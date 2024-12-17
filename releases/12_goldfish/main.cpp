@@ -2,7 +2,7 @@
 
 /// Goldfish
 
-class Passthrough : public ComputerCard
+class Goldfish : public ComputerCard
 {
 public:
 	
@@ -42,7 +42,7 @@ public:
 
 int main()
 {
-	Passthrough pt;
+	Goldfish pt;
 	pt.Run();
 }
 
