@@ -8,123 +8,113 @@ class Goldfish : public ComputerCard
 public:
 	virtual void ProcessSample()
 	{
-			
-			
-			float amp1 = KnobVal(Knob::X) / 4095.0f;
-			float amp2 = KnobVal(Knob::Y) / 4095.0f;
 
-			int cvMix = 0;
-			int thing1 = 0;
-			int thing2 = 0;
-			bool clockPulse = false;
-			bool randPulse = false;
+		float amp1 = KnobVal(Knob::X) / 4095.0f;
+		float amp2 = KnobVal(Knob::Y) / 4095.0f;
 
-			int32_t rand = LFrnd();
+		int cvMix = 0;
+		int thing1 = 0;
+		int thing2 = 0;
+		bool clockPulse = false;
 
-			if (rand > (3000-KnobVal(Knob::X))) randPulse = true;
+		int32_t rand = LFrnd();
 
-			if(Connected(Input::CV1) && Connected(Input::CV2))
+		if (Connected(Input::CV1) && Connected(Input::CV2))
+		{
+			thing1 = int16_t(CVIn1() * amp1);
+			thing2 = int16_t(CVIn2() * amp2);
+		}
+		else if (Connected(Input::CV1))
+		{
+			thing1 = int16_t(CVIn1() * amp1);
+			thing2 = int16_t(2048 * (amp2 - 0.5));
+		}
+		else if (Connected(Input::CV2))
+		{
+			thing1 = int16_t(amp1 * rand);
+			thing2 = int16_t(CVIn2() * amp2);
+		}
+		else
+		{
+			thing1 = int16_t(amp1 * rand);
+			thing2 = int16_t(2048 * (amp2 - 0.5));
+		};
+
+		cvMix = (thing1 * (4095 - KnobVal(Knob::Main)) + thing2 * KnobVal(Knob::Main)) >> 12;
+
+		CVOut1(cvMix);
+
+		clockRate = (4095 - KnobVal(Knob::Y)) << 3;
+		clockRate += (1 - amp2) * 24000 + 50;
+
+		clock++;
+		if (clock > clockRate)
+		{
+			clock = 0;
+			PulseOut1(true);
+			LedOn(4, true);
+			pulseTimer1 = 200;
+			clockPulse = true;
+		};
+
+		if (cvMix > rand && (clockPulse || PulseIn1RisingEdge()))
+		{
+			PulseOut2(true);
+			pulseTimer2 = 200;
+			LedOn(5, true);
+		};
+
+		connectedTest = Connected(Input::Pulse1);
+
+		if (Connected(Input::Pulse1))
+		{
+			//connected
+			if (PulseIn1RisingEdge())
 			{
-				thing1 = int16_t(CVIn1()*amp1);
-				thing2 = int16_t(CVIn2()*amp2);
-			}
-			else if(Connected(Input::CV1))
-			{
-				thing1 = int16_t(CVIn1()*amp1);
-				thing2 = int16_t(2048 * (amp2 - 0.5));
-			}
-			else if(Connected(Input::CV2))
-			{
-				thing1 = int16_t(amp1 * rand);
-				thing2 = int16_t(CVIn2()*amp2);
-			} else {
-				thing1 = int16_t(amp1 * rand);
-				thing2 = int16_t(2048 *(amp2-0.5));
-			};
-
-			cvMix = (thing1 * (4095 - KnobVal(Knob::Main)) + thing2 * KnobVal(Knob::Main)) >> 12;
-
-			
-
-			CVOut1(cvMix);
-
-			clockRate = (4095 - KnobVal(Knob::Y)) << 3;
-			clockRate += (1 - amp2) * 24000 + 50;
-			
-
-			clock++;
-			if (clock>clockRate)
-			{
-				clock = 0;
-				PulseOut1(true);
-				LedOn(1, true);
+				CVOut2(cvMix);
 				pulseTimer1 = 200;
-				clockPulse = true;
 			};
-
-			if(Connected(Input::Pulse1))
+		}
+		else
+		{
+			//not connected
+			if (clockPulse)
 			{
-				if(PulseIn1RisingEdge())
-				{
-					CVOut2(cvMix);
-					LedOn(0, true);
-					PulseOut1(true);
-					pulseTimer1 = 200;
-					if(randPulse)
-					{
-						PulseOut2(true);
-						pulseTimer2 = 200;
-					}
-				};
+				CVOut2(cvMix);
 			}
-			else
+		};
+
+		// If a pulse is ongoing, keep counting until it ends
+		if (pulseTimer1)
+		{
+			pulseTimer1--;
+			if (pulseTimer1 == 0) // pulse ends
 			{
-				if(clockPulse)
-				{
-					CVOut2(cvMix);
-					if(randPulse)
-					{
-						PulseOut2(true);
-						pulseTimer2 = 200;
-					}
-				}
-			};
+				PulseOut1(false);
+				LedOff(4);
+			}
+		};
 
-
-			// If a pulse is ongoing, keep counting until it ends
-			if (pulseTimer1)
+		// If a pulse is ongoing, keep counting until it ends
+		if (pulseTimer2)
+		{
+			pulseTimer2--;
+			if (pulseTimer2 == 0) // pulse ends
 			{
-				pulseTimer1--;
-				if (pulseTimer1==0) // pulse ends
-				{
-					PulseOut1(false);
-					LedOn(1, false);
-					LedOn(0, false);
-				}
-			};
+				PulseOut2(false);
+				LedOff(5);
+			}
+		};
 
-			// If a pulse is ongoing, keep counting until it ends
-			if (pulseTimer2)
-			{
-				pulseTimer2--;
-				if (pulseTimer2==0) // pulse ends
-				{
-					PulseOut2(false);
-				}
-			};
-
-		//PROCESS SAMPLE
+		// PROCESS SAMPLE
 	};
 
-	
-
 private:
-
 	int pulseTimer1 = 200;
-	int pulseTimer2 = 0;
+	int pulseTimer2;
 	int clockRate;
 	int clock = 0;
-
+	bool connectedTest;
 
 	// random number generator
 	int32_t LFrnd()
@@ -135,12 +125,9 @@ private:
 	}
 };
 
-
 int main()
 {
 	Goldfish gf;
 	gf.EnableNormalisationProbe();
 	gf.Run();
 }
-
-  
