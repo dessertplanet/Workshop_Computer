@@ -17,7 +17,7 @@ public:
 		int16_t thing2 = 0;
 		bool clockPulse = false;
 		bool effectiveSampleRate = false;
-		bool record = false;
+		ComputerCard::Switch s = SwitchVal();
 
 		int16_t rand = static_cast<int16_t>(LFrnd());
 
@@ -105,7 +105,13 @@ public:
 			}
 		};
 
-		// Delay line
+		if (PulseIn2RisingEdge())
+		{
+			writeIndexL = 0;
+			writeIndexR = 0;
+		};
+
+		// Downsample to 24kHz
 
 		downsampleCounter--;
 		if (downsampleCounter == 0)
@@ -113,29 +119,68 @@ public:
 			downsampleCounter = 2;
 			effectiveSampleRate = true;
 		}
-			// Filtered knob value
+
+		// Filtered knob value
+
+		int16_t filteredKnobVal = (KnobVal(Knob::Main) * 819 + lastFilteredKnobVal * 31949) >> 15; // 0.025 and 0.975 in Q15 format
+		lastFilteredKnobVal = filteredKnobVal;
+
+		// Delay stuff
 
 		if (effectiveSampleRate)
 		{
-			// Filtered knob value
 
-			int16_t filteredKnobVal = (KnobVal(Knob::Main) * 819 + lastFilteredKnobVal * 31949) >> 15; // 0.025 and 0.975 in Q15 format
-			lastFilteredKnobVal = filteredKnobVal;
+			if (s == ComputerCard::Switch::Up && lastSwitchVal != ComputerCard::Switch::Up)
+			{
+				play = true;
+				record = false;
+				delay = true;
+			}
+			else if (s == ComputerCard::Switch::Middle && lastSwitchVal != ComputerCard::Switch::Middle)
+			{
+				play = false;
+				record = false;
+				delay = true;
+			}
+			else if (s == ComputerCard::Switch::Down && lastSwitchVal != ComputerCard::Switch::Down)
+			{
+				record = true;
+				delay = true;
+				play = false;
+			};
 
-			int16_t delaySamplesL = (static_cast<int>(filteredKnobVal) * bufferSize >> 11);
-			int16_t delaySamplesR = (static_cast<int>(4095 - filteredKnobVal) * bufferSize >> 11);
+			if (delay)
+			{
 
-			audioBufferL[writeIndexL] = AudioIn1();
-			audioBufferR[writeIndexR] = AudioIn2();
+				int16_t delaySamplesL = (static_cast<int>(filteredKnobVal) * bufferSize >> 11);
+				int16_t delaySamplesR = (static_cast<int>(4095 - filteredKnobVal) * bufferSize >> 11);
 
-			readIndexL = (writeIndexL - delaySamplesL + bufferSize) % bufferSize;
-			readIndexR = (writeIndexR - delaySamplesR + bufferSize) % bufferSize;
+				audioBufferL[writeIndexL] = AudioIn1();
+				audioBufferR[writeIndexR] = AudioIn2();
 
-			AudioOut1(audioBufferL[readIndexL]);
-			AudioOut2(audioBufferR[readIndexR]);
+				readIndexL = (writeIndexL - delaySamplesL + bufferSize) % bufferSize;
+				readIndexR = (writeIndexR - delaySamplesR + bufferSize) % bufferSize;
+
+				AudioOut1(audioBufferL[readIndexL]);
+				AudioOut2(audioBufferR[readIndexR]);
+			};
+
+			if (record)
+			{
+				audioLoopL[writeIndexL] = audioBufferL[readIndexL];
+				audioLoopR[writeIndexR] = audioBufferR[readIndexR];
+			};
+
+			if (play)
+			{
+				AudioOut1(audioLoopL[writeIndexR] + audioBufferL[readIndexL]);
+				AudioOut2(audioLoopR[writeIndexR] + audioBufferR[readIndexR]);
+			}
 
 			writeIndexL = (writeIndexL + 1) % bufferSize;
 			writeIndexR = (writeIndexR + 1) % bufferSize;
+
+			lastSwitchVal = s;
 		}
 
 		// PROCESS SAMPLE
@@ -146,11 +191,17 @@ private:
 	int pulseTimer2;
 	int clockRate;
 	int clock = 0;
-	int downsampleCounter = 2;
+	int downsampleCounter = 3;
+	ComputerCard::Switch lastSwitchVal;
+	bool record = false;
+	bool delay = false;
+	bool play = false;
 
-	static const int bufferSize = 48000;
+	static const int bufferSize = 24000;
 	int16_t audioBufferL[bufferSize] = {0};
 	int16_t audioBufferR[bufferSize] = {0};
+	int16_t audioLoopL[bufferSize] = {0};
+	int16_t audioLoopR[bufferSize] = {0};
 	int writeIndexL = 0;
 	int writeIndexR = 0;
 	int readIndexL = 0;
