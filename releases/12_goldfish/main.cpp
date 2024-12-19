@@ -17,6 +17,7 @@ public:
 		int16_t thing2 = 0;
 		bool clockPulse = false;
 		bool effectiveSampleRate = false;
+		bool record = false;
 
 		int16_t rand = static_cast<int16_t>(LFrnd());
 
@@ -109,7 +110,7 @@ public:
 		downsampleCounter--;
 		if (downsampleCounter == 0)
 		{
-			downsampleCounter = 4;
+			downsampleCounter = 2;
 			effectiveSampleRate = true;
 		}
 			// Filtered knob value
@@ -121,13 +122,14 @@ public:
 			int16_t filteredKnobVal = (KnobVal(Knob::Main) * 819 + lastFilteredKnobVal * 31949) >> 15; // 0.025 and 0.975 in Q15 format
 			lastFilteredKnobVal = filteredKnobVal;
 
-		int16_t delaySamples = (static_cast<int>(filteredKnobVal) * bufferSize >> 11);
+			int16_t delaySamplesL = (static_cast<int>(filteredKnobVal) * bufferSize >> 11);
+			int16_t delaySamplesR = (static_cast<int>(4095 - filteredKnobVal) * bufferSize >> 11);
 
 			audioBufferL[writeIndexL] = AudioIn1();
 			audioBufferR[writeIndexR] = AudioIn2();
 
-			readIndexL = (writeIndexL - delaySamples + bufferSize) % bufferSize;
-			readIndexR = (writeIndexR - delaySamples + bufferSize) % bufferSize;
+			readIndexL = (writeIndexL - delaySamplesL + bufferSize) % bufferSize;
+			readIndexR = (writeIndexR - delaySamplesR + bufferSize) % bufferSize;
 
 			AudioOut1(audioBufferL[readIndexL]);
 			AudioOut2(audioBufferR[readIndexR]);
@@ -144,7 +146,7 @@ private:
 	int pulseTimer2;
 	int clockRate;
 	int clock = 0;
-	int downsampleCounter = 4;
+	int downsampleCounter = 2;
 
 	static const int bufferSize = 48000;
 	int16_t audioBufferL[bufferSize] = {0};
