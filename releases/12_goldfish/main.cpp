@@ -10,102 +10,102 @@ public:
 	{
 
 		int16_t amp1 = static_cast<int16_t>((KnobVal(Knob::X) << 15) / 4095); // Convert to Q15 format
-        int16_t amp2 = static_cast<int16_t>((KnobVal(Knob::Y) << 15) / 4095); // Convert to Q15 format
+		int16_t amp2 = static_cast<int16_t>((KnobVal(Knob::Y) << 15) / 4095); // Convert to Q15 format
 
-        int16_t cvMix = 0;
-        int16_t thing1 = 0;
-        int16_t thing2 = 0;
-        bool clockPulse = false;
+		int16_t cvMix = 0;
+		int16_t thing1 = 0;
+		int16_t thing2 = 0;
+		bool clockPulse = false;
 
-        int16_t rand = static_cast<int16_t>(LFrnd());
+		int16_t rand = static_cast<int16_t>(LFrnd());
 
-        if (Connected(Input::CV1) && Connected(Input::CV2))
-        {
-            thing1 = static_cast<int16_t>((CVIn1() * amp1) >> 15);
-            thing2 = static_cast<int16_t>((CVIn2() * amp2) >> 15);
-        }
-        else if (Connected(Input::CV1))
-        {
-            thing1 = static_cast<int16_t>((CVIn1() * amp1) >> 15);
-            thing2 = static_cast<int16_t>((2048 * (amp2 - (1 << 14))) >> 15); // 0.5 in Q15 format is 1 << 14
-        }
-        else if (Connected(Input::CV2))
-        {
-            thing1 = static_cast<int16_t>((amp1 * rand) >> 15);
-            thing2 = static_cast<int16_t>((CVIn2() * amp2) >> 15);
-        }
-        else
-        {
-            thing1 = static_cast<int16_t>((amp1 * rand) >> 15);
-            thing2 = static_cast<int16_t>((2048 * (amp2 - (1 << 14))) >> 15); // 0.5 in Q15 format is 1 << 14
-        };
+		if (Connected(Input::CV1) && Connected(Input::CV2))
+		{
+			thing1 = static_cast<int16_t>((CVIn1() * amp1) >> 15);
+			thing2 = static_cast<int16_t>((CVIn2() * amp2) >> 15);
+		}
+		else if (Connected(Input::CV1))
+		{
+			thing1 = static_cast<int16_t>((CVIn1() * amp1) >> 15);
+			thing2 = static_cast<int16_t>((2048 * (amp2 - (1 << 14))) >> 15); // 0.5 in Q15 format is 1 << 14
+		}
+		else if (Connected(Input::CV2))
+		{
+			thing1 = static_cast<int16_t>((amp1 * rand) >> 15);
+			thing2 = static_cast<int16_t>((CVIn2() * amp2) >> 15);
+		}
+		else
+		{
+			thing1 = static_cast<int16_t>((amp1 * rand) >> 15);
+			thing2 = static_cast<int16_t>((2048 * (amp2 - (1 << 14))) >> 15); // 0.5 in Q15 format is 1 << 14
+		};
 
-        cvMix = static_cast<int16_t>(((thing1 * (4095 - KnobVal(Knob::Main))) + (thing2 * KnobVal(Knob::Main))) >> 12);
+		cvMix = static_cast<int16_t>(((thing1 * (4095 - KnobVal(Knob::Main))) + (thing2 * KnobVal(Knob::Main))) >> 12);
 
-        CVOut1(cvMix);
+		CVOut1(cvMix);
 
-        clockRate = ((4095 - KnobVal(Knob::Y)) << 3) + (((1 << 15) - amp2) * 24000 >> 15) + 50; // 1 in Q15 format is 1 << 15
+		clockRate = ((4095 - KnobVal(Knob::Y)) << 3) + (((1 << 15) - amp2) * 24000 >> 15) + 50; // 1 in Q15 format is 1 << 15
 
-        clock++;
-        if (clock > clockRate)
-        {
-            clock = 0;
-            PulseOut1(true);
-            LedOn(4, true);
-            pulseTimer1 = 200;
-            clockPulse = true;
-        };
+		clock++;
+		if (clock > clockRate)
+		{
+			clock = 0;
+			PulseOut1(true);
+			LedOn(4, true);
+			pulseTimer1 = 200;
+			clockPulse = true;
+		};
 
-        if (cvMix > rand && (clockPulse || PulseIn1RisingEdge()))
-        {
-            PulseOut2(true);
-            pulseTimer2 = 200;
-            LedOn(5, true);
-        };
+		if (cvMix > rand && (clockPulse || PulseIn1RisingEdge()))
+		{
+			PulseOut2(true);
+			pulseTimer2 = 200;
+			LedOn(5, true);
+		};
 
-        if (Connected(Input::Pulse1))
-        {
-            // connected
-            if (PulseIn1RisingEdge())
-            {
-                CVOut2(cvMix);
-                pulseTimer1 = 200;
-            };
-        }
-        else
-        {
-            // not connected
-            if (clockPulse)
-            {
-                CVOut2(cvMix);
-            }
-        }
+		if (Connected(Input::Pulse1))
+		{
+			// connected
+			if (PulseIn1RisingEdge())
+			{
+				CVOut2(cvMix);
+				pulseTimer1 = 200;
+			};
+		}
+		else
+		{
+			// not connected
+			if (clockPulse)
+			{
+				CVOut2(cvMix);
+			}
+		}
 
-        // If a pulse is ongoing, keep counting until it ends
-        if (pulseTimer1)
-        {
-            pulseTimer1--;
-            if (pulseTimer1 == 0) // pulse ends
-            {
-                PulseOut1(false);
-                LedOff(4);
-            }
-        };
+		// If a pulse is ongoing, keep counting until it ends
+		if (pulseTimer1)
+		{
+			pulseTimer1--;
+			if (pulseTimer1 == 0) // pulse ends
+			{
+				PulseOut1(false);
+				LedOff(4);
+			}
+		};
 
-        // If a pulse is ongoing, keep counting until it ends
-        if (pulseTimer2)
-        {
-            pulseTimer2--;
-            if (pulseTimer2 == 0) // pulse ends
-            {
-                PulseOut2(false);
-                LedOff(5);
-            }
-        };
+		// If a pulse is ongoing, keep counting until it ends
+		if (pulseTimer2)
+		{
+			pulseTimer2--;
+			if (pulseTimer2 == 0) // pulse ends
+			{
+				PulseOut2(false);
+				LedOff(5);
+			}
+		};
 
-		// Delay
+		// Delay line
 
-        int16_t filteredKnobVal = (KnobVal(Knob::Main) * 3277 + lastFilteredKnobVal * 29491) >> 15; // 0.1 and 0.9 in Q15 format
+		int16_t filteredKnobVal = (KnobVal(Knob::Main) * 819 + lastFilteredKnobVal * 31949) >> 15; // 0.025 and 0.975 in Q15 format
 		lastFilteredKnobVal = filteredKnobVal;
 
 		int16_t delaySamples = (static_cast<int>(filteredKnobVal) * bufferSize >> 11);
@@ -115,7 +115,7 @@ public:
 
 		readIndexL = (writeIndexL - delaySamples + bufferSize) % bufferSize;
 		readIndexR = (writeIndexR - delaySamples + bufferSize) % bufferSize;
-		
+
 		AudioOut1(audioBufferL[readIndexL]);
 		AudioOut2(audioBufferR[readIndexR]);
 
@@ -131,7 +131,7 @@ private:
 	int clockRate;
 	int clock = 0;
 
-	static const int bufferSize = 22500;
+	static const int bufferSize = 48000;
 	int16_t audioBufferL[bufferSize] = {0};
 	int16_t audioBufferR[bufferSize] = {0};
 	int writeIndexL = 0;
@@ -142,7 +142,6 @@ private:
 	// Fixed-point constant
 	const uint16_t FIXED_POINT_SCALE = 32768; // 2^15 for Q15 format
 
-
 	// random number generator
 	int32_t LFrnd()
 	{
@@ -152,9 +151,10 @@ private:
 	};
 
 	// Function to scale value from 0-4095 to 0-FIXED_POINT_SCALE
-    int16_t scaleValue(int16_t input_value) {
-        return static_cast<int16_t>((input_value * FIXED_POINT_SCALE) / 4095);
-    }
+	int16_t scaleValue(int16_t input_value)
+	{
+		return static_cast<int16_t>((input_value * FIXED_POINT_SCALE) / 4095);
+	}
 };
 
 int main()
