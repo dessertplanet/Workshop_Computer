@@ -64,11 +64,9 @@ public:
 			LedOn(5, true);
 		};
 
-		connectedTest = Connected(Input::Pulse1);
-
 		if (Connected(Input::Pulse1))
 		{
-			//connected
+			// connected
 			if (PulseIn1RisingEdge())
 			{
 				CVOut2(cvMix);
@@ -77,7 +75,7 @@ public:
 		}
 		else
 		{
-			//not connected
+			// not connected
 			if (clockPulse)
 			{
 				CVOut2(cvMix);
@@ -106,6 +104,20 @@ public:
 			}
 		};
 
+		// Delay
+
+		float filteredKnobVal = KnobVal(Knob::Main) * 0.1f + lastFilteredKnobVal * 0.9f;
+		lastFilteredKnobVal = filteredKnobVal;
+		int delaySamples = (static_cast<int>(filteredKnobVal) * bufferSize >> 11);
+
+		audioBuffer[writeIndex] = AudioIn1();
+
+		readIndex = (writeIndex - delaySamples + bufferSize) % bufferSize;
+		
+		AudioOut1(audioBuffer[readIndex]);
+
+		writeIndex = (writeIndex + 1) % bufferSize;
+
 		// PROCESS SAMPLE
 	};
 
@@ -114,7 +126,13 @@ private:
 	int pulseTimer2;
 	int clockRate;
 	int clock = 0;
-	bool connectedTest;
+
+	static const int bufferSize = 48000;
+	int16_t audioBuffer[bufferSize] = {0};
+	int writeIndex = 0;
+	int readIndex;
+	float lastFilteredKnobVal = 0;
+
 
 	// random number generator
 	int32_t LFrnd()
