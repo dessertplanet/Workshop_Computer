@@ -24,7 +24,11 @@
             ],
             "openOCDLaunchCommands": [
                 "adapter speed 4000"
-            ]
+            ],
+            "liveWatch": {
+                "enabled": true,
+                "samplesPerSecond": 4
+            }
         }
     ]
 }

@@ -1,0 +1,15 @@
+Missing:
+delay
+Looper
+
+Goldfish (name pending)
+List of uses:
+Crossfading CV mixer
+Quantized Sample and Hold
+Clock Source
+Random Clock Source
+Noise source
+Audio delay and looper/sampler
+CV looper / sampler
+gate pattern looper/sampler
+Big knobb Offset generator and Attenuator
