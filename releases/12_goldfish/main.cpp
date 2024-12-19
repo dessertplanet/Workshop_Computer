@@ -16,6 +16,7 @@ public:
 		int16_t thing1 = 0;
 		int16_t thing2 = 0;
 		bool clockPulse = false;
+		bool effectiveSampleRate = false;
 
 		int16_t rand = static_cast<int16_t>(LFrnd());
 
@@ -105,22 +106,35 @@ public:
 
 		// Delay line
 
-		int16_t filteredKnobVal = (KnobVal(Knob::Main) * 819 + lastFilteredKnobVal * 31949) >> 15; // 0.025 and 0.975 in Q15 format
-		lastFilteredKnobVal = filteredKnobVal;
+		downsampleCounter--;
+		if (downsampleCounter == 0)
+		{
+			downsampleCounter = 4;
+			effectiveSampleRate = true;
+		}
+			// Filtered knob value
+
+		if (effectiveSampleRate)
+		{
+			// Filtered knob value
+
+			int16_t filteredKnobVal = (KnobVal(Knob::Main) * 819 + lastFilteredKnobVal * 31949) >> 15; // 0.025 and 0.975 in Q15 format
+			lastFilteredKnobVal = filteredKnobVal;
 
 		int16_t delaySamples = (static_cast<int>(filteredKnobVal) * bufferSize >> 11);
 
-		audioBufferL[writeIndexL] = AudioIn1();
-		audioBufferR[writeIndexR] = AudioIn2();
+			audioBufferL[writeIndexL] = AudioIn1();
+			audioBufferR[writeIndexR] = AudioIn2();
 
-		readIndexL = (writeIndexL - delaySamples + bufferSize) % bufferSize;
-		readIndexR = (writeIndexR - delaySamples + bufferSize) % bufferSize;
+			readIndexL = (writeIndexL - delaySamples + bufferSize) % bufferSize;
+			readIndexR = (writeIndexR - delaySamples + bufferSize) % bufferSize;
 
-		AudioOut1(audioBufferL[readIndexL]);
-		AudioOut2(audioBufferR[readIndexR]);
+			AudioOut1(audioBufferL[readIndexL]);
+			AudioOut2(audioBufferR[readIndexR]);
 
-		writeIndexL = (writeIndexL + 1) % bufferSize;
-		writeIndexR = (writeIndexR + 1) % bufferSize;
+			writeIndexL = (writeIndexL + 1) % bufferSize;
+			writeIndexR = (writeIndexR + 1) % bufferSize;
+		}
 
 		// PROCESS SAMPLE
 	};
@@ -130,6 +144,7 @@ private:
 	int pulseTimer2;
 	int clockRate;
 	int clock = 0;
+	int downsampleCounter = 4;
 
 	static const int bufferSize = 48000;
 	int16_t audioBufferL[bufferSize] = {0};
