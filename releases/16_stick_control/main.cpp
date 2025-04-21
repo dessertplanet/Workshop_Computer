@@ -1,75 +1,50 @@
 #include "ComputerCard.h"
-#include <algorithm>
+#include <cmath> // for sin
 
 class StickControl : public ComputerCard
 {
 public:
-    uint32_t sharedPhase;     // Shared phase accumulator
-    uint32_t phaseOffsets[6]; // Phase offsets for 6 triangle waves
+   
+	constexpr static unsigned tableSize = 512;
+	int16_t sine[tableSize];
 
-    StickControl()
-    {
-        // Initialize shared phase
-        sharedPhase = 0;
+	// Bitwise AND of index integer with tableMask will wrap it to table size
+	constexpr static uint32_t tableMask = tableSize - 1;
 
-        // Generate random phase offsets
-        GenerateRandomPhaseOffsets();
-    }
+	// Sine wave phase (0-2^32 gives 0-2pi phase range)
+	uint32_t phase;
+	
+	StickControl()
+	{
+		// Initialise phase of sine wave to 0
+		phase = 0;
+		
+		for (unsigned i=0; i<tableSize; i++)
+		{
+			// just shy of 2^15 * sin
+			sine[i] = int16_t(32000*sin(2*i*M_PI/double(tableSize)));
+		}
+
+	}
 
     virtual void ProcessSample()
     {
-        int32_t outputs[6]; // Array to store triangle wave values
+		//Lookup table pieces from Chris Johnson's sine_wave_lookup example
 
-        // Calculate triangle wave values for each phase offset
-        for (int i = 0; i < 6; i++)
-        {
-            uint32_t phase = sharedPhase + phaseOffsets[i];
-            uint32_t normalizedPhase = phase >> 17; // Scale 32-bit phase to 15 bits
+        uint32_t index = phase >> 23; // convert from 32-bit phase to 9-bit lookup table index
+		int32_t r = (phase & 0x7FFFFF) >> 7; // fractional part is last 23 bits of phase, shifted to 16-bit 
 
-            // Generate triangle wave: 0 to 2^15 to 0
-            int32_t value = (normalizedPhase < 32768) ? normalizedPhase : (65535 - normalizedPhase);
+		// Look up this index and next index in lookup table
+		int32_t s1 = sine[index];
+		int32_t s2 = sine[(index+1) & tableMask];
 
-            // Scale to 12-bit signed output (-2048 to 2047)
-            outputs[i] = (value >> 3) - 2048;
-        }
-
-        // Output the first two triangle waves to AudioOut1 and AudioOut2
-        AudioOut1(outputs[0]);
-        AudioOut2(outputs[1]);
-
-        // Increment shared phase for 440Hz triangle wave
-        sharedPhase += 39370534;
+		// Linear interpolation of s1 and s2, using fractional part
+		// Shift right by 20 bits
+		// (16 bits of r, and 4 bits to reduce 16-bit signed sine table to 12-bit output)
+		int32_t out = (s2 * r + s1 * (65536 - r)) >> 20;
     }
 
 private:
-    void GenerateRandomPhaseOffsets()
-    {
-        // Generate random phase offsets
-        for (int i = 0; i < 6; i++)
-        {
-            phaseOffsets[i] = rand() % 0xFFFFFFFF; // Random 32-bit value
-        }
-
-        // Sort the offsets to ensure ascending order
-        std::sort(phaseOffsets, phaseOffsets + 6);
-
-        // Enforce minimum separation between offsets
-        const uint32_t minSeparation = 0x20000000; // Minimum separation (1/8 of 2^32)
-		
-        for (int i = 1; i < 6; i++)
-        {
-            if (phaseOffsets[i] - phaseOffsets[i - 1] < minSeparation)
-            {
-                phaseOffsets[i] = phaseOffsets[i - 1] + minSeparation;
-            }
-        }
-
-        // Wrap around the last offset if it exceeds the 32-bit range
-        if (phaseOffsets[5] >= 0xFFFFFFFF)
-        {
-            phaseOffsets[5] -= 0xFFFFFFFF;
-        }
-    }
 
     // 32-bit random number generator
     uint32_t rand()
