@@ -1,6 +1,12 @@
 #include "ComputerCard.h"
 #include <cmath> // for sin
 
+#define L 1
+#define R 0
+
+#define GATE_HIGH 2047
+#define GATE_LOW 0
+
 class StickCtrl : public ComputerCard
 {
 public:
@@ -11,11 +17,25 @@ public:
 	constexpr static uint32_t tableMask = tableSize - 1;
 
 	uint32_t mixReadPhases[6];
-	uint64_t virtualFaders[6] = { 0, 0, 0, 0, 0, 0 };
+	uint64_t virtualFaders[6];
+
+	constexpr static uint32_t counterMaxSeconds = 3;
+	constexpr static uint32_t counterMaxSamples = counterMaxSeconds * 48000;
+
+	constexpr static uint32_t counterTick = 0xFFFFFFFF / counterMaxSamples;
+	constexpr static uint32_t counterTickMask = counterMaxSamples - 1;
+
+	uint32_t mainCounter;
+
+	uint32_t drummers[3] = {0, 0, 0};
+
+	int16_t activePulses[6] = {0, 0, 0, 0, 0, 0};
+
+	constexpr static bool paradiddle[8] = {R, L, R, R, L, R, L, L};
 
 	StickCtrl()
 	{
-		//Constructor
+		// Constructor
 
 		for (unsigned i = 0; i < tableSize; i++)
 		{
@@ -27,30 +47,78 @@ public:
 		{
 			mixReadPhases[i] = rnd() << 16; // random phases for our one knob mixer
 		}
+
+		mainCounter = 0;
 	}
 
 	virtual void ProcessSample()
 	{
+		// mainCounter = (mainCounter + counterTick) & counterTickMask;
+
+		bool beat = false;
+
+		int16_t tmp_clock_max = 12000;
+		int16_t pulseWidth = 200;
+
+		int16_t outputs[6] = {0, 0, 0, 0, 0, 0};
+
+		mainCounter += 1;
+
+		if (mainCounter >= tmp_clock_max)
+		{
+			mainCounter = 0;
+			beat = true;
+		}
+
+		if (beat)
+		{
+			switch (paradiddle[drummers[0]])
+			{
+			case L:
+				activePulses[0] = pulseWidth;
+				break;
+			case R:
+				activePulses[1] = pulseWidth;
+				break;
+			}
+			drummers[0] = (drummers[0] + 1) % 8;
+		}
+
+		for (int i = 0; i < 6; i++)
+		{
+			if (activePulses[i] > 0)
+			{
+				activePulses[i]--;
+				outputs[i] = GATE_HIGH;
+			}
+			else
+			{
+				outputs[i] = GATE_LOW;
+			}
+		}
+
 		for (int i = 0; i < 6; i++)
 		{
 			virtualFaders[i] = sineLookup(mixReadPhases[i] + ((uint64_t)KnobVal(Knob::Main) * 0xFFFFFFFF >> 12));
 		}
 
-		AudioOut1(virtualFaders[0]);
-		AudioOut2(virtualFaders[1]);
-		CVOut1(virtualFaders[2]);
-		CVOut2(virtualFaders[3]);
+		AudioOut1(outputs[0]);
+		AudioOut2(outputs[1]);
+
+		for (int i = 0; i < 6; i++)
+		{
+			LedBrightness(i, outputs[i] ? outputs[i] + 2048 : 0);
+		}
 	}
 
 private:
-
 	// a slightly more complex random number generator than usual to ensure reseting Computer produces different results
 	// (and to make it more difficult to reverse engineer) << Copilot added this wtf my code is super readable! (jokes)
 	int32_t rnd()
 	{
 		static uint32_t lcg_seed = UniqueCardID() & 0xFFFFFFFF; // 32-bit LCG seed from unique cardID
-		lcg_seed ^= (uint32_t)time_us_64(); // XOR with time to add some randomness
-		lcg_seed ^= KnobVal(Knob::Main) << 20; // XOR with main knob value to add some randomness
+		lcg_seed ^= (uint32_t)time_us_64();						// XOR with time to add some randomness
+		lcg_seed ^= KnobVal(Knob::Main) << 20;					// XOR with main knob value to add some randomness
 		lcg_seed = 1664525 * lcg_seed + 1013904223;
 		return lcg_seed;
 	}
@@ -59,7 +127,7 @@ private:
 	{
 		// Lookup table pieces from Chris Johnson's sine_wave_lookup example. Thanks Chris!
 
-		//wrap phase to 32 bits
+		// wrap phase to 32 bits
 		if (phase >= 0xFFFFFFFF)
 		{
 			phase -= 0xFFFFFFFF;
@@ -82,12 +150,11 @@ private:
 		int32_t out = (s2 * r + s1 * (65536 - r)) >> 20;
 		out += 2048; // 0-4095
 
-		//remove this when leaving demo mode
+		// remove this when leaving demo mode
 		out = out * 2048 >> 12; // 0-2047
-		clip(out, 0, 2047); // clip to 0-2047
+		clip(out, 0, 2047);		// clip to 0-2047
 
-
-		return (int16_t) out;
+		return (int16_t)out;
 	}
 
 	void clip(int32_t &value, int16_t min, int16_t max)
