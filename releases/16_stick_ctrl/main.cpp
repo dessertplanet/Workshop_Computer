@@ -1,7 +1,7 @@
 #include "ComputerCard.h"
 #include <cmath> // for sin
 
-class StickControl : public ComputerCard
+class StickCtrl : public ComputerCard
 {
 public:
 	constexpr static unsigned tableSize = 512;
@@ -15,7 +15,7 @@ public:
 	uint32_t mixReadPhases[6];
 	uint64_t virtualFaders[6] = { 0, 0, 0, 0, 0, 0 };
 
-	StickControl()
+	StickCtrl()
 	{
 		//Constructor
 
@@ -47,6 +47,9 @@ public:
 	}
 
 private:
+
+	// a slightly more complex random number generator than usual to ensure reseting Computer produces different results
+	// (and to make it more difficult to reverse engineer) << Copilot added this wtf my code is super readable lol
 	int32_t rnd()
 	{
 		static uint32_t lcg_seed = UniqueCardID() & 0xFFFFFFFF; // 32-bit LCG seed from unique cardID
@@ -88,7 +91,7 @@ private:
 
 int main()
 {
-	StickControl stCtrl;
+	StickCtrl stCtrl;
 	stCtrl.EnableNormalisationProbe();
 	stCtrl.Run();
 }
