@@ -10,8 +10,6 @@ public:
 	// Bitwise AND of index integer with tableMask will wrap it to table size
 	constexpr static uint32_t tableMask = tableSize - 1;
 
-	// Sine wave phase (0-2^32 gives 0-2pi phase range)
-
 	uint32_t mixReadPhases[6];
 	uint64_t virtualFaders[6] = { 0, 0, 0, 0, 0, 0 };
 
@@ -33,8 +31,6 @@ public:
 
 	virtual void ProcessSample()
 	{
-		// Lookup table pieces from Chris Johnson's sine_wave_lookup example
-
 		for (int i = 0; i < 6; i++)
 		{
 			virtualFaders[i] = sineLookup(mixReadPhases[i] + ((uint64_t)KnobVal(Knob::Main) * 0xFFFFFFFF >> 12));
@@ -49,7 +45,7 @@ public:
 private:
 
 	// a slightly more complex random number generator than usual to ensure reseting Computer produces different results
-	// (and to make it more difficult to reverse engineer) << Copilot added this wtf my code is super readable lol
+	// (and to make it more difficult to reverse engineer) << Copilot added this wtf my code is super readable! (jokes)
 	int32_t rnd()
 	{
 		static uint32_t lcg_seed = UniqueCardID() & 0xFFFFFFFF; // 32-bit LCG seed from unique cardID
@@ -84,8 +80,26 @@ private:
 		// Shift right by 20 bits
 		// (16 bits of r, and 4 bits to reduce 16-bit signed sine table to 12-bit output)
 		int32_t out = (s2 * r + s1 * (65536 - r)) >> 20;
+		out += 2048; // 0-4095
+
+		//remove this when leaving demo mode
+		out = out * 2048 >> 12; // 0-2047
+		clip(out, 0, 2047); // clip to 0-2047
+
 
 		return (int16_t) out;
+	}
+
+	void clip(int32_t &value, int16_t min, int16_t max)
+	{
+		if (value < min)
+		{
+			value = min;
+		}
+		else if (value > max)
+		{
+			value = max;
+		}
 	}
 };
 
