@@ -1,4 +1,5 @@
 #include "ComputerCard.h"
+#include "click.h"
 #include <cmath> // for sin
 
 #define L 1
@@ -6,6 +7,9 @@
 
 #define GATE_HIGH 2047
 #define GATE_LOW 0
+
+void tempTap();
+void longHold();
 
 class StickCtrl : public ComputerCard
 {
@@ -35,6 +39,13 @@ public:
 	constexpr static bool paradiddle[8] = {R, L, R, R, L, R, L, L};
 
 	uint32_t quarterNoteDurationSamples;
+
+	Click tap = Click(tempTap, longHold);
+
+	void setLED(int led, int brightness)
+	{
+		LedBrightness(led, brightness);
+	}
 
 	StickCtrl()
 	{
@@ -118,8 +129,9 @@ public:
 		AudioOut1(outputs[0]);
 		AudioOut2(outputs[1]);
 
+		tap.Update(SwitchVal() == Switch::Down);
 
-		for (int i = 0; i < 6; i++)
+		for (int i = 0; i < 2; i++)
 		{
 			int brightness = outputs[i] * 8190 >> 12;
 			LedBrightness(i, outputs[i] ? outputs[i] + 2048 : 0);
@@ -190,9 +202,24 @@ private:
 	}
 };
 
+//define this here so that it can be used in the click library
+//There is probably a better way to do this but I don't know it
+StickCtrl stCtrl;
+
 int main()
 {
-	StickCtrl stCtrl;
 	stCtrl.EnableNormalisationProbe();
 	stCtrl.Run();
+}
+
+//Functions for click library
+void tempTap()
+{
+	stCtrl.setLED(4, 4095);
+}
+
+void longHold()
+{
+	// tapCounter = 0;
+	stCtrl.setLED(5, 4095);
 }
