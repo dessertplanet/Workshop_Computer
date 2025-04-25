@@ -22,16 +22,19 @@ public:
 	constexpr static uint32_t counterMaxSeconds = 3;
 	constexpr static uint32_t counterMaxSamples = counterMaxSeconds * 48000;
 
-	constexpr static uint32_t counterTick = 0xFFFFFFFF / counterMaxSamples;
-	constexpr static uint32_t counterTickMask = counterMaxSamples - 1;
+	uint32_t sampleCounter;
 
-	uint32_t mainCounter;
+	uint32_t tapCounter;
+
+	constexpr static uint32_t counterTickMask = counterMaxSamples - 1;
 
 	uint32_t drummers[3] = {0, 0, 0};
 
 	int16_t activePulses[6] = {0, 0, 0, 0, 0, 0};
 
 	constexpr static bool paradiddle[8] = {R, L, R, R, L, R, L, L};
+
+	uint32_t quarterNoteDurationSamples;
 
 	StickCtrl()
 	{
@@ -48,27 +51,36 @@ public:
 			mixReadPhases[i] = rnd() << 16; // random phases for our one knob mixer
 		}
 
-		mainCounter = 0;
+		sampleCounter = 0;
+		tapCounter = 0;
+
+		quarterNoteDurationSamples = 12000; // 500ms at 48kHz
+
 	}
 
 	virtual void ProcessSample()
 	{
-		// mainCounter = (mainCounter + counterTick) & counterTickMask;
 
-		bool beat = false;
+		sampleCounter += 1;
+		if (sampleCounter >= counterMaxSamples)
+		{
+			sampleCounter = 0;
+		}
 
-		int16_t tmp_clock_max = 12000;
+
+		
+		if (sampleCounter % 120 == 0)
+		{
+			//400Hz loop four counting purposes
+			//number was picked so that sampleCounter in this loop is always divisible by 5, 6, and 8
+			//double checked that timing events in this loop have a max input latency of 2.5ms at 48kHz sample rate
+		}
+
+		bool beat = sampleCounter % quarterNoteDurationSamples == 0;
+
 		int16_t pulseWidth = 200;
 
 		int16_t outputs[6] = {0, 0, 0, 0, 0, 0};
-
-		mainCounter += 1;
-
-		if (mainCounter >= tmp_clock_max)
-		{
-			mainCounter = 0;
-			beat = true;
-		}
 
 		if (beat)
 		{
@@ -100,13 +112,16 @@ public:
 		for (int i = 0; i < 6; i++)
 		{
 			virtualFaders[i] = sineLookup(mixReadPhases[i] + ((uint64_t)KnobVal(Knob::Main) * 0xFFFFFFFF >> 12));
+			outputs[i] = (outputs[i] * virtualFaders[i]) >> 12;
 		}
 
 		AudioOut1(outputs[0]);
 		AudioOut2(outputs[1]);
 
+
 		for (int i = 0; i < 6; i++)
 		{
+			int brightness = outputs[i] * 8190 >> 12;
 			LedBrightness(i, outputs[i] ? outputs[i] + 2048 : 0);
 		}
 	}
@@ -151,10 +166,15 @@ private:
 		out += 2048; // 0-4095
 
 		// remove this when leaving demo mode
-		out = out * 2048 >> 12; // 0-2047
-		clip(out, 0, 2047);		// clip to 0-2047
+		// out = out * 2048 >> 12; // 0-2047
+		// clip(out, 0, 2047);		// clip to 0-2047
 
 		return (int16_t)out;
+	}
+
+	void setQuarterNote(uint32_t counter)
+	{
+		quarterNoteDurationSamples = counter;
 	}
 
 	void clip(int32_t &value, int16_t min, int16_t max)
