@@ -23,40 +23,33 @@ public:
 	uint32_t mixReadPhases[6];
 	uint64_t virtualFaders[6];
 
-	constexpr static uint32_t counterMaxSeconds = 3;
-	constexpr static uint32_t counterMaxSamples = counterMaxSeconds * 48000;
-
 	uint32_t sampleCounter;
 
-	constexpr static uint32_t counterTickMask = counterMaxSamples - 1;
-
-	uint32_t drummers[3] = {0, 0, 0};
+	uint32_t drummers[2] = {0, 0};
 
 	int16_t activePulses[6] = {0, 0, 0, 0, 0, 0};
+	// int16_t pulseMap[6] = {0, 2, 4, 1, 3, 5};
 
 	constexpr static bool paradiddle[8] = {R, L, R, R, L, R, L, L};
+	constexpr static bool sonClave[16] = {R, L, L, R, L, L, R, L, L, L, R, L , R, L, L, L};
+	constexpr static bool sixStrokeRoll[6] = {R, L, L, R, R, L};
+	constexpr static bool stickMap[6] = {L, R, L, R, L, R};
 
-	uint32_t quarterNoteDurationSamples;
+	uint32_t sixteenthNoteMs;
+
+	uint32_t sixteenthNoteSamples = 12000;
 
 	Click tap = Click(tempTap, longHold);
 
 	bool tapping = false;
-
 	bool switchHold = false;
-
 	bool resync = false;
 
-	bool beat = false;
-
-	bool tapNow = false;
+	bool sixteenthPulse = false;
+	bool sixEightPulse = false;
 
 	uint32_t tapTime = 0;
 	uint32_t tapTimeLast = 0;
-
-	void setLED(int led, int brightness)
-	{
-		LedBrightness(led, brightness);
-	}
 
 	StickCtrl()
 	{
@@ -74,54 +67,37 @@ public:
 		}
 
 		sampleCounter = 0;
-
-		quarterNoteDurationSamples = 12000; // 500ms at 48kHz == 120 BPM
 	}
 
 	virtual void ProcessSample()
 	{
-
-		sampleCounter += 1;
-		sampleCounter %= 0xFFFFFFFF;
-
-		if (sampleCounter % 120 == 0)
-		{
-			// 400Hz loop four counting purposes
-			// number was picked so that sampleCounter in this loop is always divisible by 5, 6, and 8
-			// double checked that timing events in this loop have a max input latency of 2.5ms at 48kHz sample rate
-
-			// quantize quarterNoteDurationSamples to a multiple of 120
-			
-		}
-
-		if (resync)
-		{
-			sampleCounter = 0;
-			for (int i = 0; i < 3; i++)
-			{
-				drummers[i] = 0;
-			}
-			resync = false;
-			while (quarterNoteDurationSamples % 120 != 0)
-			{
-				quarterNoteDurationSamples--;
-			}
-		}
-
-		beat = sampleCounter % quarterNoteDurationSamples == 0;
-
-		int16_t pulseWidth = 200;
-
-		int16_t outputs[6] = {0, 0, 0, 0, 0, 0};
-
 		if (SwitchVal() != Switch::Down && switchHold)
 		{
 			switchHold = false;
 		}
 
-		if (beat || tapNow)
+		tap.Update(SwitchVal() == Switch::Down);
+
+		if (resync)
 		{
-			switch (paradiddle[drummers[0]])
+			sampleCounter = 0;
+			// for (int i = 0; i < 2; i++)
+			// {
+			// 	drummers[i] = 0;
+			// }
+
+			sixteenthNoteSamples = sixteenthNoteMs * 48; // 48kHz
+			resync = false;
+		}
+
+		int16_t pulseWidth = 200;
+
+		sixteenthPulse = sampleCounter % sixteenthNoteSamples == 0;
+		sixEightPulse = sampleCounter % (sixteenthNoteSamples * 3 / 4) == 0;
+
+		if (sixteenthPulse)
+		{
+			switch (paradiddle[drummers[0] % 8])
 			{
 			case L:
 				activePulses[0] = pulseWidth;
@@ -130,13 +106,42 @@ public:
 				activePulses[1] = pulseWidth;
 				break;
 			}
-			drummers[0] = (drummers[0] + 1) % 8;
 
-			if (tapNow)
+			switch (sonClave[drummers[0]])
 			{
-				tapNow = false;
+			case L:
+				activePulses[2] = pulseWidth;
+				break;
+			case R:
+				activePulses[3] = pulseWidth;
+				break;
+			}
+
+			if (!switchHold)
+			{
+				drummers[0] = (drummers[0] + 1) % 16;
 			}
 		}
+
+		if (sixEightPulse)
+		{
+			switch (sixStrokeRoll[drummers[1] % 6])
+			{
+			case L:
+				activePulses[4] = pulseWidth;
+				break;
+			case R:
+				activePulses[5] = pulseWidth;
+				break;
+			}
+
+			if (!switchHold)
+			{
+				drummers[1] = (drummers[1] + 1) % 6;
+			}
+		}
+
+		int16_t outputs[6] = {0, 0, 0, 0, 0, 0};
 
 		for (int i = 0; i < 6; i++)
 		{
@@ -154,24 +159,25 @@ public:
 		for (int i = 0; i < 6; i++)
 		{
 			virtualFaders[i] = sineLookup(mixReadPhases[i] + ((uint64_t)KnobVal(Knob::Main) * 0xFFFFFFFF >> 12));
-			// outputs[i] = (outputs[i] * virtualFaders[i]) >> 12;
+			//outputs[i] = (outputs[i] * virtualFaders[i]) >> 12;
+			int brightness = outputs[i] * 8190 >> 12;
+			LedBrightness(i, outputs[i] ? outputs[i] + 2048 : 0);
 		}
 
 		AudioOut1(outputs[0]);
 		AudioOut2(outputs[1]);
+		CVOut1(outputs[2]);
+		CVOut2(outputs[3]);
+		PulseOut1(outputs[4]);
+		PulseOut2(outputs[5]);
 
-		tap.Update(SwitchVal() == Switch::Down);
+		sampleCounter += 1;
+		sampleCounter %= 0xFFFFFFFF;
 
 		tapTimeLast = (pico_millis() - tapTime) % 0xFFFFFFFF;
 		if (tapTimeLast > 2000 && tapping)
 		{
 			tapping = false;
-		}
-
-		for (int i = 0; i < 2; i++)
-		{
-			int brightness = outputs[i] * 8190 >> 12;
-			LedBrightness(i, outputs[i] ? outputs[i] + 2048 : 0);
 		}
 	}
 
@@ -214,28 +220,7 @@ private:
 		int32_t out = (s2 * r + s1 * (65536 - r)) >> 20;
 		out += 2048; // 0-4095
 
-		// remove this when leaving demo mode
-		// out = out * 2048 >> 12; // 0-2047
-		// clip(out, 0, 2047);		// clip to 0-2047
-
 		return (int16_t)out;
-	}
-
-	void setQuarterNote(uint32_t counter)
-	{
-		quarterNoteDurationSamples = counter;
-	}
-
-	void clip(int32_t &value, int16_t min, int16_t max)
-	{
-		if (value < min)
-		{
-			value = min;
-		}
-		else if (value > max)
-		{
-			value = max;
-		}
 	}
 };
 
@@ -264,8 +249,8 @@ void tempTap()
 		if (sinceLast > 50 && sinceLast < 3000)
 		{ // ignore bounces and forgotten taps > 2 seconds
 
-			stCtrl.tapTime = pico_millis();						// record time ready for next tap
-			stCtrl.quarterNoteDurationSamples = sinceLast * 48; // 48kHz sample rate
+			stCtrl.tapTime = pico_millis(); // record time ready for next tap
+			stCtrl.sixteenthNoteMs = sinceLast;
 			stCtrl.resync = true;
 		}
 	}
