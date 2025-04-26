@@ -14,6 +14,10 @@
 #define HIGH 1
 #define LOW 0
 
+int32_t pico_millis() {
+  return (int32_t)to_ms_since_boot(get_absolute_time());
+}
+
 class Click
 
 {
@@ -31,11 +35,7 @@ class Click
     unsigned long _tooLong = 500; // minimum time to hold the button and register a hold 
     unsigned long _pushLength; 
     void (*_functionShort)();
-    void (*_functionLong)();
-
-    int32_t pico_millis() {
-      return (int32_t)to_ms_since_boot(get_absolute_time());
-    }
+    void (*_functionLong)();  
 };
 
 

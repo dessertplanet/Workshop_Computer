@@ -28,8 +28,6 @@ public:
 
 	uint32_t sampleCounter;
 
-	uint32_t tapCounter;
-
 	constexpr static uint32_t counterTickMask = counterMaxSamples - 1;
 
 	uint32_t drummers[3] = {0, 0, 0};
@@ -41,6 +39,19 @@ public:
 	uint32_t quarterNoteDurationSamples;
 
 	Click tap = Click(tempTap, longHold);
+
+	bool tapping = false;
+
+	bool switchHold = false;
+
+	bool resync = false;
+
+	bool beat = false;
+
+	bool tapNow = false;
+
+	uint32_t tapTime = 0;
+	uint32_t tapTimeLast = 0;
 
 	void setLED(int led, int brightness)
 	{
@@ -63,37 +74,52 @@ public:
 		}
 
 		sampleCounter = 0;
-		tapCounter = 0;
 
-		quarterNoteDurationSamples = 12000; // 500ms at 48kHz
-
+		quarterNoteDurationSamples = 12000; // 500ms at 48kHz == 120 BPM
 	}
 
 	virtual void ProcessSample()
 	{
 
 		sampleCounter += 1;
-		if (sampleCounter >= counterMaxSamples)
-		{
-			sampleCounter = 0;
-		}
+		sampleCounter %= 0xFFFFFFFF;
 
-
-		
 		if (sampleCounter % 120 == 0)
 		{
-			//400Hz loop four counting purposes
-			//number was picked so that sampleCounter in this loop is always divisible by 5, 6, and 8
-			//double checked that timing events in this loop have a max input latency of 2.5ms at 48kHz sample rate
+			// 400Hz loop four counting purposes
+			// number was picked so that sampleCounter in this loop is always divisible by 5, 6, and 8
+			// double checked that timing events in this loop have a max input latency of 2.5ms at 48kHz sample rate
+
+			// quantize quarterNoteDurationSamples to a multiple of 120
+			
 		}
 
-		bool beat = sampleCounter % quarterNoteDurationSamples == 0;
+		if (resync)
+		{
+			sampleCounter = 0;
+			for (int i = 0; i < 3; i++)
+			{
+				drummers[i] = 0;
+			}
+			resync = false;
+			while (quarterNoteDurationSamples % 120 != 0)
+			{
+				quarterNoteDurationSamples--;
+			}
+		}
+
+		beat = sampleCounter % quarterNoteDurationSamples == 0;
 
 		int16_t pulseWidth = 200;
 
 		int16_t outputs[6] = {0, 0, 0, 0, 0, 0};
 
-		if (beat)
+		if (SwitchVal() != Switch::Down && switchHold)
+		{
+			switchHold = false;
+		}
+
+		if (beat || tapNow)
 		{
 			switch (paradiddle[drummers[0]])
 			{
@@ -105,6 +131,11 @@ public:
 				break;
 			}
 			drummers[0] = (drummers[0] + 1) % 8;
+
+			if (tapNow)
+			{
+				tapNow = false;
+			}
 		}
 
 		for (int i = 0; i < 6; i++)
@@ -123,13 +154,19 @@ public:
 		for (int i = 0; i < 6; i++)
 		{
 			virtualFaders[i] = sineLookup(mixReadPhases[i] + ((uint64_t)KnobVal(Knob::Main) * 0xFFFFFFFF >> 12));
-			outputs[i] = (outputs[i] * virtualFaders[i]) >> 12;
+			// outputs[i] = (outputs[i] * virtualFaders[i]) >> 12;
 		}
 
 		AudioOut1(outputs[0]);
 		AudioOut2(outputs[1]);
 
 		tap.Update(SwitchVal() == Switch::Down);
+
+		tapTimeLast = (pico_millis() - tapTime) % 0xFFFFFFFF;
+		if (tapTimeLast > 2000 && tapping)
+		{
+			tapping = false;
+		}
 
 		for (int i = 0; i < 2; i++)
 		{
@@ -202,8 +239,8 @@ private:
 	}
 };
 
-//define this here so that it can be used in the click library
-//There is probably a better way to do this but I don't know it
+// define this here so that it can be used in the click library
+// There is probably a better way to do this but I don't know it
 StickCtrl stCtrl;
 
 int main()
@@ -212,14 +249,29 @@ int main()
 	stCtrl.Run();
 }
 
-//Functions for click library
+// Callbacks for click library to call based on Switch state
 void tempTap()
 {
-	stCtrl.setLED(4, 4095);
+	// first tap
+	if (!stCtrl.tapping)
+	{
+		stCtrl.tapTime = pico_millis();
+		stCtrl.tapping = true;
+	}
+	else // second tap
+	{
+		unsigned long sinceLast = pico_millis() - stCtrl.tapTime;
+		if (sinceLast > 50 && sinceLast < 3000)
+		{ // ignore bounces and forgotten taps > 2 seconds
+
+			stCtrl.tapTime = pico_millis();						// record time ready for next tap
+			stCtrl.quarterNoteDurationSamples = sinceLast * 48; // 48kHz sample rate
+			stCtrl.resync = true;
+		}
+	}
 }
 
 void longHold()
 {
-	// tapCounter = 0;
-	stCtrl.setLED(5, 4095);
+	stCtrl.switchHold = true;
 }
