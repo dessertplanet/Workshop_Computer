@@ -1,5 +1,6 @@
 #include "ComputerCard.h"
 #include "click.h"
+#include "quantiser.h"
 #include <cmath> // for sin
 
 #define L 1
@@ -20,12 +21,12 @@ public:
 	// Bitwise AND of index integer with tableMask will wrap it to table size
 	constexpr static uint32_t tableMask = tableSize - 1;
 
-	uint32_t mixReadPhases[6];
-	uint64_t virtualFaders[6];
+	uint32_t mixReadPhases[4];
+	uint64_t virtualFaders[4];
 
 	uint32_t sampleCounter;
 
-	uint32_t drummers[2] = {0, 0};
+	uint32_t distinctPulses[3] = {0, 0, 0};
 
 	int16_t activePulses[6] = {0, 0, 0, 0, 0, 0};
 	// int16_t pulseMap[6] = {0, 2, 4, 1, 3, 5};
@@ -54,7 +55,8 @@ public:
 	int8_t startPhase0 = 0;
 	int8_t startPhase1 = 0;
 
-	int8_t paradiddleLength = 12;
+	int8_t paradiddleLength = 8;
+	int8_t sonClaveLength = 12;
 	int8_t latinGrooveLength = 5;
 
 	StickCtrl()
@@ -67,7 +69,7 @@ public:
 			sine[i] = int16_t(32000 * sin(2 * i * M_PI / double(tableSize)));
 		}
 
-		for (int i = 0; i < 6; i++)
+		for (int i = 0; i < 4; i++)
 		{
 			mixReadPhases[i] = rnd() << 16; // random phases for our one knob mixer
 		}
@@ -89,64 +91,80 @@ public:
 			sampleCounter = 0;
 			sixteenthNoteSamples = sixteenthNoteMs * 48; // 48kHz
 			resync = false;
-			drummers[0] = startPhase0;
-			drummers[1] = startPhase1;
+			distinctPulses[0] = startPhase0;
+			distinctPulses[1] = startPhase1;
 		}
 
 		int16_t pulseWidth = KnobVal(Knob::X) * sixteenthNoteSamples >> 12;
 
-		startPhase0 = KnobVal(Knob::Y) * paradiddleLength >> 12;
+		if (pulseWidth < 10)
+		{
+			pulseWidth = 0;
+		}
+
+		startPhase0 = KnobVal(Knob::Y) * sonClaveLength >> 12;
 		startPhase1 = (4095 - KnobVal(Knob::Y)) * latinGrooveLength >> 12;
 
-		if (Connected(Input::Pulse1) == false)
-		{
-			sixteenthPulse = sampleCounter % sixteenthNoteSamples == 0;
-		}
-		else
+		if (Connected(Input::Pulse1) && Connected(Input::Pulse2))
 		{
 			sixteenthPulse = PulseIn1RisingEdge();
-		}
-
-		if (Connected(Input::Pulse2) == false)
+			sixEightPulse = PulseIn2RisingEdge();
+		} else if (Connected(Input::Pulse1))
 		{
+			sixteenthPulse = PulseIn1RisingEdge();
 			sixEightPulse = sampleCounter % (sixteenthNoteSamples * 3 / 4) == 0;
+		} else if (Connected(Input::Pulse2))
+		{
+			sixteenthPulse = sampleCounter % sixteenthNoteSamples == 0;
+			sixEightPulse = PulseIn2RisingEdge();
 		}
 		else
 		{
-			sixEightPulse = PulseIn2RisingEdge();
+			sixteenthPulse = sampleCounter % sixteenthNoteSamples == 0;
+			sixEightPulse = sampleCounter % (sixteenthNoteSamples * 3 / 4) == 0;
 		}
+
+		int16_t inputs[4] = {0, 0, 0, 0};
+
+		// if (pulseWidth == 0)
+		// {
+		// 	for (int i = 0; i < 4; i++)
+		// 	{
+		// 		inputs[i] = 2048;
+		// 	}
+		// }
 
 		if (Connected(Input::Audio1))
 		{
-
+			inputs[0] = AudioIn1();
 		}
 
 		if (Connected(Input::Audio2))
 		{
-
+			inputs[1] = AudioIn2();
 		}
 
 		if (Connected(Input::CV1))
 		{
-
+			inputs[2] = CVIn1();
 		}
 
 		if (Connected(Input::CV2))
 		{
-
+			inputs[3] = CVIn2();
 		}
-		
+
 		if (SwitchVal() == Switch::Up)
 		{
-			drummers[0] = startPhase0;
-			drummers[1] = startPhase1;
+			distinctPulses[0] = startPhase0;
+			distinctPulses[1] = startPhase1;
 		}
 		else
 		{
 			if (sixteenthPulse)
 			{
 
-				switch (paradiddle[drummers[0] % 8])
+				switch (paradiddle[distinctPulses[0]])
 				{
 				case L:
 					activePulses[0] = pulseWidth;
@@ -158,31 +176,27 @@ public:
 
 				if (!switchHold)
 				{
-					drummers[0] = (drummers[0] + 1) % paradiddleLength;
+					distinctPulses[0] = (distinctPulses[0] + 1) % paradiddleLength;
 					activePulses[4] = pulseWidth;
 				}
 			}
 
 			if (sixEightPulse)
 			{
-				switch (fiveStrokePattern[drummers[1] % 6])
+				if (fiveStrokePattern[distinctPulses[1]] == L)
 				{
-				case L:
 					activePulses[3] = pulseWidth;
-					break;
 				}
 
-				switch (sonClave[drummers[0]])
+				if (sonClave[distinctPulses[2]] == R)
 				{
-				case R:
 					activePulses[2] = pulseWidth;
-					break;
 				}
-
 
 				if (!switchHold)
 				{
-					drummers[1] = (drummers[1] + 1) % latinGrooveLength;
+					distinctPulses[1] = (distinctPulses[1] + 1) % latinGrooveLength;
+					distinctPulses[2] = (distinctPulses[2] + 1) % sonClaveLength;
 					activePulses[5] = pulseWidth;
 				}
 			}
@@ -203,18 +217,23 @@ public:
 			}
 		}
 
-		for (int i = 0; i < 6; i++)
+		for (int i = 0; i < 4; i++)
 		{
 			virtualFaders[i] = sineLookup(mixReadPhases[i] + ((uint64_t)KnobVal(Knob::Main) * 0xFFFFFFFF >> 12));
-			// outputs[i] = (outputs[i] * virtualFaders[i]) >> 12;
+			outputs[i] = (outputs[i] * virtualFaders[i]) >> 12;
+			outputs[i] += (4095 - virtualFaders[i]) * inputs[i] >> 12;
+		}
+
+		for (int i = 0; i < 6; i++)
+		{
 			int brightness = outputs[i] * 8190 >> 12;
 			LedBrightness(i, outputs[i] ? outputs[i] + 2048 : 0);
 		}
 
 		AudioOut1(outputs[0]);
 		AudioOut2(outputs[1]);
-		CVOut1(outputs[2]);
-		CVOut2(outputs[3]);
+		CVOut1MIDINote(quantSample(outputs[2]));
+		CVOut2MIDINote(quantSample(outputs[3]));
 		PulseOut1(outputs[4]);
 		PulseOut2(outputs[5]);
 
