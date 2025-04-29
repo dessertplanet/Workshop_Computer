@@ -31,8 +31,8 @@ public:
 	// int16_t pulseMap[6] = {0, 2, 4, 1, 3, 5};
 
 	constexpr static bool paradiddle[8] = {R, L, R, R, L, R, L, L};
-	constexpr static bool sonClave[16] = {R, L, L, R, L, L, R, L, L, L, R, L, R, L, L, L};
-	constexpr static bool sixStrokeRoll[6] = {R, L, L, R, R, L};
+	constexpr static bool sonClave[12] = {R, L, R, L, R, L, L, R, L, R, L, L};
+	constexpr static bool fiveStrokePattern[6] = {R, L, L, R, R};
 	constexpr static bool stickMap[6] = {L, R, L, R, L, R};
 
 	uint32_t sixteenthNoteMs;
@@ -54,7 +54,7 @@ public:
 	int8_t startPhase0 = 0;
 	int8_t startPhase1 = 0;
 
-	int8_t paradiddleLength = 16;
+	int8_t paradiddleLength = 12;
 	int8_t latinGrooveLength = 5;
 
 	StickCtrl()
@@ -89,13 +89,53 @@ public:
 			sampleCounter = 0;
 			sixteenthNoteSamples = sixteenthNoteMs * 48; // 48kHz
 			resync = false;
+			drummers[0] = startPhase0;
+			drummers[1] = startPhase1;
 		}
 
-		int16_t pulseWidth = 200;
+		int16_t pulseWidth = KnobVal(Knob::X) * sixteenthNoteSamples >> 12;
 
-		sixteenthPulse = sampleCounter % sixteenthNoteSamples == 0;
-		sixEightPulse = sampleCounter % (sixteenthNoteSamples * 3 / 4) == 0;
+		startPhase0 = KnobVal(Knob::Y) * paradiddleLength >> 12;
+		startPhase1 = (4095 - KnobVal(Knob::Y)) * latinGrooveLength >> 12;
 
+		if (Connected(Input::Pulse1) == false)
+		{
+			sixteenthPulse = sampleCounter % sixteenthNoteSamples == 0;
+		}
+		else
+		{
+			sixteenthPulse = PulseIn1RisingEdge();
+		}
+
+		if (Connected(Input::Pulse2) == false)
+		{
+			sixEightPulse = sampleCounter % (sixteenthNoteSamples * 3 / 4) == 0;
+		}
+		else
+		{
+			sixEightPulse = PulseIn2RisingEdge();
+		}
+
+		if (Connected(Input::Audio1))
+		{
+
+		}
+
+		if (Connected(Input::Audio2))
+		{
+
+		}
+
+		if (Connected(Input::CV1))
+		{
+
+		}
+
+		if (Connected(Input::CV2))
+		{
+
+		}
+		
 		if (SwitchVal() == Switch::Up)
 		{
 			drummers[0] = startPhase0;
@@ -105,6 +145,7 @@ public:
 		{
 			if (sixteenthPulse)
 			{
+
 				switch (paradiddle[drummers[0] % 8])
 				{
 				case L:
@@ -115,43 +156,34 @@ public:
 					break;
 				}
 
-				switch (sonClave[drummers[0]])
-				{
-				case L:
-					activePulses[2] = pulseWidth;
-					break;
-				case R:
-					activePulses[3] = pulseWidth;
-					break;
-				}
-
 				if (!switchHold)
 				{
 					drummers[0] = (drummers[0] + 1) % paradiddleLength;
+					activePulses[4] = pulseWidth;
 				}
 			}
 
 			if (sixEightPulse)
 			{
-				switch (sixStrokeRoll[drummers[1] % 6])
+				switch (fiveStrokePattern[drummers[1] % 6])
 				{
 				case L:
-					activePulses[4] = pulseWidth;
-					break;
-				case R:
-					activePulses[5] = pulseWidth;
+					activePulses[3] = pulseWidth;
 					break;
 				}
 
+				switch (sonClave[drummers[0]])
+				{
+				case R:
+					activePulses[2] = pulseWidth;
+					break;
+				}
+
+
 				if (!switchHold)
 				{
-					// deliberately wacky here because I liked the five pulse pattern
 					drummers[1] = (drummers[1] + 1) % latinGrooveLength;
-
-					// if (drummers[1] >= latinGrooveLength - 1)
-					// {
-					// 	drummers[1] = startPhase1;
-					// }
+					activePulses[5] = pulseWidth;
 				}
 			}
 		}
