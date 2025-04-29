@@ -32,22 +32,20 @@ public:
 	// int16_t pulseMap[6] = {0, 2, 4, 1, 3, 5};
 
 	constexpr static bool paradiddle[8] = {R, L, R, R, L, R, L, L};
-	constexpr static bool sonClave[12] = {R, L, R, L, R, L, L, R, L, R, L, L};
-	constexpr static bool fiveStrokePattern[6] = {R, L, L, R, R};
+	constexpr static bool sonClave[12] = {R, L, R, L, R, L, L, R, L, R, L, L}; // needs to be double time
+	constexpr static bool fiveStrokePattern[5] = {L, R, L, R, R};			   // needs to be half time
+
 	constexpr static bool stickMap[6] = {L, R, L, R, L, R};
 
-	uint32_t sixteenthNoteMs;
+	uint32_t quarterNoteMs;
 
-	uint32_t sixteenthNoteSamples = 12000;
+	uint32_t quarterNoteSamples = 12000;
 
 	Click tap = Click(tempTap, longHold);
 
 	bool tapping = false;
 	bool switchHold = false;
 	bool resync = false;
-
-	bool sixteenthPulse = false;
-	bool sixEightPulse = false;
 
 	uint32_t tapTime = 0;
 	uint32_t tapTimeLast = 0;
@@ -57,7 +55,7 @@ public:
 
 	int8_t paradiddleLength = 8;
 	int8_t sonClaveLength = 12;
-	int8_t latinGrooveLength = 5;
+	int8_t fiveStrokePatternLength = 5;
 
 	StickCtrl()
 	{
@@ -89,13 +87,13 @@ public:
 		if (resync)
 		{
 			sampleCounter = 0;
-			sixteenthNoteSamples = sixteenthNoteMs * 48; // 48kHz
+			quarterNoteSamples = quarterNoteMs * 48; // 48kHz
 			resync = false;
 			distinctPulses[0] = startPhase0;
 			distinctPulses[1] = startPhase1;
 		}
 
-		int16_t pulseWidth = KnobVal(Knob::X) * sixteenthNoteSamples >> 12;
+		int16_t pulseWidth = KnobVal(Knob::X) * quarterNoteSamples >> 12;
 
 		if (pulseWidth < 10)
 		{
@@ -103,25 +101,27 @@ public:
 		}
 
 		startPhase0 = KnobVal(Knob::Y) * sonClaveLength >> 12;
-		startPhase1 = (4095 - KnobVal(Knob::Y)) * latinGrooveLength >> 12;
+		startPhase1 = (4095 - KnobVal(Knob::Y)) * fiveStrokePatternLength >> 12;
+
+		bool quarterPulse = sampleCounter % quarterNoteSamples == 0;
+		bool tripletPulse = sampleCounter % (quarterNoteSamples / 3) == 0;
+		bool sixEightPulse = sampleCounter % (quarterNoteSamples * 2 / 3) == 0;
+		bool eighthPulse = sampleCounter % (quarterNoteSamples / 2) == 0;
+		bool sixteenthPulse = sampleCounter % (quarterNoteSamples / 4) == 0;
+
 
 		if (Connected(Input::Pulse1) && Connected(Input::Pulse2))
 		{
-			sixteenthPulse = PulseIn1RisingEdge();
-			sixEightPulse = PulseIn2RisingEdge();
-		} else if (Connected(Input::Pulse1))
-		{
-			sixteenthPulse = PulseIn1RisingEdge();
-			sixEightPulse = sampleCounter % (sixteenthNoteSamples * 3 / 4) == 0;
-		} else if (Connected(Input::Pulse2))
-		{
-			sixteenthPulse = sampleCounter % sixteenthNoteSamples == 0;
+			eighthPulse = PulseIn1RisingEdge();
 			sixEightPulse = PulseIn2RisingEdge();
 		}
-		else
+		else if (Connected(Input::Pulse1))
 		{
-			sixteenthPulse = sampleCounter % sixteenthNoteSamples == 0;
-			sixEightPulse = sampleCounter % (sixteenthNoteSamples * 3 / 4) == 0;
+			eighthPulse = PulseIn1RisingEdge();
+		}
+		else if (Connected(Input::Pulse2))
+		{
+			sixEightPulse = PulseIn2RisingEdge();
 		}
 
 		int16_t inputs[4] = {0, 0, 0, 0};
@@ -161,7 +161,7 @@ public:
 		}
 		else
 		{
-			if (sixteenthPulse)
+			if (eighthPulse)
 			{
 
 				switch (paradiddle[distinctPulses[0]])
@@ -177,8 +177,27 @@ public:
 				if (!switchHold)
 				{
 					distinctPulses[0] = (distinctPulses[0] + 1) % paradiddleLength;
-					activePulses[4] = pulseWidth;
 				}
+			}
+
+			if (tripletPulse)
+			{
+				
+
+				if (sonClave[distinctPulses[2]] == R)
+				{
+					activePulses[2] = pulseWidth;
+				}
+
+				if (!switchHold)
+				{
+					distinctPulses[2] = (distinctPulses[2] + 1) % sonClaveLength;
+				}
+			}
+
+			if (quarterPulse)
+			{
+				activePulses[4] = pulseWidth;
 			}
 
 			if (sixEightPulse)
@@ -188,17 +207,12 @@ public:
 					activePulses[3] = pulseWidth;
 				}
 
-				if (sonClave[distinctPulses[2]] == R)
-				{
-					activePulses[2] = pulseWidth;
-				}
-
 				if (!switchHold)
 				{
-					distinctPulses[1] = (distinctPulses[1] + 1) % latinGrooveLength;
-					distinctPulses[2] = (distinctPulses[2] + 1) % sonClaveLength;
-					activePulses[5] = pulseWidth;
+					distinctPulses[1] = (distinctPulses[1] + 1) % fiveStrokePatternLength;
 				}
+
+				activePulses[5] = pulseWidth;
 			}
 		}
 
@@ -220,8 +234,8 @@ public:
 		for (int i = 0; i < 4; i++)
 		{
 			virtualFaders[i] = sineLookup(mixReadPhases[i] + ((uint64_t)KnobVal(Knob::Main) * 0xFFFFFFFF >> 12));
-			outputs[i] = (outputs[i] * virtualFaders[i]) >> 12;
-			outputs[i] += (4095 - virtualFaders[i]) * inputs[i] >> 12;
+			// outputs[i] = (outputs[i] * virtualFaders[i]) >> 12;
+			// outputs[i] += (4095 - virtualFaders[i]) * inputs[i] >> 12;
 		}
 
 		for (int i = 0; i < 6; i++)
@@ -316,7 +330,7 @@ void tempTap()
 		{ // ignore bounces and forgotten taps > 2 seconds
 
 			stCtrl.tapTime = pico_millis(); // record time ready for next tap
-			stCtrl.sixteenthNoteMs = sinceLast;
+			stCtrl.quarterNoteMs = sinceLast;
 			stCtrl.resync = true;
 		}
 	}
