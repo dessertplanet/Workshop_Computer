@@ -5,10 +5,9 @@
 
 #define COMPUTERCARD_NOIMPL
 
-int note_in = 69, pulseCounter = 0;
-constexpr static uint8_t majorScale[12] = {0, 0, 2, 2, 4, 4, 5, 7, 7, 9, 9, 11};  // Octaves
+int note_in = 69;
 
-int16_t __not_in_flash_func(quantSample)(int16_t input)
+int16_t __not_in_flash_func(quantSample)(int16_t input, const uint8_t* scale)
 {
     int32_t note_in_cont = (input + 2048) << 8;
     if (note_in_cont < 0)
@@ -25,10 +24,10 @@ int16_t __not_in_flash_func(quantSample)(int16_t input)
         note_in = note_in_down;
     };
 
-    int16_t octave = note_in / 12;
-    int16_t noteval = note_in % 12;
+    int16_t octave = note_in / 7;  // Adjusted for the scale size
+    int16_t noteval = note_in % 7;
 
-    int16_t quantisedNote = 12 * octave + majorScale[noteval];
+    int16_t quantisedNote = 12 * octave + scale[noteval];
 
     return quantisedNote;
 }
