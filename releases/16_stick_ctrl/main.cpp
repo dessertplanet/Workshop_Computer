@@ -95,36 +95,23 @@ public:
 
 		int16_t pulseWidth = KnobVal(Knob::X) * quarterNoteSamples >> 12;
 
-		if (pulseWidth < 10)
-		{
-			pulseWidth = 0;
-		}
+		// if (pulseWidth < 10)
+		// {
+		// 	pulseWidth = 0;
+		// }
 
 		startPhase0 = KnobVal(Knob::Y) * sonClaveLength >> 12;
 		startPhase1 = (4095 - KnobVal(Knob::Y)) * fiveStrokePatternLength >> 12;
 
+		// 4/4 pulse things
 		bool quarterPulse = sampleCounter % quarterNoteSamples == 0;
-		bool tripletPulse = sampleCounter % (quarterNoteSamples / 3) == 0;
-		bool sixEightPulse = sampleCounter % (quarterNoteSamples * 2 / 3) == 0;
 		bool eighthPulse = sampleCounter % (quarterNoteSamples / 2) == 0;
 		bool sixteenthPulse = sampleCounter % (quarterNoteSamples / 4) == 0;
 
-
-		if (Connected(Input::Pulse1) && Connected(Input::Pulse2))
-		{
-			eighthPulse = PulseIn1RisingEdge();
-			sixEightPulse = PulseIn2RisingEdge();
-		}
-		else if (Connected(Input::Pulse1))
-		{
-			eighthPulse = PulseIn1RisingEdge();
-		}
-		else if (Connected(Input::Pulse2))
-		{
-			sixEightPulse = PulseIn2RisingEdge();
-		}
-
-		int16_t inputs[4] = {0, 0, 0, 0};
+		// triplet pulse things 
+		uint32_t tripletPulseSamples = quarterNoteSamples / 3;
+		bool tripletPulse = sampleCounter % tripletPulseSamples == 0;
+		bool sixEightPulse = sampleCounter % (tripletPulseSamples * 2) == 0;
 
 		// if (pulseWidth == 0)
 		// {
@@ -133,26 +120,6 @@ public:
 		// 		inputs[i] = 2048;
 		// 	}
 		// }
-
-		if (Connected(Input::Audio1))
-		{
-			inputs[0] = AudioIn1();
-		}
-
-		if (Connected(Input::Audio2))
-		{
-			inputs[1] = AudioIn2();
-		}
-
-		if (Connected(Input::CV1))
-		{
-			inputs[2] = CVIn1();
-		}
-
-		if (Connected(Input::CV2))
-		{
-			inputs[3] = CVIn2();
-		}
 
 		if (SwitchVal() == Switch::Up)
 		{
