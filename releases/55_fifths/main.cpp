@@ -90,19 +90,19 @@ int main()
 // Callbacks for click library to call based on Switch state
 void tempTap()
 {
-	// first tap
+	uint32_t currentTime = pico_millis();
+	
 	if (!card.tapping)
 	{
-		card.tapTime = pico_millis();
+		card.tapTime = currentTime;
 		card.tapping = true;
 	}
-	else // second tap
+	else
 	{
-		unsigned long sinceLast = pico_millis() - card.tapTime;
+		uint32_t sinceLast = (currentTime - card.tapTime) & 0xFFFFFFFF; // Handle overflow
 		if (sinceLast > 20 && sinceLast < 3000)
-		{ // ignore bounces and forgotten taps > 3 seconds
-
-			card.tapTime = pico_millis(); // record time ready for next tap
+		{ // Ignore bounces and forgotten taps > 3 seconds
+			card.tapTime = currentTime; // Record time ready for next tap
 			card.quarterNoteSamples = sinceLast * 48;
 			card.resync = true;
 			card.pulse = true;
