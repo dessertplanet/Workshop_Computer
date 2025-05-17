@@ -9,19 +9,16 @@ class Fifths : public ComputerCard
 {
 public:
 	uint32_t sampleCounter;
-
 	uint32_t quarterNoteMs;
-
 	uint32_t quarterNoteSamples = 12000;
-
 	Click tap = Click(tempTap, longHold);
-
 	bool tapping = false;
 	bool switchHold = false;
 	bool resync = false;
-
+	bool pulse = false;
 	uint32_t tapTime = 0;
 	uint32_t tapTimeLast = 0;
+	int16_t counter = 0;
 
 	Fifths()
 	{
@@ -34,15 +31,34 @@ public:
 	{
 		tap.Update(SwitchVal() == Switch::Down);
 
-		if (resync)
-		{
-			sampleCounter = 0;
-		}
-
 		sampleCounter += 1;
 		sampleCounter %= 0xFFFFFFFF;
 
+		if (resync)
+		{
+			resync = false;
+			sampleCounter = 0;
+			counter = 0;
+		}
+
+		pulse = sampleCounter % quarterNoteSamples == 0;
+
+		if (pulse && !counter)
+		{
+			counter = 100;
+		}
+
+		if (counter)
+		{
+			counter--;
+		}
+
+		LedBrightness(0, counter ? 4095 : 0);
+
+		PulseOut1(counter);
+
 		tapTimeLast = (pico_millis() - tapTime) % 0xFFFFFFFF;
+
 		if (tapTimeLast > 2000 && tapping)
 		{
 			tapping = false;
@@ -83,12 +99,13 @@ void tempTap()
 	else // second tap
 	{
 		unsigned long sinceLast = pico_millis() - card.tapTime;
-		if (sinceLast > 50 && sinceLast < 3000)
-		{ // ignore bounces and forgotten taps > 2 seconds
+		if (sinceLast > 20 && sinceLast < 3000)
+		{ // ignore bounces and forgotten taps > 3 seconds
 
 			card.tapTime = pico_millis(); // record time ready for next tap
-			card.quarterNoteMs = sinceLast;
+			card.quarterNoteSamples = sinceLast * 48;
 			card.resync = true;
+			card.pulse = true;
 		}
 	}
 }
