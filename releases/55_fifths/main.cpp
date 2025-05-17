@@ -29,6 +29,8 @@ public:
 
 	virtual void ProcessSample()
 	{
+
+		////TIMING
 		tap.Update(SwitchVal() == Switch::Down);
 
 		sampleCounter += 1;
@@ -53,16 +55,47 @@ public:
 			counter--;
 		}
 
-		LedBrightness(0, counter ? 4095 : 0);
-
-		PulseOut1(counter);
-
 		tapTimeLast = (pico_millis() - tapTime) % 0xFFFFFFFF;
 
 		if (tapTimeLast > 2000 && tapping)
 		{
 			tapping = false;
 		}
+
+		/////VCA
+		int16_t input;
+
+		int16_t mainKnob = virtualDetentedKnob(KnobVal(Knob::Main));
+		int16_t vcaKnob = virtualDetentedKnob(KnobVal(Knob::Y));
+		int16_t vcaOut;
+		int16_t vcaCV = virtualDetentedKnob(AudioIn2() * vcaKnob >> 12);
+
+
+		if (Connected(Input::Audio1) && Connected(Input::Audio2))
+		{
+			input = AudioIn1();
+			vcaOut = input * vcaCV >> 11;
+		} else if (Connected(Input::Audio1))
+		{
+			input = AudioIn1();
+			vcaOut = input * vcaKnob >> 12;
+		} else if (Connected(Input::Audio2))
+		{
+			input = rnd() - 2048;
+			vcaOut = input * vcaCV >> 11;
+		} else 
+		{
+			input = rnd() - 2048;
+			vcaOut = input * vcaKnob >> 11;
+		}
+
+		AudioOut1(mainKnob - 2048);
+		AudioOut2(vcaOut);
+
+		/////WEIRD QUANTIZER
+
+
+		
 	}
 
 private:
@@ -75,6 +108,30 @@ private:
 		lcg_seed = 1664525 * lcg_seed + 1013904223;
 		return lcg_seed;
 	}
+
+	int16_t virtualDetentedKnob(int16_t val)
+    {
+        if (val > 4079)
+        {
+            val = 4095;
+        }
+        else if (val < 16)
+        {
+            val = 0;
+        }
+
+        if (cabs(val - 2048) < 16)
+        {
+            val = 2048;
+        }
+
+        return val;
+    }
+
+	int32_t cabs(int32_t a)
+    {
+        return (a > 0) ? a : -a;
+    }
 };
 
 // define this here so that it can be used in the click library
@@ -91,7 +148,7 @@ int main()
 void tempTap()
 {
 	uint32_t currentTime = pico_millis();
-	
+
 	if (!card.tapping)
 	{
 		card.tapTime = currentTime;
