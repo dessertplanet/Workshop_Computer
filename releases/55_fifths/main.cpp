@@ -68,25 +68,36 @@ public:
 		int16_t mainKnob = virtualDetentedKnob(KnobVal(Knob::Main));
 		int16_t vcaKnob = virtualDetentedKnob(KnobVal(Knob::Y));
 		int16_t vcaOut;
-		int16_t vcaCV = virtualDetentedKnob(AudioIn2() * vcaKnob >> 12);
+		int16_t vcaCV;
 
+		if (Connected(Input::Audio2))
+		{
+			vcaCV = virtualDetentedKnob(AudioIn2() * vcaKnob >> 12) - 2048;
+		}
+		else
+		{
+			vcaCV = virtualDetentedKnob(vcaKnob) - 2048;
+		}
 
 		if (Connected(Input::Audio1) && Connected(Input::Audio2))
 		{
 			input = AudioIn1();
 			vcaOut = input * vcaCV >> 11;
-		} else if (Connected(Input::Audio1))
+		}
+		else if (Connected(Input::Audio1))
 		{
 			input = AudioIn1();
 			vcaOut = input * vcaKnob >> 12;
-		} else if (Connected(Input::Audio2))
+		}
+		else if (Connected(Input::Audio2))
 		{
-			input = rnd() - 2048;
+			input = rnd12() - 2048;
 			vcaOut = input * vcaCV >> 11;
-		} else 
+		}
+		else
 		{
-			input = rnd() - 2048;
-			vcaOut = input * vcaKnob >> 11;
+			input = rnd12() - 2048;
+			vcaOut = input * vcaKnob >> 12;
 		}
 
 		AudioOut1(mainKnob - 2048);
@@ -105,38 +116,36 @@ public:
 
 private:
 	// a slightly more complex random number generator than usual to ensure reseting Computer produces different results
-	int32_t rnd()
+	uint32_t __not_in_flash_func(rnd12)()
 	{
-		static uint32_t lcg_seed = UniqueCardID() & 0xFFFFFFFF; // 32-bit LCG seed from unique cardID
-		lcg_seed ^= (uint32_t)time_us_64();						// XOR with time to add some randomness
-		lcg_seed ^= KnobVal(Knob::Main) << 20;					// XOR with main knob value to add some randomness
+		static uint32_t lcg_seed = 1;
 		lcg_seed = 1664525 * lcg_seed + 1013904223;
-		return lcg_seed;
+		return lcg_seed >> 20;
 	}
 
 	int16_t virtualDetentedKnob(int16_t val)
-    {
-        if (val > 4079)
-        {
-            val = 4095;
-        }
-        else if (val < 16)
-        {
-            val = 0;
-        }
+	{
+		if (val > 4079)
+		{
+			val = 4095;
+		}
+		else if (val < 16)
+		{
+			val = 0;
+		}
 
-        if (cabs(val - 2048) < 16)
-        {
-            val = 2048;
-        }
+		if (cabs(val - 2048) < 16)
+		{
+			val = 2048;
+		}
 
-        return val;
-    }
+		return val;
+	}
 
 	int32_t cabs(int32_t a)
-    {
-        return (a > 0) ? a : -a;
-    }
+	{
+		return (a > 0) ? a : -a;
+	}
 };
 
 // define this here so that it can be used in the click library
@@ -163,7 +172,7 @@ void tempTap()
 	{
 		uint32_t sinceLast = (currentTime - card.tapTime) & 0xFFFFFFFF; // Handle overflow
 		if (sinceLast > 20 && sinceLast < 3000)
-		{ // Ignore bounces and forgotten taps > 3 seconds
+		{								// Ignore bounces and forgotten taps > 3 seconds
 			card.tapTime = currentTime; // Record time ready for next tap
 			card.quarterNoteSamples = sinceLast * 48;
 			card.resync = true;
