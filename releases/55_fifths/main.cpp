@@ -8,6 +8,12 @@ void longHold();
 class Fifths : public ComputerCard
 {
 public:
+	// tonics on the circle of fifths starting from Gb all the way to F#,
+	// always choosing an octave with a note as close as possible to the key center (0)
+	constexpr static int8_t circle_of_fifths[13] = {-6, 1, -4, 3, -2, 5, 0, -5, 2, -3, 4, -1, 6};
+
+	int8_t all_keys[13][12];
+
 	uint32_t sampleCounter;
 	uint32_t quarterNoteMs;
 	uint32_t quarterNoteSamples = 12000;
@@ -25,6 +31,19 @@ public:
 		// Constructor
 
 		sampleCounter = 0;
+
+		// set up scale matrix
+
+		for (int i = 0; i < 13; i++)
+		{
+			populateScale(circle_of_fifths[i]);
+
+			for (int j = 0; j < 12; j++)
+			{
+				all_keys[i][j] = scale[j];
+			}
+		}
+
 	}
 
 	virtual void ProcessSample()
@@ -105,11 +124,11 @@ public:
 
 		/////WEIRD QUANTIZER
 
-		uint8_t major[7] = {0, 2, 4, 5, 7, 9, 11};
+		int8_t key_index = KnobVal(Knob::Main) * 13 >> 12;
 
 		if (PulseIn1RisingEdge())
 		{
-			int16_t quantisedNote = quantSample(vcaOut, major);
+			int16_t quantisedNote = quantSample(vcaOut, all_keys[key_index]);
 			CVOut1MIDINote(quantisedNote);
 		}
 	}
@@ -121,6 +140,32 @@ private:
 		static uint32_t lcg_seed = 1;
 		lcg_seed = 1664525 * lcg_seed + 1013904223;
 		return lcg_seed >> 20;
+	}
+
+	int8_t *scale = new int8_t[12];
+
+	void populateScale(int8_t tonic)
+	{
+		int8_t whole = 2;
+		int8_t half = 1;
+		int8_t temp[12] = {
+			tonic,
+			tonic,
+			tonic + whole,
+			tonic + whole,
+			tonic + whole + whole,
+			tonic + whole + whole,
+			tonic + whole + whole + half,
+			tonic + whole + whole + half + whole,
+			tonic + whole + whole + half + whole,
+			tonic + whole + whole + half + whole + whole,
+			tonic + whole + whole + half + whole + whole,
+			tonic + whole + whole + half + whole + whole + half
+		};
+		for (int i = 0; i < 12; i++)
+		{
+			scale[i] = temp[i];
+		}
 	}
 
 	int16_t virtualDetentedKnob(int16_t val)
