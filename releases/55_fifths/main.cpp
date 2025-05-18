@@ -12,6 +12,8 @@ public:
 	// always choosing an octave with a note as close as possible to the key center (0)
 	constexpr static int8_t circle_of_fifths[13] = {-6, 1, -4, 3, -2, 5, 0, -5, 2, -3, 4, -1, 6};
 
+	// half-way between a minor third (3/12) and a major third (4/12) in 1V per Octave terms
+	constexpr static int ambiguous_third = 597; //this is approximately 3.5 semitones in fixed point
 	int8_t all_keys[13][12];
 
 	uint32_t sampleCounter;
@@ -91,7 +93,7 @@ public:
 
 		if (Connected(Input::Audio2))
 		{
-			vcaCV = virtualDetentedKnob(AudioIn2() * vcaKnob >> 12) - 2048;
+			vcaCV = virtualDetentedKnob((AudioIn2() * vcaKnob >> 12) + 2048) - 2048;
 		}
 		else
 		{
@@ -129,7 +131,9 @@ public:
 		if (PulseIn1RisingEdge())
 		{
 			int16_t quantisedNote = quantSample(vcaOut, all_keys[key_index]);
+			int16_t quantizedAmbigThird = quantSample(vcaOut + ambiguous_third, all_keys[key_index]);
 			CVOut1MIDINote(quantisedNote);
+			CVOut2MIDINote(quantizedAmbigThird);
 		}
 	}
 
