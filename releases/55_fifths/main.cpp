@@ -12,8 +12,6 @@ public:
 	// always choosing an octave with a note as close as possible to the key center (0)
 	constexpr static int8_t circle_of_fifths[13] = {-6, 1, -4, 3, -2, 5, 0, -5, 2, -3, 4, -1, 6};
 
-	// half-way between a minor third (3/12) and a major third (4/12) in 1V per Octave terms
-	constexpr static int ambiguous_third = 440; //this is approximately 3.5 semitones in fixed point
 	int8_t all_keys[13][12];
 
 	uint32_t sampleCounter;
@@ -30,6 +28,9 @@ public:
 
 	int16_t vcaOut;
 	int16_t vcaCV;
+
+	int16_t quantisedNote;
+	int32_t quantizedAmbigThird;
 
 	Fifths()
 	{
@@ -48,7 +49,6 @@ public:
 				all_keys[i][j] = scale[j];
 			}
 		}
-
 	}
 
 	virtual void ProcessSample()
@@ -87,11 +87,10 @@ public:
 		}
 
 		/////VCA
-		int16_t input = AudioIn1() + 25; // weird behavior on the ADC
+		int16_t input = AudioIn1() + 25; // DC offset for non-callibrated input. Works on Dune's Workshop System *shrug*
 
 		int16_t mainKnob = virtualDetentedKnob(KnobVal(Knob::Main));
 		int16_t vcaKnob = virtualDetentedKnob(KnobVal(Knob::Y));
-		
 
 		if (Connected(Input::Audio2))
 		{
@@ -128,12 +127,11 @@ public:
 
 		/////WEIRD QUANTIZER
 
-		int8_t key_index = KnobVal(Knob::Main) * 13 >> 12;
-
 		if (PulseIn1RisingEdge())
 		{
-			int16_t quantisedNote = quantSample(vcaOut, all_keys[key_index]);
-			int16_t quantizedAmbigThird = quantSample(vcaOut + ambiguous_third, all_keys[key_index]);
+			int8_t key_index = KnobVal(Knob::Main) * 13 >> 12;
+			quantisedNote = quantSample(vcaOut, all_keys[key_index]);
+			quantizedAmbigThird = calculateAmbigThird(quantisedNote, key_index);
 			CVOut1MIDINote(quantisedNote);
 			CVOut2MIDINote(quantizedAmbigThird);
 		}
@@ -166,12 +164,27 @@ private:
 			tonic + whole + whole + half + whole,
 			tonic + whole + whole + half + whole + whole,
 			tonic + whole + whole + half + whole + whole,
-			tonic + whole + whole + half + whole + whole + whole
-		};
+			tonic + whole + whole + half + whole + whole + whole};
 		for (int i = 0; i < 12; i++)
 		{
 			scale[i] = temp[i];
 		}
+	}
+
+	int8_t calculateAmbigThird(int8_t input, int8_t key_index)
+	{
+		int8_t octave = input / 12;
+
+		for (int i = 0; i < 12; i++)
+		{
+			if (input + 3 == 12 * octave + all_keys[key_index][i] 
+				|| input + 3 == 12 * (octave + 1) + all_keys[key_index][i]) // check for minor third in this or next octave
+			{
+				return input + 3;
+			}
+		};
+
+		return input + 4; // otherwise return major third
 	}
 
 	int16_t virtualDetentedKnob(int16_t val)
