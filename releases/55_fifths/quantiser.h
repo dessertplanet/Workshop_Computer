@@ -24,7 +24,7 @@ int16_t __not_in_flash_func(quantSample)(int16_t input, int8_t *scale)
         note_in = note_in_down;
     };
 
-    int16_t octave = note_in / 12;
+    int16_t octave = note_in / 12 - 1;
     int16_t noteval = note_in % 12;
 
     int16_t quantisedNote = 12 * octave + scale[noteval];

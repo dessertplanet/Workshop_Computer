@@ -13,7 +13,7 @@ public:
 	constexpr static int8_t circle_of_fifths[13] = {-6, 1, -4, 3, -2, 5, 0, -5, 2, -3, 4, -1, 6};
 
 	// half-way between a minor third (3/12) and a major third (4/12) in 1V per Octave terms
-	constexpr static int ambiguous_third = 597; //this is approximately 3.5 semitones in fixed point
+	constexpr static int ambiguous_third = 440; //this is approximately 3.5 semitones in fixed point
 	int8_t all_keys[13][12];
 
 	uint32_t sampleCounter;
@@ -27,6 +27,9 @@ public:
 	uint32_t tapTime = 0;
 	uint32_t tapTimeLast = 0;
 	int16_t counter = 0;
+
+	int16_t vcaOut;
+	int16_t vcaCV;
 
 	Fifths()
 	{
@@ -84,12 +87,11 @@ public:
 		}
 
 		/////VCA
-		int16_t input;
+		int16_t input = AudioIn1() + 25; // weird behavior on the ADC
 
 		int16_t mainKnob = virtualDetentedKnob(KnobVal(Knob::Main));
 		int16_t vcaKnob = virtualDetentedKnob(KnobVal(Knob::Y));
-		int16_t vcaOut;
-		int16_t vcaCV;
+		
 
 		if (Connected(Input::Audio2))
 		{
@@ -97,17 +99,15 @@ public:
 		}
 		else
 		{
-			vcaCV = virtualDetentedKnob(vcaKnob) - 2048;
+			vcaCV = virtualDetentedKnob(KnobVal(Knob::Y));
 		}
 
 		if (Connected(Input::Audio1) && Connected(Input::Audio2))
 		{
-			input = AudioIn1();
 			vcaOut = input * vcaCV >> 11;
 		}
 		else if (Connected(Input::Audio1))
 		{
-			input = AudioIn1();
 			vcaOut = input * vcaKnob >> 12;
 		}
 		else if (Connected(Input::Audio2))
@@ -120,6 +120,8 @@ public:
 			input = rnd12() - 2048;
 			vcaOut = input * vcaKnob >> 12;
 		}
+
+		clip(vcaOut);
 
 		AudioOut1(mainKnob - 2048);
 		AudioOut2(vcaOut);
@@ -164,7 +166,7 @@ private:
 			tonic + whole + whole + half + whole,
 			tonic + whole + whole + half + whole + whole,
 			tonic + whole + whole + half + whole + whole,
-			tonic + whole + whole + half + whole + whole + half
+			tonic + whole + whole + half + whole + whole + whole
 		};
 		for (int i = 0; i < 12; i++)
 		{
@@ -194,6 +196,18 @@ private:
 	int32_t cabs(int32_t a)
 	{
 		return (a > 0) ? a : -a;
+	}
+
+	void clip(int16_t &val)
+	{
+		if (val > 2047)
+		{
+			val = 2047;
+		}
+		else if (val < -2048)
+		{
+			val = -2048;
+		}
 	}
 };
 
