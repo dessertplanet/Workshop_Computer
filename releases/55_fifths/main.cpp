@@ -22,6 +22,7 @@ public:
 	bool switchHold = false;
 	bool resync = false;
 	bool pulse = false;
+	bool shift_on = false;
 	uint32_t tapTime = 0;
 	uint32_t tapTimeLast = 0;
 	int16_t counter = 0;
@@ -38,6 +39,15 @@ public:
 
 	int8_t looplength = 12;
 	int8_t loopindex = 0;
+
+	int16_t lastX;
+	int16_t lastY;
+
+	int16_t mainKnob;
+	int16_t vcaKnob;
+	int16_t xKnob;
+
+	int16_t pulseDuration = 100;
 
 	Fifths()
 	{
@@ -103,13 +113,14 @@ public:
 
 		if (pulse && !counter)
 		{
-			counter = 100;
+			counter = pulseDuration;
 		}
 
 		if (counter)
 		{
 			counter--;
 		}
+		
 
 		tapTimeLast = (pico_millis() - tapTime) % 0xFFFFFFFF;
 
@@ -118,11 +129,18 @@ public:
 			tapping = false;
 		}
 
+		if(switchHold && (tapTimeLast > 1000) && sw != Switch::Down)
+		{
+			switchHold = false;
+			shift_on = false;
+		}
+
 		/////VCA
 		int16_t input = AudioIn1() + 25; // DC offset for non-callibrated input. Works on Dune's Workshop System *shrug*
 
-		int16_t mainKnob = virtualDetentedKnob(KnobVal(Knob::Main));
-		int16_t vcaKnob = virtualDetentedKnob(KnobVal(Knob::Y));
+		mainKnob = virtualDetentedKnob(KnobVal(Knob::Main));
+		vcaKnob = virtualDetentedKnob(KnobVal(Knob::Y));
+		xKnob = virtualDetentedKnob(KnobVal(Knob::X));
 
 		if (Connected(Input::Audio2))
 		{
@@ -224,9 +242,19 @@ public:
 			}
 		}
 
+		if (switchHold && ((xKnob - lastX) > 0 || shift_on))
+		{
+			shift_on = true;
+			
+			pulseDuration = xKnob * (12000) >> 12;
+		}
+
 		PulseOut1(counter > 0);
 
 		LedOn(4, counter > 0);
+
+		lastX = xKnob;
+		lastY = vcaKnob;
 	}
 
 private:
