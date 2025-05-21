@@ -21,8 +21,7 @@ public:
 	bool tapping = false;
 	bool switchHold = false;
 	bool resync = false;
-	bool pulse_ext = false;
-	bool pulse_int = false;
+	bool pulse = false;
 	uint32_t tapTime = 0;
 	uint32_t tapTimeLast = 0;
 	int16_t counter = 0;
@@ -32,6 +31,13 @@ public:
 
 	int16_t quantisedNote;
 	int32_t quantizedAmbigThird;
+
+	bool looping;
+
+	int16_t buffer[12];
+
+	int8_t looplength = 12;
+	int8_t loopindex = 0;
 
 	Fifths()
 	{
@@ -50,10 +56,28 @@ public:
 				all_keys[i][j] = scale[j];
 			}
 		}
+
+		looping = SwitchVal() == Switch::Middle;
+
+		for (int i = 0; i < 12; i++)
+		{
+			buffer[i] = (rnd12() - 2048) / 4;
+		}
 	}
 
 	virtual void ProcessSample()
 	{
+
+		// Switch behaviour
+
+		Switch sw = SwitchVal();
+
+		looping = !(sw == Switch::Up);
+
+		if (PulseIn2())
+		{
+			looping = !looping;
+		}
 
 		////TIMING
 		tap.Update(SwitchVal() == Switch::Down);
@@ -68,11 +92,16 @@ public:
 			counter = 0;
 		}
 
-		pulse_ext = PulseIn1RisingEdge();
-		pulse_int = sampleCounter % quarterNoteSamples == 0;
+		if (Connected(Input::Pulse1))
+		{
+			pulse = PulseIn1RisingEdge();
+		}
+		else
+		{
+			pulse = sampleCounter % quarterNoteSamples == 0;
+		}
 
-
-		if (pulse_int && !counter)
+		if (pulse && !counter)
 		{
 			counter = 100;
 		}
@@ -130,13 +159,69 @@ public:
 
 		/////WEIRD QUANTIZER
 
-		if (pulse_ext || (!Connected(Input::Pulse1) && pulse_int))
+		if (pulse)
 		{
-			int8_t key_index = KnobVal(Knob::Main) * 13 >> 12;
-			quantisedNote = quantSample(vcaOut, all_keys[key_index]);
+			int8_t key_index;
+			if (Connected(Input::CV2))
+			{
+				key_index = (virtualDetentedKnob(KnobVal(Knob::Main)) + CVIn2()) * 13 >> 12;
+				if (key_index < 0)
+				{
+					key_index += 13;
+				}
+				else if (key_index > 12)
+				{
+					key_index -= 13;
+				}
+			}
+			else
+			{
+				key_index = KnobVal(Knob::Main) * 13 >> 12;
+			}
+
+			if (Connected(Input::CV1))
+			{
+				looplength = (virtualDetentedKnob(KnobVal(Knob::X)) + CVIn1()) * 12 >> 12;
+				if (looplength < 0)
+				{
+					looplength += 12;
+				}
+				else if (looplength > 11)
+				{
+					looplength -= 12;
+				}
+			}
+			else
+			{
+				looplength = virtualDetentedKnob(KnobVal(Knob::X)) * 12 >> 12; // 0 - 11
+			}
+
+			looplength = looplength + 1; // 1 - 12
+
+			int16_t quant_input;
+
+			if (looping)
+			{
+				quant_input = buffer[loopindex];
+			}
+			else
+			{
+				quant_input = vcaOut;
+				buffer[loopindex] = quant_input;
+			}
+
+			clip(quant_input);
+
+			quantisedNote = quantSample(quant_input, all_keys[key_index]);
 			quantizedAmbigThird = calculateAmbigThird(quantisedNote, key_index);
 			CVOut1MIDINote(quantisedNote);
 			CVOut2MIDINote(quantizedAmbigThird);
+			loopindex = loopindex + 1;
+
+			if (loopindex >= looplength)
+			{
+				loopindex = 0;
+			}
 		}
 
 		PulseOut1(counter > 0);
@@ -149,6 +234,7 @@ private:
 	uint32_t __not_in_flash_func(rnd12)()
 	{
 		static uint32_t lcg_seed = 1;
+		lcg_seed ^= UniqueCardID() >> 20;
 		lcg_seed = 1664525 * lcg_seed + 1013904223;
 		return lcg_seed >> 20;
 	}
@@ -258,7 +344,7 @@ void tempTap()
 			card.tapTime = currentTime; // Record time ready for next tap
 			card.quarterNoteSamples = sinceLast * 48;
 			card.resync = true;
-			card.pulse_ext = true;
+			card.pulse = true;
 		}
 	}
 }
