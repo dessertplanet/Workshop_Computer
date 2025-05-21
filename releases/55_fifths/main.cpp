@@ -21,7 +21,8 @@ public:
 	bool tapping = false;
 	bool switchHold = false;
 	bool resync = false;
-	bool pulse = false;
+	bool pulse_ext = false;
+	bool pulse_int = false;
 	uint32_t tapTime = 0;
 	uint32_t tapTimeLast = 0;
 	int16_t counter = 0;
@@ -67,9 +68,11 @@ public:
 			counter = 0;
 		}
 
-		pulse = sampleCounter % quarterNoteSamples == 0;
+		pulse_ext = PulseIn1RisingEdge();
+		pulse_int = sampleCounter % quarterNoteSamples == 0;
 
-		if (pulse && !counter)
+
+		if (pulse_int && !counter)
 		{
 			counter = 100;
 		}
@@ -127,7 +130,7 @@ public:
 
 		/////WEIRD QUANTIZER
 
-		if (PulseIn1RisingEdge())
+		if (pulse_ext || (!Connected(Input::Pulse1) && pulse_int))
 		{
 			int8_t key_index = KnobVal(Knob::Main) * 13 >> 12;
 			quantisedNote = quantSample(vcaOut, all_keys[key_index]);
@@ -135,6 +138,10 @@ public:
 			CVOut1MIDINote(quantisedNote);
 			CVOut2MIDINote(quantizedAmbigThird);
 		}
+
+		PulseOut1(counter > 0);
+
+		LedOn(4, counter > 0);
 	}
 
 private:
@@ -177,8 +184,7 @@ private:
 
 		for (int i = 0; i < 12; i++)
 		{
-			if (input + 3 == 12 * octave + all_keys[key_index][i] 
-				|| input + 3 == 12 * (octave + 1) + all_keys[key_index][i]) // check for minor third in this or next octave
+			if (input + 3 == 12 * octave + all_keys[key_index][i] || input + 3 == 12 * (octave + 1) + all_keys[key_index][i]) // check for minor third in this or next octave
 			{
 				return input + 3;
 			}
@@ -252,7 +258,7 @@ void tempTap()
 			card.tapTime = currentTime; // Record time ready for next tap
 			card.quarterNoteSamples = sinceLast * 48;
 			card.resync = true;
-			card.pulse = true;
+			card.pulse_ext = true;
 		}
 	}
 }
