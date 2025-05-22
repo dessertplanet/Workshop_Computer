@@ -22,10 +22,12 @@ public:
 	bool switchHold = false;
 	bool resync = false;
 	bool pulse = false;
+	bool pulseSeq = false;
 	bool shift_on = false;
 	uint32_t tapTime = 0;
 	uint32_t tapTimeLast = 0;
 	int16_t counter = 0;
+	int16_t pulseSeqCounter = 0;
 
 	int16_t vcaOut;
 	int16_t vcaCV;
@@ -36,6 +38,7 @@ public:
 	bool looping;
 
 	int16_t buffer[12];
+	bool pulseBuffer[12];
 
 	int8_t looplength = 12;
 	int8_t loopindex = 0;
@@ -48,6 +51,7 @@ public:
 	int16_t xKnob;
 
 	int16_t pulseDuration = 100;
+	int16_t thresh = 2048;
 
 	Fifths()
 	{
@@ -72,6 +76,7 @@ public:
 		for (int i = 0; i < 12; i++)
 		{
 			buffer[i] = (rnd12() - 2048) / 4;
+			pulseBuffer[i] = rnd12() > 2048;
 		}
 	}
 
@@ -100,6 +105,7 @@ public:
 			resync = false;
 			sampleCounter = 0;
 			counter = 0;
+			pulseSeqCounter = 0;
 		}
 
 		if (Connected(Input::Pulse1))
@@ -116,11 +122,15 @@ public:
 			counter = pulseDuration;
 		}
 
+		if (pulseSeqCounter)
+		{
+			pulseSeqCounter--;
+		}
+
 		if (counter)
 		{
 			counter--;
 		}
-		
 
 		tapTimeLast = (pico_millis() - tapTime) % 0xFFFFFFFF;
 
@@ -129,7 +139,7 @@ public:
 			tapping = false;
 		}
 
-		if(switchHold && (tapTimeLast > 1000) && sw != Switch::Down)
+		if (switchHold && (tapTimeLast > 1000) && sw != Switch::Down)
 		{
 			switchHold = false;
 			shift_on = false;
@@ -221,11 +231,24 @@ public:
 			if (looping)
 			{
 				quant_input = buffer[loopindex];
+				if (pulseBuffer[loopindex] && !pulseSeqCounter)
+				{
+					pulseSeqCounter = pulseDuration;
+				}
 			}
 			else
 			{
 				quant_input = vcaOut;
 				buffer[loopindex] = quant_input;
+				if (rnd12() > thresh)
+				{
+					pulseBuffer[loopindex] = true;
+					pulseSeqCounter = pulseDuration;
+				}
+				else
+				{
+					pulseBuffer[loopindex] = false;
+				}
 			}
 
 			clip(quant_input);
@@ -245,13 +268,21 @@ public:
 		if (switchHold && ((xKnob - lastX) > 0 || shift_on))
 		{
 			shift_on = true;
-			
-			pulseDuration = xKnob * (12000) >> 12;
+
+			pulseDuration = xKnob * 12000 >> 12;
+			pulseDuration++; // to avoid 0 duration
 		}
 
 		PulseOut1(counter > 0);
+		PulseOut2(pulseSeqCounter > 0);
+
+		LedBrightness(0, cabs(2048 - mainKnob) * 4095 >> 12);
+		LedBrightness(1, cabs(vcaOut) * 4095 >> 12);
+		LedBrightness(2, quantisedNote << 4);
+		LedBrightness(3, quantizedAmbigThird << 4);
 
 		LedOn(4, counter > 0);
+		LedOn(5, pulseSeqCounter > 0);
 
 		lastX = xKnob;
 		lastY = vcaKnob;
