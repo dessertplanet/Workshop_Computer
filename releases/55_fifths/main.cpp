@@ -22,6 +22,7 @@ public:
 	bool switchHold = false;
 	bool resync = false;
 	bool pulse = false;
+	bool pulse_int = false;
 	bool pulseSeq = false;
 	bool changeX = false;
 	bool changeY = false;
@@ -29,6 +30,7 @@ public:
 	uint32_t tapTimeLast = 0;
 	int16_t counter = 0;
 	int16_t pulseSeqCounter = 0;
+	int16_t pulseIntCounter = 0;
 
 	int16_t vcaOut;
 	int16_t vcaCV;
@@ -43,6 +45,7 @@ public:
 
 	int8_t looplength = 12;
 	int8_t loopindex = 0;
+	int8_t pulseindex = 0;
 
 	int16_t lastX;
 	int16_t lastY;
@@ -121,10 +124,12 @@ public:
 		{
 			looping = !looping;
 		}
+
 		// Timing and tap update
 		tap.Update(SwitchVal() == Switch::Down);
 		sampleCounter += 1;
 		sampleCounter %= 0xFFFFFFFF;
+
 		if (resync)
 		{
 			resync = false;
@@ -132,6 +137,7 @@ public:
 			counter = 0;
 			pulseSeqCounter = 0;
 		}
+
 		if (Connected(Input::Pulse1))
 		{
 			pulse = PulseIn1RisingEdge();
@@ -140,17 +146,32 @@ public:
 		{
 			pulse = sampleCounter % quarterNoteSamples == 0;
 		}
+
+		pulse_int = sampleCounter % quarterNoteSamples == 0; // internal pulse continues even if external pulse is present
+
 		if (pulse && !counter)
 		{
 			counter = pulseDuration;
 		}
+
+		if (pulse_int && !pulseIntCounter)
+		{
+			pulseIntCounter = pulseDuration;
+		}
+
 		if (pulseSeqCounter)
 		{
 			pulseSeqCounter--;
 		}
+
 		if (counter)
 		{
 			counter--;
+		}
+
+		if (pulseIntCounter)
+		{
+			pulseIntCounter--;
 		}
 	}
 
@@ -158,10 +179,12 @@ public:
 	void updateSwitchAndTapStates(Switch sw)
 	{
 		tapTimeLast = (pico_millis() - tapTime) % 0xFFFFFFFF;
+
 		if (tapTimeLast > 2000 && tapping)
 		{
 			tapping = false;
 		}
+
 		if (switchHold && (tapTimeLast > 1000) && sw != Switch::Down)
 		{
 			switchHold = false;
@@ -173,9 +196,11 @@ public:
 	void processQuantizerStep()
 	{
 		int8_t key_index;
+
 		if (Connected(Input::CV2))
 		{
 			key_index = (virtualDetentedKnob(KnobVal(Knob::Main)) + CVIn2()) * 13 >> 12;
+
 			if (key_index < 0)
 			{
 				key_index += 13;
@@ -189,9 +214,11 @@ public:
 		{
 			key_index = KnobVal(Knob::Main) * 13 >> 12;
 		}
+
 		if (Connected(Input::CV1))
 		{
 			looplength = (virtualDetentedKnob(KnobVal(Knob::X)) + CVIn1()) * 12 >> 12;
+
 			if (looplength < 0)
 			{
 				looplength += 12;
@@ -205,39 +232,61 @@ public:
 		{
 			looplength = virtualDetentedKnob(KnobVal(Knob::X)) * 12 >> 12; // 0 - 11
 		}
+
 		looplength = looplength + 1; // 1 - 12
 		int16_t quant_input;
+
 		if (looping)
 		{
 			quant_input = buffer[loopindex];
-			if (pulseBuffer[loopindex] && !pulseSeqCounter)
-			{
-				pulseSeqCounter = pulseDuration;
-			}
 		}
 		else
 		{
 			quant_input = vcaOut;
 			buffer[loopindex] = quant_input;
-			if (rnd12() > thresh)
-			{
-				pulseBuffer[loopindex] = true;
-				pulseSeqCounter = pulseDuration;
-			}
-			else
-			{
-				pulseBuffer[loopindex] = false;
-			}
 		}
+
 		clip(quant_input);
 		quantisedNote = quantSample(quant_input, all_keys[key_index]);
 		quantizedAmbigThird = calculateAmbigThird(quantisedNote, key_index);
 		CVOut1MIDINote(quantisedNote);
 		CVOut2MIDINote(quantizedAmbigThird);
 		loopindex = loopindex + 1;
+
 		if (loopindex >= looplength)
 		{
 			loopindex = 0;
+		}
+	}
+
+	// helper: Process pulse sequencer on internal pulse
+	void processPulseSeq()
+	{
+		if (looping)
+		{
+			if (pulseBuffer[pulseindex] && !pulseSeqCounter)
+			{
+				pulseSeqCounter = pulseDuration;
+			}
+		}
+		else
+		{
+			if (rnd12() < thresh)
+			{
+				pulseBuffer[pulseindex] = true;
+				pulseSeqCounter = pulseDuration;
+			}
+			else
+			{
+				pulseBuffer[pulseindex] = false;
+			}
+		}
+
+		pulseindex = pulseindex + 1;
+
+		if (pulseindex >= looplength)
+		{
+			pulseindex = 0;
 		}
 	}
 
@@ -247,6 +296,21 @@ public:
 		// 1. Update switch and tap states
 		Switch sw = SwitchVal();
 		updateSwitchAndTapStates(sw);
+
+		// 4. Quantizer step on pulse
+		if (pulse)
+		{
+			processQuantizerStep();
+		}
+
+		// 4.5 Update pulse sequencer
+		if (pulse_int)
+		{
+			processPulseSeq();
+		}
+
+		PulseOut1(pulseIntCounter > 0);
+		PulseOut2(pulseSeqCounter > 0);
 
 		// 2. Update pulse and counters
 		updatePulseAndCounters(sw);
@@ -260,12 +324,6 @@ public:
 		clip(vcaOut);
 		AudioOut1(mainKnob - 2048);
 		AudioOut2(vcaOut);
-
-		// 4. Quantizer step on pulse
-		if (pulse)
-		{
-			processQuantizerStep();
-		}
 
 		// 5. Handle switchHold for X and Y knobs
 		if (switchHold && ((xKnob - lastX > 0) || changeX))
@@ -282,20 +340,18 @@ public:
 		}
 
 		// 6. Output pulses and LED feedback
-		PulseOut1(counter > 0);
-		PulseOut2(pulseSeqCounter > 0);
 		LedBrightness(0, cabs(2048 - mainKnob) * 4095 >> 12);
 		LedBrightness(1, cabs(vcaOut) * 4095 >> 12);
 		LedBrightness(2, quantisedNote << 4);
 		LedBrightness(3, quantizedAmbigThird << 4);
-		LedOn(4, counter > 0);
+		LedOn(4, pulseIntCounter > 0);
 		LedOn(5, pulseSeqCounter > 0);
 		lastX = xKnob;
 		lastY = vcaKnob;
 	}
 
 private:
-	//RNG! Different values for each card but the same on each boot
+	// RNG! Different values for each card but the same on each boot
 	uint32_t __not_in_flash_func(rnd12)()
 	{
 		static uint32_t lcg_seed = 1;
@@ -404,6 +460,7 @@ void tempTap()
 	else
 	{
 		uint32_t sinceLast = (currentTime - card.tapTime) & 0xFFFFFFFF; // Handle overflow
+		
 		if (sinceLast > 20 && sinceLast < 3000)
 		{								// Ignore bounces and forgotten taps > 3 seconds
 			card.tapTime = currentTime; // Record time ready for next tap
