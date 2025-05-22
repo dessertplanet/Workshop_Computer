@@ -23,7 +23,8 @@ public:
 	bool resync = false;
 	bool pulse = false;
 	bool pulseSeq = false;
-	bool shift_on = false;
+	bool changeX = false;
+	bool changeY = false;
 	uint32_t tapTime = 0;
 	uint32_t tapTimeLast = 0;
 	int16_t counter = 0;
@@ -142,7 +143,7 @@ public:
 		if (switchHold && (tapTimeLast > 1000) && sw != Switch::Down)
 		{
 			switchHold = false;
-			shift_on = false;
+			changeX = false;
 		}
 
 		/////VCA
@@ -154,6 +155,7 @@ public:
 
 		if (Connected(Input::Audio2))
 		{
+			//This is problematic but works as long as this is CV
 			vcaCV = virtualDetentedKnob((AudioIn2() * vcaKnob >> 12) + 2048) - 2048;
 		}
 		else
@@ -265,12 +267,20 @@ public:
 			}
 		}
 
-		if (switchHold && ((xKnob - lastX) > 0 || shift_on))
+		if (switchHold && ((xKnob - lastX > 0) || changeX))
 		{
-			shift_on = true;
+			changeX = true;
 
 			pulseDuration = xKnob * 12000 >> 12;
 			pulseDuration++; // to avoid 0 duration
+		}
+
+		if (switchHold && ((vcaKnob - lastY) > 0 || changeY))
+		{
+			changeY = true;
+
+			thresh = vcaKnob;
+			thresh++; // to avoid 0 duration
 		}
 
 		PulseOut1(counter > 0);
