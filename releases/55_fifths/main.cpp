@@ -82,12 +82,13 @@ public:
 	}
 
 	// Helper: Calculate VCA output based on input connections and knob/CV values
-	int16_t calculateVCAOut(int16_t &input)
+	int16_t calculateVCAOut(int16_t input)
 	{
 		if (Connected(Input::Audio2))
 		{
 			// If Audio2 is connected, treat as CV input
-			vcaCV = virtualDetentedKnob((AudioIn2() * vcaKnob >> 12) + 2048) - 2048;
+			// vcaCV = virtualDetentedKnob((AudioIn2() * vcaKnob >> 12) + 2048) - 2048;
+			vcaCV = AudioIn2() * virtualDetentedKnob(vcaKnob) >> 12;
 		}
 		else
 		{
@@ -104,12 +105,10 @@ public:
 		}
 		else if (Connected(Input::Audio2))
 		{
-			input = rnd12() - 2048;
 			return input * vcaCV >> 11;
 		}
 		else
 		{
-			input = rnd12() - 2048;
 			return input * vcaKnob >> 12;
 		}
 	}
@@ -253,7 +252,7 @@ public:
 		updatePulseAndCounters(sw);
 
 		// 3. VCA calculation
-		int16_t input = AudioIn1() + 25; // DC offset for non-callibrated input
+		int16_t input = Connected(Input::Audio1) ? AudioIn1() + 25 : (rnd12() - 2048); // DC offset for non-callibrated input
 		mainKnob = virtualDetentedKnob(KnobVal(Knob::Main));
 		vcaKnob = virtualDetentedKnob(KnobVal(Knob::Y));
 		xKnob = virtualDetentedKnob(KnobVal(Knob::X));
