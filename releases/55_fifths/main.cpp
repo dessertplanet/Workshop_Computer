@@ -51,7 +51,7 @@ public:
 	int16_t vcaKnob;
 	int16_t xKnob;
 
-	int16_t pulseDuration = 100;
+	int16_t pulseDuration = 200;
 	int16_t thresh = 2048;
 
 	Fifths()
@@ -81,81 +81,12 @@ public:
 		}
 	}
 
-	virtual void ProcessSample()
+	// Helper: Calculate VCA output based on input connections and knob/CV values
+	int16_t calculateVCAOut(int16_t &input)
 	{
-
-		// Switch behaviour
-
-		Switch sw = SwitchVal();
-
-		looping = !(sw == Switch::Up);
-
-		if (PulseIn2())
-		{
-			looping = !looping;
-		}
-
-		////TIMING
-		tap.Update(SwitchVal() == Switch::Down);
-
-		sampleCounter += 1;
-		sampleCounter %= 0xFFFFFFFF;
-
-		if (resync)
-		{
-			resync = false;
-			sampleCounter = 0;
-			counter = 0;
-			pulseSeqCounter = 0;
-		}
-
-		if (Connected(Input::Pulse1))
-		{
-			pulse = PulseIn1RisingEdge();
-		}
-		else
-		{
-			pulse = sampleCounter % quarterNoteSamples == 0;
-		}
-
-		if (pulse && !counter)
-		{
-			counter = pulseDuration;
-		}
-
-		if (pulseSeqCounter)
-		{
-			pulseSeqCounter--;
-		}
-
-		if (counter)
-		{
-			counter--;
-		}
-
-		tapTimeLast = (pico_millis() - tapTime) % 0xFFFFFFFF;
-
-		if (tapTimeLast > 2000 && tapping)
-		{
-			tapping = false;
-		}
-
-		if (switchHold && (tapTimeLast > 1000) && sw != Switch::Down)
-		{
-			switchHold = false;
-			changeX = false;
-		}
-
-		/////VCA
-		int16_t input = AudioIn1() + 25; // DC offset for non-callibrated input. Works on Dune's Workshop System *shrug*
-
-		mainKnob = virtualDetentedKnob(KnobVal(Knob::Main));
-		vcaKnob = virtualDetentedKnob(KnobVal(Knob::Y));
-		xKnob = virtualDetentedKnob(KnobVal(Knob::X));
-
 		if (Connected(Input::Audio2))
 		{
-			//This is problematic but works as long as this is CV
+			// If Audio2 is connected, treat as CV input
 			vcaCV = virtualDetentedKnob((AudioIn2() * vcaKnob >> 12) + 2048) - 2048;
 		}
 		else
@@ -165,141 +96,207 @@ public:
 
 		if (Connected(Input::Audio1) && Connected(Input::Audio2))
 		{
-			vcaOut = input * vcaCV >> 11;
+			return input * vcaCV >> 11;
 		}
 		else if (Connected(Input::Audio1))
 		{
-			vcaOut = input * vcaKnob >> 12;
+			return input * vcaKnob >> 12;
 		}
 		else if (Connected(Input::Audio2))
 		{
 			input = rnd12() - 2048;
-			vcaOut = input * vcaCV >> 11;
+			return input * vcaCV >> 11;
 		}
 		else
 		{
 			input = rnd12() - 2048;
-			vcaOut = input * vcaKnob >> 12;
+			return input * vcaKnob >> 12;
 		}
+	}
 
+	// Helper: Update pulse and counter logic
+	void updatePulseAndCounters(Switch sw)
+	{
+		looping = !(sw == Switch::Up);
+		if (PulseIn2())
+		{
+			looping = !looping;
+		}
+		// Timing and tap update
+		tap.Update(SwitchVal() == Switch::Down);
+		sampleCounter += 1;
+		sampleCounter %= 0xFFFFFFFF;
+		if (resync)
+		{
+			resync = false;
+			sampleCounter = 0;
+			counter = 0;
+			pulseSeqCounter = 0;
+		}
+		if (Connected(Input::Pulse1))
+		{
+			pulse = PulseIn1RisingEdge();
+		}
+		else
+		{
+			pulse = sampleCounter % quarterNoteSamples == 0;
+		}
+		if (pulse && !counter)
+		{
+			counter = pulseDuration;
+		}
+		if (pulseSeqCounter)
+		{
+			pulseSeqCounter--;
+		}
+		if (counter)
+		{
+			counter--;
+		}
+	}
+
+	// Helper: Update switch and tap state
+	void updateSwitchAndTapStates(Switch sw)
+	{
+		tapTimeLast = (pico_millis() - tapTime) % 0xFFFFFFFF;
+		if (tapTimeLast > 2000 && tapping)
+		{
+			tapping = false;
+		}
+		if (switchHold && (tapTimeLast > 1000) && sw != Switch::Down)
+		{
+			switchHold = false;
+			changeX = false;
+		}
+	}
+
+	// Helper: Process quantizer logic on pulse
+	void processQuantizerStep()
+	{
+		int8_t key_index;
+		if (Connected(Input::CV2))
+		{
+			key_index = (virtualDetentedKnob(KnobVal(Knob::Main)) + CVIn2()) * 13 >> 12;
+			if (key_index < 0)
+			{
+				key_index += 13;
+			}
+			else if (key_index > 12)
+			{
+				key_index -= 13;
+			}
+		}
+		else
+		{
+			key_index = KnobVal(Knob::Main) * 13 >> 12;
+		}
+		if (Connected(Input::CV1))
+		{
+			looplength = (virtualDetentedKnob(KnobVal(Knob::X)) + CVIn1()) * 12 >> 12;
+			if (looplength < 0)
+			{
+				looplength += 12;
+			}
+			else if (looplength > 11)
+			{
+				looplength -= 12;
+			}
+		}
+		else
+		{
+			looplength = virtualDetentedKnob(KnobVal(Knob::X)) * 12 >> 12; // 0 - 11
+		}
+		looplength = looplength + 1; // 1 - 12
+		int16_t quant_input;
+		if (looping)
+		{
+			quant_input = buffer[loopindex];
+			if (pulseBuffer[loopindex] && !pulseSeqCounter)
+			{
+				pulseSeqCounter = pulseDuration;
+			}
+		}
+		else
+		{
+			quant_input = vcaOut;
+			buffer[loopindex] = quant_input;
+			if (rnd12() > thresh)
+			{
+				pulseBuffer[loopindex] = true;
+				pulseSeqCounter = pulseDuration;
+			}
+			else
+			{
+				pulseBuffer[loopindex] = false;
+			}
+		}
+		clip(quant_input);
+		quantisedNote = quantSample(quant_input, all_keys[key_index]);
+		quantizedAmbigThird = calculateAmbigThird(quantisedNote, key_index);
+		CVOut1MIDINote(quantisedNote);
+		CVOut2MIDINote(quantizedAmbigThird);
+		loopindex = loopindex + 1;
+		if (loopindex >= looplength)
+		{
+			loopindex = 0;
+		}
+	}
+
+	virtual void ProcessSample() override
+	{
+		// Main audio/CV processing loop
+		// 1. Update switch and tap states
+		Switch sw = SwitchVal();
+		updateSwitchAndTapStates(sw);
+
+		// 2. Update pulse and counters
+		updatePulseAndCounters(sw);
+
+		// 3. VCA calculation
+		int16_t input = AudioIn1() + 25; // DC offset for non-callibrated input
+		mainKnob = virtualDetentedKnob(KnobVal(Knob::Main));
+		vcaKnob = virtualDetentedKnob(KnobVal(Knob::Y));
+		xKnob = virtualDetentedKnob(KnobVal(Knob::X));
+		vcaOut = calculateVCAOut(input);
 		clip(vcaOut);
-
 		AudioOut1(mainKnob - 2048);
 		AudioOut2(vcaOut);
 
-		/////WEIRD QUANTIZER
-
+		// 4. Quantizer step on pulse
 		if (pulse)
 		{
-			int8_t key_index;
-			if (Connected(Input::CV2))
-			{
-				key_index = (virtualDetentedKnob(KnobVal(Knob::Main)) + CVIn2()) * 13 >> 12;
-				if (key_index < 0)
-				{
-					key_index += 13;
-				}
-				else if (key_index > 12)
-				{
-					key_index -= 13;
-				}
-			}
-			else
-			{
-				key_index = KnobVal(Knob::Main) * 13 >> 12;
-			}
-
-			if (Connected(Input::CV1))
-			{
-				looplength = (virtualDetentedKnob(KnobVal(Knob::X)) + CVIn1()) * 12 >> 12;
-				if (looplength < 0)
-				{
-					looplength += 12;
-				}
-				else if (looplength > 11)
-				{
-					looplength -= 12;
-				}
-			}
-			else
-			{
-				looplength = virtualDetentedKnob(KnobVal(Knob::X)) * 12 >> 12; // 0 - 11
-			}
-
-			looplength = looplength + 1; // 1 - 12
-
-			int16_t quant_input;
-
-			if (looping)
-			{
-				quant_input = buffer[loopindex];
-				if (pulseBuffer[loopindex] && !pulseSeqCounter)
-				{
-					pulseSeqCounter = pulseDuration;
-				}
-			}
-			else
-			{
-				quant_input = vcaOut;
-				buffer[loopindex] = quant_input;
-				if (rnd12() > thresh)
-				{
-					pulseBuffer[loopindex] = true;
-					pulseSeqCounter = pulseDuration;
-				}
-				else
-				{
-					pulseBuffer[loopindex] = false;
-				}
-			}
-
-			clip(quant_input);
-
-			quantisedNote = quantSample(quant_input, all_keys[key_index]);
-			quantizedAmbigThird = calculateAmbigThird(quantisedNote, key_index);
-			CVOut1MIDINote(quantisedNote);
-			CVOut2MIDINote(quantizedAmbigThird);
-			loopindex = loopindex + 1;
-
-			if (loopindex >= looplength)
-			{
-				loopindex = 0;
-			}
+			processQuantizerStep();
 		}
 
+		// 5. Handle switchHold for X and Y knobs
 		if (switchHold && ((xKnob - lastX > 0) || changeX))
 		{
 			changeX = true;
-
 			pulseDuration = xKnob * 12000 >> 12;
 			pulseDuration++; // to avoid 0 duration
 		}
-
 		if (switchHold && ((vcaKnob - lastY) > 0 || changeY))
 		{
 			changeY = true;
-
 			thresh = vcaKnob;
 			thresh++; // to avoid 0 duration
 		}
 
+		// 6. Output pulses and LED feedback
 		PulseOut1(counter > 0);
 		PulseOut2(pulseSeqCounter > 0);
-
 		LedBrightness(0, cabs(2048 - mainKnob) * 4095 >> 12);
 		LedBrightness(1, cabs(vcaOut) * 4095 >> 12);
 		LedBrightness(2, quantisedNote << 4);
 		LedBrightness(3, quantizedAmbigThird << 4);
-
 		LedOn(4, counter > 0);
 		LedOn(5, pulseSeqCounter > 0);
-
 		lastX = xKnob;
 		lastY = vcaKnob;
 	}
 
 private:
-	// a slightly more complex random number generator than usual to ensure reseting Computer produces different results
+	//RNG! Different values for each card but the same on each boot
 	uint32_t __not_in_flash_func(rnd12)()
 	{
 		static uint32_t lcg_seed = 1;
