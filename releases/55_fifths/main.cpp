@@ -189,6 +189,7 @@ public:
 		{
 			switchHold = false;
 			changeX = false;
+			changeY = false;
 		}
 	}
 
@@ -199,7 +200,9 @@ public:
 
 		if (Connected(Input::CV2))
 		{
-			key_index = (virtualDetentedKnob(KnobVal(Knob::Main)) + CVIn2()) * 13 >> 12;
+			key_index = CVIn2() * 13 >> 12;
+
+			key_index += 7;
 
 			if (key_index < 0)
 			{
@@ -215,25 +218,9 @@ public:
 			key_index = KnobVal(Knob::Main) * 13 >> 12;
 		}
 
-		if (Connected(Input::CV1))
-		{
-			looplength = (virtualDetentedKnob(KnobVal(Knob::X)) + CVIn1()) * 12 >> 12;
-
-			if (looplength < 0)
-			{
-				looplength += 12;
-			}
-			else if (looplength > 11)
-			{
-				looplength -= 12;
-			}
-		}
-		else
-		{
-			looplength = virtualDetentedKnob(KnobVal(Knob::X)) * 12 >> 12; // 0 - 11
-		}
-
+		looplength = virtualDetentedKnob(KnobVal(Knob::X)) * 12 >> 12; // 0 - 11
 		looplength = looplength + 1; // 1 - 12
+
 		int16_t quant_input;
 
 		if (looping)
@@ -244,6 +231,10 @@ public:
 		{
 			quant_input = vcaOut;
 			buffer[loopindex] = quant_input;
+		}
+
+		if (Connected(Input::CV1)){
+			quant_input += CVIn1() * 1365 >> 12; // CV1 is up to 2 octaves transpose
 		}
 
 		clip(quant_input);
@@ -325,14 +316,14 @@ public:
 		AudioOut1(mainKnob - 2048);
 		AudioOut2(vcaOut);
 
-		// 5. Handle switchHold for X and Y knobs
-		if (switchHold && ((xKnob - lastX > 0) || changeX))
+		// 5. Handle switchHold (shift functions) for knobs
+		if (switchHold && ((cabs(xKnob - lastX) > 0) || changeX))
 		{
 			changeX = true;
-			pulseDuration = xKnob * 12000 >> 12;
-			pulseDuration++; // to avoid 0 duration
+			pulseDuration = xKnob * quarterNoteSamples >> 12;
+			pulseDuration = pulseDuration + 20; // to avoid 0 duration
 		}
-		if (switchHold && ((vcaKnob - lastY) > 0 || changeY))
+		if (switchHold && (cabs(vcaKnob - lastY) > 0 || changeY))
 		{
 			changeY = true;
 			thresh = vcaKnob;
