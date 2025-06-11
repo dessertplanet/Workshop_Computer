@@ -1,5 +1,7 @@
 # Micropython
 
+_Note: In addition to the micropython code in this folder, see MJLMills' [pyworkshopsystem](https://github.com/MJLMills/pyworkshopsystem/) library and the [examples by rwmodular](https://github.com/rwmodular/computer)._
+
 ## Setup
 
 Connect the Computer to your computer with a keyboard. This should mount it as a disk.
