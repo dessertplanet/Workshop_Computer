@@ -7,35 +7,69 @@ void longHold();
 class StickCtrl : public ComputerCard
 {
 public:
-	uint32_t sampleCounter;
-	uint32_t quarterNoteMs;
-	uint32_t quarterNoteSamples = 12000;
-	Click tap = Click(tempTap, longHold);
+
+	// Timing variables for tap tempo are public so that the callback functions can access them
 	bool tapping = false;
 	bool switchHold = false;
 	bool resync = false;
 	bool pulse = false;
+	uint32_t quarterNoteSamples = 12000;
 	uint32_t tapTime = 0;
-	uint32_t tapTimeLast = 0;
-
-	int16_t lastX;
-	int16_t lastY;
-
-	int16_t mainKnob;
-	int16_t vcaKnob;
-	int16_t xKnob;
 
 	StickCtrl()
 	{
 		// Constructor
+		sampleCounter_ = 0;
 	}
 
 	virtual void ProcessSample() override
 	{
-		//main loop
+		// main loop
+
+		pulse = sampleCounter_ % tempo_samples_ == 0;
+
+		if (pulse)
+		{
+			L_counter_ = pulseWidth_;
+			R_counter_ = pulseWidth_;
+		}
+
+		// iterate sample counter
+		sampleCounter_++;
+		if ((sampleCounter_ + quarterNoteSamples) == 0xFFFFFFFF)
+		{
+			sampleCounter_ = 0;
+		}
+
+		// decrement counters
+		if (L_counter_)
+		{
+			L_counter_--;
+		}
+
+		if (R_counter_)
+		{
+			R_counter_--;
+		}
+
+		// render pulse outputs
+
+		PulseOut1(L_counter_);
+		PulseOut2(R_counter_);
+
+		// display outputs on "screen"
+		LedOn(4, L_counter_);
+		LedOn(5, R_counter_);
 	}
 
 private:
+	int16_t pulseWidth_ = 200; // in samples
+	int16_t tempo_samples_ = 12000; // in samples
+	int16_t L_counter_ = 0;
+	int16_t R_counter_ = 0;
+	uint32_t sampleCounter_;
+	Click tap_ = Click(tempTap, longHold);
+
 	// RNG! Different values for each card but the same on each boot
 	uint32_t __not_in_flash_func(rnd12)()
 	{
@@ -105,7 +139,7 @@ void tempTap()
 	else
 	{
 		uint32_t sinceLast = (currentTime - card.tapTime) & 0xFFFFFFFF; // Handle overflow
-		
+
 		if (sinceLast > 20 && sinceLast < 3000)
 		{								// Ignore bounces and forgotten taps > 3 seconds
 			card.tapTime = currentTime; // Record time ready for next tap
