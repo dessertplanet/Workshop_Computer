@@ -7,7 +7,6 @@ void longHold();
 class StickCtrl : public ComputerCard
 {
 public:
-
 	// Timing variables for tap tempo are public so that the callback functions can access them
 	bool tapping = false;
 	bool switchHold = false;
@@ -24,54 +23,70 @@ public:
 
 	virtual void ProcessSample() override
 	{
-		// main loop
+		// audio loop runs at 24kHz
+		if (halftime_)
+		{
+			halftime_ = !halftime_;
+			
+		}
 
+		//counters and timing run at 48kHz
 		pulse = sampleCounter_ % tempo_samples_ == 0;
 
-		if (pulse)
-		{
-			L_counter_ = pulseWidth_;
-			R_counter_ = pulseWidth_;
-		}
+			if (pulse)
+			{
+				L_counter_ = pulseWidth_;
+				R_counter_ = pulseWidth_;
+			}
 
-		// iterate sample counter
-		sampleCounter_++;
-		if ((sampleCounter_ + quarterNoteSamples) == 0xFFFFFFFF)
-		{
-			sampleCounter_ = 0;
-		}
+			// iterate sample counter
+			sampleCounter_++;
+			if ((sampleCounter_ + quarterNoteSamples) == 0xFFFFFFFF)
+			{
+				sampleCounter_ = 0;
+			}
 
-		// decrement counters
-		if (L_counter_)
-		{
-			L_counter_--;
-		}
+			// decrement counters
+			if (L_counter_)
+			{
+				L_counter_--;
+			}
 
-		if (R_counter_)
-		{
-			R_counter_--;
-		}
+			if (R_counter_)
+			{
+				R_counter_--;
+			}
 
-		// render pulse outputs
+			// render pulse outputs
 
-		PulseOut1(L_counter_);
-		PulseOut2(R_counter_);
+			PulseOut1(L_counter_);
+			PulseOut2(R_counter_);
 
-		// display outputs on "screen"
-		LedOn(4, L_counter_);
-		LedOn(5, R_counter_);
+			// display outputs on "screen"
+			LedOn(4, L_counter_);
+			LedOn(5, R_counter_);
+	}
+
+	void record()
+	{
 	}
 
 private:
-	int16_t pulseWidth_ = 200; // in samples
+	int16_t pulseWidth_ = 200;		// in samples
 	int16_t tempo_samples_ = 12000; // in samples
 	int16_t L_counter_ = 0;
 	int16_t R_counter_ = 0;
 	uint32_t sampleCounter_;
 	Click tap_ = Click(tempTap, longHold);
+	bool halftime_ = true;
 
-	// RNG! Different values for each card but the same on each boot
-	uint32_t __not_in_flash_func(rnd12)()
+	constexpr static int bufSize_ = 48000; // 2 seconds at 24kHz
+	int16_t sampleL[bufSize_];
+	int16_t sampleR[bufSize_];
+
+		// RNG! Different values for each card but the same on each boot
+		uint32_t
+		__not_in_flash_func(rnd12)()
 	{
 		static uint32_t lcg_seed = 1;
 		lcg_seed ^= UniqueCardID() >> 20;
