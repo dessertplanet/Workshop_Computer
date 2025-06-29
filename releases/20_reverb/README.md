@@ -2,6 +2,7 @@
 
 A simple reverb (on audio inputs/outputs) **plus** configurable MIDI interface / clock / Turing machine / bernoulli gate ( on CV / pulses inputs/outputs), for Music Thing Workshop System Computer.
 
+See card documentation on the [Music Thing Modular website](https://www.musicthing.co.uk/Computer_Program_Cards/#20-reverb).
 
 Reverb algorithm is that in the [Dattorro paper](https://ccrma.stanford.edu/~dattorro/EffectDesignPart1.pdf) (J. Audio Eng. Soc., **45**(9), 1997, 660&ndash;684), modified to damp either high or low frequencies in the reverb tail.
 
@@ -25,15 +26,13 @@ A `uf2` file is included in the `build` directory.
 
 The source is in C, using the Raspberry Pi Pico SDK. To compile:
 
-1. Copy the custom board definition `mtm_computer_16mb.h` to `<path_to_pico_sdk>/src/boards/include/boards/`. 
-
-2. Set up the environment variable defining the path to the Pico SDK, e.g.:
+1. Set up the environment variable defining the path to the Pico SDK, e.g.:
     `export PICO_SDK_PATH=<path_to_pico_sdk>`
 	or equivalent for your shell.
     
-3. Change to `20_reverb/` directory
+2. Change to `20_reverb/` directory
 
-4. Make and build in the usual way for the Pico SDK:
+3. Make and build in the usual way for the Pico SDK:
 
 
     mkdir build
@@ -41,10 +40,6 @@ The source is in C, using the Raspberry Pi Pico SDK. To compile:
     cmake ..
     make
     
-
-(The custom board definition  defines `#define PICO_XOSC_STARTUP_DELAY_MULTIPLIER 64`,  often needed for the RP2040 to startup).
-   
-   
    
 ----
 

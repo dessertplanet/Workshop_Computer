@@ -19,7 +19,8 @@ void clock_init(clock *c)
 
 uint32_t __not_in_flash_func(clock_get_incr_from_hz)(clock *c, float f)
 {
-	return 89478.48533f * f;
+	(void)c;
+	return (uint32_t)(89478.48533f * f);
 }
 
 void __not_in_flash_func(clock_set_freq_hz)(clock *c, float f)
@@ -27,7 +28,7 @@ void __not_in_flash_func(clock_set_freq_hz)(clock *c, float f)
 	// tick called at 48kHz
 	// wraps at 2^32 = 4,294,967,296
 	// increment is linear in Hz, with 89478.485333 per Hz
-	c->increment = 89478.48533f * f;
+	c->increment = (uint32_t)(89478.48533f * f);
 }
 
 void __not_in_flash_func(clock_set_freq_incr)(clock *c, uint32_t incr)

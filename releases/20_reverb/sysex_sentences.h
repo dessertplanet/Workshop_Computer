@@ -287,4 +287,4 @@
 #define CARD_ID_LOW 20
 #define CARD_ID_HIGH 0
 #define CARD_VER_MAJOR 1
-#define CARD_VER_MINOR 1
+#define CARD_VER_MINOR 2
