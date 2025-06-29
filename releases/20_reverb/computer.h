@@ -44,6 +44,7 @@ uint leds[NUM_LEDS] = { LED1, LED2, LED3, LED4, LED5, LED6 };
 #define KNOB_Y 2
 #define KNOB_SWITCH 3
 
+#define USB_HOST_STATUS 20
 
 #define CV_OUT_1 23
 #define CV_OUT_2 22
@@ -59,8 +60,10 @@ uint leds[NUM_LEDS] = { LED1, LED2, LED3, LED4, LED5, LED6 };
 #define BOARD_ID_0 7
 #define BOARD_ID_1 6
 #define BOARD_ID_2 5
-#define BOARD_PROTO_1 0x2a
+#define BOARD_PROTO_1 0x2a // 2024 Dyski
 #define BOARD_PROTO_2_0 0x30
+#define BOARD_REV1_0 0x30 // Q4 2024
+#define BOARD_REV1_1 0x0C // Q2 2025
 
 uint8_t GetBoardID()
 {
@@ -170,7 +173,7 @@ void CalcCalCoeffs(int channel)
 
 	for (int i = 0; i < N; i++)
 	{
-		float v = calibrationTable[channel][i].voltage * 0.1;
+		float v = calibrationTable[channel][i].voltage * 0.1f;
 		float dac = calibrationTable[channel][i].dacSetting;
 		sumV += v;
 		sumDAC += dac;
@@ -189,8 +192,8 @@ void CalcCalCoeffs(int channel)
 	}
 	calCoeffs[channel].b = (sumDAC - calCoeffs[channel].m * sumV) / N;
 
-	calCoeffs[channel].mi = (calCoeffs[channel].m * 1.333333333333333f + 0.5f);
-	calCoeffs[channel].bi = calCoeffs[channel].b + 0.5f;
+	calCoeffs[channel].mi = (int32_t)(calCoeffs[channel].m * 1.333333333333333f + 0.5f);
+	calCoeffs[channel].bi = (int32_t)(calCoeffs[channel].b + 0.5f);
 	debug("%d %f %f\n", channel, calCoeffs[channel].m, calCoeffs[channel].b);
 }
 
@@ -223,12 +226,14 @@ int ReadEEPROM()
 		buf[i] = ReadByteFromEEPROM(i);
 	}
 
+	#ifdef ENABLE_UART_DEBUGGING
 	{
 		int eepMajor = (buf[EEPROM_ADDR_VERSION] >> 4) & 0x0F; // Extract bits 7-4
 		int eepMinor = (buf[EEPROM_ADDR_VERSION] >> 2) & 0x03; // Extract bits 3-2
 		int eepPoint = buf[EEPROM_ADDR_VERSION] & 0x03; // Extract bits 1-0
 		debug("EEPROM version %d.%d.%d\n", eepMajor, eepMinor, eepPoint);
 	}
+	#endif
 
 	uint16_t calculatedCRC = CRCencode(buf, 86);
 	uint16_t foundCRC = ((uint16_t)buf[EEPROM_ADDR_CRC_H] << 8) | buf[EEPROM_ADDR_CRC_L];
@@ -342,6 +347,11 @@ void SetupComputerIO()
 	i2c_init(i2c0, 100 * 1000);
 	gpio_set_function(EEPROM_SDA, GPIO_FUNC_I2C);
 	gpio_set_function(EEPROM_SCL, GPIO_FUNC_I2C);
+
+	// Initialise USB host status pin
+	gpio_init(USB_HOST_STATUS);
+	gpio_set_dir(USB_HOST_STATUS, GPIO_IN);
+	gpio_disable_pulls(USB_HOST_STATUS);
 
 
 

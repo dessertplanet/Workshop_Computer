@@ -58,6 +58,8 @@ The function of knobs, CV and Pulse input/output are controlled by MIDI SysEx co
 #include <math.h>
 #include <string.h>
 
+#include "usb_midi_host.h"
+
 // Variables for passing debug info from audio thread to usb thread
 volatile uint32_t pf1 = 0, pf2 = 0, pfflag = 0;
 
@@ -117,6 +119,10 @@ uint16_t SPI_Buffer[2][2];
 uint8_t adc_dma, spi_dma; // DMA ids
 
 
+volatile uint8_t midiDeviceConnected=0;
+int32_t midiDeviceOutputCable=0;
+uint8_t midiDeviceAddress=0;
+
 
 uint8_t dmaPhase = 0;
 
@@ -153,8 +159,11 @@ void __not_in_flash_func(buffer_full)()
 	debug_pin(DEBUG_2, true);
 	static int mux_state = 0;
 	static int norm_probe_count = 0;
-	static int np = 0, np1 = 0, np2 = 0;
 
+	#ifdef ENABLE_UART_DEBUGGING
+	static int np = 0, np1 = 0, np2 = 0;
+	#endif
+	
 	// Internal variables for IIR filters on knobs/cv
 	static volatile int32_t knobssm[4] = { 0, 0, 0, 0 };
 	static volatile int32_t cvsm[2] = { 0, 0 };
@@ -341,7 +350,6 @@ int32_t __not_in_flash_func(continuous_source_from_config)(int offset)
 // Returns tempo in Hz from a "TempoSource" dropdown
 float __not_in_flash_func(tempo_source_from_config)(int offset)
 {
-	int32_t ret = 0;
 	if (config[offset] == OPT_A_CONSTANT)
 	{
 		int val = 100 * config[offset + 1]
@@ -587,23 +595,106 @@ void process_sys_ex_command(uint8_t *packet)
 	}
 }
 
-void midi_task()
+void midi_device_task()
 {
 	// Read incoming packet if availabie
 	while (tud_midi_available())
 	{
 		uint32_t bytes_read = tud_midi_stream_read(packet, sizeof(packet));
 
-		if (packet[0] == 0xF0) // If SysEx, handle with standard routine
+		if (bytes_read > 0)
 		{
-			process_sys_ex_command(packet);
-		}
-		else // else pass on to application midi message handler
-		{
-			handle_midi_message(packet);
+			if (packet[0] == 0xF0) // If SysEx, handle with standard routine
+			{
+				process_sys_ex_command(packet);
+			}
+			else // else pass on to application midi message handler
+			{
+				handle_midi_message(packet);
+			}
 		}
 	}
 }
+
+
+////////////////////////////////////////
+// MIDI host callbacks
+void tuh_midi_mount_cb(uint8_t dev_addr, uint8_t in_ep, uint8_t out_ep, uint8_t num_cables_rx, uint16_t num_cables_tx)
+{
+	(void)in_ep; (void)out_ep; (void)num_cables_rx; // avoid unused variable warnings
+
+	
+	if (midiDeviceAddress == 0)
+	{
+		midiDeviceAddress = dev_addr;
+		midiDeviceConnected = 1;
+		midiDeviceOutputCable = num_cables_tx - 1; // sets to -1 if device has no midi
+	}
+}
+
+
+void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance)
+{
+	(void)instance;
+	
+	if (dev_addr == midiDeviceAddress)
+	{
+		midiDeviceAddress = 0;
+		midiDeviceConnected = 0;
+		midiDeviceOutputCable = -1;
+	}
+}
+
+// Handle host-mode incoming midi message
+void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets)
+{
+	if (midiDeviceAddress != dev_addr)
+		return;
+
+	if (num_packets == 0)
+		return;
+	
+	uint8_t cable_num;
+	static uint8_t buffer[512];
+	while (1)
+	{
+		int32_t bytesToProcess = tuh_midi_stream_read(dev_addr, &cable_num, buffer, sizeof(buffer));
+		uint8_t *bptr = buffer;
+
+		if (bytesToProcess == 0)
+		{
+			break;
+		}
+		
+		while (bytesToProcess > 0)
+		{
+			if (bptr[0] == 0xF0)
+			{
+				process_sys_ex_command(bptr);
+			}
+			else
+			{
+				handle_midi_message(bptr);
+			}
+
+			// move pointer along until we reach an other MIDI command byte
+			do 
+			{
+				bptr++;
+				bytesToProcess--;
+			} while (bytesToProcess > 0 && (!(*bptr & 0x80)));			
+		}
+
+	}
+}
+
+void tuh_midi_tx_cb(uint8_t dev_addr)
+{
+    (void)dev_addr;
+}
+
+
+
 #endif
 
 
@@ -737,9 +828,36 @@ void usb_worker()
 	inDefaultConfigLoad = 0;
 	set_config_from_flash();
 
+	sleep_us(100000); // wait 0.1s
 #ifdef ENABLE_MIDI
+
+	// work out MIDI host status
+	uint8_t boardid = GetBoardID();
+	bool isHost;
+	if (boardid == BOARD_PROTO_1 || boardid == BOARD_PROTO_2_0)
+	{
+		// USB host mode if switch in up position
+		isHost = (knobs[KNOB_SWITCH] >= 3000);
+	}
+	else if (gpio_get(USB_HOST_STATUS))
+	{
+		isHost = false; // upstream facing port
+	}
+	else
+	{
+		isHost = true;
+	}
+
+	if (isHost)
+	{
+		tuh_init(TUH_OPT_RHPORT);
+	}
+	else
+	{
+		tud_init(TUD_OPT_RHPORT);
+	}
+
 	board_init();
-	tusb_init();
 #endif
 
 	// If switch held down (momentary) for 0.1s at startup,
@@ -770,8 +888,15 @@ void usb_worker()
 	{
 		delayVal = 1664525 * delayVal + 1013904223;
 #ifdef ENABLE_MIDI
-		tud_task();
-		midi_task();
+		if (isHost)
+		{
+			tuh_task();
+		}
+		else
+		{
+			tud_task();
+			midi_device_task();
+		}
 #endif
 
 		// Do this processing in the second core, as it's a expensive
