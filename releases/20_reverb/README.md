@@ -6,18 +6,6 @@ See card documentation on the [Music Thing Modular website](https://www.musicthi
 
 Reverb algorithm is that in the [Dattorro paper](https://ccrma.stanford.edu/~dattorro/EffectDesignPart1.pdf) (J. Audio Eng. Soc., **45**(9), 1997, 660&ndash;684), modified to damp either high or low frequencies in the reverb tail.
 
-## Panel interface:
-The panel interface is configurable from a computer using the file `reverb.html` in the repository. Load this page in a browser that supports Web MIDI, such as Google Chrome.
-
-The editing interface allows control over which knobs and CV inputs control which parameters, and the arrangement of MIDI events, clock and Turing Machine outputs that appear on the CV and gate outputs.
-![screenshot](docs/html_control.png)
-
-Audio inputs are summed into the reverb input. Audio input 2 is inverting. Audio outputs are left/right channels of the combined wet+dry reverb output.
-
-Left three LEDs show a 'VU meter' of the wet reverb output. To minimise noise and clipping, use input levels such that the bottom four LEDs are mostly lit and the top two mostly unlit. Top right LED shows input clipping.
-
-Middle right LED shows pulse 1 output, bottom right LED shows pulse 2 output. 
-
 ## Use:
 
 A `uf2` file is included in the `build` directory.
