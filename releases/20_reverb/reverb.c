@@ -927,16 +927,16 @@ void usb_worker()
 	bool isHost;
 	if (boardid == BOARD_PROTO_1 || boardid == BOARD_PROTO_2_0)
 	{
-		// USB host mode if switch in up position
-		isHost = (knobs[KNOB_SWITCH] >= 3000);
+		// USB host mode not supported on 2024 boards
+		isHost = false;
 	}
 	else if (gpio_get(USB_HOST_STATUS))
 	{
-		isHost = false; // upstream facing port
+		isHost = false; // 2025 (or later) board, upstream facing port
 	}
 	else
 	{
-		isHost = true;
+		isHost = true; // 2025 (or later) board, downstream facing port
 	}
 
 	if (isHost)
