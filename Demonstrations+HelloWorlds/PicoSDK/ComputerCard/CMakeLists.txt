@@ -11,7 +11,8 @@ macro (add_example _name)
 	# Add warnings, in particular about float/double conversion, as it's very easy to end up
 	# with slower double-precision calculations when we only mean to use single-precision float.
 	target_compile_options(${_name} PRIVATE -Wdouble-promotion -Wfloat-conversion -Wall -Wextra)
-
+	target_link_options(${_name} PRIVATE -Wl,--print-memory-usage)
+	
 	# Give oscillator more time to start - some boards won't run if this isn't included
 	target_compile_definitions(${_name} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
 	

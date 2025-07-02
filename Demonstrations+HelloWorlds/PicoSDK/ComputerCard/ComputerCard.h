@@ -44,7 +44,9 @@ public:
 	enum HardwareVersion_t {Proto1=0x2a, Proto2_Rev1=0x30, Rev1_1=0x0C, Unknown=0xFF};
 	/// USB Power state
 	enum USBPowerState_t {DFP, UFP, Unsupported};
-	
+	/// PulseOutLevel
+	enum PulseOutLevel {Off=5, Partial=1, Full=0};
+
 	ComputerCard();
 
 	/** \brief Start audio processing.
@@ -60,6 +62,8 @@ public:
 
 	/// Use before Run() to enable Connected/Disconnected detection
 	void EnableNormalisationProbe() {useNormProbe = true;}
+	
+	static ComputerCard *ThisPtr() {return thisptr;}
 
 protected:
 	/// Callback, called once per sample at 48kHz
@@ -100,56 +104,109 @@ protected:
 	/// Set CV output (values -2048 to 2047)
 	void __not_in_flash_func(CVOut)(int i, int16_t val)
 	{
-		pwm_set_gpio_level(CV_OUT_1 - i, (2047-val)>>1);
+		if (val<-2048) val = -2048;
+		if (val > 2047) val = 2047;
+		cvValue[i] = (2047-val)<<7;
 	}
 	
 	/// Set CV 1 output (values -2048 to 2047)
 	void __not_in_flash_func(CVOut1)(int16_t val)
 	{
-		pwm_set_gpio_level(CV_OUT_1, (2047-val)>>1);
+		if (val<-2048) val = -2048;
+		if (val > 2047) val = 2047;
+		cvValue[0] = (2047-val)<<7;
 	}
 	
 	/// Set CV 2 output (values -2048 to 2047)
 	void __not_in_flash_func(CVOut2)(int16_t val)
 	{
-		pwm_set_gpio_level(CV_OUT_2, (2047-val)>>1);
+		if (val<-2048) val = -2048;
+		if (val > 2047) val = 2047;
+		cvValue[1] = (2047-val)<<7;
+	}
+
+		
+	/// Set CV output (values -262144 to 262143)
+	void __not_in_flash_func(CVOutPrecise)(int i, int32_t val)
+	{
+		if (val<-262144) val = -262144;
+		if (val > 262143) val = 262143;
+		cvValue[i] = 262143-val;
+	}
+	
+	/// Set CV 1 output (values -262144 to 262143)
+	void __not_in_flash_func(CVOut1Precise)(int32_t val)
+	{
+		if (val<-262144) val = -262144;
+		if (val > 262143) val = 262143;
+		cvValue[0] = 262143-val;
+	}
+	
+	/// Set CV 2 output (values -262144 to 262143)
+	void __not_in_flash_func(CVOut2Precise)(int32_t val)
+	{
+		if (val<-262144) val = -262144;
+		if (val > 262143) val = 262143;
+		cvValue[1] = 262143-val;
 	}
 
 	/// Set CV 1 output from calibrated MIDI note number (values 0 to 127)
 	void __not_in_flash_func(CVOutMIDINote)(int i, uint8_t noteNum)
 	{
-		pwm_set_gpio_level(CV_OUT_1 - i, MIDIToDac(noteNum, 0) >> 8);
+		cvValue[i] = MIDIToDac(noteNum, i);
 	}
 	
 	/// Set CV 1 output from calibrated MIDI note number (values 0 to 127)
 	void __not_in_flash_func(CVOut1MIDINote)(uint8_t noteNum)
 	{
-		pwm_set_gpio_level(CV_OUT_1, MIDIToDac(noteNum, 0) >> 8);
+		cvValue[0] = MIDIToDac(noteNum, 0);
 	}
 	
 	/// Set CV 2 output from calibrated MIDI note number (values 0 to 127)
 	void __not_in_flash_func(CVOut2MIDINote)(uint8_t noteNum)
 	{
-		pwm_set_gpio_level(CV_OUT_2, MIDIToDac(noteNum, 1) >> 8);
+		cvValue[1] = MIDIToDac(noteNum, 1);
 	}
 	
 	/// Set Pulse output (true = on)
 	void __not_in_flash_func(PulseOut)(int i, bool val)
 	{
-		gpio_put(PULSE_1_RAW_OUT + i, !val);
+		
+		pwm_set_gpio_level(PULSE_1_RAW_OUT + i, val?0:5);
 	}
 	
 	/// Set Pulse 1 output (true = on)
 	void __not_in_flash_func(PulseOut1)(bool val)
 	{
-		gpio_put(PULSE_1_RAW_OUT, !val);
+		pwm_set_gpio_level(PULSE_1_RAW_OUT, val?0:5);
 	}
 	
 	/// Set Pulse 2 output (true = on)
 	void __not_in_flash_func(PulseOut2)(bool val)
 	{
-		gpio_put(PULSE_2_RAW_OUT, !val);
+		pwm_set_gpio_level(PULSE_2_RAW_OUT, val?0:5);
 	}
+
+	
+	/// Set Pulse output (with experimental partially-on state)
+	void __not_in_flash_func(PulseOut)(int i, PulseOutLevel val)
+	{
+		
+		pwm_set_gpio_level(PULSE_1_RAW_OUT + i, val);
+	}
+	
+	/// Set Pulse 1 output (with experimental partially-on state)
+	void __not_in_flash_func(PulseOut1)(PulseOutLevel val)
+	{
+		pwm_set_gpio_level(PULSE_1_RAW_OUT, val?1:5);
+	}
+	
+	/// Set Pulse 2 output (with experimental partially-on state) 
+	void __not_in_flash_func(PulseOut2)(PulseOutLevel val)
+	{
+		pwm_set_gpio_level(PULSE_2_RAW_OUT, val?1:5);
+	}
+
 	
 	/// Return audio in (-2048 to 2047)
 	int16_t __not_in_flash_func(AudioIn)(int i){return i?adcInR:adcInL;}
@@ -234,13 +291,11 @@ protected:
 	HardwareVersion_t HardwareVersion() {return hw;}
 
 	/// Return ID number unique to flash card
-	uint64_t UniqueCardID()	{return uniqueID;}
-	
-	static ComputerCard *ThisPtr() {return thisptr;}
-
+	uint64_t UniqueCardID()	{return uniqueID;}	
 	
 	void Abort();
-	
+	uint16_t CRCencode(const uint8_t *data, int length);
+
 private:
 	
 	typedef struct
@@ -257,6 +312,8 @@ private:
 
 	static constexpr int calMaxChannels = 2;
 	static constexpr int calMaxPoints = 10;
+
+	static volatile uint32_t cvValue[2];
 	
 	uint8_t numCalibrationPoints[calMaxChannels];
 	CalPoint calibrationTable[calMaxChannels][calMaxPoints];
@@ -266,7 +323,6 @@ private:
 	
 	uint8_t ReadByteFromEEPROM(unsigned int eeAddress);
 	int ReadIntFromEEPROM(unsigned int eeAddress);
-	uint16_t CRCencode(const uint8_t *data, int length);
 	void CalcCalCoeffs(int channel);
 	int ReadEEPROM();
 	uint32_t MIDIToDac(int midiNote, int channel);
@@ -321,6 +377,20 @@ private:
 		thisptr->BufferFull();
 	}
 	static ComputerCard *thisptr;
+
+	// 19-bit CV outputs
+	static void OnCVPWMWrap()
+	{
+		static int32_t error1 = 0, error2 = 0;
+
+		pwm_clear_irq(pwm_gpio_to_slice_num(CV_OUT_1)); // clear the interrupt flag
+		uint32_t truncated_cv1_val = (cvValue[0]-error1) & 0xFFFFFF00;
+		error1 += truncated_cv1_val - cvValue[0];
+		pwm_set_gpio_level(CV_OUT_1, (truncated_cv1_val>>8));
+		uint32_t truncated_cv2_val = (cvValue[1]-error2) & 0xFFFFFF00;
+		error2 += truncated_cv2_val - cvValue[1];
+		pwm_set_gpio_level(CV_OUT_2, (truncated_cv2_val>>8));
+	}
 
 };
 
@@ -390,6 +460,9 @@ private:
 #define EEPROM_PAGE_ADDRESS 0x50
 
 
+// Initialise CV output delta-sigma target to half-way (near 0V)
+volatile uint32_t ComputerCard::cvValue[2] = {262144,262144};
+
 
 ComputerCard *ComputerCard::thisptr;
 
@@ -444,7 +517,16 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 	irq_set_exclusive_handler(DMA_IRQ_0, ComputerCard::AudioCallback);
 
 
+	// Turn on IRQ for CV output PWM
+	uint slice_num = pwm_gpio_to_slice_num(CV_OUT_1);
+	pwm_clear_irq(slice_num);
+	pwm_set_irq_enabled(slice_num, true);
+	
+	irq_set_exclusive_handler(PWM_IRQ_WRAP, ComputerCard::OnCVPWMWrap);
+	irq_set_priority(PWM_IRQ_WRAP, 255);
+	irq_set_enabled(PWM_IRQ_WRAP, true);
 
+	
 	// Set up DMA for SPI
 	spi_dmacfg = dma_channel_get_default_config(spi_dma);
 	channel_config_set_transfer_data_size(&spi_dmacfg, DMA_SIZE_16);
@@ -475,6 +557,10 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 		}
 		else if (runADCMode == RUN_ADC_MODE_ADC_STOPPED)
 		{
+			// We can't remove the PWM IRQ from within the ADC IRQ callback, so we do it here instead.
+			irq_set_enabled(PWM_IRQ_WRAP, false);
+			pwm_clear_irq(pwm_gpio_to_slice_num(CV_OUT_1)); // reset CV PWM interrupt flag
+			irq_remove_handler(PWM_IRQ_WRAP, ComputerCard::OnCVPWMWrap);
 			break;
 		}
 		   
@@ -624,7 +710,10 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 		dma_hw->ints0 = 1u << adc_dma; // reset adc interrupt flag
 		dma_channel_cleanup(adc_dma);
 		dma_channel_cleanup(spi_dma);
+		irq_set_enabled(DMA_IRQ_0, false);
 		irq_remove_handler(DMA_IRQ_0, ComputerCard::AudioCallback);
+
+
 		
 		runADCMode = RUN_ADC_MODE_ADC_STOPPED;
 	}
@@ -677,7 +766,6 @@ ComputerCard::HardwareVersion_t ComputerCard::ProbeHardwareVersion()
 
 ComputerCard::ComputerCard()
 {
-		
 	runADCMode = RUN_ADC_MODE_RUNNING;
 
 	adc_run(false);
@@ -691,7 +779,8 @@ ComputerCard::ComputerCard()
 	}
 
 	
-	// Initialize PWM for LEDs, in pairs due pinout and PWM hardware
+	////////////////////////////////////////
+	// Initialise LEDs (PWM, set up in pairs due pinout and PWM hardware)
 	for (int i = 0; i < numLeds; i+=2)
 	{	
 		gpio_set_function(leds[i], GPIO_FUNC_PWM);
@@ -712,24 +801,9 @@ ComputerCard::ComputerCard()
 	}
 
 	
-	// Board version ID pins
-	gpio_init(BOARD_ID_0);
-	gpio_init(BOARD_ID_1);
-	gpio_init(BOARD_ID_2);
-	gpio_set_dir(BOARD_ID_0, GPIO_IN);
-	gpio_set_dir(BOARD_ID_1, GPIO_IN);
-	gpio_set_dir(BOARD_ID_2, GPIO_IN);
-	hw = ProbeHardwareVersion();
+	////////////////////////////////////////
+	// Initialise knobs / audio in / CV in (ADC + Mux)
 	
-	// USB host status pin
-	gpio_init(USB_HOST_STATUS);
-	gpio_disable_pulls(USB_HOST_STATUS);
-
-	// Normalisation probe pin
-	gpio_init(NORMALISATION_PROBE);
-	gpio_set_dir(NORMALISATION_PROBE, GPIO_OUT);
-	gpio_put(NORMALISATION_PROBE, false);
-
 	adc_init(); // Initialize the ADC
 
 	// Set ADC pins
@@ -744,16 +818,25 @@ ComputerCard::ComputerCard()
 	gpio_set_dir(MX_A, GPIO_OUT);
 	gpio_set_dir(MX_B, GPIO_OUT);
 
-	// Initialize pulse out
-	gpio_init(PULSE_1_RAW_OUT);
-	gpio_set_dir(PULSE_1_RAW_OUT, GPIO_OUT);
-	gpio_put(PULSE_1_RAW_OUT, true); // set raw value high (output low)
+	
+	////////////////////////////////////////
+	// Initialise pulse outputs (with PWM for intermediate value)
+	// First, tell the CV pins that the PWM is in charge of the value.
+	gpio_set_function(PULSE_1_RAW_OUT, GPIO_FUNC_PWM);
+	gpio_set_function(PULSE_2_RAW_OUT, GPIO_FUNC_PWM);
 
-	gpio_init(PULSE_2_RAW_OUT);
-	gpio_set_dir(PULSE_2_RAW_OUT, GPIO_OUT);
-	gpio_put(PULSE_2_RAW_OUT, true); // set raw value high (output low)
+	// now create PWM config struct
+	pwm_config config = pwm_get_default_config();
+	pwm_config_set_wrap(&config, 4); 
 
-	// Initialize pulse in
+	pwm_init(pwm_gpio_to_slice_num(PULSE_1_RAW_OUT), &config, true); // Slice 1, channel A
+	pwm_init(pwm_gpio_to_slice_num(PULSE_2_RAW_OUT), &config, true); // slice 1 channel B (redundant to set up again)
+	pwm_set_gpio_level(PULSE_1_RAW_OUT, 5);
+	pwm_set_gpio_level(PULSE_2_RAW_OUT, 5);
+	
+
+	////////////////////////////////////////
+	// Initialise pulse inputs
 	gpio_init(PULSE_1_INPUT);
 	gpio_set_dir(PULSE_1_INPUT, GPIO_IN);
 	gpio_pull_up(PULSE_1_INPUT); // NB Needs pullup to activate transistor on inputs
@@ -762,30 +845,27 @@ ComputerCard::ComputerCard()
 	gpio_set_dir(PULSE_2_INPUT, GPIO_IN);
 	gpio_pull_up(PULSE_2_INPUT); // NB: Needs pullup to activate transistor on inputs
 
-
-	// Setup SPI for DAC output
+	
+	////////////////////////////////////////
+	// Initialise audio outputs (SPI for external DAC)
 	spi_init(SPI_PORT, 15625000);
 	spi_set_format(SPI_PORT, 16, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
 	gpio_set_function(DAC_SCK, GPIO_FUNC_SPI);
 	gpio_set_function(DAC_TX, GPIO_FUNC_SPI);
 	gpio_set_function(DAC_CS, GPIO_FUNC_SPI);
 
-	// Setup I2C for EEPROM
-	i2c_init(i2c0, 100 * 1000);
-	gpio_set_function(EEPROM_SDA, GPIO_FUNC_I2C);
-	gpio_set_function(EEPROM_SCL, GPIO_FUNC_I2C);
 
+	////////////////////////////////////////
+	// Initialise CV outputs
+	// We set up the PWM here, and add the IRQ for sigma-delta later one Run() is called
 
-
-	// Setup CV PWM
 	// First, tell the CV pins that the PWM is in charge of the value.
 	gpio_set_function(CV_OUT_1, GPIO_FUNC_PWM);
 	gpio_set_function(CV_OUT_2, GPIO_FUNC_PWM);
 
 	// now create PWM config struct
-	pwm_config config = pwm_get_default_config();
+	config = pwm_get_default_config();
 	pwm_config_set_wrap(&config, 2047); // 11-bit PWM
-
 
 	// now set this PWM config to apply to the two outputs
 	// NB: CV_A and CV_B share the same PWM slice, which means that they share a PWM config
@@ -797,7 +877,34 @@ ComputerCard::ComputerCard()
 	pwm_set_gpio_level(CV_OUT_1, 1024);
 	pwm_set_gpio_level(CV_OUT_2, 1024);
 
-// If not using UART pins for UART, instead use as debug lines
+
+	////////////////////////////////////////
+	// Miscellaneous pins
+
+	// Initialise board version ID pins
+	gpio_init(BOARD_ID_0);
+	gpio_init(BOARD_ID_1);
+	gpio_init(BOARD_ID_2);
+	gpio_set_dir(BOARD_ID_0, GPIO_IN);
+	gpio_set_dir(BOARD_ID_1, GPIO_IN);
+	gpio_set_dir(BOARD_ID_2, GPIO_IN);
+	
+	// Initialise USB host status pin
+	gpio_init(USB_HOST_STATUS);
+	gpio_disable_pulls(USB_HOST_STATUS);
+
+	// Initialise normalisation probe pin
+	gpio_init(NORMALISATION_PROBE);
+	gpio_set_dir(NORMALISATION_PROBE, GPIO_OUT);
+	gpio_put(NORMALISATION_PROBE, false);
+	
+	// Initialise EEPROM (I2C)
+	i2c_init(i2c0, 100 * 1000);
+	gpio_set_function(EEPROM_SDA, GPIO_FUNC_I2C);
+	gpio_set_function(EEPROM_SCL, GPIO_FUNC_I2C);
+
+	
+	// If not using UART pins for UART, instead use as debug lines
 #ifndef ENABLE_UART_DEBUGGING
 	// Debug pins
 	gpio_init(DEBUG_1);
@@ -807,6 +914,9 @@ ComputerCard::ComputerCard()
 	gpio_set_dir(DEBUG_2, GPIO_OUT);
 #endif
 
+	// Read hardware version
+	hw = ProbeHardwareVersion();
+	
 	// Read EEPROM calibration values
 	ReadEEPROM();
 
