@@ -656,18 +656,28 @@ void midi_device_task()
 	// Read incoming packet if availabie
 	while (tud_midi_available())
 	{
-		uint32_t bytes_read = tud_midi_stream_read(packet, sizeof(packet));
+		uint32_t bytesToProcess = tud_midi_stream_read(packet, sizeof(packet));
 
-		if (bytes_read > 0)
+		uint8_t *bufferPtr = packet;
+		
+		while (bytesToProcess > 0)
 		{
 			if (packet[0] == 0xF0) // If SysEx, handle with standard routine
 			{
-				process_sys_ex_command(packet);
+				process_sys_ex_command(bufferPtr);
 			}
 			else // else pass on to application midi message handler
 			{
-				handle_midi_message(packet);
+				handle_midi_message(bufferPtr);
 			}
+
+			// Move pointer to next midi message in buffer, if it exists
+			// by scanning until we see a MIDI command byte (most significant bit set)
+			do 
+			{
+				bufferPtr++;
+				bytesToProcess--;
+			} while (bytesToProcess > 0 && (!(*bufferPtr & 0x80)));			
 		}
 	}
 }
