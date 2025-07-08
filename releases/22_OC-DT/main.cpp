@@ -11,7 +11,7 @@
  * - Loop/glitch mode for captured segment looping
  * 
  * Controls:
- * - Main Knob: Grain playback speed/direction (-2x to +2x, center=pause)
+ * - Main Knob: Grain playback speed/direction (-1x to +1x, center=pause)
  * - X Knob/CV1: Grain position spread (0=fixed delay, right=random spread)
  * - Y Knob/CV2: Grain size (Y knob as attenuverter when CV2 connected)
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop Mode
@@ -292,15 +292,17 @@ private:
 		// Get main knob value and apply virtual detents for playback speed
 		int32_t mainKnobVal = virtualDetentedKnob(KnobVal(Main));
 		
-		// Map main knob to grain playback speed: -2.0x to +2.0x with pause at center
-		// 0 -> -2.0x (-8192), 2048 -> 0x (0 = paused), 4095 -> +2.0x (8192)
+		// Map main knob to grain playback speed: -1x to +1x with pause at center
+		// 0 -> -1x (-4096), 2048 -> 0x (0 = paused), 4095 -> +1x (4096)
 		if (mainKnobVal <= 2048) {
-			// Left half: -2.0x to 0x (reverse full speed to paused)
-			grainPlaybackSpeed_ = -8192 + ((mainKnobVal * 8192) >> 11); // -8192 to 0
+			// Left half: -1x to 0x (full reverse to paused)
+			// -1x in Q12 = -4096
+			grainPlaybackSpeed_ = -4096 + ((mainKnobVal * 4096) >> 11); // -4096 to 0
 		} else {
-			// Right half: 0x to +2.0x (paused to forward full speed)
+			// Right half: 0x to +1x (paused to full forward)
+			// +1x in Q12 = 4096
 			int32_t rightKnob = mainKnobVal - 2048; // 0 to 2047
-			grainPlaybackSpeed_ = (rightKnob * 8192) >> 11; // 0 to 8192
+			grainPlaybackSpeed_ = (rightKnob * 4096) >> 11; // 0 to 4096
 		}
 		
 		// CRASH PROTECTION: Limit grain speed to prevent overflow and runaway loops
