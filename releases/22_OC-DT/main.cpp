@@ -11,8 +11,9 @@
  * - Loop/glitch mode for captured segment looping
  * 
  * Controls:
- * - Main Knob: Grain playback speed/direction (-2x to +2x, center=pause)
- * - X Knob/CV1: Grain position spread (0=fixed delay, right=random spread)
+ * - Main Knob: Grain playback speed/direction (-2x to +2x, center=pause) OR pitch attenuverter when CV1 connected
+ * - X Knob: Grain position spread (0=fixed delay, right=random spread)
+ * - CV1: Pitch control (-5V to +5V = -2x to +2x speed) with Main knob as attenuverter
  * - Y Knob/CV2: Grain size (Y knob as attenuverter when CV2 connected)
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop Mode
  * - Pulse 1 In: Triggers new grains
@@ -99,17 +100,8 @@ public:
 		}
 		// When switch is up, writeHead_ stays frozen, but virtualWriteHead_ continues advancing
 		
-		// Calculate X control value from knob X or CV1 (with X knob as attenuverter)
-		int32_t xControlValue;
-		if (Connected(Input::CV1)) {
-			// CV1 connected - X knob becomes attenuverter
-			int32_t cv1Val = CVIn1(); // -2048 to +2047
-			int32_t xKnobVal = KnobVal(X); // 0 to 4095
-			xControlValue = applyAttenuverter(cv1Val, xKnobVal);
-		} else {
-			// CV1 disconnected - X knob direct control (no virtual detents)
-			xControlValue = KnobVal(X);
-		}
+		// X knob always controls delay time/spread directly (no CV1 interaction)
+		int32_t xControlValue = KnobVal(X);
 		
 		// X knob functionality: Left half = delay time, Right half = spread
 		if (xControlValue <= 2047) {
@@ -289,20 +281,28 @@ private:
 		// Main knob now controls playback speed/direction (-2.0x to +2.0x with pause at center)
 		// Y knob now controls grain size (linear system)
 		
-		// Get main knob value and apply virtual detents for playback speed
-		int32_t mainKnobVal = virtualDetentedKnob(KnobVal(Main));
-		
-		// Map main knob to grain playback speed: -2x to +2x with pause at center
-		// 0 -> -2x (-8192), 2048 -> 0x (0 = paused), 4095 -> +2x (8192)
-		if (mainKnobVal <= 2048) {
-			// Left half: -2x to 0x (full reverse to paused)
-			// -2x in Q12 = -8192
-			grainPlaybackSpeed_ = -8192 + ((mainKnobVal * 8192) >> 11); // -8192 to 0
+		// CV1 pitch control with Main knob as attenuverter
+		if (Connected(Input::CV1)) {
+			// CV1 connected - CV1 controls pitch, Main knob becomes attenuverter
+			int32_t cv1Val = CVIn1(); // -2048 to +2047 (±5V)
+			int32_t mainKnobVal = virtualDetentedKnob(KnobVal(Main)); // Apply detents
+			grainPlaybackSpeed_ = applyPitchAttenuverter(cv1Val, mainKnobVal);
 		} else {
-			// Right half: 0x to +2x (paused to full forward)
-			// +2x in Q12 = 8192
-			int32_t rightKnob = mainKnobVal - 2048; // 0 to 2047
-			grainPlaybackSpeed_ = (rightKnob * 8192) >> 11; // 0 to 8192
+			// CV1 disconnected - Main knob direct pitch control (original behavior)
+			int32_t mainKnobVal = virtualDetentedKnob(KnobVal(Main));
+			
+			// Map main knob to grain playback speed: -2x to +2x with pause at center
+			// 0 -> -2x (-8192), 2048 -> 0x (0 = paused), 4095 -> +2x (8192)
+			if (mainKnobVal <= 2048) {
+				// Left half: -2x to 0x (full reverse to paused)
+				// -2x in Q12 = -8192
+				grainPlaybackSpeed_ = -8192 + ((mainKnobVal * 8192) >> 11); // -8192 to 0
+			} else {
+				// Right half: 0x to +2x (paused to full forward)
+				// +2x in Q12 = 8192
+				int32_t rightKnob = mainKnobVal - 2048; // 0 to 2047
+				grainPlaybackSpeed_ = (rightKnob * 8192) >> 11; // 0 to 8192
+			}
 		}
 		
 		// CRASH PROTECTION: Limit grain speed to prevent overflow and runaway loops
@@ -407,6 +407,37 @@ private:
 		// Clamp to valid knob range
 		if (result < 0) result = 0;
 		if (result > 4095) result = 4095;
+		
+		return result;
+	}
+	
+	// Pitch attenuverter function: applies Main knob as ±1x attenuverter to CV1 pitch input
+	int32_t __not_in_flash_func(applyPitchAttenuverter)(int32_t cv1Value, int32_t mainKnobValue)
+	{
+		// cv1Value: -2048 to +2047 (±5V CV input)
+		// mainKnobValue: 0 to 4095 (Main knob with detents)
+		// Returns: -8192 to +8192 (±2x speed in Q12)
+		
+		// Map Main knob to ±1x gain factor
+		// 0 -> -4096 (-1x), 2048 -> +4096 (+1x), 4095 -> +4096 (+1x)
+		int32_t gainFactor;
+		if (mainKnobValue <= 2048) {
+			// Left half: -1x to +1x gain
+			gainFactor = -4096 + ((mainKnobValue * 8192) >> 11); // -4096 to +4096
+		} else {
+			// Right half: +1x gain (no amplification beyond 1x)
+			gainFactor = 4096;
+		}
+		
+		// Apply gain to CV1: cv1 * gain / 4096
+		int32_t scaledCV = (cv1Value * gainFactor) >> 12;
+		
+		// Scale to ±2x speed range: scaledCV * 2
+		int32_t result = scaledCV * 2;
+		
+		// Clamp to ±2x speed range
+		if (result > 8192) result = 8192;   // +2x max
+		if (result < -8192) result = -8192; // -2x max
 		
 		return result;
 	}
