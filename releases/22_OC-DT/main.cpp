@@ -83,6 +83,13 @@ public:
 			switchPos = Switch::Down;
 		}
 		
+		// Always advance virtual write head for consistent delay timing
+		virtualWriteHead_++;
+		if (virtualWriteHead_ >= BUFF_LENGTH_SAMPLES)
+		{
+			virtualWriteHead_ = 0; // Wrap around for circular buffer
+		}
+		
 		// Record incoming audio to buffer ONLY when switch is not up (not in freeze mode)
 		if (switchPos != Switch::Up) {
 			uint16_t stereoSample = packStereo(AudioIn1(), AudioIn2());
@@ -92,8 +99,10 @@ public:
 			{
 				writeHead_ = 0; // Wrap around for circular buffer
 			}
+			// Keep virtual write head in sync with real write head when recording
+			virtualWriteHead_ = writeHead_;
 		}
-		// When switch is up, writeHead_ stays frozen, creating a looped buffer
+		// When switch is up, writeHead_ stays frozen, but virtualWriteHead_ continues advancing
 		
 		// Calculate X control value from knob X or CV1 (with X knob as attenuverter)
 		int32_t xControlValue;
@@ -200,6 +209,7 @@ public:
 private:
 	uint16_t buffer_[BUFF_LENGTH_SAMPLES]; 
 	int32_t writeHead_ = 0;	 // Write head for the buffer (start at 0, not 500)
+	int32_t virtualWriteHead_ = 0; // Virtual write head that continues advancing in freeze mode
 	int32_t delayDistance_ = 10000; // Distance between record and playback heads
 	int32_t spreadAmount_ = 0; // Spread control: 0 = fixed delay position, 4095 = full random
 
@@ -413,8 +423,9 @@ private:
 			{
 				grains_[i].active = true;
 				
-				// Calculate base playback position: writeHead - delayDistance
-				int32_t basePlaybackPos = writeHead_ - delayDistance_;
+				// Calculate base playback position using virtual write head for consistent delay timing
+				// In freeze mode, virtualWriteHead_ continues advancing while writeHead_ stays frozen
+				int32_t basePlaybackPos = virtualWriteHead_ - delayDistance_;
 				if (basePlaybackPos < 0) basePlaybackPos += BUFF_LENGTH_SAMPLES;
 				
 				// Apply spread control with overflow protection
