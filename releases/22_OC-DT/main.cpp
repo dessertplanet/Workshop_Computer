@@ -14,7 +14,7 @@
  * - Main Knob: Grain playback speed/direction (-2x to +2x, center=pause)
  * - X Knob/CV1: Grain position spread (0=fixed delay, right=random spread)
  * - Y Knob/CV2: Grain size (Y knob as attenuverter when CV2 connected)
- * - Switch: Up=Dry, Middle=Wet, Down=Loop Mode
+ * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop Mode
  * - Pulse 1 In: Triggers new grains
  * - Pulse 2 In: Forces switch down (loop mode)
  * 
@@ -27,6 +27,16 @@
 
 class OC_DT : public ComputerCard
 {
+private:
+	// Constants for magic numbers (Bug Fix #9)
+	static const int32_t GRAIN_TRIGGER_COOLDOWN_SAMPLES = 48; // ~1ms cooldown at 48kHz
+	static const int32_t SAFETY_MARGIN_SAMPLES = 1000; // ~20ms safety margin
+	static const int32_t GRAIN_END_PULSE_DURATION = 200; // ~4.2ms pulse duration
+	static const int32_t MAX_PULSE_HALF_PERIOD = 32768; // Maximum reasonable pulse period
+	static const int32_t PULSE_COUNTER_OVERFLOW_LIMIT = 65536; // Prevent counter overflow
+	static const int32_t VIRTUAL_DETENT_THRESHOLD = 12; // Center detent threshold
+	static const int32_t VIRTUAL_DETENT_EDGE_THRESHOLD = 5; // Edge detent threshold
+
 public:
 	OC_DT()
 	{
@@ -65,16 +75,25 @@ public:
 
 	virtual void ProcessSample()
 	{
-		uint16_t stereoSample;
+		// Read 3-way switch position first to determine recording behavior
+		Switch switchPos = SwitchVal();
 		
-		// Always record incoming audio (infinite tape mode)
-		stereoSample = packStereo(AudioIn1(), AudioIn2());
-		buffer_[writeHead_] = stereoSample;
-		writeHead_++;
-		if (writeHead_ >= BUFF_LENGTH_SAMPLES)
-		{
-			writeHead_ = 0; // Wrap around for circular buffer
+		// Override switch position if Pulse 2 is high (acts as switch down)
+		if (PulseIn2()) {
+			switchPos = Switch::Down;
 		}
+		
+		// Record incoming audio to buffer ONLY when switch is not up (not in freeze mode)
+		if (switchPos != Switch::Up) {
+			uint16_t stereoSample = packStereo(AudioIn1(), AudioIn2());
+			buffer_[writeHead_] = stereoSample;
+			writeHead_++;
+			if (writeHead_ >= BUFF_LENGTH_SAMPLES)
+			{
+				writeHead_ = 0; // Wrap around for circular buffer
+			}
+		}
+		// When switch is up, writeHead_ stays frozen, creating a looped buffer
 		
 		// Calculate X control value from knob X or CV1 (with X knob as attenuverter)
 		int32_t xControlValue;
@@ -104,16 +123,6 @@ public:
 		// Update stretch parameters from knobs
 		updateStretchParameters();
 		
-		// Read 3-way switch position
-		Switch switchPos = SwitchVal();
-		
-		// Override switch position if Pulse 2 is high (acts as switch down)
-		if (PulseIn2()) {
-			switchPos = Switch::Down;
-		}
-		
-		// Handle switch modes using enums
-		
 		// Check for grain triggering once per sample (before switch logic)
 		bool shouldTriggerGrain = PulseIn1RisingEdge() && (grainTriggerCooldown_ <= 0);
 		
@@ -124,19 +133,23 @@ public:
 		
 		// If we trigger a grain, set cooldown to prevent rapid retriggering
 		if (shouldTriggerGrain) {
-			grainTriggerCooldown_ = 48; // ~1ms cooldown at 48kHz
+			grainTriggerCooldown_ = GRAIN_TRIGGER_COOLDOWN_SAMPLES;
 		}
 		
-		if (switchPos == Switch::Up) { // Switch Up - Totally Dry
-			// Pass input directly to output
-			AudioOut1(AudioIn1());
-			AudioOut2(AudioIn2());
-			
-			// Still allow grain triggering in background for pulse output feedback
+		if (switchPos == Switch::Up) { // Switch Up - Freeze Buffer (Loop entire buffer)
+			// Buffer recording is already frozen (writeHead_ not advancing)
+			// Still allow grain triggering for pulse output feedback
 			if (shouldTriggerGrain)
 			{
 				triggerNewGrain();
 			}
+			
+			// Generate granular output from the frozen buffer
+			int16_t outL = generateStretchedSample(0); // Left channel
+			int16_t outR = generateStretchedSample(1); // Right channel
+
+			AudioOut1(outL);
+			AudioOut2(outR);
 		}
 		else if (switchPos == Switch::Middle) { // Switch Middle - 100% Wet (current behavior)
 			// Exit loop mode if we were in it
@@ -192,12 +205,14 @@ private:
 
 	// Time-stretching grain system
 	static const int MAX_GRAINS = 4;
+	static const int32_t GRAIN_FREEZE_TIMEOUT = 48000 * 5; // 5 seconds at 48kHz
 	struct Grain {
 		int32_t readPos;        // Current read position in buffer (integer part)
 		int32_t readFrac;       // Q12 fractional part for interpolation
 		int32_t sampleCount;    // Samples processed in this grain
 		int32_t startPos;       // Where grain started in buffer
 		int32_t loopSize;       // Size of loop when in loop mode
+		int32_t freezeCounter;  // Counter for frozen grain timeout
 		bool active;            // Whether grain is currently playing
 		bool looping;           // Whether this grain is in loop mode
 	};
@@ -226,8 +241,13 @@ private:
 		while (pos1 >= BUFF_LENGTH_SAMPLES) pos1 -= BUFF_LENGTH_SAMPLES;
 		while (pos1 < 0) pos1 += BUFF_LENGTH_SAMPLES;
 		
+		// Calculate pos2 with proper wraparound handling
 		int32_t pos2 = pos1 + 1;
-		if (pos2 >= BUFF_LENGTH_SAMPLES) pos2 = 0; // Wraparound
+		if (pos2 >= BUFF_LENGTH_SAMPLES) pos2 = 0; // Forward wraparound
+		
+		// Additional safety check: ensure both positions are valid
+		if (pos1 < 0 || pos1 >= BUFF_LENGTH_SAMPLES) pos1 = 0;
+		if (pos2 < 0 || pos2 >= BUFF_LENGTH_SAMPLES) pos2 = 0;
 		
 		int16_t sample1 = unpackStereo(buffer_[pos1], channel);
 		int16_t sample2 = unpackStereo(buffer_[pos2], channel);
@@ -347,7 +367,7 @@ private:
 		}
 
 		// Center detent - important for pause/freeze at 0x speed
-		if (cabs(val - 2048) < 12)
+		if (cabs(val - 2048) < VIRTUAL_DETENT_THRESHOLD)
 		{
 			val = 2048; // Slightly larger detent zone for center (pause)
 		}
@@ -397,7 +417,7 @@ private:
 				int32_t basePlaybackPos = writeHead_ - delayDistance_;
 				if (basePlaybackPos < 0) basePlaybackPos += BUFF_LENGTH_SAMPLES;
 				
-				// Apply spread control
+				// Apply spread control with overflow protection
 				int32_t playbackPos;
 				if (spreadAmount_ == 0) {
 					// Spread = 0: Use exact fixed delay position (normal time-stretching)
@@ -410,13 +430,28 @@ private:
 					// Convert to -2048 to +2047 range for bidirectional offset
 					int32_t randomOffset = randomValue - 2048;
 					
-					// Scale the offset by spread amount and limit to safe buffer portion
-					// Limit maximum offset to 1/4 of buffer to prevent read-past-write issues
-					int32_t maxOffset = BUFF_LENGTH_SAMPLES >> 2; // 1/4 buffer size
-					randomOffset = (randomOffset * maxOffset) >> 11; // Scale by spread (>> 11 = / 2048)
-					randomOffset = (randomOffset * spreadAmount_) >> 12; // Apply spread amount
+					// Scale the offset with overflow protection
+					// Limit maximum offset to 1/8 of buffer (more conservative) to prevent overflow
+					const int32_t maxSafeOffset = BUFF_LENGTH_SAMPLES >> 3; // 1/8 buffer size
 					
-					// Apply offset to base position
+					// First scaling: randomOffset * maxSafeOffset with overflow check
+					int64_t temp64 = (int64_t)randomOffset * maxSafeOffset;
+					temp64 >>= 11; // Scale by spread (>> 11 = / 2048)
+					
+					// Clamp to prevent overflow
+					if (temp64 > maxSafeOffset) temp64 = maxSafeOffset;
+					if (temp64 < -maxSafeOffset) temp64 = -maxSafeOffset;
+					
+					// Second scaling: apply spread amount with overflow check
+					temp64 = (temp64 * spreadAmount_) >> 12;
+					
+					// Final clamp to safe range
+					if (temp64 > maxSafeOffset) temp64 = maxSafeOffset;
+					if (temp64 < -maxSafeOffset) temp64 = -maxSafeOffset;
+					
+					randomOffset = (int32_t)temp64;
+					
+					// Apply offset to base position with bounds checking
 					playbackPos = basePlaybackPos + randomOffset;
 				}
 				
@@ -425,7 +460,7 @@ private:
 				while (playbackPos < 0) playbackPos += BUFF_LENGTH_SAMPLES;
 				
 				// Safety check: ensure grain never reads past write head (allow small safety margin)
-				int32_t safetyMargin = 1000; // ~20ms safety margin
+				const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
 				int32_t maxSafePos = writeHead_ - safetyMargin;
 				if (maxSafePos < 0) maxSafePos += BUFF_LENGTH_SAMPLES;
 				
@@ -440,6 +475,8 @@ private:
 				grains_[i].readFrac = 0; // Initialize fractional part
 				grains_[i].startPos = grains_[i].readPos;
 				grains_[i].sampleCount = 0;
+				grains_[i].freezeCounter = 0; // Initialize freeze counter
+				grains_[i].loopSize = grainSize_; // Store current grain size for potential loop mode
 				break;
 			}
 		}
@@ -496,7 +533,7 @@ private:
 			}
 		}
 		
-		// Handle output normalization
+		// Handle output normalization with division by zero protection
 		if (totalWeight > 0)
 		{
 			// Always normalize by total weight for consistent granular processing
@@ -510,6 +547,7 @@ private:
 		}
 		else
 		{
+			// No active grains or zero total weight - return silence
 			return 0;
 		}
 	}
@@ -599,7 +637,25 @@ private:
 							grainEndCounter_ = 0;
 						}
 					}
-					// When speed is 0, grain stays frozen at current position indefinitely
+					else
+					{
+						// When speed is 0, grain is frozen - increment freeze counter
+						// BUT: Don't apply freeze timeout to looping grains (they're supposed to stay active)
+						if (!grains_[i].looping)
+						{
+							grains_[i].freezeCounter++;
+							
+							// If grain has been frozen too long, deactivate it to prevent stuck grains
+							if (grains_[i].freezeCounter >= GRAIN_FREEZE_TIMEOUT)
+							{
+								grains_[i].active = false;
+								// Trigger grain end pulse on timeout
+								grainEndTrigger_ = true;
+								grainEndCounter_ = 0;
+							}
+						}
+						// Looping grains stay frozen at their current position when speed = 0
+					}
 				}
 			}
 		}
@@ -616,7 +672,8 @@ private:
 			if (grains_[i].active)
 			{
 				grains_[i].looping = true;
-				grains_[i].loopSize = grainSize_; // Capture current grain size as loop size
+				// Use the grain's stored loop size (set when grain was created)
+				// This prevents race condition where grainSize_ changes after grain creation
 				// Reset sample count to prevent immediate deactivation
 				grains_[i].sampleCount = 0;
 			}
@@ -754,12 +811,18 @@ private:
 			}
 		}
 		
-		// Safety clamps to prevent lockup
+		// Safety clamps to prevent lockup and overflow
 		if (pulseHalfPeriod < 1) pulseHalfPeriod = 1;
-		if (pulseHalfPeriod > 32768) pulseHalfPeriod = 32768; // Max reasonable period
+		if (pulseHalfPeriod > MAX_PULSE_HALF_PERIOD) pulseHalfPeriod = MAX_PULSE_HALF_PERIOD;
 		
-		// Generate square wave
+		// Generate square wave with overflow protection
 		pulseCounter_++;
+		
+		// Prevent counter overflow by resetting if it gets too large
+		if (pulseCounter_ > PULSE_COUNTER_OVERFLOW_LIMIT) {
+			pulseCounter_ = 0;
+		}
+		
 		if (pulseCounter_ >= pulseHalfPeriod) {
 			pulseState_ = !pulseState_;
 			pulseCounter_ = 0;
@@ -775,8 +838,8 @@ private:
 		bool pulse2Output = false;
 		
 		if (grainEndTrigger_) {
-			// Generate a longer trigger pulse (200 samples = ~4.2ms at 48kHz)
-			if (grainEndCounter_ < 200) {
+			// Generate a longer trigger pulse
+			if (grainEndCounter_ < GRAIN_END_PULSE_DURATION) {
 				pulse2Output = true;
 				grainEndCounter_++;
 			} else {
