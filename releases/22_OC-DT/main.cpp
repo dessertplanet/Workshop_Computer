@@ -17,10 +17,6 @@
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop Mode
  * - Pulse 1 In: Triggers new grains
  * - Pulse 2 In: Forces switch down (loop mode)
- * 
- * Outputs:
- * - Pulse 1 Out: Square wave with Y knob rate control (24kHz to grain-rate, left=fast)
- * - Pulse 2 Out: Quick pulse whenever any grain ends
  */
 
 #define BUFF_LENGTH_SAMPLES 125000 // ~2.6 seconds at 48kHz
@@ -36,6 +32,10 @@ private:
 	static const int32_t PULSE_COUNTER_OVERFLOW_LIMIT = 65536; // Prevent counter overflow
 	static const int32_t VIRTUAL_DETENT_THRESHOLD = 12; // Center detent threshold
 	static const int32_t VIRTUAL_DETENT_EDGE_THRESHOLD = 5; // Edge detent threshold
+	
+	// Crash protection constants
+	static const int32_t MAX_FRACTIONAL_ITERATIONS = 16; // Limit while loop iterations to prevent runaway
+	static const int32_t MAX_SAFE_GRAIN_SPEED = 16384; // Limit grain speed to prevent overflow (4x max)
 
 public:
 	OC_DT()
@@ -53,11 +53,6 @@ public:
 		maxActiveGrains_ = 4; // Fixed maximum - no adaptive limits
 		loopMode_ = false; // Initialize loop mode
 		
-		// Initialize pulse output state
-		pulseCounter_ = 0;
-		pulseState_ = false;
-		grainEndTrigger_ = false;
-		grainEndCounter_ = 0;
 		grainTriggerCooldown_ = 0;
 		
 		// Initialize all grains as inactive
@@ -199,9 +194,6 @@ public:
 			AudioOut2(outR);
 		}
 		
-		// Update pulse outputs
-		updatePulseOutputs();
-		
 		// Update grain system
 		updateGrains();
 	}
@@ -235,11 +227,6 @@ private:
 	int32_t maxActiveGrains_;   // Fixed maximum grain count (4)
 	bool loopMode_;             // Whether we're in loop/glitch mode (switch down)
 	
-	// Pulse output state
-	int32_t pulseCounter_;      // Counter for pulse timing
-	bool pulseState_;           // Current state of pulse output
-	bool grainEndTrigger_;      // Trigger for grain end pulses
-	int32_t grainEndCounter_;   // Counter for grain end pulse duration
 	int32_t grainTriggerCooldown_; // Cooldown to prevent rapid retriggering
 	
 
@@ -314,6 +301,14 @@ private:
 			// Right half: 0x to +2.0x (paused to forward full speed)
 			int32_t rightKnob = mainKnobVal - 2048; // 0 to 2047
 			grainPlaybackSpeed_ = (rightKnob * 8192) >> 11; // 0 to 8192
+		}
+		
+		// CRASH PROTECTION: Limit grain speed to prevent overflow and runaway loops
+		if (grainPlaybackSpeed_ > MAX_SAFE_GRAIN_SPEED) {
+			grainPlaybackSpeed_ = MAX_SAFE_GRAIN_SPEED;
+		}
+		if (grainPlaybackSpeed_ < -MAX_SAFE_GRAIN_SPEED) {
+			grainPlaybackSpeed_ = -MAX_SAFE_GRAIN_SPEED;
 		}
 		
 		// Calculate Y control value from knob Y or CV2 (with Y knob as attenuverter)
@@ -614,13 +609,21 @@ private:
 					{
 						grains_[i].sampleCount++;
 						
+						// Store original position for boundary checking
+						int32_t originalPos = grains_[i].readPos;
+						int32_t originalFrac = grains_[i].readFrac;
+						
 						// Advance read position with fractional tracking
 						grains_[i].readFrac += grainSpeed;
 						
-						// Handle integer overflow from fractional part
-						while (grains_[i].readFrac >= 4096) { // >= 1.0 in Q12
+						// CRASH PROTECTION: Bounded iteration limits to prevent runaway loops
+						int32_t iterationCount = 0;
+						
+						// Handle integer overflow from fractional part with bounded iterations
+						while (grains_[i].readFrac >= 4096 && iterationCount < MAX_FRACTIONAL_ITERATIONS) {
 							grains_[i].readPos++;
 							grains_[i].readFrac -= 4096;
+							iterationCount++;
 							
 							// Handle buffer wraparound
 							if (grains_[i].readPos >= BUFF_LENGTH_SAMPLES) {
@@ -628,10 +631,19 @@ private:
 							}
 						}
 						
-						// Handle negative speeds (reverse playback)
-						while (grains_[i].readFrac < 0) {
+						// If we hit the iteration limit, clamp the fractional part
+						if (grains_[i].readFrac >= 4096) {
+							grains_[i].readFrac = 4095; // Clamp to just under 1.0
+						}
+						
+						// Reset iteration counter for negative speed handling
+						iterationCount = 0;
+						
+						// Handle negative speeds (reverse playback) with bounded iterations
+						while (grains_[i].readFrac < 0 && iterationCount < MAX_FRACTIONAL_ITERATIONS) {
 							grains_[i].readPos--;
 							grains_[i].readFrac += 4096;
+							iterationCount++;
 							
 							// Handle buffer wraparound
 							if (grains_[i].readPos < 0) {
@@ -639,13 +651,30 @@ private:
 							}
 						}
 						
+						// If we hit the iteration limit, clamp the fractional part
+						if (grains_[i].readFrac < 0) {
+							grains_[i].readFrac = 0; // Clamp to 0
+						}
+						
+						// WRITE HEAD BOUNDARY CHECK: Prevent grains from reading past write head
+						const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
+						int32_t maxSafePos = writeHead_ - safetyMargin;
+						if (maxSafePos < 0) maxSafePos += BUFF_LENGTH_SAMPLES;
+						
+						// Calculate distance from grain to write head (accounting for circular buffer)
+						int32_t distanceToWrite = writeHead_ - grains_[i].readPos;
+						if (distanceToWrite < 0) distanceToWrite += BUFF_LENGTH_SAMPLES;
+						
+						// If grain is too close to write head, clamp it to safe position
+						if (distanceToWrite < safetyMargin) {
+							grains_[i].readPos = maxSafePos;
+							grains_[i].readFrac = 0; // Reset fractional part when clamped
+						}
+						
 						// Deactivate grain if it's finished (only when not frozen)
 						if (grains_[i].sampleCount >= grainSize_)
 						{
 							grains_[i].active = false;
-							// Trigger grain end pulse on Pulse 2 output
-							grainEndTrigger_ = true;
-							grainEndCounter_ = 0;
 						}
 					}
 					else
@@ -660,9 +689,6 @@ private:
 							if (grains_[i].freezeCounter >= GRAIN_FREEZE_TIMEOUT)
 							{
 								grains_[i].active = false;
-								// Trigger grain end pulse on timeout
-								grainEndTrigger_ = true;
-								grainEndCounter_ = 0;
 							}
 						}
 						// Looping grains stay frozen at their current position when speed = 0
@@ -774,97 +800,6 @@ private:
 		}
 	}
 
-	// Update pulse outputs
-	void __not_in_flash_func(updatePulseOutputs)()
-	{
-		// Pulse 1: Square wave with Y knob controlling rate from grain-based to 24kHz
-		// Calculate the rate based on current grain size (slowest) up to 24kHz (fastest)
-		
-		// Get Y control value (same as used for grain size)
-		int32_t yControlValue;
-		if (Connected(Input::CV2)) {
-			// CV2 connected - Y knob becomes attenuverter
-			int32_t cv2Val = CVIn2(); // -2048 to +2047
-			int32_t yKnobVal = KnobVal(Y); // 0 to 4095
-			yControlValue = applyAttenuverter(cv2Val, yKnobVal);
-		} else {
-			// CV2 disconnected - Y knob direct control
-			yControlValue = KnobVal(Y);
-		}
-		
-		// Apply virtual detents to the control value
-		yControlValue = virtualDetentedKnob(yControlValue);
-		
-		// Map Y control to pulse rate (FLIPPED):
-		// yControlValue = 0 -> 24kHz period (1 sample, fastest)
-		// yControlValue = 4095 -> use grain size period (slowest)
-		
-		int32_t pulseHalfPeriod;
-		if (yControlValue <= 2048) {
-			// Left half: 24kHz to ~1kHz
-			// At 0: 1 sample (24kHz at 48kHz)
-			// At 2048: 24 samples (1kHz)
-			pulseHalfPeriod = 1 + ((yControlValue * 23) / 2048); // 1 up to 24
-		} else {
-			// Right half: ~1kHz to grain-based rate
-			// At 2048: 24 samples (1kHz)
-			// At 4095: use grain size / 2 (slowest)
-			int32_t rightKnob = yControlValue - 2048; // 0 to 2047
-			int32_t grainHalfPeriod = grainSize_ >> 1;
-			int32_t fastHalfPeriod = 24; // 1kHz
-			
-			// Ensure we don't have negative values in interpolation
-			if (grainHalfPeriod < fastHalfPeriod) {
-				pulseHalfPeriod = grainHalfPeriod;
-			} else {
-				// Linear interpolation from fast to slow
-				pulseHalfPeriod = fastHalfPeriod + ((grainHalfPeriod - fastHalfPeriod) * rightKnob) / 2047;
-			}
-		}
-		
-		// Safety clamps to prevent lockup and overflow
-		if (pulseHalfPeriod < 1) pulseHalfPeriod = 1;
-		if (pulseHalfPeriod > MAX_PULSE_HALF_PERIOD) pulseHalfPeriod = MAX_PULSE_HALF_PERIOD;
-		
-		// Generate square wave with overflow protection
-		pulseCounter_++;
-		
-		// Prevent counter overflow by resetting if it gets too large
-		if (pulseCounter_ > PULSE_COUNTER_OVERFLOW_LIMIT) {
-			pulseCounter_ = 0;
-		}
-		
-		if (pulseCounter_ >= pulseHalfPeriod) {
-			pulseState_ = !pulseState_;
-			pulseCounter_ = 0;
-		}
-		
-		// Output the pulse state
-		PulseOut1(pulseState_);
-		
-		// Light up LED 4 when Pulse 1 is high
-		LedOn(4, pulseState_);
-		
-		// Pulse 2: Quick pulse whenever any grain ends
-		bool pulse2Output = false;
-		
-		if (grainEndTrigger_) {
-			// Generate a longer trigger pulse
-			if (grainEndCounter_ < GRAIN_END_PULSE_DURATION) {
-				pulse2Output = true;
-				grainEndCounter_++;
-			} else {
-				// End of trigger pulse
-				grainEndTrigger_ = false;
-				grainEndCounter_ = 0;
-			}
-		}
-		
-		PulseOut2(pulse2Output);
-		
-		// Light up LED 5 when Pulse 2 is high
-		LedOn(5, pulse2Output);
-	}
 };
 
 int main()
