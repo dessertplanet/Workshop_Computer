@@ -12,9 +12,9 @@
  * 
  * Controls:
  * - Main Knob: Grain playback speed/direction (-2x to +2x, center=pause) OR pitch attenuverter when CV2 connected
- * - X Knob: Grain position spread (0=fixed delay, right=random spread) OR attenuverter when CV1 connected
+ * - X Knob: Grain position spread (0=fixed delay, right=random spread) OR attenuverter when CV1 connected (left=invert, center=off, right=normal)
  * - Y Knob: Grain size (linear control from micro to huge grains)
- * - CV1: Grain position control (relative to write head in normal mode, scrubs whole buffer in freeze mode) with X knob as attenuverter
+ * - CV1: Grain position control (0-5V covers full range, negative values wrap from end) with X knob as attenuverter
  * - CV2: Pitch control (-5V to +5V = -2x to +2x speed) with Main knob as attenuverter
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop Mode
  * - Pulse 1 In: Triggers new grains
@@ -479,8 +479,47 @@ private:
 					int32_t cv1Val = CVIn1(); // -2048 to +2047 (±5V)
 					int32_t xKnobVal = KnobVal(X); // 0 to 4095 (X knob as attenuverter)
 					
-					// Apply attenuverter to get position control value
-					int32_t positionControlValue = applyAttenuverter(cv1Val, xKnobVal);
+					// Convert CV1 to position control value with wrapping
+					// 0-5V (cv1Val 0 to +2047) uses full range 0-4095
+					// Negative values wrap around from the end
+					int32_t rawPositionValue;
+					if (cv1Val >= 0) {
+						// Positive CV: scale 0-2047 to 0-4095 (double the resolution for 0-5V)
+						rawPositionValue = (cv1Val * 4095) / 2047;
+					} else {
+						// Negative CV: wrap from end of range
+						// -2048 to -1 maps to 4095 down to 2048 (wrapping from end)
+						rawPositionValue = 4095 + ((cv1Val * 2048) / 2048); // cv1Val is negative, so this subtracts
+					}
+					
+					// Clamp to valid range
+					if (rawPositionValue < 0) rawPositionValue = 0;
+					if (rawPositionValue > 4095) rawPositionValue = 4095;
+					
+					// Apply X knob as proper attenuverter
+					// X knob at 0 = full inversion (-1x)
+					// X knob at 2048 = no effect (0x) 
+					// X knob at 4095 = full positive (+1x)
+					int32_t positionControlValue;
+					
+					// Map X knob to gain factor: 0 -> -1x, 2048 -> 0x, 4095 -> +1x
+					int32_t gainFactor;
+					if (xKnobVal <= 2048) {
+						// Left half: -1x to 0x
+						gainFactor = -4096 + ((xKnobVal * 4096) / 2048); // -4096 to 0
+					} else {
+						// Right half: 0x to +1x
+						gainFactor = ((xKnobVal - 2048) * 4096) / 2047; // 0 to +4096
+					}
+					
+					// Apply attenuverter: center position (2048) + (CV offset * gain)
+					int32_t cvOffset = rawPositionValue - 2048; // -2048 to +2047
+					int32_t scaledOffset = (cvOffset * gainFactor) / 4096; // Apply gain
+					positionControlValue = 2048 + scaledOffset; // Add back to center
+					
+					// Final clamp
+					if (positionControlValue < 0) positionControlValue = 0;
+					if (positionControlValue > 4095) positionControlValue = 4095;
 					
 					// Check if buffer is frozen (switch up or pulse 2)
 					bool bufferIsFrozen = (SwitchVal() == Switch::Up) || PulseIn2();
