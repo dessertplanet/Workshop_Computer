@@ -11,10 +11,10 @@
  * - Loop/glitch mode for captured segment looping
  * 
  * Controls:
- * - Main Knob: Grain playback speed/direction (-2x to +2x, center=pause) OR pitch attenuverter when CV1 connected
+ * - Main Knob: Grain playback speed/direction (-2x to +2x, center=pause) OR pitch attenuverter when CV2 connected
  * - X Knob: Grain position spread (0=fixed delay, right=random spread)
- * - CV1: Pitch control (-5V to +5V = -2x to +2x speed) with Main knob as attenuverter
- * - Y Knob/CV2: Grain size (Y knob as attenuverter when CV2 connected)
+ * - CV1/Y Knob: Grain size (Y knob as attenuverter when CV1 connected)
+ * - CV2: Pitch control (-5V to +5V = -2x to +2x speed) with Main knob as attenuverter
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop Mode
  * - Pulse 1 In: Triggers new grains
  * - Pulse 2 In: Forces switch down (loop mode)
@@ -291,14 +291,14 @@ private:
 		// Main knob now controls playback speed/direction (-2.0x to +2.0x with pause at center)
 		// Y knob now controls grain size (linear system)
 		
-		// CV1 pitch control with Main knob as attenuverter
-		if (Connected(Input::CV1)) {
-			// CV1 connected - CV1 controls pitch, Main knob becomes attenuverter
-			int32_t cv1Val = CVIn1(); // -2048 to +2047 (±5V)
+		// CV2 pitch control with Main knob as attenuverter
+		if (Connected(Input::CV2)) {
+			// CV2 connected - CV2 controls pitch, Main knob becomes attenuverter
+			int32_t cv2Val = CVIn2(); // -2048 to +2047 (±5V)
 			int32_t mainKnobVal = virtualDetentedKnob(KnobVal(Main)); // Apply detents
-			grainPlaybackSpeed_ = applyPitchAttenuverter(cv1Val, mainKnobVal);
+			grainPlaybackSpeed_ = applyPitchAttenuverter(cv2Val, mainKnobVal);
 		} else {
-			// CV1 disconnected - Main knob direct pitch control (original behavior)
+			// CV2 disconnected - Main knob direct pitch control (original behavior)
 			int32_t mainKnobVal = virtualDetentedKnob(KnobVal(Main));
 			
 			// Map main knob to grain playback speed: -2x to +2x with pause at center
@@ -323,15 +323,15 @@ private:
 			grainPlaybackSpeed_ = -MAX_SAFE_GRAIN_SPEED;
 		}
 		
-		// Calculate Y control value from knob Y or CV2 (with Y knob as attenuverter)
+		// Calculate Y control value from knob Y or CV1 (with Y knob as attenuverter)
 		int32_t yControlValue;
-		if (Connected(Input::CV2)) {
-			// CV2 connected - Y knob becomes attenuverter
-			int32_t cv2Val = CVIn2(); // -2048 to +2047
+		if (Connected(Input::CV1)) {
+			// CV1 connected - Y knob becomes attenuverter
+			int32_t cv1Val = CVIn1(); // -2048 to +2047
 			int32_t yKnobVal = KnobVal(Y); // 0 to 4095
-			yControlValue = applyAttenuverter(cv2Val, yKnobVal);
+			yControlValue = applyAttenuverter(cv1Val, yKnobVal);
 		} else {
-			// CV2 disconnected - Y knob direct control
+			// CV1 disconnected - Y knob direct control
 			yControlValue = KnobVal(Y);
 		}
 		
