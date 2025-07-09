@@ -194,11 +194,8 @@ public:
 				enterLoopMode();
 			}
 			
-			// Allow grain triggering even in loop mode
-			if (shouldTriggerGrain)
-			{
-				triggerNewGrain();
-			}
+			// In loop mode, do NOT trigger new grains - existing grains just loop
+			// User must manually trigger grains before entering loop mode
 			
 			// Generate looped granular output
 			int16_t outL = generateStretchedSample(0); // Left channel
@@ -590,9 +587,15 @@ private:
 				// Handle looping grains differently
 				if (grains_[i].looping)
 				{
-					// In loop mode, grains loop within their captured segment
+					// In loop mode, grains loop within their original captured segment
+					// They advance through their grain but loop back to the start when finished
+					// This creates repeating stutters of the captured audio segment
+					
 					if (grainSpeed != 0)
 					{
+						// Increment sample count for windowing calculation
+						grains_[i].sampleCount++;
+						
 						// Advance read position with fractional tracking
 						grains_[i].readFrac += grainSpeed;
 						
@@ -600,24 +603,28 @@ private:
 						while (grains_[i].readFrac >= 4096) { // >= 1.0 in Q12
 							grains_[i].readPos++;
 							grains_[i].readFrac -= 4096;
-							
-							// Loop within the captured segment
-							if (grains_[i].readPos >= grains_[i].startPos + grains_[i].loopSize) {
-								grains_[i].readPos = grains_[i].startPos;
-							}
 						}
 						
 						// Handle negative speeds (reverse looping)
 						while (grains_[i].readFrac < 0) {
 							grains_[i].readPos--;
 							grains_[i].readFrac += 4096;
-							
-							// Loop within the captured segment (reverse)
-							if (grains_[i].readPos < grains_[i].startPos) {
-								grains_[i].readPos = grains_[i].startPos + grains_[i].loopSize - 1;
-							}
 						}
+						
+						// Loop back to start when grain reaches its end
+						// This creates the stuttering loop effect
+						if (grains_[i].sampleCount >= grains_[i].grainSize) {
+							// Reset to beginning of grain segment for looping
+							grains_[i].readPos = grains_[i].startPos;
+							grains_[i].readFrac = 0;
+							grains_[i].sampleCount = 0;
+						}
+						
+						// Handle buffer wraparound for readPos
+						while (grains_[i].readPos >= BUFF_LENGTH_SAMPLES) grains_[i].readPos -= BUFF_LENGTH_SAMPLES;
+						while (grains_[i].readPos < 0) grains_[i].readPos += BUFF_LENGTH_SAMPLES;
 					}
+					
 					// Looping grains never deactivate automatically
 				}
 				else
@@ -722,16 +729,33 @@ private:
 	{
 		loopMode_ = true;
 		
-		// Convert all currently active grains to looping mode
+		// Check if any grains are currently active
+		bool hasActiveGrains = false;
 		for (int i = 0; i < MAX_GRAINS; i++)
 		{
 			if (grains_[i].active)
 			{
+				hasActiveGrains = true;
 				grains_[i].looping = true;
 				// Use the grain's stored loop size (set when grain was created)
 				// This prevents race condition where grainSize_ changes after grain creation
-				// Reset sample count to prevent immediate deactivation
-				grains_[i].sampleCount = 0;
+				// Keep current sampleCount for smooth transition to loop mode
+			}
+		}
+		
+		// If no grains are active, trigger one grain to ensure we have something to loop
+		if (!hasActiveGrains)
+		{
+			triggerNewGrain();
+			// Now convert the newly triggered grain to looping mode
+			for (int i = 0; i < MAX_GRAINS; i++)
+			{
+				if (grains_[i].active && !grains_[i].looping)
+				{
+					grains_[i].looping = true;
+					// Keep initial sampleCount for proper windowing
+					break; // Only need to convert the first one we find
+				}
 			}
 		}
 	}
@@ -747,8 +771,7 @@ private:
 			{
 				grains_[i].looping = false;
 				grains_[i].loopSize = 0;
-				// Reset sample count for normal grain lifecycle
-				grains_[i].sampleCount = 0;
+				// Keep current sample count for smooth transition from loop mode
 			}
 		}
 	}
