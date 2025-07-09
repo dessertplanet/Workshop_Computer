@@ -20,7 +20,7 @@
  * - Pulse 2 In: Forces switch down (loop mode)
  */
 
-#define BUFF_LENGTH_SAMPLES 125000 // ~2.6 seconds at 48kHz
+#define BUFF_LENGTH_SAMPLES 100000 // ~2.6 seconds at 48kHz
 
 class OC_DT : public ComputerCard
 {
@@ -28,22 +28,24 @@ private:
 	// 256-entry Hann window lookup table (Q12 format)
 	static constexpr int HANN_TABLE_SIZE = 256;
 	static constexpr int32_t hannWindowTable_[HANN_TABLE_SIZE] = {
-		// 256-entry Hann window, Q12 format, 0.5 * (1 - cos(2 * pi * n / 255)) * 4096
-		0, 78, 313, 704, 1251, 1953, 2820, 3850, 5043, 6397, 7911, 9584, 11414, 13399, 15539, 17831,
-		20274, 22865, 25603, 28485, 31509, 34672, 37972, 41406, 44971, 48664, 52482, 56422, 60480, 64653, 68937, 73328,
-		77822, 82415, 87102, 91878, 96739, 101681, 106698, 111786, 116940, 122154, 127423, 132741, 138102, 143501, 148931, 154387,
-		159862, 165351, 170847, 176344, 181836, 187316, 192778, 198216, 203623, 208993, 214319, 219595, 224814, 229970, 235056, 240067,
-		244995, 249836, 254582, 259228, 263768, 268196, 272505, 276690, 280744, 284662, 288437, 292064, 295537, 298851, 302000, 304980,
-		307785, 310411, 312853, 315107, 317168, 319033, 320697, 322157, 323409, 324450, 325277, 325887, 326277, 326445, 326389, 326108,
-		325599, 324862, 323895, 322698, 321270, 319611, 317721, 315600, 313249, 310668, 307858, 304820, 301555, 298065, 294351, 290415,
-		286259, 281885, 277295, 272492, 267478, 262256, 256828, 251198, 245368, 239342, 233123, 226715, 220121, 213346, 206393, 199267,
-		191972, 184513, 176895, 169123, 161202, 153137, 144934, 136598, 128135, 119551, 110852, 102044, 93133, 84126, 75029, 65848,
-		56601, 47294, 37934, 28529, 19086, 9622,  0, -9622, -19086, -28529, -37934, -47294, -56601, -65848, -75029, -84126,
-		-93133, -102044, -110852, -119551, -128135, -136598, -144934, -153137, -161202, -169123, -176895, -184513, -191972, -199267, -206393, -213346,
-		-220121, -226715, -233123, -239342, -245368, -251198, -256828, -262256, -267478, -272492, -277295, -281885, -286259, -290415, -294351, -298065,
-		-301555, -304820, -307858, -310668, -313249, -315600, -317721, -319611, -321270, -322698, -323895, -324862, -325599, -326108, -326389, -326445,
-		-326277, -325887, -325277, -324450, -323409, -322157, -320697, -319033, -317168, -315107, -312853, -310411, -307785, -304980, -302000, -298851,
-		-295537, -292064, -288437, -284662, -280744, -276690, -272505, -268196, -263768, -259228, -254582, -249836, -244995, -240067, -235056, -229970
+		// 256-entry Hann window, Q12 format, 0.5 * (1 - cos(2 * pi * n / (N-1))) * 4096
+		// Properly calculated Hann window - all values are positive, ranging from 0 to 4096
+		0, 5, 20, 45, 78, 121, 173, 235, 306, 386, 476, 575, 683, 801, 928, 1064,
+		1210, 1365, 1529, 1703, 1886, 2078, 2279, 2490, 2710, 2939, 3177, 3424, 3680, 3945, 4219, 4502,
+		4794, 5095, 5405, 5724, 6051, 6387, 6732, 7085, 7447, 7817, 8196, 8583, 8978, 9381, 9792, 10212,
+		10639, 11074, 11517, 11968, 12426, 12892, 13365, 13845, 14333, 14828, 15330, 15838, 16354, 16876, 17405, 17940,
+		18482, 19030, 19584, 20144, 20710, 21281, 21858, 22440, 23027, 23619, 24216, 24818, 25424, 26035, 26650, 27269,
+		27892, 28519, 29149, 29783, 30420, 31060, 31703, 32349, 32997, 33648, 34301, 34956, 35613, 36272, 36932, 37594,
+		38257, 38921, 39586, 40252, 40918, 41585, 42252, 42919, 43586, 44253, 44920, 45586, 46252, 46917, 47581, 48244,
+		48906, 49567, 50226, 50884, 51540, 52195, 52847, 53498, 54146, 54793, 55437, 56079, 56718, 57355, 57989, 58620,
+		59248, 59873, 60495, 61114, 61729, 62341, 62949, 63554, 64154, 64751, 65343, 65931, 66515, 67094, 67668, 68237,
+		68801, 69360, 69913, 70461, 71003, 71539, 72069, 72593, 73110, 73621, 74125, 74623, 75113, 75596, 76072, 76540,
+		77001, 77454, 77899, 78336, 78765, 79185, 79597, 80000, 80394, 80779, 81155, 81522, 81879, 82227, 82566, 82895,
+		83214, 83523, 83822, 84111, 84389, 84657, 84915, 85162, 85398, 85623, 85837, 86040, 86231, 86411, 86580, 86737,
+		86883, 87017, 87139, 87249, 87347, 87433, 87507, 87569, 87618, 87655, 87680, 87693, 87693, 87680, 87655, 87618,
+		87569, 87507, 87433, 87347, 87249, 87139, 87017, 86883, 86737, 86580, 86411, 86231, 86040, 85837, 85623, 85398,
+		85162, 84915, 84657, 84389, 84111, 83822, 83523, 83214, 82895, 82566, 82227, 81879, 81522, 81155, 80779, 80394,
+		80000, 79597, 79185, 78765, 78336, 77899, 77454, 77001, 76540, 76072, 75596, 75113, 74623, 74125, 73621, 73110
 	};
 	// Constants for magic numbers (Bug Fix #9)
 	static const int32_t GRAIN_TRIGGER_COOLDOWN_SAMPLES = 48; // ~1ms cooldown at 48kHz
@@ -229,6 +231,10 @@ private:
 		int32_t freezeCounter;  // Counter for frozen grain timeout
 		bool active;            // Whether grain is currently playing
 		bool looping;           // Whether this grain is in loop mode
+		// Per-grain parameters (snapshotted at trigger)
+		int32_t delayDistance;
+		int32_t spreadAmount;
+		int32_t grainSize;
 	};
 	Grain grains_[MAX_GRAINS];
 	
@@ -274,24 +280,6 @@ private:
 		if (interpolated < -2048) interpolated = -2048;
 		
 		return (int16_t)interpolated;
-	}
-
-	// Fast cosine approximation for Hann windowing (Q12 fixed-point)
-	int32_t __not_in_flash_func(fastCos)(int32_t x)
-	{
-		// x is 0-4095 representing 0-2π in Q12
-		// Simple polynomial approximation: cos(x) ≈ 1 - x²/2 + x⁴/24
-		// For better performance, use a simpler approximation or lookup table
-		
-		// Normalize x to -π to π range (Q12)
-		x = x - 2048; // Now -2048 to 2047 representing -π to π
-		
-		// Simple parabolic approximation: cos(x) ≈ 1 - 2*x²/π²
-		// where x is normalized to -1 to 1
-		int32_t x_norm = (x * 2048) >> 11; // Normalize to Q12 -1 to 1
-		int32_t x_sq = (x_norm * x_norm) >> 12; // x² in Q12
-		
-		return 4096 - ((x_sq * 8192) >> 12); // 1 - 2*x² in Q12
 	}
 
 	// Time-stretching helper functions
@@ -470,72 +458,47 @@ private:
 			if (!grains_[i].active)
 			{
 				grains_[i].active = true;
-				
+				// Snapshot delay, spread, and grain size for this grain
+				grains_[i].delayDistance = delayDistance_;
+				grains_[i].spreadAmount = spreadAmount_;
+				grains_[i].grainSize = grainSize_;
 				// Calculate base playback position using virtual write head for consistent delay timing
-				// In freeze mode, virtualWriteHead_ continues advancing while writeHead_ stays frozen
-				int32_t basePlaybackPos = virtualWriteHead_ - delayDistance_;
+				int32_t basePlaybackPos = virtualWriteHead_ - grains_[i].delayDistance;
 				if (basePlaybackPos < 0) basePlaybackPos += BUFF_LENGTH_SAMPLES;
-				
 				// Apply spread control with overflow protection
 				int32_t playbackPos;
-				if (spreadAmount_ == 0) {
-					// Spread = 0: Use exact fixed delay position (normal time-stretching)
+				if (grains_[i].spreadAmount == 0) {
 					playbackPos = basePlaybackPos;
 				} else {
-					// Spread > 0: Add controlled randomness around the base position
-					// Generate random value from 0 to 4095
-					int32_t randomValue = rnd12() & 0xFFF; // Ensure 12-bit range
-					
-					// Convert to -2048 to +2047 range for bidirectional offset
+					int32_t randomValue = rnd12() & 0xFFF;
 					int32_t randomOffset = randomValue - 2048;
-					
-					// Scale the offset with overflow protection
-					// Limit maximum offset to 1/8 of buffer (more conservative) to prevent overflow
-					const int32_t maxSafeOffset = BUFF_LENGTH_SAMPLES >> 3; // 1/8 buffer size
-					
-					// First scaling: randomOffset * maxSafeOffset with overflow check
+					const int32_t maxSafeOffset = BUFF_LENGTH_SAMPLES >> 3;
 					int64_t temp64 = (int64_t)randomOffset * maxSafeOffset;
-					temp64 >>= 11; // Scale by spread (>> 11 = / 2048)
-					
-					// Clamp to prevent overflow
+					temp64 >>= 11;
 					if (temp64 > maxSafeOffset) temp64 = maxSafeOffset;
 					if (temp64 < -maxSafeOffset) temp64 = -maxSafeOffset;
-					
-					// Second scaling: apply spread amount with overflow check
-					temp64 = (temp64 * spreadAmount_) >> 12;
-					
-					// Final clamp to safe range
+					temp64 = (temp64 * grains_[i].spreadAmount) >> 12;
 					if (temp64 > maxSafeOffset) temp64 = maxSafeOffset;
 					if (temp64 < -maxSafeOffset) temp64 = -maxSafeOffset;
-					
 					randomOffset = (int32_t)temp64;
-					
-					// Apply offset to base position with bounds checking
 					playbackPos = basePlaybackPos + randomOffset;
 				}
-				
-				// Ensure position is within buffer bounds and never past write head
 				while (playbackPos >= BUFF_LENGTH_SAMPLES) playbackPos -= BUFF_LENGTH_SAMPLES;
 				while (playbackPos < 0) playbackPos += BUFF_LENGTH_SAMPLES;
-				
-				// Safety check: ensure grain never reads past write head (allow small safety margin)
 				const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
 				int32_t maxSafePos = writeHead_ - safetyMargin;
 				if (maxSafePos < 0) maxSafePos += BUFF_LENGTH_SAMPLES;
-				
-				// If playback position is too close to write head, wrap it around safely
 				int32_t distanceFromWrite = writeHead_ - playbackPos;
 				if (distanceFromWrite < 0) distanceFromWrite += BUFF_LENGTH_SAMPLES;
 				if (distanceFromWrite < safetyMargin) {
 					playbackPos = maxSafePos;
 				}
-				
 				grains_[i].readPos = playbackPos;
-				grains_[i].readFrac = 0; // Initialize fractional part
+				grains_[i].readFrac = 0;
 				grains_[i].startPos = grains_[i].readPos;
 				grains_[i].sampleCount = 0;
-				grains_[i].freezeCounter = 0; // Initialize freeze counter
-				grains_[i].loopSize = grainSize_; // Store current grain size for potential loop mode
+				grains_[i].freezeCounter = 0;
+				grains_[i].loopSize = grains_[i].grainSize;
 				break;
 			}
 		}
@@ -545,24 +508,34 @@ private:
 	{
 		Grain& grain = grains_[grainIndex];
 		// Safety check to prevent division by zero
-		if (grainSize_ <= 0)
+		if (grain.grainSize <= 0)
 		{
 			return 4096; // Full weight if grain size is invalid
 		}
 		// Position in grain: 0 to grainSize-1, normalized to 0-4095 (Q12)
-		int32_t posQ12 = (grain.sampleCount << 12) / grainSize_; // Q12 normalized position (0-4095)
+		int32_t posQ12 = (grain.sampleCount << 12) / grain.grainSize; // Q12 normalized position (0-4095)
 		if (posQ12 < 0) posQ12 = 0;
 		if (posQ12 > 4095) posQ12 = 4095;
-		// Map Q12 position to 0-255 table index
-		int idx = (posQ12 * (HANN_TABLE_SIZE - 1)) >> 12; // 0-255
-		// Linear interpolation for extra smoothness
-		int nextIdx = (idx < HANN_TABLE_SIZE - 1) ? idx + 1 : idx;
-		int frac = (posQ12 * (HANN_TABLE_SIZE - 1)) & 0xFFF; // Q12 frac
-		int32_t w0 = hannWindowTable_[idx];
-		int32_t w1 = hannWindowTable_[nextIdx];
-		int32_t weight = w0 + (((w1 - w0) * frac) >> 12);
-		// Ensure weight is never negative or zero
-		if (weight < 1) weight = 1;
+		
+		// Map Q12 position to table lookup with proper interpolation
+		// Scale posQ12 to table range: 0-4095 -> 0-(HANN_TABLE_SIZE-1) in Q12
+		int32_t tablePos = (posQ12 * (HANN_TABLE_SIZE - 1)) >> 12; // Integer table index
+		int32_t tableFrac = (posQ12 * (HANN_TABLE_SIZE - 1)) & 0xFFF; // Q12 fractional part
+		
+		// Clamp table index to valid range
+		if (tablePos >= HANN_TABLE_SIZE - 1) {
+			tablePos = HANN_TABLE_SIZE - 1;
+			tableFrac = 0;
+		}
+		
+		// Linear interpolation between table entries
+		int32_t w0 = hannWindowTable_[tablePos];
+		int32_t w1 = hannWindowTable_[tablePos + 1];
+		int32_t weight = w0 + (((w1 - w0) * tableFrac) >> 12);
+		
+		// Ensure weight is never negative (should not happen with proper Hann window)
+		if (weight < 0) weight = 0;
+		
 		return weight;
 	}
 	
@@ -718,7 +691,7 @@ private:
 						}
 						
 						// Deactivate grain if it's finished (only when not frozen)
-						if (grains_[i].sampleCount >= grainSize_)
+						if (grains_[i].sampleCount >= grains_[i].grainSize)
 						{
 							grains_[i].active = false;
 						}
