@@ -25,6 +25,26 @@
 class OC_DT : public ComputerCard
 {
 private:
+	// 256-entry Hann window lookup table (Q12 format)
+	static constexpr int HANN_TABLE_SIZE = 256;
+	static constexpr int32_t hannWindowTable_[HANN_TABLE_SIZE] = {
+		// 256-entry Hann window, Q12 format, 0.5 * (1 - cos(2 * pi * n / 255)) * 4096
+		0, 78, 313, 704, 1251, 1953, 2820, 3850, 5043, 6397, 7911, 9584, 11414, 13399, 15539, 17831,
+		20274, 22865, 25603, 28485, 31509, 34672, 37972, 41406, 44971, 48664, 52482, 56422, 60480, 64653, 68937, 73328,
+		77822, 82415, 87102, 91878, 96739, 101681, 106698, 111786, 116940, 122154, 127423, 132741, 138102, 143501, 148931, 154387,
+		159862, 165351, 170847, 176344, 181836, 187316, 192778, 198216, 203623, 208993, 214319, 219595, 224814, 229970, 235056, 240067,
+		244995, 249836, 254582, 259228, 263768, 268196, 272505, 276690, 280744, 284662, 288437, 292064, 295537, 298851, 302000, 304980,
+		307785, 310411, 312853, 315107, 317168, 319033, 320697, 322157, 323409, 324450, 325277, 325887, 326277, 326445, 326389, 326108,
+		325599, 324862, 323895, 322698, 321270, 319611, 317721, 315600, 313249, 310668, 307858, 304820, 301555, 298065, 294351, 290415,
+		286259, 281885, 277295, 272492, 267478, 262256, 256828, 251198, 245368, 239342, 233123, 226715, 220121, 213346, 206393, 199267,
+		191972, 184513, 176895, 169123, 161202, 153137, 144934, 136598, 128135, 119551, 110852, 102044, 93133, 84126, 75029, 65848,
+		56601, 47294, 37934, 28529, 19086, 9622,  0, -9622, -19086, -28529, -37934, -47294, -56601, -65848, -75029, -84126,
+		-93133, -102044, -110852, -119551, -128135, -136598, -144934, -153137, -161202, -169123, -176895, -184513, -191972, -199267, -206393, -213346,
+		-220121, -226715, -233123, -239342, -245368, -251198, -256828, -262256, -267478, -272492, -277295, -281885, -286259, -290415, -294351, -298065,
+		-301555, -304820, -307858, -310668, -313249, -315600, -317721, -319611, -321270, -322698, -323895, -324862, -325599, -326108, -326389, -326445,
+		-326277, -325887, -325277, -324450, -323409, -322157, -320697, -319033, -317168, -315107, -312853, -310411, -307785, -304980, -302000, -298851,
+		-295537, -292064, -288437, -284662, -280744, -276690, -272505, -268196, -263768, -259228, -254582, -249836, -244995, -240067, -235056, -229970
+	};
 	// Constants for magic numbers (Bug Fix #9)
 	static const int32_t GRAIN_TRIGGER_COOLDOWN_SAMPLES = 48; // ~1ms cooldown at 48kHz
 	static const int32_t SAFETY_MARGIN_SAMPLES = 1000; // ~20ms safety margin
@@ -524,32 +544,25 @@ private:
 	int32_t __not_in_flash_func(calculateGrainWeight)(int grainIndex)
 	{
 		Grain& grain = grains_[grainIndex];
-		
 		// Safety check to prevent division by zero
 		if (grainSize_ <= 0)
 		{
 			return 4096; // Full weight if grain size is invalid
 		}
-		
-		// Hann window: 0.5 * (1 - cos(2π * position / grainSize))
 		// Position in grain: 0 to grainSize-1, normalized to 0-4095 (Q12)
-		int32_t pos = (grain.sampleCount << 12) / grainSize_; // Q12 normalized position (0-4095)
-		
-		// Clamp position to valid range
-		if (pos > 4095) pos = 4095;
-		if (pos < 0) pos = 0;
-		
-		// Calculate cos(2π * pos) where pos is 0-4095 representing 0-1
-		// Scale pos to 0-4095 representing 0-2π for fastCos
-		int32_t cosArg = pos; // pos is already 0-4095
-		int32_t cosVal = fastCos(cosArg); // Returns Q12 cos value
-		
-		// Hann window: 0.5 * (1 - cos) = 2048 - (cosVal >> 1)
-		int32_t weight = 2048 - (cosVal >> 1); // Q12 format
-		
+		int32_t posQ12 = (grain.sampleCount << 12) / grainSize_; // Q12 normalized position (0-4095)
+		if (posQ12 < 0) posQ12 = 0;
+		if (posQ12 > 4095) posQ12 = 4095;
+		// Map Q12 position to 0-255 table index
+		int idx = (posQ12 * (HANN_TABLE_SIZE - 1)) >> 12; // 0-255
+		// Linear interpolation for extra smoothness
+		int nextIdx = (idx < HANN_TABLE_SIZE - 1) ? idx + 1 : idx;
+		int frac = (posQ12 * (HANN_TABLE_SIZE - 1)) & 0xFFF; // Q12 frac
+		int32_t w0 = hannWindowTable_[idx];
+		int32_t w1 = hannWindowTable_[nextIdx];
+		int32_t weight = w0 + (((w1 - w0) * frac) >> 12);
 		// Ensure weight is never negative or zero
 		if (weight < 1) weight = 1;
-		
 		return weight;
 	}
 	
