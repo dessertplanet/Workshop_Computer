@@ -12,8 +12,9 @@
  * 
  * Controls:
  * - Main Knob: Grain playback speed/direction (-2x to +2x, center=pause) OR pitch attenuverter when CV2 connected
- * - X Knob: Grain position spread (0=fixed delay, right=random spread)
- * - CV1/Y Knob: Grain size (Y knob as attenuverter when CV1 connected)
+ * - X Knob: Grain position spread (0=fixed delay, right=random spread) OR attenuverter when CV1 connected
+ * - Y Knob: Grain size (linear control from micro to huge grains)
+ * - CV1: Grain position control (relative to write head in normal mode, scrubs whole buffer in freeze mode) with X knob as attenuverter
  * - CV2: Pitch control (-5V to +5V = -2x to +2x speed) with Main knob as attenuverter
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop Mode
  * - Pulse 1 In: Triggers new grains
@@ -126,21 +127,29 @@ public:
 		}
 		// When switch is up, both writeHead_ and virtualWriteHead_ stay frozen
 		
-		// X knob always controls delay time/spread directly (no CV1 interaction)
+		// X knob controls delay time/spread, but when CV1 is connected it becomes an attenuverter
 		int32_t xControlValue = KnobVal(X);
 		
-		// X knob functionality: Left half = delay time, Right half = spread
-		if (xControlValue <= 2047) {
-			// Left half (0-2047): Control delay time from shortest to longest
-			// Map to delay distance: 0 -> 2400 samples (~50ms), 2047 -> 95000 samples (~2.0s)
-			// Keep within buffer bounds (100000 samples) with safety margin
-			delayDistance_ = 2400 + ((xControlValue * (95000 - 2400)) / 2047);
-			spreadAmount_ = 0; // No spread on left half
+		// When CV1 is NOT connected: X knob functionality remains as before
+		if (!Connected(Input::CV1)) {
+			// X knob functionality: Left half = delay time, Right half = spread
+			if (xControlValue <= 2047) {
+				// Left half (0-2047): Control delay time from shortest to longest
+				// Map to delay distance: 0 -> 2400 samples (~50ms), 2047 -> 95000 samples (~2.0s)
+				// Keep within buffer bounds (100000 samples) with safety margin
+				delayDistance_ = 2400 + ((xControlValue * (95000 - 2400)) / 2047);
+				spreadAmount_ = 0; // No spread on left half
+			} else {
+				// Right half (2048-4095): Control spread with fixed delay time
+				delayDistance_ = 24000; // Fixed delay at ~0.5 seconds
+				// Map right half to spread: 2048 -> 0, 4095 -> 4095
+				spreadAmount_ = ((xControlValue - 2048) * 4095) / 2047;
+			}
 		} else {
-			// Right half (2048-4095): Control spread with fixed delay time
-			delayDistance_ = 24000; // Fixed delay at ~0.5 seconds
-			// Map right half to spread: 2048 -> 0, 4095 -> 4095
-			spreadAmount_ = ((xControlValue - 2048) * 4095) / 2047;
+			// CV1 connected: X knob becomes attenuverter, disable spread, use fixed delay
+			delayDistance_ = 24000; // Fixed delay at ~0.5 seconds when CV1 controls position
+			spreadAmount_ = 0; // Disable noise-based spread when CV1 is connected
+			// X knob will be used as attenuverter in triggerNewGrain() function
 		}
 		
 		// Update stretch parameters from knobs
@@ -287,9 +296,12 @@ private:
 	// Time-stretching helper functions
 	void __not_in_flash_func(updateStretchParameters)()
 	{
-		// SWAPPED CONTROLS:
-		// Main knob now controls playback speed/direction (-2.0x to +2.0x with pause at center)
-		// Y knob now controls grain size (linear system)
+		// CONTROLS OVERVIEW:
+		// Main knob: playback speed/direction (-2.0x to +2.0x with pause at center)
+		// Y knob: grain size (linear control from micro to huge grains) 
+		// X knob: delay/spread control OR position attenuverter when CV1 connected
+		// CV1: grain position control (read only when grains are triggered)
+		// CV2: pitch control with Main knob as attenuverter
 		
 		// CV2 pitch control with Main knob as attenuverter
 		if (Connected(Input::CV2)) {
@@ -323,17 +335,8 @@ private:
 			grainPlaybackSpeed_ = -MAX_SAFE_GRAIN_SPEED;
 		}
 		
-		// Calculate Y control value from knob Y or CV1 (with Y knob as attenuverter)
-		int32_t yControlValue;
-		if (Connected(Input::CV1)) {
-			// CV1 connected - Y knob becomes attenuverter
-			int32_t cv1Val = CVIn1(); // -2048 to +2047
-			int32_t yKnobVal = KnobVal(Y); // 0 to 4095
-			yControlValue = applyAttenuverter(cv1Val, yKnobVal);
-		} else {
-			// CV1 disconnected - Y knob direct control
-			yControlValue = KnobVal(Y);
-		}
+		// Calculate Y control value directly from Y knob (no CV1 interaction for grain size)
+		int32_t yControlValue = KnobVal(Y); // Y knob now directly controls grain size
 		
 		// Apply virtual detents to the control value
 		yControlValue = virtualDetentedKnob(yControlValue);
@@ -467,31 +470,62 @@ private:
 				// Calculate base playback position using virtual write head for consistent delay timing
 				int32_t basePlaybackPos = virtualWriteHead_ - grains_[i].delayDistance;
 				if (basePlaybackPos < 0) basePlaybackPos += BUFF_LENGTH_SAMPLES;
-				// Apply spread control with overflow protection
+				
+				// Handle CV1 position control vs normal spread control
 				int32_t playbackPos;
-				if (grains_[i].spreadAmount == 0) {
-					playbackPos = basePlaybackPos;
+				if (Connected(Input::CV1)) {
+					// CV1 connected: CV1 controls grain position with X knob as attenuverter
+					// Read CV1 input only when grain is triggered
+					int32_t cv1Val = CVIn1(); // -2048 to +2047 (±5V)
+					int32_t xKnobVal = KnobVal(X); // 0 to 4095 (X knob as attenuverter)
+					
+					// Apply attenuverter to get position control value
+					int32_t positionControlValue = applyAttenuverter(cv1Val, xKnobVal);
+					
+					// Check if buffer is frozen (switch up or pulse 2)
+					bool bufferIsFrozen = (SwitchVal() == Switch::Up) || PulseIn2();
+					
+					if (bufferIsFrozen) {
+						// Freeze mode: CV1 scrubs the entire buffer (0-4095 maps to full buffer range)
+						playbackPos = (positionControlValue * (BUFF_LENGTH_SAMPLES - 1)) / 4095;
+						// Ensure position is within buffer bounds
+						if (playbackPos >= BUFF_LENGTH_SAMPLES) playbackPos = BUFF_LENGTH_SAMPLES - 1;
+						if (playbackPos < 0) playbackPos = 0;
+					} else {
+						// Normal mode: CV1 position is relative to write head with safety checks
+						// Map 0-4095 to delay range: 2400 to 95000 samples
+						int32_t cvDelayDistance = 2400 + ((positionControlValue * (95000 - 2400)) / 4095);
+						playbackPos = virtualWriteHead_ - cvDelayDistance;
+						if (playbackPos < 0) playbackPos += BUFF_LENGTH_SAMPLES;
+					}
 				} else {
-					int32_t randomValue = rnd12() & 0xFFF;  // 0 to 4095
-					int32_t randomOffset = randomValue - 2047;  // -2047 to +2048, centered better
-					const int32_t maxSafeOffset = BUFF_LENGTH_SAMPLES >> 3;
-					int64_t temp64 = (int64_t)randomOffset * maxSafeOffset;
-					temp64 >>= 11;
-					if (temp64 > maxSafeOffset) temp64 = maxSafeOffset;
-					if (temp64 < -maxSafeOffset) temp64 = -maxSafeOffset;
-					temp64 = (temp64 * grains_[i].spreadAmount) >> 12;
-					if (temp64 > maxSafeOffset) temp64 = maxSafeOffset;
-					if (temp64 < -maxSafeOffset) temp64 = -maxSafeOffset;
-					randomOffset = (int32_t)temp64;
-					playbackPos = basePlaybackPos + randomOffset;
+					// CV1 disconnected: Use normal spread control (original behavior)
+					if (grains_[i].spreadAmount == 0) {
+						playbackPos = basePlaybackPos;
+					} else {
+						int32_t randomValue = rnd12() & 0xFFF;  // 0 to 4095
+						int32_t randomOffset = randomValue - 2047;  // -2047 to +2048, centered better
+						const int32_t maxSafeOffset = BUFF_LENGTH_SAMPLES >> 3;
+						int64_t temp64 = (int64_t)randomOffset * maxSafeOffset;
+						temp64 >>= 11;
+						if (temp64 > maxSafeOffset) temp64 = maxSafeOffset;
+						if (temp64 < -maxSafeOffset) temp64 = -maxSafeOffset;
+						temp64 = (temp64 * grains_[i].spreadAmount) >> 12;
+						if (temp64 > maxSafeOffset) temp64 = maxSafeOffset;
+						if (temp64 < -maxSafeOffset) temp64 = -maxSafeOffset;
+						randomOffset = (int32_t)temp64;
+						playbackPos = basePlaybackPos + randomOffset;
+					}
 				}
 				while (playbackPos >= BUFF_LENGTH_SAMPLES) playbackPos -= BUFF_LENGTH_SAMPLES;
 				while (playbackPos < 0) playbackPos += BUFF_LENGTH_SAMPLES;
 				
 				// Apply write head safety check ONLY when buffer is recording (not frozen)
 				// In freeze mode, grains can access the entire buffer safely
+				// Also skip safety check when CV1 is connected since position is explicitly controlled
 				bool bufferIsFrozen = (SwitchVal() == Switch::Up) || PulseIn2();
-				if (!bufferIsFrozen) {
+				bool cv1Connected = Connected(Input::CV1);
+				if (!bufferIsFrozen && !cv1Connected) {
 					const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
 					int32_t maxSafePos = writeHead_ - safetyMargin;
 					if (maxSafePos < 0) maxSafePos += BUFF_LENGTH_SAMPLES;
