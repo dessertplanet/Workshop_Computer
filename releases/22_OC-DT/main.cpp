@@ -4,7 +4,7 @@
  * OC-DT Granular Delay
  * 
  * A sophisticated granular delay effect with the following features:
- * - 5.2-second circular buffer for audio capture
+ * - 2.6-second circular buffer for audio capture (100k samples at 48kHz)
  * - Up to 4 simultaneous grains with Hann windowing
  * - Linear grain sizes from micro (64 samples) to huge (65536 samples)
  * - Bidirectional playback (-2x to +2x speed)
@@ -20,7 +20,7 @@
  * - Pulse 2 In: Forces switch down (loop mode)
  */
 
-#define BUFF_LENGTH_SAMPLES 100000 // ~2.6 seconds at 48kHz
+#define BUFF_LENGTH_SAMPLES 100000 // 100,000 samples (2.08 seconds at 48kHz)
 
 class OC_DT : public ComputerCard
 {
@@ -87,6 +87,7 @@ public:
 			grains_[i].sampleCount = 0;
 			grains_[i].startPos = 0;
 			grains_[i].loopSize = 0;
+			grains_[i].freezeCounter = 0;
 			grains_[i].looping = false;
 		}
 	}
@@ -131,8 +132,9 @@ public:
 		// X knob functionality: Left half = delay time, Right half = spread
 		if (xControlValue <= 2047) {
 			// Left half (0-2047): Control delay time from shortest to longest
-			// Map to delay distance: 0 -> 2400 samples (~50ms), 2047 -> 120000 samples (~2.5s)
-			delayDistance_ = 2400 + ((xControlValue * (120000 - 2400)) / 2047);
+			// Map to delay distance: 0 -> 2400 samples (~50ms), 2047 -> 95000 samples (~2.0s)
+			// Keep within buffer bounds (100000 samples) with safety margin
+			delayDistance_ = 2400 + ((xControlValue * (95000 - 2400)) / 2047);
 			spreadAmount_ = 0; // No spread on left half
 		} else {
 			// Right half (2048-4095): Control spread with fixed delay time
@@ -470,8 +472,8 @@ private:
 				if (grains_[i].spreadAmount == 0) {
 					playbackPos = basePlaybackPos;
 				} else {
-					int32_t randomValue = rnd12() & 0xFFF;
-					int32_t randomOffset = randomValue - 2048;
+					int32_t randomValue = rnd12() & 0xFFF;  // 0 to 4095
+					int32_t randomOffset = randomValue - 2047;  // -2047 to +2048, centered better
 					const int32_t maxSafeOffset = BUFF_LENGTH_SAMPLES >> 3;
 					int64_t temp64 = (int64_t)randomOffset * maxSafeOffset;
 					temp64 >>= 11;
@@ -537,7 +539,7 @@ private:
 		
 		// Linear interpolation between table entries
 		int32_t w0 = hannWindowTable_[tablePos];
-		int32_t w1 = hannWindowTable_[tablePos + 1];
+		int32_t w1 = (tablePos < HANN_TABLE_SIZE - 1) ? hannWindowTable_[tablePos + 1] : hannWindowTable_[tablePos];
 		int32_t weight = w0 + (((w1 - w0) * tableFrac) >> 12);
 		
 		// Ensure weight is never negative (should not happen with proper Hann window)
@@ -630,9 +632,13 @@ private:
 							grains_[i].sampleCount = 0;
 						}
 						
-						// Handle buffer wraparound for readPos
-						while (grains_[i].readPos >= BUFF_LENGTH_SAMPLES) grains_[i].readPos -= BUFF_LENGTH_SAMPLES;
-						while (grains_[i].readPos < 0) grains_[i].readPos += BUFF_LENGTH_SAMPLES;
+						// Handle buffer wraparound for readPos - more efficient than while loops
+						if (grains_[i].readPos >= BUFF_LENGTH_SAMPLES) {
+							grains_[i].readPos %= BUFF_LENGTH_SAMPLES;
+						}
+						if (grains_[i].readPos < 0) {
+							grains_[i].readPos = ((grains_[i].readPos % BUFF_LENGTH_SAMPLES) + BUFF_LENGTH_SAMPLES) % BUFF_LENGTH_SAMPLES;
+						}
 					}
 					
 					// Looping grains never deactivate automatically
