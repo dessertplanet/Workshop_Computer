@@ -101,11 +101,14 @@ public:
 			switchPos = Switch::Down;
 		}
 		
-		// Always advance virtual write head for consistent delay timing
-		virtualWriteHead_++;
-		if (virtualWriteHead_ >= BUFF_LENGTH_SAMPLES)
-		{
-			virtualWriteHead_ = 0; // Wrap around for circular buffer
+		// Advance virtual write head for consistent delay timing ONLY when not in freeze mode
+		// In freeze mode, virtual write head stays frozen to prevent grains from accessing unrecorded buffer sections
+		if (switchPos != Switch::Up) {
+			virtualWriteHead_++;
+			if (virtualWriteHead_ >= BUFF_LENGTH_SAMPLES)
+			{
+				virtualWriteHead_ = 0; // Wrap around for circular buffer
+			}
 		}
 		
 		// Record incoming audio to buffer ONLY when switch is not up (not in freeze mode)
@@ -120,7 +123,7 @@ public:
 			// Keep virtual write head in sync with real write head when recording
 			virtualWriteHead_ = writeHead_;
 		}
-		// When switch is up, writeHead_ stays frozen, but virtualWriteHead_ continues advancing
+		// When switch is up, both writeHead_ and virtualWriteHead_ stay frozen
 		
 		// X knob always controls delay time/spread directly (no CV1 interaction)
 		int32_t xControlValue = KnobVal(X);
@@ -482,14 +485,21 @@ private:
 				}
 				while (playbackPos >= BUFF_LENGTH_SAMPLES) playbackPos -= BUFF_LENGTH_SAMPLES;
 				while (playbackPos < 0) playbackPos += BUFF_LENGTH_SAMPLES;
-				const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
-				int32_t maxSafePos = writeHead_ - safetyMargin;
-				if (maxSafePos < 0) maxSafePos += BUFF_LENGTH_SAMPLES;
-				int32_t distanceFromWrite = writeHead_ - playbackPos;
-				if (distanceFromWrite < 0) distanceFromWrite += BUFF_LENGTH_SAMPLES;
-				if (distanceFromWrite < safetyMargin) {
-					playbackPos = maxSafePos;
+				
+				// Apply write head safety check ONLY when buffer is recording (not frozen)
+				// In freeze mode, grains can access the entire buffer safely
+				bool bufferIsFrozen = (SwitchVal() == Switch::Up) || PulseIn2();
+				if (!bufferIsFrozen) {
+					const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
+					int32_t maxSafePos = writeHead_ - safetyMargin;
+					if (maxSafePos < 0) maxSafePos += BUFF_LENGTH_SAMPLES;
+					int32_t distanceFromWrite = writeHead_ - playbackPos;
+					if (distanceFromWrite < 0) distanceFromWrite += BUFF_LENGTH_SAMPLES;
+					if (distanceFromWrite < safetyMargin) {
+						playbackPos = maxSafePos;
+					}
 				}
+				
 				grains_[i].readPos = playbackPos;
 				grains_[i].readFrac = 0;
 				grains_[i].startPos = grains_[i].readPos;
@@ -683,18 +693,22 @@ private:
 						}
 						
 						// WRITE HEAD BOUNDARY CHECK: Prevent grains from reading past write head
-						const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
-						int32_t maxSafePos = writeHead_ - safetyMargin;
-						if (maxSafePos < 0) maxSafePos += BUFF_LENGTH_SAMPLES;
-						
-						// Calculate distance from grain to write head (accounting for circular buffer)
-						int32_t distanceToWrite = writeHead_ - grains_[i].readPos;
-						if (distanceToWrite < 0) distanceToWrite += BUFF_LENGTH_SAMPLES;
-						
-						// If grain is too close to write head, clamp it to safe position
-						if (distanceToWrite < safetyMargin) {
-							grains_[i].readPos = maxSafePos;
-							grains_[i].readFrac = 0; // Reset fractional part when clamped
+						// Only apply this check when buffer is recording (not frozen)
+						bool bufferIsFrozen = (SwitchVal() == Switch::Up) || PulseIn2();
+						if (!bufferIsFrozen) {
+							const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
+							int32_t maxSafePos = writeHead_ - safetyMargin;
+							if (maxSafePos < 0) maxSafePos += BUFF_LENGTH_SAMPLES;
+							
+							// Calculate distance from grain to write head (accounting for circular buffer)
+							int32_t distanceToWrite = writeHead_ - grains_[i].readPos;
+							if (distanceToWrite < 0) distanceToWrite += BUFF_LENGTH_SAMPLES;
+							
+							// If grain is too close to write head, clamp it to safe position
+							if (distanceToWrite < safetyMargin) {
+								grains_[i].readPos = maxSafePos;
+								grains_[i].readFrac = 0; // Reset fractional part when clamped
+							}
 						}
 						
 						// Deactivate grain if it's finished (only when not frozen)
