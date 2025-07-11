@@ -4,9 +4,9 @@
  * OC-DT Granular Delay
  *
  * A sophisticated granular delay effect with the following features:
- * - 2.6-second circular buffer for audio capture (100k samples at 48kHz)
+ * - 5.2-second circular buffer for audio capture (100k samples at 24kHz)
  * - Up to 3 simultaneous grains with Hann windowing
- * - Linear grain sizes from micro (64 samples) to huge (65536 samples)
+ * - Linear grain sizes from micro (64 samples) to huge (50000 samples)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
  *
@@ -33,44 +33,26 @@
  * - LEDs 4,5: Pulse output states (on/off)
  *
  * Performance Optimizations:
- * - Knob values cached and updated at 1000Hz (instead of 48kHz) for reduced CPU overhead
- * - LED feedback updated at 1000Hz (instead of 48kHz) for improved efficiency
+ * - Knob values cached and updated at 1000Hz (instead of 24kHz) for reduced CPU overhead
+ * - LED feedback updated at 1000Hz (instead of 24kHz) for improved efficiency
  * - Grain size/position parameters updated at 1000Hz (only affect new grains, not existing ones)
- * - Playback speed updated at 48kHz (affects all active grains in real-time)
+ * - Playback speed updated at 24kHz (affects all active grains in real-time)
  * - Fixed maximum of 3 active grains (no dynamic allocation based on grain size)
  */
 
-#define BUFF_LENGTH_SAMPLES 100000 // 100,000 samples (2.08 seconds at 48kHz)
+#define BUFF_LENGTH_SAMPLES 100000 // 100,000 samples (4.17 seconds at 24kHz)
 
 class OC_DT : public ComputerCard
 {
 private:
-	// 256-entry Hann window lookup table (Q12 format)
+	// 256-entry Hann window lookup table (Q12 format) - calculated at startup
 	static constexpr int HANN_TABLE_SIZE = 256;
-	static constexpr int32_t hannWindowTable_[HANN_TABLE_SIZE] = {
-		// 256-entry Hann window, Q12 format, 0.5 * (1 - cos(2 * pi * n / (N-1))) * 4096
-		// Properly calculated Hann window - all values are positive, ranging from 0 to 4096
-		0, 5, 20, 45, 78, 121, 173, 235, 306, 386, 476, 575, 683, 801, 928, 1064,
-		1210, 1365, 1529, 1703, 1886, 2078, 2279, 2490, 2710, 2939, 3177, 3424, 3680, 3945, 4219, 4502,
-		4794, 5095, 5405, 5724, 6051, 6387, 6732, 7085, 7447, 7817, 8196, 8583, 8978, 9381, 9792, 10212,
-		10639, 11074, 11517, 11968, 12426, 12892, 13365, 13845, 14333, 14828, 15330, 15838, 16354, 16876, 17405, 17940,
-		18482, 19030, 19584, 20144, 20710, 21281, 21858, 22440, 23027, 23619, 24216, 24818, 25424, 26035, 26650, 27269,
-		27892, 28519, 29149, 29783, 30420, 31060, 31703, 32349, 32997, 33648, 34301, 34956, 35613, 36272, 36932, 37594,
-		38257, 38921, 39586, 40252, 40918, 41585, 42252, 42919, 43586, 44253, 44920, 45586, 46252, 46917, 47581, 48244,
-		48906, 49567, 50226, 50884, 51540, 52195, 52847, 53498, 54146, 54793, 55437, 56079, 56718, 57355, 57989, 58620,
-		59248, 59873, 60495, 61114, 61729, 62341, 62949, 63554, 64154, 64751, 65343, 65931, 66515, 67094, 67668, 68237,
-		68801, 69360, 69913, 70461, 71003, 71539, 72069, 72593, 73110, 73621, 74125, 74623, 75113, 75596, 76072, 76540,
-		77001, 77454, 77899, 78336, 78765, 79185, 79597, 80000, 80394, 80779, 81155, 81522, 81879, 82227, 82566, 82895,
-		83214, 83523, 83822, 84111, 84389, 84657, 84915, 85162, 85398, 85623, 85837, 86040, 86231, 86411, 86580, 86737,
-		86883, 87017, 87139, 87249, 87347, 87433, 87507, 87569, 87618, 87655, 87680, 87693, 87693, 87680, 87655, 87618,
-		87569, 87507, 87433, 87347, 87249, 87139, 87017, 86883, 86737, 86580, 86411, 86231, 86040, 85837, 85623, 85398,
-		85162, 84915, 84657, 84389, 84111, 83822, 83523, 83214, 82895, 82566, 82227, 81879, 81522, 81155, 80779, 80394,
-		80000, 79597, 79185, 78765, 78336, 77899, 77454, 77001, 76540, 76072, 75596, 75113, 74623, 74125, 73621, 73110};
+	int32_t hannWindowTable_[HANN_TABLE_SIZE];
 	// Timing constants
-	static const int32_t GRAIN_TRIGGER_COOLDOWN_SAMPLES = 48; // 1ms cooldown at 48kHz
-	static const int32_t SAFETY_MARGIN_SAMPLES = 1000;		  // 20ms safety margin
-	static const int32_t GRAIN_END_PULSE_DURATION = 200;	  // 4.2ms pulse duration
-	static const int32_t MAX_PULSE_HALF_PERIOD = 32768;
+	static const int32_t GRAIN_TRIGGER_COOLDOWN_SAMPLES = 24; // 1ms cooldown at 24kHz
+	static const int32_t SAFETY_MARGIN_SAMPLES = 500;		  // 20ms safety margin
+	static const int32_t GRAIN_END_PULSE_DURATION = 100;	  // 4.2ms pulse duration
+	static const int32_t MAX_PULSE_HALF_PERIOD = 16384;
 	static const int32_t PULSE_COUNTER_OVERFLOW_LIMIT = 65536;
 	static const int32_t VIRTUAL_DETENT_THRESHOLD = 12;
 	static const int32_t VIRTUAL_DETENT_EDGE_THRESHOLD = 5;
@@ -121,6 +103,57 @@ public:
 			grains_[i].looping = false;
 			grains_[i].pulse90Triggered = false;
 		}
+
+		// Calculate Hann window lookup table at startup
+		// Formula: 0.5 * (1 - cos(2 * pi * n / (N-1))) * 4096 (Q12 format)
+		for (int i = 0; i < HANN_TABLE_SIZE; i++)
+		{
+			// Calculate using integer arithmetic for better accuracy
+			// We'll use a quarter-wave cosine lookup and symmetry
+			
+			// Map i (0 to 255) to angle (0 to 2*pi), then to quarter wave position
+			int32_t angle_256 = (i * 1024) / 255; // Scale to 0-1024 (representing 0 to 2*pi)
+			
+			// Simple cosine approximation using quarter-wave symmetry
+			// cos(x) for x in [0, 2*pi] mapped to [0, 1024]
+			int32_t cos_val_4096; // Will be in range -4096 to +4096
+			
+			if (angle_256 <= 256) // 0 to pi/2
+			{
+				// Use parabolic approximation: cos(x) ≈ 1 - 2*x²/π²
+				int32_t x = (angle_256 * 16384) / 256; // Scale to 0-16384 for better precision
+				int32_t x_sq = (x * x) >> 14; // x² with scaling
+				cos_val_4096 = 4096 - (x_sq * 4096) / 26753; // Approximate cos
+			}
+			else if (angle_256 <= 512) // pi/2 to pi
+			{
+				int32_t x = 512 - angle_256; // Mirror around pi/2
+				x = (x * 16384) / 256;
+				int32_t x_sq = (x * x) >> 14;
+				cos_val_4096 = -(4096 - (x_sq * 4096) / 26753); // Negative quadrant
+			}
+			else if (angle_256 <= 768) // pi to 3*pi/2
+			{
+				int32_t x = angle_256 - 512; // Offset from pi
+				x = (x * 16384) / 256;
+				int32_t x_sq = (x * x) >> 14;
+				cos_val_4096 = -(4096 - (x_sq * 4096) / 26753); // Negative quadrant
+			}
+			else // 3*pi/2 to 2*pi
+			{
+				int32_t x = 1024 - angle_256; // Mirror around 3*pi/2
+				x = (x * 16384) / 256;
+				int32_t x_sq = (x * x) >> 14;
+				cos_val_4096 = 4096 - (x_sq * 4096) / 26753; // Positive quadrant
+			}
+			
+			// Hann window: 0.5 * (1 - cos(2*pi*n/(N-1))) * 4096
+			hannWindowTable_[i] = (4096 - cos_val_4096) >> 1;
+			
+			// Clamp to valid range (should not be needed with correct math)
+			if (hannWindowTable_[i] < 0) hannWindowTable_[i] = 0;
+			if (hannWindowTable_[i] > 4096) hannWindowTable_[i] = 4096;
+		}
 	}
 
 	virtual void ProcessSample()
@@ -163,21 +196,21 @@ public:
 		{
 			if (xControlValue <= 2047)
 			{
-				// Left half: delay time control
-				delayDistance_ = 2400 + ((xControlValue * (95000 - 2400)) / 2047);
+				// Left half: delay time control - use more of the longer buffer
+				delayDistance_ = 1200 + ((xControlValue * (80000 - 1200)) / 2047);
 				spreadAmount_ = 0;
 			}
 			else
 			{
-				// Right half: spread control with fixed delay
-				delayDistance_ = 24000;
+				// Right half: spread control with fixed delay - use longer default delay
+				delayDistance_ = 20000;
 				spreadAmount_ = ((xControlValue - 2048) * 4095) / 2047;
 			}
 		}
 		else
 		{
 			// CV1 connected: X knob becomes attenuverter
-			delayDistance_ = 24000;
+			delayDistance_ = 20000;
 			spreadAmount_ = 0;
 		}
 
@@ -259,12 +292,12 @@ private:
 	uint16_t buffer_[BUFF_LENGTH_SAMPLES];
 	int32_t writeHead_ = 0;
 	int32_t virtualWriteHead_ = 0;
-	int32_t delayDistance_ = 10000;
+	int32_t delayDistance_ = 8000;
 	int32_t spreadAmount_ = 0;
 
 	// Grain system
 	static const int MAX_GRAINS = 4;
-	static const int32_t GRAIN_FREEZE_TIMEOUT = 48000 * 5;
+	static const int32_t GRAIN_FREEZE_TIMEOUT = 24000 * 5;
 	struct Grain
 	{
 		int32_t readPos;
@@ -301,7 +334,7 @@ private:
 	int16_t cvOut2PhaseValue_;
 
 	// Control update throttling
-	static const int32_t UPDATE_RATE_DIVIDER = 48;
+	static const int32_t UPDATE_RATE_DIVIDER = 24;
 	int32_t updateCounter_;
 
 	// Cached knob values
@@ -415,12 +448,12 @@ private:
 		if (normalizedRatio > 4095)
 			normalizedRatio = 4095;
 
-		grainSize_ = 64 + ((normalizedRatio * 65472) / 4095);
+		grainSize_ = 64 + ((normalizedRatio * 49936) / 4095);
 
 		if (grainSize_ < 64)
 			grainSize_ = 64;
-		if (grainSize_ > 65536)
-			grainSize_ = 65536;
+		if (grainSize_ > 50000)
+			grainSize_ = 50000;
 	}
 
 	int16_t virtualDetentedKnob(int16_t val)
@@ -1006,13 +1039,13 @@ private:
 	void __not_in_flash_func(updatePulseOutputs)()
 	{
 		// Update stochastic clock period based on grain size
-		// Wider range than grain size: 480 samples (10ms) to 9600 samples (200ms) at 48kHz
+		// Wider range than grain size: 240 samples (10ms) to 4800 samples (200ms) at 24kHz
 		// Inverse relationship: smaller grains = faster clock, larger grains = slower clock
-		int32_t normalizedGrainSize = grainSize_ - 64; // 0 to 65472 range
-		int32_t maxPeriod = 9600;					   // 200ms at 48kHz
-		int32_t minPeriod = 480;					   // 10ms at 48kHz
+		int32_t normalizedGrainSize = grainSize_ - 64; // 0 to 49936 range
+		int32_t maxPeriod = 4800;					   // 200ms at 24kHz
+		int32_t minPeriod = 240;					   // 10ms at 24kHz
 		// Inverse mapping: larger grain size = longer period (slower clock)
-		stochasticClockPeriod_ = maxPeriod - ((normalizedGrainSize * (maxPeriod - minPeriod)) / 65472);
+		stochasticClockPeriod_ = maxPeriod - ((normalizedGrainSize * (maxPeriod - minPeriod)) / 49936);
 
 		// Clamp to valid range
 		if (stochasticClockPeriod_ < minPeriod)
