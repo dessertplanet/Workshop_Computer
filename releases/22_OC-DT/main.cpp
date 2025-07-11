@@ -18,7 +18,7 @@
  * - CV2: Pitch control (-5V to +5V = -2x to +2x speed) with Main knob as attenuverter
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop Mode
  * - Pulse 1 In: Triggers new grains
- * - Pulse 2 In: Forces switch down (loop mode)
+ * - Pulse 2 In: Gate input - forces loop mode when high, returns to switch behavior when low
  */
 
 #define BUFF_LENGTH_SAMPLES 100000 // 100,000 samples (2.08 seconds at 48kHz)
@@ -98,8 +98,10 @@ public:
 		// Read 3-way switch position first to determine recording behavior
 		Switch switchPos = SwitchVal();
 		
-		// Override switch position if Pulse 2 is high (acts as switch down)
-		if (PulseIn2()) {
+		// Pulse 2 acts as a gate: when high, forces loop/glitch mode (switch down)
+		// When low, returns to normal switch behavior
+		bool pulse2Gate = PulseIn2();
+		if (pulse2Gate) {
 			switchPos = Switch::Down;
 		}
 		
@@ -202,7 +204,7 @@ public:
 			AudioOut1(outL);
 			AudioOut2(outR);
 		}
-		else { // Switch Down - Loop/Glitch Mode
+		else { // Switch Down OR Pulse 2 Gate High - Loop/Glitch Mode
 			// Enter loop mode if not already in it
 			if (!loopMode_) {
 				enterLoopMode();
@@ -457,6 +459,9 @@ private:
 	
 	void __not_in_flash_func(triggerNewGrain)()
 	{
+		// Read pulse 2 gate state for consistent behavior
+		bool pulse2Gate = PulseIn2();
+		
 		// Find an inactive grain slot
 		for (int i = 0; i < MAX_GRAINS; i++)
 		{
@@ -521,8 +526,8 @@ private:
 					if (positionControlValue < 0) positionControlValue = 0;
 					if (positionControlValue > 4095) positionControlValue = 4095;
 					
-					// Check if buffer is frozen (switch up or pulse 2)
-					bool bufferIsFrozen = (SwitchVal() == Switch::Up) || PulseIn2();
+					// Check if buffer is frozen (switch up or pulse 2 gate high)
+					bool bufferIsFrozen = (SwitchVal() == Switch::Up) || pulse2Gate;
 					
 					if (bufferIsFrozen) {
 						// Freeze mode: CV1 scrubs the entire buffer (0-4095 maps to full buffer range)
@@ -562,7 +567,7 @@ private:
 				// Apply write head safety check ONLY when buffer is recording (not frozen)
 				// In freeze mode, grains can access the entire buffer safely
 				// Also skip safety check when CV1 is connected since position is explicitly controlled
-				bool bufferIsFrozen = (SwitchVal() == Switch::Up) || PulseIn2();
+				bool bufferIsFrozen = (SwitchVal() == Switch::Up) || pulse2Gate;
 				bool cv1Connected = Connected(Input::CV1);
 				if (!bufferIsFrozen && !cv1Connected) {
 					const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
@@ -661,6 +666,9 @@ private:
 	
 	void __not_in_flash_func(updateGrains)()
 	{
+		// Read pulse 2 gate state once for consistent behavior
+		bool pulse2Gate = PulseIn2();
+		
 		// Update all active grains
 		for (int i = 0; i < MAX_GRAINS; i++)
 		{
@@ -773,7 +781,7 @@ private:
 						
 						// WRITE HEAD BOUNDARY CHECK: Prevent grains from reading past write head
 						// Only apply this check when buffer is recording (not frozen)
-						bool bufferIsFrozen = (SwitchVal() == Switch::Up) || PulseIn2();
+						bool bufferIsFrozen = (SwitchVal() == Switch::Up) || pulse2Gate;
 						if (!bufferIsFrozen) {
 							const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
 							int32_t maxSafePos = writeHead_ - safetyMargin;
