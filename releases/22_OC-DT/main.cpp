@@ -66,56 +66,49 @@ private:
 		87569, 87507, 87433, 87347, 87249, 87139, 87017, 86883, 86737, 86580, 86411, 86231, 86040, 85837, 85623, 85398,
 		85162, 84915, 84657, 84389, 84111, 83822, 83523, 83214, 82895, 82566, 82227, 81879, 81522, 81155, 80779, 80394,
 		80000, 79597, 79185, 78765, 78336, 77899, 77454, 77001, 76540, 76072, 75596, 75113, 74623, 74125, 73621, 73110};
-	// Constants for magic numbers (Bug Fix #9)
-	static const int32_t GRAIN_TRIGGER_COOLDOWN_SAMPLES = 48;  // ~1ms cooldown at 48kHz
-	static const int32_t SAFETY_MARGIN_SAMPLES = 1000;		   // ~20ms safety margin
-	static const int32_t GRAIN_END_PULSE_DURATION = 200;	   // ~4.2ms pulse duration
-	static const int32_t MAX_PULSE_HALF_PERIOD = 32768;		   // Maximum reasonable pulse period
-	static const int32_t PULSE_COUNTER_OVERFLOW_LIMIT = 65536; // Prevent counter overflow
-	static const int32_t VIRTUAL_DETENT_THRESHOLD = 12;		   // Center detent threshold
-	static const int32_t VIRTUAL_DETENT_EDGE_THRESHOLD = 5;	   // Edge detent threshold
+	// Timing constants
+	static const int32_t GRAIN_TRIGGER_COOLDOWN_SAMPLES = 48; // 1ms cooldown at 48kHz
+	static const int32_t SAFETY_MARGIN_SAMPLES = 1000;		  // 20ms safety margin
+	static const int32_t GRAIN_END_PULSE_DURATION = 200;	  // 4.2ms pulse duration
+	static const int32_t MAX_PULSE_HALF_PERIOD = 32768;
+	static const int32_t PULSE_COUNTER_OVERFLOW_LIMIT = 65536;
+	static const int32_t VIRTUAL_DETENT_THRESHOLD = 12;
+	static const int32_t VIRTUAL_DETENT_EDGE_THRESHOLD = 5;
 
-	// Crash protection constants
-	static const int32_t MAX_FRACTIONAL_ITERATIONS = 4; // Sufficient for ±2x speed with safety margin
-	static const int32_t MAX_SAFE_GRAIN_SPEED = 8192;	// Limit grain speed to 2x max speed
+	// Safety limits
+	static const int32_t MAX_FRACTIONAL_ITERATIONS = 4;
+	static const int32_t MAX_SAFE_GRAIN_SPEED = 8192;
 
 public:
 	OC_DT()
 	{
-		// Constructor
 		for (int i = 0; i < BUFF_LENGTH_SAMPLES; i++)
 		{
 			buffer_[i] = 0;
 		}
 
-		// Initialize time-stretching system
-		stretchRatio_ = 4096;		// 1.0x stretch ratio (Q12 fixed-point)
-		grainPlaybackSpeed_ = 4096; // 1.0x grain speed (Q12 fixed-point)
+		stretchRatio_ = 4096;
+		grainPlaybackSpeed_ = 4096;
 		grainSize_ = 1024;
-		maxActiveGrains_ = 3; // Fixed maximum grain count
-		loopMode_ = false;	  // Initialize loop mode
+		maxActiveGrains_ = 3;
+		loopMode_ = false;
 
 		grainTriggerCooldown_ = 0;
 
-		// Initialize pulse output state
 		pulseOut1Counter_ = 0;
 		pulseOut2Counter_ = 0;
 		stochasticClockCounter_ = 0;
-		stochasticClockPeriod_ = 2400; // Initial period (~50ms at 48kHz)
+		stochasticClockPeriod_ = 2400;
 
-		// Initialize CV output state
 		cvOut1NoiseValue_ = 0;
 		cvOut2PhaseValue_ = 0;
 
-		// Initialize control and LED update throttling
-		updateCounter_ = UPDATE_RATE_DIVIDER - 1; // Start at max to trigger immediate update on first sample
+		updateCounter_ = UPDATE_RATE_DIVIDER - 1;
 
-		// Initialize cached knob values (will be updated on first ProcessSample call)
-		cachedMainKnob_ = 2048; // Center position
-		cachedXKnob_ = 0;		// Left position
-		cachedYKnob_ = 2048;	// Center position
+		cachedMainKnob_ = 2048;
+		cachedXKnob_ = 0;
+		cachedYKnob_ = 2048;
 
-		// Initialize all grains as inactive
 		for (int i = 0; i < MAX_GRAINS; i++)
 		{
 			grains_[i].active = false;
@@ -132,29 +125,25 @@ public:
 
 	virtual void ProcessSample()
 	{
-		// Read 3-way switch position first to determine recording behavior
 		Switch switchPos = SwitchVal();
 
-		// Pulse 2 acts as a gate: when high, forces loop/glitch mode (switch down)
-		// When low, returns to normal switch behavior
 		bool pulse2Gate = PulseIn2();
 		if (pulse2Gate)
 		{
 			switchPos = Switch::Down;
 		}
 
-		// Advance virtual write head for consistent delay timing ONLY when not in freeze mode
-		// In freeze mode, virtual write head stays frozen to prevent grains from accessing unrecorded buffer sections
+		// Advance virtual write head when not in freeze mode
 		if (switchPos != Switch::Up)
 		{
 			virtualWriteHead_++;
 			if (virtualWriteHead_ >= BUFF_LENGTH_SAMPLES)
 			{
-				virtualWriteHead_ = 0; // Wrap around for circular buffer
+				virtualWriteHead_ = 0;
 			}
 		}
 
-		// Record incoming audio to buffer ONLY when switch is not up (not in freeze mode)
+		// Record audio when not in freeze mode
 		if (switchPos != Switch::Up)
 		{
 			uint16_t stereoSample = packStereo(AudioIn1(), AudioIn2());
@@ -162,166 +151,131 @@ public:
 			writeHead_++;
 			if (writeHead_ >= BUFF_LENGTH_SAMPLES)
 			{
-				writeHead_ = 0; // Wrap around for circular buffer
+				writeHead_ = 0;
 			}
-			// Keep virtual write head in sync with real write head when recording
 			virtualWriteHead_ = writeHead_;
 		}
-		// When switch is up, both writeHead_ and virtualWriteHead_ stay frozen
 
-		// X knob controls delay time/spread, but when CV1 is connected it becomes an attenuverter
+		// X knob controls delay time/spread or becomes attenuverter when CV1 connected
 		int32_t xControlValue = cachedXKnob_;
 
-		// When CV1 is NOT connected: X knob functionality remains as before
 		if (!Connected(Input::CV1))
 		{
-			// X knob functionality: Left half = delay time, Right half = spread
 			if (xControlValue <= 2047)
 			{
-				// Left half (0-2047): Control delay time from shortest to longest
-				// Map to delay distance: 0 -> 2400 samples (~50ms), 2047 -> 95000 samples (~2.0s)
-				// Keep within buffer bounds (100000 samples) with safety margin
+				// Left half: delay time control
 				delayDistance_ = 2400 + ((xControlValue * (95000 - 2400)) / 2047);
-				spreadAmount_ = 0; // No spread on left half
+				spreadAmount_ = 0;
 			}
 			else
 			{
-				// Right half (2048-4095): Control spread with fixed delay time
-				delayDistance_ = 24000; // Fixed delay at ~0.5 seconds
-				// Map right half to spread: 2048 -> 0, 4095 -> 4095
+				// Right half: spread control with fixed delay
+				delayDistance_ = 24000;
 				spreadAmount_ = ((xControlValue - 2048) * 4095) / 2047;
 			}
 		}
 		else
 		{
-			// CV1 connected: X knob becomes attenuverter, disable spread, use fixed delay
-			delayDistance_ = 24000; // Fixed delay at ~0.5 seconds when CV1 controls position
-			spreadAmount_ = 0;		// Disable noise-based spread when CV1 is connected
-									// X knob will be used as attenuverter in triggerNewGrain() function
+			// CV1 connected: X knob becomes attenuverter
+			delayDistance_ = 24000;
+			spreadAmount_ = 0;
 		}
 
-		// Update playback speed from knobs (affects all active grains)
 		updatePlaybackSpeed();
 
-		// Check for grain triggering once per sample (before switch logic)
 		bool shouldTriggerGrain = PulseIn1RisingEdge() && (grainTriggerCooldown_ <= 0);
 
-		// Update cooldown counter
 		if (grainTriggerCooldown_ > 0)
 		{
 			grainTriggerCooldown_--;
 		}
 
-		// If we trigger a grain, set cooldown to prevent rapid retriggering
 		if (shouldTriggerGrain)
 		{
 			grainTriggerCooldown_ = GRAIN_TRIGGER_COOLDOWN_SAMPLES;
 		}
 
 		if (switchPos == Switch::Up)
-		{ // Switch Up - Freeze Buffer (Loop entire buffer)
-			// Buffer recording is already frozen (writeHead_ not advancing)
-			// Still allow grain triggering for pulse output feedback
+		{
 			if (shouldTriggerGrain)
 			{
 				triggerNewGrain();
 			}
 
-			// Generate granular output from the frozen buffer
-			int16_t outL = generateStretchedSample(0); // Left channel
-			int16_t outR = generateStretchedSample(1); // Right channel
+			int16_t outL = generateStretchedSample(0);
+			int16_t outR = generateStretchedSample(1);
 
 			AudioOut1(outL);
 			AudioOut2(outR);
 		}
 		else if (switchPos == Switch::Middle)
-		{ // Switch Middle - 100% Wet (current behavior)
-			// Exit loop mode if we were in it
+		{
 			if (loopMode_)
 			{
 				exitLoopMode();
 			}
 
-			// Normal granular processing
 			if (shouldTriggerGrain)
 			{
 				triggerNewGrain();
 			}
 
-			// Generate granular output ONLY
-			int16_t outL = generateStretchedSample(0); // Left channel
-			int16_t outR = generateStretchedSample(1); // Right channel
+			int16_t outL = generateStretchedSample(0);
+			int16_t outR = generateStretchedSample(1);
 
 			AudioOut1(outL);
 			AudioOut2(outR);
 		}
 		else
-		{ // Switch Down OR Pulse 2 Gate High - Loop/Glitch Mode
-			// Enter loop mode if not already in it
+		{
 			if (!loopMode_)
 			{
 				enterLoopMode();
 			}
 
-			// In loop mode, do NOT trigger new grains - existing grains just loop
-			// User must manually trigger grains before entering loop mode
-
-			// Generate looped granular output
-			int16_t outL = generateStretchedSample(0); // Left channel
-			int16_t outR = generateStretchedSample(1); // Right channel
+			int16_t outL = generateStretchedSample(0);
+			int16_t outR = generateStretchedSample(1);
 
 			AudioOut1(outL);
 			AudioOut2(outR);
 		}
 
-		// Update grain system
 		updateGrains();
-
-		// Update CV outputs
 		updateCVOutputs();
-
-		// Update pulse outputs
 		updatePulseOutputs();
 
-		// Update grain size and position parameters only when controls change (1000Hz)
-		// These only affect newly triggered grains, not existing ones
+		// Update control parameters at 1000Hz
 		updateCounter_++;
 		if (updateCounter_ >= UPDATE_RATE_DIVIDER)
 		{
 			updateCounter_ = 0;
-
-			// Update cached knob values
 			updateCachedKnobValues();
-
-			// Update grain size and position parameters for new grains
 			updateGrainParameters();
-
-			// Update LED feedback
 			updateLEDFeedback();
 		}
 	}
 
 private:
 	uint16_t buffer_[BUFF_LENGTH_SAMPLES];
-	int32_t writeHead_ = 0;			// Write head for the buffer (start at 0, not 500)
-	int32_t virtualWriteHead_ = 0;	// Virtual write head that continues advancing in freeze mode
-	int32_t delayDistance_ = 10000; // Distance between record and playback heads
-	int32_t spreadAmount_ = 0;		// Spread control: 0 = fixed delay position, 4095 = full random
+	int32_t writeHead_ = 0;
+	int32_t virtualWriteHead_ = 0;
+	int32_t delayDistance_ = 10000;
+	int32_t spreadAmount_ = 0;
 
-	// Time-stretching grain system
+	// Grain system
 	static const int MAX_GRAINS = 4;
-	static const int32_t GRAIN_FREEZE_TIMEOUT = 48000 * 5; // 5 seconds at 48kHz
+	static const int32_t GRAIN_FREEZE_TIMEOUT = 48000 * 5;
 	struct Grain
 	{
-		int32_t readPos;	   // Current read position in buffer (integer part)
-		int32_t readFrac;	   // Q12 fractional part for interpolation
-		int32_t sampleCount;   // Samples processed in this grain
-		int32_t startPos;	   // Where grain started in buffer
-		int32_t loopSize;	   // Size of loop when in loop mode
-		int32_t freezeCounter; // Counter for frozen grain timeout
-		bool active;		   // Whether grain is currently playing
-		bool looping;		   // Whether this grain is in loop mode
-		bool pulse90Triggered; // Whether this grain has triggered the 90% pulse
+		int32_t readPos;
+		int32_t readFrac;
+		int32_t sampleCount;
+		int32_t startPos;
+		int32_t loopSize;
+		int32_t freezeCounter;
+		bool active;
+		bool looping;
+		bool pulse90Triggered;
 		// Per-grain parameters (snapshotted at trigger)
 		int32_t delayDistance;
 		int32_t spreadAmount;
@@ -329,50 +283,47 @@ private:
 	};
 	Grain grains_[MAX_GRAINS];
 
-	// Time-stretching state
-	int32_t stretchRatio_;		 // Q12 fixed-point stretch ratio (4096 = 1.0x)
-	int32_t grainPlaybackSpeed_; // Q12 fixed-point grain speed (4096 = 1.0x)
-	int32_t grainSize_;			 // Current grain size in samples
-	int32_t maxActiveGrains_;	 // Fixed maximum grain count (set to 3)
-	bool loopMode_;				 // Whether we're in loop/glitch mode (switch down)
+	int32_t stretchRatio_;
+	int32_t grainPlaybackSpeed_;
+	int32_t grainSize_;
+	int32_t maxActiveGrains_;
+	bool loopMode_;
 
-	int32_t grainTriggerCooldown_; // Cooldown to prevent rapid retriggering
+	int32_t grainTriggerCooldown_;
 
-	// Pulse output state variables
-	int32_t pulseOut1Counter_;		 // Counter for pulse output 1 duration
-	int32_t pulseOut2Counter_;		 // Counter for pulse output 2 duration
-	int32_t stochasticClockCounter_; // Counter for stochastic clock timing
-	int32_t stochasticClockPeriod_;	 // Current period for stochastic clock (varies with grain size)
+	// Pulse and CV output state
+	int32_t pulseOut1Counter_;
+	int32_t pulseOut2Counter_;
+	int32_t stochasticClockCounter_;
+	int32_t stochasticClockPeriod_;
 
-	// CV output state variables
-	int16_t cvOut1NoiseValue_; // Current noise value for CV Out 1
-	int16_t cvOut2PhaseValue_; // Current phase value for CV Out 2
+	int16_t cvOut1NoiseValue_;
+	int16_t cvOut2PhaseValue_;
 
-	// Control and LED update throttling (1000Hz instead of 48kHz)
-	static const int32_t UPDATE_RATE_DIVIDER = 48; // 48kHz / 48 = 1000Hz
-	int32_t updateCounter_;						   // Counter for control and LED update rate throttling
+	// Control update throttling
+	static const int32_t UPDATE_RATE_DIVIDER = 48;
+	int32_t updateCounter_;
 
-	// Cached knob values (updated at 1000Hz)
+	// Cached knob values
 	int32_t cachedMainKnob_;
 	int32_t cachedXKnob_;
 	int32_t cachedYKnob_;
 
-	// Interpolated sample reading with wraparound (Q12 fixed-point)
+	// Interpolated sample reading with wraparound
 	int16_t __not_in_flash_func(getInterpolatedSample)(int32_t bufferPos, int32_t frac, int channel)
 	{
-		// Ensure buffer position is within bounds with proper modulo for negative values
+		// Ensure buffer position is within bounds
 		int32_t pos1 = bufferPos;
 		while (pos1 >= BUFF_LENGTH_SAMPLES)
 			pos1 -= BUFF_LENGTH_SAMPLES;
 		while (pos1 < 0)
 			pos1 += BUFF_LENGTH_SAMPLES;
 
-		// Calculate pos2 with proper wraparound handling
 		int32_t pos2 = pos1 + 1;
 		if (pos2 >= BUFF_LENGTH_SAMPLES)
-			pos2 = 0; // Forward wraparound
+			pos2 = 0;
 
-		// Additional safety check: ensure both positions are valid
+		// Safety check
 		if (pos1 < 0 || pos1 >= BUFF_LENGTH_SAMPLES)
 			pos1 = 0;
 		if (pos2 < 0 || pos2 >= BUFF_LENGTH_SAMPLES)
@@ -381,17 +332,17 @@ private:
 		int16_t sample1 = unpackStereo(buffer_[pos1], channel);
 		int16_t sample2 = unpackStereo(buffer_[pos2], channel);
 
-		// Clamp fractional part to valid range
+		// Clamp fractional part
 		if (frac < 0)
 			frac = 0;
 		if (frac >= 4096)
 			frac = 4095;
 
-		// Linear interpolation in Q12: sample1 + (sample2 - sample1) * frac
+		// Linear interpolation in Q12
 		int32_t diff = sample2 - sample1;
 		int32_t interpolated = sample1 + ((diff * frac) >> 12);
 
-		// Clamp result to prevent overflow
+		// Clamp result
 		if (interpolated > 2047)
 			interpolated = 2047;
 		if (interpolated < -2048)
@@ -400,40 +351,34 @@ private:
 		return (int16_t)interpolated;
 	}
 
-	// Update playback speed (called every sample - affects all active grains)
+	// Update playback speed (affects all active grains)
 	void __not_in_flash_func(updatePlaybackSpeed)()
 	{
-		// CV2 pitch control with Main knob as attenuverter
 		if (Connected(Input::CV2))
 		{
-			// CV2 connected - CV2 controls pitch, Main knob becomes attenuverter
-			int32_t cv2Val = CVIn2();									// -2048 to +2047 (±5V)
-			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_); // Apply detents
+			// CV2 controls pitch, Main knob is attenuverter
+			int32_t cv2Val = CVIn2();
+			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
 			grainPlaybackSpeed_ = applyPitchAttenuverter(cv2Val, mainKnobVal);
 		}
 		else
 		{
-			// CV2 disconnected - Main knob direct pitch control (original behavior)
+			// Main knob controls pitch directly
 			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
 
-			// Map main knob to grain playback speed: -2x to +2x with pause at center
-			// 0 -> -2x (-8192), 2048 -> 0x (0 = paused), 4095 -> +2x (8192)
+			// Map -2x to +2x with pause at center
 			if (mainKnobVal <= 2048)
 			{
-				// Left half: -2x to 0x (full reverse to paused)
-				// -2x in Q12 = -8192
-				grainPlaybackSpeed_ = -8192 + ((mainKnobVal * 8192) >> 11); // -8192 to 0
+				grainPlaybackSpeed_ = -8192 + ((mainKnobVal * 8192) >> 11);
 			}
 			else
 			{
-				// Right half: 0x to +2x (paused to full forward)
-				// +2x in Q12 = 8192
-				int32_t rightKnob = mainKnobVal - 2048;			// 0 to 2047
-				grainPlaybackSpeed_ = (rightKnob * 8192) >> 11; // 0 to 8192
+				int32_t rightKnob = mainKnobVal - 2048;
+				grainPlaybackSpeed_ = (rightKnob * 8192) >> 11;
 			}
 		}
 
-		// CRASH PROTECTION: Limit grain speed to prevent overflow and runaway loops
+		// Limit speed for safety
 		if (grainPlaybackSpeed_ > MAX_SAFE_GRAIN_SPEED)
 		{
 			grainPlaybackSpeed_ = MAX_SAFE_GRAIN_SPEED;
@@ -444,111 +389,71 @@ private:
 		}
 	}
 
-	// Update grain parameters (called at 1000Hz - only affects newly triggered grains)
+	// Update grain parameters (affects newly triggered grains only)
 	void __not_in_flash_func(updateGrainParameters)()
 	{
-		// Calculate Y control value directly from Y knob (no CV1 interaction for grain size)
-		int32_t yControlValue = cachedYKnob_; // Y knob now directly controls grain size
-
-		// Apply virtual detents to the control value
+		int32_t yControlValue = cachedYKnob_;
 		yControlValue = virtualDetentedKnob(yControlValue);
 
-		// Map Y control value to stretch ratio for grain size calculation
-		// We'll use this to determine grain size in the 6-tier system
-		// 0 -> 0.25x (1024), 2048 -> 1.0x (4096), 4095 -> 4.0x (16384)
+		// Map Y control to stretch ratio
 		if (yControlValue <= 2048)
 		{
-			// Left half: 0.25x to 1.0x
-			stretchRatio_ = 1024 + ((yControlValue * 3072) >> 11); // 3072 = (4096-1024)
+			stretchRatio_ = 1024 + ((yControlValue * 3072) >> 11);
 		}
 		else
 		{
-			// Right half: 1.0x to 4.0x
-			int32_t rightKnob = yControlValue - 2048;			// 0 to 2047
-			stretchRatio_ = 4096 + ((rightKnob * 12288) >> 11); // 12288 = (16384-4096)
+			int32_t rightKnob = yControlValue - 2048;
+			stretchRatio_ = 4096 + ((rightKnob * 12288) >> 11);
 		}
 
-		// Calculate grain size based on Y knob (stretchRatio_) - smooth linear control
-		// Linear mapping for predictable grain size range using Q12 integer arithmetic
-		// Range: 64 samples (~1.3ms) to 65536 samples (~1.36s)
+		// Calculate grain size from stretch ratio
+		int32_t normalizedRatio = stretchRatio_ - 1024;
+		normalizedRatio = (normalizedRatio * 4096) / 15360;
 
-		// Normalize stretchRatio_ (1024-16384) to 0-4095 range (Q12)
-		int32_t normalizedRatio = stretchRatio_ - 1024;		// Now 0 to 15360
-		normalizedRatio = (normalizedRatio * 4096) / 15360; // Scale to 0-4095 (Q12)
-
-		// Clamp to valid range
 		if (normalizedRatio < 0)
 			normalizedRatio = 0;
 		if (normalizedRatio > 4095)
 			normalizedRatio = 4095;
 
-		// Linear mapping from 64 to 65536 samples
-		// grainSize = 64 + (normalizedRatio * (65536 - 64)) / 4095
-		grainSize_ = 64 + ((normalizedRatio * 65472) / 4095); // 65472 = 65536 - 64
+		grainSize_ = 64 + ((normalizedRatio * 65472) / 4095);
 
-		// Safety clamp
 		if (grainSize_ < 64)
 			grainSize_ = 64;
 		if (grainSize_ > 65536)
 			grainSize_ = 65536;
-
-		// Grain limit is now fixed at 3 - no dynamic adjustment needed
-		// enforceGrainLimit() will handle any excess grains if needed
 	}
 
-	// Time-stretching helper functions (legacy function - now split into updatePlaybackSpeed and updateGrainParameters)
-	void __not_in_flash_func(updateStretchParameters)()
-	{
-		// This function is deprecated - functionality split into:
-		// - updatePlaybackSpeed() - called every sample
-		// - updateGrainParameters() - called at 1000Hz
-		updatePlaybackSpeed();
-		updateGrainParameters();
-	}
 	int16_t virtualDetentedKnob(int16_t val)
 	{
-		// Create virtual detents at key positions
 		if (val > 4090)
 		{
-			val = 4095; // Far right detent
+			val = 4095;
 		}
 		else if (val < 5)
 		{
-			val = 0; // Far left detent
+			val = 0;
 		}
 
-		// Center detent - important for pause/freeze at 0x speed
+		// Center detent for pause/freeze
 		if (cabs(val - 2048) < VIRTUAL_DETENT_THRESHOLD)
 		{
-			val = 2048; // Slightly larger detent zone for center (pause)
+			val = 2048;
 		}
 
 		return val;
 	}
 
-	// Attenuverter function: applies knob as attenuverter to CV input
+	// Apply knob as attenuverter to CV input
 	int32_t __not_in_flash_func(applyAttenuverter)(int32_t cvValue, int32_t knobValue)
 	{
-		// cvValue: -2048 to +2047 (CV input)
-		// knobValue: 0 to 4095 (knob position)
-		// Returns: 0 to 4095 (scaled for use as control value)
+		// Map knob to scale factor -2.0 to +2.0
+		int32_t scaleFactor = ((knobValue - 2048) * 4) + 4096;
 
-		// Convert knob to attenuverter scale: 0-4095 -> -1.0 to +1.0 (Q12)
-		// knob = 0 -> -4096 (full inversion)
-		// knob = 2048 -> 0 (no effect, but we want unity gain)
-		// knob = 4095 -> +4096 (full positive)
-
-		// Map knob 0-4095 to scale factor -2.0 to +2.0 (Q12)
-		int32_t scaleFactor = ((knobValue - 2048) * 4) + 4096; // -4096 to +12288, centered at 4096
-
-		// Apply scaling to CV: cv * scale / 4096
 		int32_t scaledCV = (cvValue * scaleFactor) >> 12;
 
-		// Convert from CV range (-2048 to +2047) to knob range (0 to 4095)
-		// Add offset and scale to 0-4095 range
-		int32_t result = scaledCV + 2048; // Now -2048+2048 to +2047+2048 = 0 to 4095
+		// Convert to 0-4095 range
+		int32_t result = scaledCV + 2048;
 
-		// Clamp to valid knob range
 		if (result < 0)
 			result = 0;
 		if (result > 4095)
@@ -1066,7 +971,7 @@ private:
 							if (grains_[i].sampleCount >= percent90 && pulseOut1Counter_ <= 0)
 							{
 								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 200 samples
-								grains_[i].pulse90Triggered = true;			  // Mark as triggered for this grain instance
+								grains_[i].pulse90Triggered = true;			  // Mark as triggered for next loop iteration
 							}
 						}
 
@@ -1312,34 +1217,6 @@ private:
 		return (a > 0) ? a : -a;
 	}
 
-	void clip(int16_t &val)
-	{
-		if (val > 2047)
-		{
-			val = 2047;
-		}
-		else if (val < -2048)
-		{
-			val = -2048;
-		}
-	}
-
-	int8_t sign(int16_t val)
-	{
-		if (val > 0)
-		{
-			return 1;
-		}
-		else if (val < 0)
-		{
-			return -1;
-		}
-		else
-		{
-			return 0;
-		}
-	}
-
 	// Update cached knob values at 1000Hz
 	void __not_in_flash_func(updateCachedKnobValues)()
 	{
@@ -1348,10 +1225,9 @@ private:
 		cachedYKnob_ = KnobVal(Y);
 	}
 };
-
 int main()
 {
 	OC_DT card;
-	card.EnableNormalisationProbe(); // Enable CV jack detection
+	card.EnableNormalisationProbe();
 	card.Run();
 }
