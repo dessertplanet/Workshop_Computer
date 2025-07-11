@@ -24,7 +24,7 @@
  * - Audio Outs: Granular processed audio (stereo)
  * - CV Out 1: Random noise value (updates when grains are triggered)
  * - CV Out 2: Playback phase of grain 0 (0V=start, 5V=end of grain)
- * - Pulse 1 Out: Sends 200-sample pulse when grain 0 ends
+ * - Pulse 1 Out: Triggers when any grain reaches 90% completion
  * - Pulse 2 Out: Stochastic clock - triggers when noise < X knob value, rate inversely proportional to grain size
  * 
  * LED Feedback:
@@ -127,6 +127,7 @@ public:
 			grains_[i].loopSize = 0;
 			grains_[i].freezeCounter = 0;
 			grains_[i].looping = false;
+			grains_[i].pulse90Triggered = false;
 		}
 	}
 
@@ -303,6 +304,7 @@ private:
 		int32_t freezeCounter;  // Counter for frozen grain timeout
 		bool active;            // Whether grain is currently playing
 		bool looping;           // Whether this grain is in loop mode
+		bool pulse90Triggered;  // Whether this grain has triggered the 90% pulse
 		// Per-grain parameters (snapshotted at trigger)
 		int32_t delayDistance;
 		int32_t spreadAmount;
@@ -614,6 +616,9 @@ private:
 				grains_[i].spreadAmount = spreadAmount_;
 				grains_[i].grainSize = grainSize_;
 				
+				// Reset pulse trigger flag for this grain
+				grains_[i].pulse90Triggered = false;
+				
 				// Generate new noise value for CV Out 1 when grain is triggered
 				cvOut1NoiseValue_ = (int16_t)((rnd12() & 0xFFF) - 2048); // -2048 to +2047
 				
@@ -854,6 +859,7 @@ private:
 						grains_[i].readPos = grains_[i].startPos;
 						grains_[i].readFrac = 0;
 						grains_[i].sampleCount = 0;
+						grains_[i].pulse90Triggered = false; // Reset pulse trigger for next loop iteration
 					}
 						
 						// Handle buffer wraparound for readPos - more efficient than while loops
@@ -940,13 +946,18 @@ private:
 							}
 						}
 						
+						// Check if grain has reached 90% completion and trigger Pulse 1
+						if (grains_[i].grainSize > 0 && !grains_[i].pulse90Triggered) {
+							int32_t percent90 = (grains_[i].grainSize * 90) / 100; // 90% of grain size
+							if (grains_[i].sampleCount >= percent90 && pulseOut1Counter_ <= 0) {
+								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 200 samples
+								grains_[i].pulse90Triggered = true; // Mark as triggered for this grain instance
+							}
+						}
+						
 						// Deactivate grain if it's finished (only when not frozen)
 						if (grains_[i].sampleCount >= grains_[i].grainSize)
 						{
-							// Check if this is grain 0 ending - trigger pulse output 1
-							if (i == 0 && pulseOut1Counter_ <= 0) {
-								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 200 samples
-							}
 							grains_[i].active = false;
 						}
 					}
