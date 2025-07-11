@@ -5,7 +5,7 @@
  * 
  * A sophisticated granular delay effect with the following features:
  * - 2.6-second circular buffer for audio capture (100k samples at 48kHz)
- * - Up to 4 simultaneous grains with Hann windowing (auto-reduces to 3 for large grains)
+ * - Up to 3 simultaneous grains with Hann windowing
  * - Linear grain sizes from micro (64 samples) to huge (65536 samples)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
@@ -37,6 +37,7 @@
  * - LED feedback updated at 1000Hz (instead of 48kHz) for improved efficiency
  * - Grain size/position parameters updated at 1000Hz (only affect new grains, not existing ones)
  * - Playback speed updated at 48kHz (affects all active grains in real-time)
+ * - Fixed maximum of 3 active grains (no dynamic allocation based on grain size)
  */
 
 #define BUFF_LENGTH_SAMPLES 100000 // 100,000 samples (2.08 seconds at 48kHz)
@@ -92,7 +93,7 @@ public:
 		stretchRatio_ = 4096; // 1.0x stretch ratio (Q12 fixed-point)
 		grainPlaybackSpeed_ = 4096; // 1.0x grain speed (Q12 fixed-point)
 		grainSize_ = 1024;
-		maxActiveGrains_ = 4; // Will be dynamically updated based on grain size
+		maxActiveGrains_ = 3; // Fixed maximum grain count
 		loopMode_ = false; // Initialize loop mode
 		
 		grainTriggerCooldown_ = 0;
@@ -313,7 +314,7 @@ private:
 	int32_t stretchRatio_;      // Q12 fixed-point stretch ratio (4096 = 1.0x)
 	int32_t grainPlaybackSpeed_; // Q12 fixed-point grain speed (4096 = 1.0x)
 	int32_t grainSize_;         // Current grain size in samples
-	int32_t maxActiveGrains_;   // Dynamic maximum grain count (4 for small grains, 3 for large)
+	int32_t maxActiveGrains_;   // Fixed maximum grain count (set to 3)
 	bool loopMode_;             // Whether we're in loop/glitch mode (switch down)
 	
 	int32_t grainTriggerCooldown_; // Cooldown to prevent rapid retriggering
@@ -449,12 +450,8 @@ private:
 		if (grainSize_ < 64) grainSize_ = 64;
 		if (grainSize_ > 65536) grainSize_ = 65536;
 		
-		// TEMPORARILY BYPASS DYNAMIC GRAIN LIMITING FOR TESTING
-		// Set maximum grain limit to 3 for all grain sizes
-		maxActiveGrains_ = 3;
-		
-		// If grain limit was reduced, deactivate excess grains (oldest first)
-		enforceGrainLimit();
+		// Grain limit is now fixed at 3 - no dynamic adjustment needed
+		// enforceGrainLimit() will handle any excess grains if needed
 	}
 	
 	// Time-stretching helper functions (legacy function - now split into updatePlaybackSpeed and updateGrainParameters)
@@ -1116,7 +1113,7 @@ private:
 			}
 		}
 		
-		// Scale brightness based on active grains (0-4 grains = 0-4095 brightness)
+		// Scale brightness based on active grains (0-3 grains = 0-4095 brightness)
 		uint16_t audioLedBrightness = (uint16_t)((activeGrains * 4095) / MAX_GRAINS);
 		
 		LedBrightness(0, audioLedBrightness);
