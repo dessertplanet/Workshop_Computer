@@ -166,8 +166,9 @@ public:
 			switchPos = Switch::Down;
 		}
 
-		// Advance virtual write head when not in freeze mode
-		if (switchPos != Switch::Up)
+		// Advance virtual write head when not in freeze mode, OR when in freeze mode but CV1 is disconnected
+		bool shouldAdvanceWriteHead = (switchPos != Switch::Up) || (switchPos == Switch::Up && !Connected(Input::CV1));
+		if (shouldAdvanceWriteHead)
 		{
 			virtualWriteHead_++;
 			if (virtualWriteHead_ >= BUFF_LENGTH_SAMPLES)
@@ -176,7 +177,7 @@ public:
 			}
 		}
 
-		// Record audio when not in freeze mode
+		// Record audio when not in freeze mode (freeze mode stops recording but allows playback)
 		if (switchPos != Switch::Up)
 		{
 			uint16_t stereoSample = packStereo(AudioIn1(), AudioIn2());
