@@ -19,8 +19,24 @@
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop Mode
  * - Pulse 1 In: Triggers new grains
  * - Pulse 2 In: Gate input - forces loop mode when high, returns to switch behavior when low
+ * 
+ * Outputs:
+ * - Audio Outs: Granular processed audio (stereo)
+ * - CV Out 1: Random noise value (updates when grains are triggered)
+ * - CV Out 2: Playback phase of grain 0 (0V=start, 5V=end of grain)
  * - Pulse 1 Out: Sends 200-sample pulse when grain 0 ends
  * - Pulse 2 Out: Stochastic clock - triggers when noise < X knob value, rate inversely proportional to grain size
+ * 
+ * LED Feedback:
+ * - LEDs 0,1: Audio output activity (brightness = number of active grains)
+ * - LEDs 2,3: CV output levels (brightness = CV voltage magnitude)
+ * - LEDs 4,5: Pulse output states (on/off)
+ * 
+ * Performance Optimizations:
+ * - Knob values cached and updated at 1000Hz (instead of 48kHz) for reduced CPU overhead
+ * - LED feedback updated at 1000Hz (instead of 48kHz) for improved efficiency
+ * - Grain size/position parameters updated at 1000Hz (only affect new grains, not existing ones)
+ * - Playback speed updated at 48kHz (affects all active grains in real-time)
  */
 
 #define BUFF_LENGTH_SAMPLES 100000 // 100,000 samples (2.08 seconds at 48kHz)
@@ -87,6 +103,18 @@ public:
 		stochasticClockCounter_ = 0;
 		stochasticClockPeriod_ = 2400; // Initial period (~50ms at 48kHz)
 		
+		// Initialize CV output state
+		cvOut1NoiseValue_ = 0;
+		cvOut2PhaseValue_ = 0;
+		
+		// Initialize control and LED update throttling
+		updateCounter_ = UPDATE_RATE_DIVIDER - 1; // Start at max to trigger immediate update on first sample
+		
+		// Initialize cached knob values (will be updated on first ProcessSample call)
+		cachedMainKnob_ = 2048; // Center position
+		cachedXKnob_ = 0; // Left position
+		cachedYKnob_ = 2048; // Center position
+		
 		// Initialize all grains as inactive
 		for (int i = 0; i < MAX_GRAINS; i++)
 		{
@@ -138,7 +166,7 @@ public:
 		// When switch is up, both writeHead_ and virtualWriteHead_ stay frozen
 		
 		// X knob controls delay time/spread, but when CV1 is connected it becomes an attenuverter
-		int32_t xControlValue = KnobVal(X);
+		int32_t xControlValue = cachedXKnob_;
 		
 		// When CV1 is NOT connected: X knob functionality remains as before
 		if (!Connected(Input::CV1)) {
@@ -162,8 +190,8 @@ public:
 			// X knob will be used as attenuverter in triggerNewGrain() function
 		}
 		
-		// Update stretch parameters from knobs
-		updateStretchParameters();
+		// Update playback speed from knobs (affects all active grains)
+		updatePlaybackSpeed();
 		
 		// Check for grain triggering once per sample (before switch logic)
 		bool shouldTriggerGrain = PulseIn1RisingEdge() && (grainTriggerCooldown_ <= 0);
@@ -232,8 +260,27 @@ public:
 		// Update grain system
 		updateGrains();
 		
+		// Update CV outputs
+		updateCVOutputs();
+		
 		// Update pulse outputs
 		updatePulseOutputs();
+		
+		// Update grain size and position parameters only when controls change (1000Hz)
+		// These only affect newly triggered grains, not existing ones
+		updateCounter_++;
+		if (updateCounter_ >= UPDATE_RATE_DIVIDER) {
+			updateCounter_ = 0;
+			
+			// Update cached knob values
+			updateCachedKnobValues();
+			
+			// Update grain size and position parameters for new grains
+			updateGrainParameters();
+			
+			// Update LED feedback
+			updateLEDFeedback();
+		}
 	}
 
 private:
@@ -277,6 +324,19 @@ private:
 	int32_t stochasticClockCounter_; // Counter for stochastic clock timing
 	int32_t stochasticClockPeriod_; // Current period for stochastic clock (varies with grain size)
 	
+	// CV output state variables
+	int16_t cvOut1NoiseValue_; // Current noise value for CV Out 1
+	int16_t cvOut2PhaseValue_; // Current phase value for CV Out 2
+	
+	// Control and LED update throttling (1000Hz instead of 48kHz)
+	static const int32_t UPDATE_RATE_DIVIDER = 48; // 48kHz / 48 = 1000Hz
+	int32_t updateCounter_; // Counter for control and LED update rate throttling
+	
+	// Cached knob values (updated at 1000Hz)
+	int32_t cachedMainKnob_;
+	int32_t cachedXKnob_;
+	int32_t cachedYKnob_;
+	
 
 	// Interpolated sample reading with wraparound (Q12 fixed-point)
 	int16_t __not_in_flash_func(getInterpolatedSample)(int32_t bufferPos, int32_t frac, int channel)
@@ -312,25 +372,18 @@ private:
 		return (int16_t)interpolated;
 	}
 
-	// Time-stretching helper functions
-	void __not_in_flash_func(updateStretchParameters)()
+	// Update playback speed (called every sample - affects all active grains)
+	void __not_in_flash_func(updatePlaybackSpeed)()
 	{
-		// CONTROLS OVERVIEW:
-		// Main knob: playback speed/direction (-2.0x to +2.0x with pause at center)
-		// Y knob: grain size (linear control from micro to huge grains) 
-		// X knob: delay/spread control OR position attenuverter when CV1 connected
-		// CV1: grain position control (read only when grains are triggered)
-		// CV2: pitch control with Main knob as attenuverter
-		
 		// CV2 pitch control with Main knob as attenuverter
 		if (Connected(Input::CV2)) {
 			// CV2 connected - CV2 controls pitch, Main knob becomes attenuverter
 			int32_t cv2Val = CVIn2(); // -2048 to +2047 (±5V)
-			int32_t mainKnobVal = virtualDetentedKnob(KnobVal(Main)); // Apply detents
+			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_); // Apply detents
 			grainPlaybackSpeed_ = applyPitchAttenuverter(cv2Val, mainKnobVal);
 		} else {
 			// CV2 disconnected - Main knob direct pitch control (original behavior)
-			int32_t mainKnobVal = virtualDetentedKnob(KnobVal(Main));
+			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
 			
 			// Map main knob to grain playback speed: -2x to +2x with pause at center
 			// 0 -> -2x (-8192), 2048 -> 0x (0 = paused), 4095 -> +2x (8192)
@@ -353,9 +406,13 @@ private:
 		if (grainPlaybackSpeed_ < -MAX_SAFE_GRAIN_SPEED) {
 			grainPlaybackSpeed_ = -MAX_SAFE_GRAIN_SPEED;
 		}
-		
+	}
+	
+	// Update grain parameters (called at 1000Hz - only affects newly triggered grains)
+	void __not_in_flash_func(updateGrainParameters)()
+	{
 		// Calculate Y control value directly from Y knob (no CV1 interaction for grain size)
-		int32_t yControlValue = KnobVal(Y); // Y knob now directly controls grain size
+		int32_t yControlValue = cachedYKnob_; // Y knob now directly controls grain size
 		
 		// Apply virtual detents to the control value
 		yControlValue = virtualDetentedKnob(yControlValue);
@@ -398,7 +455,16 @@ private:
 		
 		// If grain limit was reduced, deactivate excess grains (oldest first)
 		enforceGrainLimit();
-		
+	}
+	
+	// Time-stretching helper functions (legacy function - now split into updatePlaybackSpeed and updateGrainParameters)
+	void __not_in_flash_func(updateStretchParameters)()
+	{
+		// This function is deprecated - functionality split into:
+		// - updatePlaybackSpeed() - called every sample
+		// - updateGrainParameters() - called at 1000Hz
+		updatePlaybackSpeed();
+		updateGrainParameters();
 	}
 	int16_t virtualDetentedKnob(int16_t val)
 	{
@@ -550,6 +616,10 @@ private:
 				grains_[i].delayDistance = delayDistance_;
 				grains_[i].spreadAmount = spreadAmount_;
 				grains_[i].grainSize = grainSize_;
+				
+				// Generate new noise value for CV Out 1 when grain is triggered
+				cvOut1NoiseValue_ = (int16_t)((rnd12() & 0xFFF) - 2048); // -2048 to +2047
+				
 				// Calculate base playback position using virtual write head for consistent delay timing
 				int32_t basePlaybackPos = virtualWriteHead_ - grains_[i].delayDistance;
 				if (basePlaybackPos < 0) basePlaybackPos += BUFF_LENGTH_SAMPLES;
@@ -560,7 +630,7 @@ private:
 					// CV1 connected: CV1 controls grain position with X knob as attenuverter
 					// Read CV1 input only when grain is triggered
 					int32_t cv1Val = CVIn1(); // -2048 to +2047 (±5V)
-					int32_t xKnobVal = KnobVal(X); // 0 to 4095 (X knob as attenuverter)
+					int32_t xKnobVal = cachedXKnob_; // 0 to 4095 (X knob as attenuverter)
 					
 					// Convert CV1 to position control value with wrapping
 					// 0-5V (cv1Val 0 to +2047) uses full range 0-4095
@@ -927,7 +997,7 @@ private:
 			
 			// Generate random value and compare with X knob threshold
 			int32_t randomValue = rnd12() & 0xFFF; // 0 to 4095
-			int32_t xKnobValue = KnobVal(X); // 0 to 4095
+			int32_t xKnobValue = cachedXKnob_; // 0 to 4095
 			
 			// If random value is less than X knob value, trigger pulse
 			// Higher X knob = higher threshold = more pulses
@@ -1004,6 +1074,65 @@ private:
 			}
 		}
 	}
+	
+	// Update CV outputs
+	void __not_in_flash_func(updateCVOutputs)()
+	{
+		// CV Out 1: Current noise value (updated when grains are triggered)
+		CVOut1(cvOut1NoiseValue_);
+		
+		// CV Out 2: Playback phase of grain 0 (0 to 2047 = start to end of grain)
+		bool grain0Active = false;
+		for (int i = 0; i < MAX_GRAINS; i++) {
+			if (grains_[i].active && i == 0) { // Find grain 0
+				grain0Active = true;
+				if (grains_[i].grainSize > 0) {
+					// Calculate phase: 0 to 2047 based on grain progress
+					int32_t phase = (grains_[i].sampleCount * 2047) / grains_[i].grainSize;
+					if (phase > 2047) phase = 2047;
+					if (phase < 0) phase = 0;
+					cvOut2PhaseValue_ = (int16_t)phase;
+				}
+				break;
+			}
+		}
+		
+		// If grain 0 is not active, output 0V
+		if (!grain0Active) {
+			cvOut2PhaseValue_ = 0;
+		}
+		
+		CVOut2(cvOut2PhaseValue_);
+	}
+	
+	// Update LED feedback for all outputs
+	void __not_in_flash_func(updateLEDFeedback)()
+	{
+		// LEDs 0,1: Audio outputs (brightness based on number of active grains)
+		int32_t activeGrains = 0;
+		for (int i = 0; i < MAX_GRAINS; i++) {
+			if (grains_[i].active) {
+				activeGrains++;
+			}
+		}
+		
+		// Scale brightness based on active grains (0-4 grains = 0-4095 brightness)
+		uint16_t audioLedBrightness = (uint16_t)((activeGrains * 4095) / MAX_GRAINS);
+		
+		LedBrightness(0, audioLedBrightness);
+		LedBrightness(1, audioLedBrightness);
+		
+		// LEDs 2,3: CV outputs (brightness based on CV level)
+		uint16_t ledCV1 = (uint16_t)((cabs(cvOut1NoiseValue_) * 4095) / 2048);
+		uint16_t ledCV2 = (uint16_t)((cvOut2PhaseValue_ * 4095) / 2047); // Phase is 0-2047
+		
+		LedBrightness(2, ledCV1);
+		LedBrightness(3, ledCV2);
+		
+		// LEDs 4,5: Pulse outputs (on/off based on pulse state)
+		LedOn(4, pulseOut1Counter_ > 0);
+		LedOn(5, pulseOut2Counter_ > 0);
+	}
 
 	// RNG! Different values for each card but the same on each boot
 	uint32_t __not_in_flash_func(rnd12)()
@@ -1071,6 +1200,13 @@ private:
 		}
 	}
 
+	// Update cached knob values at 1000Hz
+	void __not_in_flash_func(updateCachedKnobValues)()
+	{
+		cachedMainKnob_ = KnobVal(Main);
+		cachedXKnob_ = KnobVal(X);
+		cachedYKnob_ = KnobVal(Y);
+	}
 };
 
 int main()
