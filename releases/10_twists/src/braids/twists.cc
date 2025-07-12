@@ -127,10 +127,10 @@ void timer_callback() {
       cv[mxPos % 2] = cvsm[mxPos % 2] >> 4;
     break;
     case 1:
-      audio_in[0] = adc;
+      audio_in[1] = 4095 - adc;
       break;
     case 2:
-      audio_in[1] = adc;
+      audio_in[0] = 4095 - adc;
       break;
     case 3:
       // Each knob sampled at 48kHz/4 = 12kHz
