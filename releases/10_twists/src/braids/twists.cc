@@ -283,6 +283,7 @@ int16_t clamp(int16_t val, int16_t min, int16_t max) {
   return val;
 }
 
+bool last_trigger_from_midi = false;
 void RenderBlock() {
   static int16_t previous_pitch = 0;
   static uint16_t gain_lp;
@@ -290,7 +291,7 @@ void RenderBlock() {
   envelope.Update(
       settings.GetValue(SETTING_AD_ATTACK) * 8,
       settings.GetValue(SETTING_AD_DECAY) * 8);
-  uint32_t ad_value = envelope.Render(midi_active);
+  uint32_t ad_value = envelope.Render(last_trigger_from_midi);
   
   osc.set_shape(settings.shape());
 
@@ -304,9 +305,11 @@ void RenderBlock() {
     MIDIMessage midi_message = midi_messages.front();
     midi_messages.pop();
 
+    last_trigger_from_midi = false;
     if(midi_message.command == MIDIMessage::NoteOn) {
       midi_note_on = true;
       midi_active = true;
+      last_trigger_from_midi = true;
       midi_note = midi_message.note;
       midi_notes_on++;      
     } else if(midi_message.command == MIDIMessage::NoteOff) {
