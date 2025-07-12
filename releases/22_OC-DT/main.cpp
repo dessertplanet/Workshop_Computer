@@ -6,7 +6,7 @@
  * A sophisticated granular delay effect with the following features:
  * - 5.2-second circular buffer for audio capture (125k samples at 24kHz)
  * - Up to 3 simultaneous grains with Hann windowing
- * - Linear grain sizes from micro (64 samples) to huge (50000 samples)
+ * - Linear grain sizes from micro (64 samples) to huge (24000 samples)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
  *
@@ -449,12 +449,12 @@ private:
 		if (normalizedRatio > 4095)
 			normalizedRatio = 4095;
 
-		grainSize_ = 64 + ((normalizedRatio * 49936) / 4095);
+		grainSize_ = 64 + ((normalizedRatio * 23936) / 4095);
 
 		if (grainSize_ < 64)
 			grainSize_ = 64;
-		if (grainSize_ > 50000)
-			grainSize_ = 50000;
+		if (grainSize_ > 24000)
+			grainSize_ = 24000;
 	}
 
 	int16_t virtualDetentedKnob(int16_t val)
@@ -1042,11 +1042,11 @@ private:
 		// Update stochastic clock period based on grain size
 		// Wider range than grain size: 240 samples (10ms) to 4800 samples (200ms) at 24kHz
 		// Inverse relationship: smaller grains = faster clock, larger grains = slower clock
-		int32_t normalizedGrainSize = grainSize_ - 64; // 0 to 49936 range
+		int32_t normalizedGrainSize = grainSize_ - 64; // 0 to 23936 range
 		int32_t maxPeriod = 4800;					   // 200ms at 24kHz
 		int32_t minPeriod = 240;					   // 10ms at 24kHz
 		// Inverse mapping: larger grain size = longer period (slower clock)
-		stochasticClockPeriod_ = maxPeriod - ((normalizedGrainSize * (maxPeriod - minPeriod)) / 49936);
+		stochasticClockPeriod_ = maxPeriod - ((normalizedGrainSize * (maxPeriod - minPeriod)) / 23936);
 
 		// Clamp to valid range
 		if (stochasticClockPeriod_ < minPeriod)
