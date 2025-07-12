@@ -3,9 +3,9 @@
 /*
  * OC-DT Granular Delay
  *
- * A sophisticated granular delay effect with the following features:
- * - 5.2-second circular buffer for audio capture (125k samples at 24kHz)
- * - Up to 3 simultaneous grains with Hann windowing
+ * A granular delay effect with the following features:
+ * - 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz)
+ * - Up to 5 simultaneous grains 
  * - Linear grain sizes from micro (64 samples) to huge (24000 samples)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
@@ -16,7 +16,7 @@
  * - Y Knob: Grain size (linear control from micro to huge grains)
  * - CV1: Grain position control (0-5V covers full range, negative values wrap from end) with X knob as attenuverter
  * - CV2: Pitch control (-5V to +5V = -2x to +2x speed) with Main knob as attenuverter
- * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop Mode
+ * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop/glitch Mode
  * - Pulse 1 In: Triggers new grains
  * - Pulse 2 In: Gate input - forces loop mode when high, returns to switch behavior when low
  *
@@ -72,7 +72,7 @@ public:
 		stretchRatio_ = 4096;
 		grainPlaybackSpeed_ = 4096;
 		grainSize_ = 1024;
-		maxActiveGrains_ = 5;
+		maxActiveGrains_ = 5; // Maximum number of active grains
 		loopMode_ = false;
 
 		grainTriggerCooldown_ = 0;

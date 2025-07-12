@@ -1,6 +1,8 @@
 /*
 ComputerCard  - by Chris Johnson
 
+THIS VERSION HAS SUBTLE CHANGES FROM DUNE AND CLAUDE TO HALVE THE SPEED TO 24KHZ
+
 ComputerCard is a header-only C++ library, providing a class that
 manages the hardware aspects of the Music Thing Modular Workshop
 System Computer.
