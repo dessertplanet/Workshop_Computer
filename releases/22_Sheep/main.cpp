@@ -297,7 +297,7 @@ private:
 	int32_t spreadAmount_ = 0;
 
 	// Grain system
-	static const int MAX_GRAINS = 4;
+	static const int MAX_GRAINS = 5;
 	static const int32_t GRAIN_FREEZE_TIMEOUT = 24000 * 5;
 	struct Grain
 	{
