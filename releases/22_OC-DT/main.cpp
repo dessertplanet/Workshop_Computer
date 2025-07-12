@@ -4,7 +4,7 @@
  * OC-DT Granular Delay
  *
  * A sophisticated granular delay effect with the following features:
- * - 5.2-second circular buffer for audio capture (100k samples at 24kHz)
+ * - 5.2-second circular buffer for audio capture (125k samples at 24kHz)
  * - Up to 3 simultaneous grains with Hann windowing
  * - Linear grain sizes from micro (64 samples) to huge (50000 samples)
  * - Bidirectional playback (-2x to +2x speed)
@@ -40,7 +40,7 @@
  * - Fixed maximum of 3 active grains (no dynamic allocation based on grain size)
  */
 
-#define BUFF_LENGTH_SAMPLES 100000 // 100,000 samples (4.17 seconds at 24kHz)
+#define BUFF_LENGTH_SAMPLES 125000 // 125,000 samples (5.2 seconds at 24kHz)
 
 class OC_DT : public ComputerCard
 {
@@ -72,7 +72,7 @@ public:
 		stretchRatio_ = 4096;
 		grainPlaybackSpeed_ = 4096;
 		grainSize_ = 1024;
-		maxActiveGrains_ = 3;
+		maxActiveGrains_ = 5;
 		loopMode_ = false;
 
 		grainTriggerCooldown_ = 0;
@@ -1004,7 +1004,7 @@ private:
 							int32_t percent90 = (grains_[i].grainSize * 90) / 100; // 90% of grain size
 							if (grains_[i].sampleCount >= percent90 && pulseOut1Counter_ <= 0)
 							{
-								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 200 samples
+								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
 								grains_[i].pulse90Triggered = true;			  // Mark as triggered for next loop iteration
 							}
 						}
@@ -1068,7 +1068,7 @@ private:
 			// Higher X knob = higher threshold = more pulses
 			if (randomValue < xKnobValue && pulseOut2Counter_ <= 0)
 			{
-				pulseOut2Counter_ = GRAIN_END_PULSE_DURATION; // 200 samples
+				pulseOut2Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
 			}
 		}
 
