@@ -159,17 +159,6 @@ public:
 		
 		Switch switchPos = SwitchVal();
 
-		// Advance virtual write head when not in freeze mode, OR when in freeze mode but CV1 is disconnected
-		bool shouldAdvanceWriteHead = (switchPos != Switch::Up) || (switchPos == Switch::Up && !Connected(Input::CV1));
-		if (shouldAdvanceWriteHead)
-		{
-			virtualWriteHead_++;
-			if (virtualWriteHead_ >= BUFF_LENGTH_SAMPLES)
-			{
-				virtualWriteHead_ = 0;
-			}
-		}
-
 		// Record audio when not in freeze mode (freeze mode stops recording but allows playback)
 		if (switchPos != Switch::Up)
 		{
@@ -178,12 +167,13 @@ public:
 			int16_t rightIn = clipAudio(AudioIn2());
 			uint16_t stereoSample = packStereo(leftIn, rightIn);
 			buffer_[writeHead_] = stereoSample;
-			writeHead_++;
-			if (writeHead_ >= BUFF_LENGTH_SAMPLES)
-			{
-				writeHead_ = 0;
-			}
-			virtualWriteHead_ = writeHead_;
+		}
+
+		// Always advance writeHead_ for timing and reference
+		writeHead_++;
+		if (writeHead_ >= BUFF_LENGTH_SAMPLES)
+		{
+			writeHead_ = 0;
 		}
 
 		// X knob controls delay time/spread or becomes attenuverter when CV1 connected
@@ -305,7 +295,6 @@ public:
 private:
 	uint16_t buffer_[BUFF_LENGTH_SAMPLES];
 	int32_t writeHead_ = 0;
-	int32_t virtualWriteHead_ = 0;
 	int32_t delayDistance_ = 8000;
 	int32_t spreadAmount_ = 0;
 	
@@ -651,8 +640,8 @@ private:
 				// Generate new noise value for CV Out 1 when grain is triggered
 				cvOut1NoiseValue_ = (int16_t)((rnd12() & 0xFFF) - 2048); // -2048 to +2047
 
-				// Calculate base playback position using virtual write head for consistent delay timing
-				int32_t basePlaybackPos = virtualWriteHead_ - grains_[i].delayDistance;
+				// Calculate base playback position using write head for consistent delay timing
+				int32_t basePlaybackPos = writeHead_ - grains_[i].delayDistance;
 				if (basePlaybackPos < 0)
 					basePlaybackPos += BUFF_LENGTH_SAMPLES;
 
@@ -1183,17 +1172,8 @@ private:
 		// CV Out 1: Current noise value (updated when grains are triggered)
 		CVOut1(cvOut1NoiseValue_);
 
-		// CV Out 2: Rising sawtooth LFO (0V to 5V) with fixed 1 second period
-		triangleLfoPeriod_ = BUFF_LENGTH_SAMPLES; // Fixed at buffer length (5.2s at 24kHz)
-
-		// Update triangle LFO counter and calculate sawtooth wave
-		triangleLfoCounter_++;
-		if (triangleLfoCounter_ >= triangleLfoPeriod_)
-		{
-			triangleLfoCounter_ = 0;
-		}
-		// Calculate rising sawtooth wave value (0 to 2047)
-		cvOut2PhaseValue_ = (int16_t)((triangleLfoCounter_ * 2047) / triangleLfoPeriod_);
+		// CV Out 2: Write head position mapped to 0-5V (0 to 2047)
+		cvOut2PhaseValue_ = (int16_t)((writeHead_ * 2047) / (BUFF_LENGTH_SAMPLES - 1));
 		if (cvOut2PhaseValue_ > 2047) cvOut2PhaseValue_ = 2047;
 		CVOut2(cvOut2PhaseValue_);
 	}
