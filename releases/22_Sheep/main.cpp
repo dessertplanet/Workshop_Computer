@@ -193,15 +193,9 @@ public:
 		{
 			if (xControlValue <= 2047)
 			{
-				// Left half: delay time control with minimum grain distance
-				// X knob at 0: minimum delay (1200 samples) + no grain spacing limit (0 samples)
-				// X knob at center: maximum delay (80000 samples) + maximum grain spacing (0.25 seconds = 6000 samples)
+				// Left half: delay time control only
 				delayDistance_ = 1200 + ((xControlValue * (80000 - 1200)) / 2047);
-				
-				// Minimum grain distance: 0 at full left (no limit), 0.25 seconds (6000 samples) at center
-				// Higher X knob value = more minimum distance between grains
-				minGrainDistance_ = (xControlValue * 6000) / 2047;
-				
+				minGrainDistance_ = 0; // Rate limiting permanently removed
 				spreadAmount_ = 0;
 			}
 			else
@@ -633,16 +627,6 @@ private:
 		if (activeCount >= maxActiveGrains_)
 		{
 			return;
-		}
-
-		// Check minimum grain distance (only when minGrainDistance_ > 0)
-		if (minGrainDistance_ > 0)
-		{
-			int32_t timeSinceLastGrain = globalSampleCounter_ - lastGrainTriggerTime_;
-			if (timeSinceLastGrain < minGrainDistance_)
-			{
-				return; // Not enough time has passed since last grain
-			}
 		}
 
 		// Find an inactive grain slot
@@ -1202,25 +1186,20 @@ private:
 		// CV Out 2: Rising sawtooth LFO (0V to 5V) with rate controlled by Y knob (grain size)
 		// Update triangle LFO period based on grain size (inverse of stochastic clock)
 		int32_t normalizedGrainSize = grainSize_ - 64; // 0 to 23936 range
-		int32_t maxPeriod = 120000;					   // 5 seconds at 24kHz (slow, 0.2 Hz)
-		int32_t minPeriod = 12000;					   // 0.5 seconds at 24kHz (fast, 2 Hz)
-		// Inverse mapping: larger grain size = shorter period (faster LFO, 0.2 Hz to 2 Hz range)
+		int32_t maxPeriod = 72000; // 3 seconds at 24kHz (slow, ~0.33 Hz)
+		int32_t minPeriod = 12000; // 0.5 seconds at 24kHz (fast, 2 Hz)
+		// Inverse mapping: larger grain size = shorter period (faster LFO, 0.33 Hz to 2 Hz range)
 		triangleLfoPeriod_ = maxPeriod - ((normalizedGrainSize * (maxPeriod - minPeriod)) / 23936);
 
-		// Update triangle LFO counter and calculate triangle wave
+		// Update triangle LFO counter and calculate sawtooth wave
 		triangleLfoCounter_++;
 		if (triangleLfoCounter_ >= triangleLfoPeriod_)
 		{
 			triangleLfoCounter_ = 0;
 		}
-		
 		// Calculate rising sawtooth wave value (0 to 2047)
-		// Simple linear ramp: counter * max_value / period
 		cvOut2PhaseValue_ = (int16_t)((triangleLfoCounter_ * 2047) / triangleLfoPeriod_);
-		
-		// Clamp output to valid range (safety check)
 		if (cvOut2PhaseValue_ > 2047) cvOut2PhaseValue_ = 2047;
-
 		CVOut2(cvOut2PhaseValue_);
 	}
 
