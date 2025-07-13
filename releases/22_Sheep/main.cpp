@@ -171,7 +171,10 @@ public:
 		// Record audio when not in freeze mode (freeze mode stops recording but allows playback)
 		if (switchPos != Switch::Up)
 		{
-			uint16_t stereoSample = packStereo(AudioIn1(), AudioIn2());
+			// Clip inputs to prevent overflow
+			int16_t leftIn = clipAudio(AudioIn1());
+			int16_t rightIn = clipAudio(AudioIn2());
+			uint16_t stereoSample = packStereo(leftIn, rightIn);
 			buffer_[writeHead_] = stereoSample;
 			writeHead_++;
 			if (writeHead_ >= BUFF_LENGTH_SAMPLES)
@@ -220,6 +223,10 @@ public:
 			int16_t outL = generateStretchedSample(0);
 			int16_t outR = generateStretchedSample(1);
 
+			// Clip outputs to prevent overflow and ensure clean audio
+			outL = clipAudio(outL);
+			outR = clipAudio(outR);
+
 			// Store output amplitudes for LED feedback
 			lastOutputL_ = outL;
 			lastOutputR_ = outR;
@@ -242,6 +249,10 @@ public:
 			int16_t outL = generateStretchedSample(0);
 			int16_t outR = generateStretchedSample(1);
 
+			// Clip outputs to prevent overflow and ensure clean audio
+			outL = clipAudio(outL);
+			outR = clipAudio(outR);
+
 			// Store output amplitudes for LED feedback
 			lastOutputL_ = outL;
 			lastOutputR_ = outR;
@@ -258,6 +269,10 @@ public:
 
 			int16_t outL = generateStretchedSample(0);
 			int16_t outR = generateStretchedSample(1);
+
+			// Clip outputs to prevent overflow and ensure clean audio
+			outL = clipAudio(outL);
+			outR = clipAudio(outR);
 
 			// Store output amplitudes for LED feedback
 			lastOutputL_ = outL;
@@ -1242,6 +1257,16 @@ private:
 	int32_t cabs(int32_t a)
 	{
 		return (a > 0) ? a : -a;
+	}
+
+	// Clip audio sample to valid range (±2048 for 12-bit audio)
+	int16_t __not_in_flash_func(clipAudio)(int32_t sample)
+	{
+		if (sample > 2047)
+			sample = 2047;
+		if (sample < -2048)
+			sample = -2048;
+		return (int16_t)sample;
 	}
 
 	// Update cached knob values at 1000Hz
