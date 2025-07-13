@@ -1,6 +1,10 @@
 #include "ComputerCard.h"
 #include <cmath>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 /*
  * Sheep: A Granular Delay
  *
@@ -50,7 +54,7 @@ private:
 	static constexpr int HANN_TABLE_SIZE = 256;
 	int32_t hannWindowTable_[HANN_TABLE_SIZE];
 	// Timing constants
-	static const int32_t SAFETY_MARGIN_SAMPLES = 500;		  // 20ms safety margin
+	static const int32_t SAFETY_MARGIN_SAMPLES = 120;		  // 5ms safety margin
 	static const int32_t GRAIN_END_PULSE_DURATION = 100;	  // 4.2ms pulse duration
 	static const int32_t MAX_PULSE_HALF_PERIOD = 16384;
 	static const int32_t PULSE_COUNTER_OVERFLOW_LIMIT = 65536;
@@ -763,6 +767,13 @@ private:
 	int32_t __not_in_flash_func(calculateGrainWeight)(int grainIndex)
 	{
 		Grain &grain = grains_[grainIndex];
+		
+		// In loop/glitch mode, bypass windowing for harsh discontinuities
+		if (grain.looping)
+		{
+			return 4096; // Full weight - no windowing for glitch effects
+		}
+		
 		// Safety check to prevent division by zero
 		if (grain.grainSize <= 0)
 		{
