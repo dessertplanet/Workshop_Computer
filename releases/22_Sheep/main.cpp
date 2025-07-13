@@ -431,7 +431,15 @@ private:
 	void __not_in_flash_func(updateGrainParameters)()
 	{
 		int32_t yControlValue = cachedYKnob_;
-		yControlValue = virtualDetentedKnob(yControlValue);
+		// Apply edge detents but NOT center detent for smooth grain size control
+		if (yControlValue > 4090)
+		{
+			yControlValue = 4095;
+		}
+		else if (yControlValue < 5)
+		{
+			yControlValue = 0;
+		}
 
 		// Map Y control to stretch ratio
 		if (yControlValue <= 2048)
@@ -453,12 +461,12 @@ private:
 		if (normalizedRatio > 4095)
 			normalizedRatio = 4095;
 
-		grainSize_ = 16 + ((normalizedRatio * 124984) / 4095);
+		grainSize_ = 16 + ((normalizedRatio * 47984) / 4095);
 
 		if (grainSize_ < 16)
 			grainSize_ = 16;
-		if (grainSize_ > 125000)
-			grainSize_ = 125000;
+		if (grainSize_ > 48000)
+			grainSize_ = 48000;
 	}
 
 	int16_t virtualDetentedKnob(int16_t val)
@@ -1002,14 +1010,14 @@ private:
 							}
 						}
 
-						// Check if grain has reached 90% completion and trigger Pulse 1
+						// Check if grain has reached 75% completion and trigger Pulse 1 for continuous looping
 						if (grains_[i].grainSize > 0 && !grains_[i].pulse90Triggered)
 						{
-							int32_t percent90 = (grains_[i].grainSize * 90) / 100; // 90% of grain size
-							if (grains_[i].sampleCount >= percent90 && pulseOut1Counter_ <= 0)
+							int32_t percent75 = (grains_[i].grainSize * 75) / 100; // 75% of grain size
+							if (grains_[i].sampleCount >= percent75 && pulseOut1Counter_ <= 0)
 							{
 								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
-								grains_[i].pulse90Triggered = true;			  // Mark as triggered for next loop iteration
+								grains_[i].pulse90Triggered = true;			  // Mark as triggered for this grain
 							}
 						}
 
