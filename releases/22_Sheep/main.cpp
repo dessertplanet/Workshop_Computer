@@ -447,7 +447,7 @@ private:
 	void __not_in_flash_func(updateGrainParameters)()
 	{
 		int32_t yControlValue = cachedYKnob_;
-		// Apply edge detents but NOT center detent for smooth grain size control
+		// Only edge detents are applied for the Y knob (no center detent), for smooth grain size control
 		if (yControlValue > 4090)
 		{
 			yControlValue = 4095;
@@ -457,7 +457,7 @@ private:
 			yControlValue = 0;
 		}
 
-		// Map Y control to stretch ratio
+		// Map Y control to stretch ratio (full smooth range, no center detent)
 		if (yControlValue <= 2048)
 		{
 			stretchRatio_ = 1024 + ((yControlValue * 3072) >> 11);
@@ -1183,13 +1183,8 @@ private:
 		// CV Out 1: Current noise value (updated when grains are triggered)
 		CVOut1(cvOut1NoiseValue_);
 
-		// CV Out 2: Rising sawtooth LFO (0V to 5V) with rate controlled by Y knob (grain size)
-		// Update triangle LFO period based on grain size (inverse of stochastic clock)
-		int32_t normalizedGrainSize = grainSize_ - 64; // 0 to 23936 range
-		int32_t maxPeriod = 72000; // 3 seconds at 24kHz (slow, ~0.33 Hz)
-		int32_t minPeriod = 12000; // 0.5 seconds at 24kHz (fast, 2 Hz)
-		// Inverse mapping: larger grain size = shorter period (faster LFO, 0.33 Hz to 2 Hz range)
-		triangleLfoPeriod_ = maxPeriod - ((normalizedGrainSize * (maxPeriod - minPeriod)) / 23936);
+		// CV Out 2: Rising sawtooth LFO (0V to 5V) with fixed 1 second period
+		triangleLfoPeriod_ = BUFF_LENGTH_SAMPLES; // Fixed at buffer length (5.2s at 24kHz)
 
 		// Update triangle LFO counter and calculate sawtooth wave
 		triangleLfoCounter_++;
