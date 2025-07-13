@@ -49,7 +49,6 @@ private:
 	static constexpr int HANN_TABLE_SIZE = 256;
 	int32_t hannWindowTable_[HANN_TABLE_SIZE];
 	// Timing constants
-	static const int32_t GRAIN_TRIGGER_COOLDOWN_SAMPLES = 24; // 1ms cooldown at 24kHz
 	static const int32_t SAFETY_MARGIN_SAMPLES = 500;		  // 20ms safety margin
 	static const int32_t GRAIN_END_PULSE_DURATION = 100;	  // 4.2ms pulse duration
 	static const int32_t MAX_PULSE_HALF_PERIOD = 16384;
@@ -72,10 +71,8 @@ public:
 		stretchRatio_ = 4096;
 		grainPlaybackSpeed_ = 4096;
 		grainSize_ = 1024;
-		maxActiveGrains_ = 5; // Maximum number of active grains
+		maxActiveGrains_ = MAX_GRAINS; // Maximum number of active grains
 		loopMode_ = false;
-
-		grainTriggerCooldown_ = 0;
 
 		pulseOut1Counter_ = 0;
 		pulseOut2Counter_ = 0;
@@ -217,17 +214,7 @@ public:
 
 		updatePlaybackSpeed();
 
-		bool shouldTriggerGrain = PulseIn1RisingEdge() && (grainTriggerCooldown_ <= 0);
-
-		if (grainTriggerCooldown_ > 0)
-		{
-			grainTriggerCooldown_--;
-		}
-
-		if (shouldTriggerGrain)
-		{
-			grainTriggerCooldown_ = GRAIN_TRIGGER_COOLDOWN_SAMPLES;
-		}
+		bool shouldTriggerGrain = PulseIn1RisingEdge();
 
 		if (switchPos == Switch::Up)
 		{
@@ -322,8 +309,6 @@ private:
 	int32_t grainSize_;
 	int32_t maxActiveGrains_;
 	bool loopMode_;
-
-	int32_t grainTriggerCooldown_;
 
 	// Pulse and CV output state
 	int32_t pulseOut1Counter_;
@@ -1261,6 +1246,7 @@ private:
 };
 int main()
 {
+	set_sys_clock_khz(200000, true);
 	Sheep card;
 	card.EnableNormalisationProbe();
 	card.Run();
