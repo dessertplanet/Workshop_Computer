@@ -82,6 +82,9 @@ public:
 		cvOut1NoiseValue_ = 0;
 		cvOut2PhaseValue_ = 0;
 
+		lastOutputL_ = 0;
+		lastOutputR_ = 0;
+
 		updateCounter_ = UPDATE_RATE_DIVIDER - 1;
 
 		cachedMainKnob_ = 2048;
@@ -226,6 +229,10 @@ public:
 			int16_t outL = generateStretchedSample(0);
 			int16_t outR = generateStretchedSample(1);
 
+			// Store output amplitudes for LED feedback
+			lastOutputL_ = outL;
+			lastOutputR_ = outR;
+
 			AudioOut1(outL);
 			AudioOut2(outR);
 		}
@@ -244,6 +251,10 @@ public:
 			int16_t outL = generateStretchedSample(0);
 			int16_t outR = generateStretchedSample(1);
 
+			// Store output amplitudes for LED feedback
+			lastOutputL_ = outL;
+			lastOutputR_ = outR;
+
 			AudioOut1(outL);
 			AudioOut2(outR);
 		}
@@ -256,6 +267,10 @@ public:
 
 			int16_t outL = generateStretchedSample(0);
 			int16_t outR = generateStretchedSample(1);
+
+			// Store output amplitudes for LED feedback
+			lastOutputL_ = outL;
+			lastOutputR_ = outR;
 
 			AudioOut1(outL);
 			AudioOut2(outR);
@@ -318,6 +333,10 @@ private:
 
 	int16_t cvOut1NoiseValue_;
 	int16_t cvOut2PhaseValue_;
+	
+	// Audio output amplitude tracking for LED feedback
+	int16_t lastOutputL_;
+	int16_t lastOutputR_;
 
 	// Control update throttling
 	static const int32_t UPDATE_RATE_DIVIDER = 24;
@@ -434,12 +453,12 @@ private:
 		if (normalizedRatio > 4095)
 			normalizedRatio = 4095;
 
-		grainSize_ = 64 + ((normalizedRatio * 23936) / 4095);
+		grainSize_ = 16 + ((normalizedRatio * 124984) / 4095);
 
-		if (grainSize_ < 64)
-			grainSize_ = 64;
-		if (grainSize_ > 24000)
-			grainSize_ = 24000;
+		if (grainSize_ < 16)
+			grainSize_ = 16;
+		if (grainSize_ > 125000)
+			grainSize_ = 125000;
 	}
 
 	int16_t virtualDetentedKnob(int16_t val)
@@ -1171,21 +1190,12 @@ private:
 	// Update LED feedback for all outputs
 	void __not_in_flash_func(updateLEDFeedback)()
 	{
-		// LEDs 0,1: Audio outputs (brightness based on number of active grains)
-		int32_t activeGrains = 0;
-		for (int i = 0; i < MAX_GRAINS; i++)
-		{
-			if (grains_[i].active)
-			{
-				activeGrains++;
-			}
-		}
+		// LEDs 0,1: Audio outputs (brightness based on output amplitude)
+		uint16_t ledL = (uint16_t)((cabs(lastOutputL_) * 4095) / 2048); // Scale from ±2048 to 0-4095
+		uint16_t ledR = (uint16_t)((cabs(lastOutputR_) * 4095) / 2048); // Scale from ±2048 to 0-4095
 
-		// Scale brightness based on active grains (0-3 grains = 0-4095 brightness)
-		uint16_t audioLedBrightness = (uint16_t)((activeGrains * 4095) / MAX_GRAINS);
-
-		LedBrightness(0, audioLedBrightness);
-		LedBrightness(1, audioLedBrightness);
+		LedBrightness(0, ledL);
+		LedBrightness(1, ledR);
 
 		// LEDs 2,3: CV outputs (brightness based on CV level)
 		uint16_t ledCV1 = (uint16_t)((cabs(cvOut1NoiseValue_) * 4095) / 2048);
