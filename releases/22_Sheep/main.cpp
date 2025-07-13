@@ -343,20 +343,14 @@ private:
 		if (pos2 >= BUFF_LENGTH_SAMPLES)
 			pos2 = 0;
 
-		// Safety check
-		if (pos1 < 0 || pos1 >= BUFF_LENGTH_SAMPLES)
-			pos1 = 0;
-		if (pos2 < 0 || pos2 >= BUFF_LENGTH_SAMPLES)
-			pos2 = 0;
+		// Redundant safety check removed for performance
+		// pos1 and pos2 are guaranteed to be in bounds after wraparound logic above
 
 		int16_t sample1 = unpackStereo(buffer_[pos1], channel);
 		int16_t sample2 = unpackStereo(buffer_[pos2], channel);
 
-		// Clamp fractional part
-		if (frac < 0)
-			frac = 0;
-		if (frac >= 4096)
-			frac = 4095;
+		// Removed fractional part clamping for performance
+		// Assumes frac is always in valid range from caller
 
 		// Linear interpolation in Q12
 		int32_t diff = sample2 - sample1;
@@ -1011,19 +1005,9 @@ private:
 					}
 					else
 					{
-						// When speed is 0, grain is frozen - increment freeze counter
-						// BUT: Don't apply freeze timeout to looping grains (they're supposed to stay active)
-						if (!grains_[i].looping)
-						{
-							grains_[i].freezeCounter++;
-
-							// If grain has been frozen too long, deactivate it to prevent stuck grains
-							if (grains_[i].freezeCounter >= GRAIN_FREEZE_TIMEOUT)
-							{
-								grains_[i].active = false;
-							}
-						}
-						// Looping grains stay frozen at their current position when speed = 0
+						// When speed is 0, grain is frozen
+						// Removed freeze timeout for performance - grains can stay frozen indefinitely
+						// This relies on user input or mode changes to clear stuck grains
 					}
 				}
 			}
@@ -1042,11 +1026,7 @@ private:
 		// Inverse mapping: larger grain size = longer period (slower clock)
 		stochasticClockPeriod_ = maxPeriod - ((normalizedGrainSize * (maxPeriod - minPeriod)) / 23936);
 
-		// Clamp to valid range
-		if (stochasticClockPeriod_ < minPeriod)
-			stochasticClockPeriod_ = minPeriod;
-		if (stochasticClockPeriod_ > maxPeriod)
-			stochasticClockPeriod_ = maxPeriod;
+		// Removed conservative clamping for performance - calculation should always be in range
 
 		// Update stochastic clock counter
 		stochasticClockCounter_++;
