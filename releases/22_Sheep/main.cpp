@@ -67,7 +67,7 @@ private:
 	
 	// Grain system constants
 	static const int MAX_GRAINS = 16;  // Maximum number of simultaneous grains
-	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90;
+	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90; // used for pulse 1 output
 
 public:
 	Sheep()
@@ -96,10 +96,11 @@ public:
 		lastOutputR_ = 0;
 
 		updateCounter_ = UPDATE_RATE_DIVIDER - 1;
-
-		cachedMainKnob_ = 2048;
-		cachedXKnob_ = 0;
-		cachedYKnob_ = 2048;
+		
+		// Initialize grain timing variables
+		globalSampleCounter_ = 0;
+		minGrainDistance_ = 0;
+		lastGrainTriggerTime_ = 0;
 
 		for (int i = 0; i < MAX_GRAINS; i++)
 		{
@@ -149,6 +150,9 @@ public:
 
 	virtual void ProcessSample()
 	{
+		// Increment global sample counter for grain timing
+		globalSampleCounter_++;
+		
 		Switch switchPos = SwitchVal();
 
 		bool pulse2Gate = PulseIn2();
@@ -191,8 +195,15 @@ public:
 		{
 			if (xControlValue <= 2047)
 			{
-				// Left half: delay time control - use more of the longer buffer
+				// Left half: delay time control with minimum grain distance
+				// X knob at 0: minimum delay (1200 samples) + no grain spacing limit (0 samples)
+				// X knob at center: maximum delay (80000 samples) + maximum grain spacing (0.25 seconds = 6000 samples)
 				delayDistance_ = 1200 + ((xControlValue * (80000 - 1200)) / 2047);
+				
+				// Minimum grain distance: 0 at full left (no limit), 0.25 seconds (6000 samples) at center
+				// Higher X knob value = more minimum distance between grains
+				minGrainDistance_ = (xControlValue * 6000) / 2047;
+				
 				spreadAmount_ = 0;
 			}
 			else
@@ -200,6 +211,7 @@ public:
 				// Right half: spread control with fixed delay - use longer default delay
 				delayDistance_ = 20000;
 				spreadAmount_ = ((xControlValue - 2048) * 4095) / 2047;
+				minGrainDistance_ = 0; // No minimum distance when using spread control
 			}
 		}
 		else
@@ -207,6 +219,7 @@ public:
 			// CV1 connected: X knob becomes attenuverter
 			delayDistance_ = 20000;
 			spreadAmount_ = 0;
+			minGrainDistance_ = 0; // No minimum distance when CV1 is connected
 		}
 
 		updatePlaybackSpeed();
@@ -303,6 +316,10 @@ private:
 	int32_t virtualWriteHead_ = 0;
 	int32_t delayDistance_ = 8000;
 	int32_t spreadAmount_ = 0;
+	
+	// Minimum grain distance control (left side of X knob)
+	int32_t minGrainDistance_ = 0;        // Minimum samples between grain triggers (0 = no minimum)
+	int32_t lastGrainTriggerTime_ = 0;    // Sample counter when last grain was triggered
 
 	// Grain system
 	static const int32_t GRAIN_FREEZE_TIMEOUT = 24000 * 5;
@@ -347,6 +364,9 @@ private:
 	// Control update throttling
 	static const int32_t UPDATE_RATE_DIVIDER = 24;
 	int32_t updateCounter_;
+	
+	// Global sample counter for timing
+	int32_t globalSampleCounter_;
 
 	// Cached knob values
 	int32_t cachedMainKnob_;
@@ -616,6 +636,16 @@ private:
 			return;
 		}
 
+		// Check minimum grain distance (only when minGrainDistance_ > 0)
+		if (minGrainDistance_ > 0)
+		{
+			int32_t timeSinceLastGrain = globalSampleCounter_ - lastGrainTriggerTime_;
+			if (timeSinceLastGrain < minGrainDistance_)
+			{
+				return; // Not enough time has passed since last grain
+			}
+		}
+
 		// Find an inactive grain slot
 		for (int i = 0; i < MAX_GRAINS; i++)
 		{
@@ -623,6 +653,10 @@ private:
 			{
 				grains_[i].active = true;
 				cachedActiveGrainCount_++; // Update cached count when grain is activated
+				
+				// Update last grain trigger time for minimum distance tracking
+				lastGrainTriggerTime_ = globalSampleCounter_;
+				
 				// Snapshot delay, spread, and grain size for this grain
 				grains_[i].delayDistance = delayDistance_;
 				grains_[i].spreadAmount = spreadAmount_;
@@ -672,8 +706,7 @@ private:
 
 					// Apply X knob as proper attenuverter
 					// X knob at 0 = full inversion (-1x)
-					// X knob at 2048 = no effect (0x)
-					// X knob at 4095 = full positive (+1x)
+					// X knob at 2048 = no effect (0x = no effect), 4095 = full positive (+1x)
 					int32_t positionControlValue;
 
 					// Map X knob to gain factor: 0 -> -1x, 2048 -> 0x, 4095 -> +1x
