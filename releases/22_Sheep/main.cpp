@@ -1,4 +1,5 @@
 #include "ComputerCard.h"
+#include <cmath>
 
 /*
  * Sheep: A Granular Delay
@@ -106,53 +107,34 @@ public:
 
 		// Calculate Hann window lookup table at startup
 		// Formula: 0.5 * (1 - cos(2 * pi * n / (N-1))) * 4096 (Q12 format)
+		// Using M_PI for maximum accuracy to eliminate grain boundary artifacts
 		for (int i = 0; i < HANN_TABLE_SIZE; i++)
 		{
-			// Calculate using integer arithmetic for better accuracy
-			// We'll use a quarter-wave cosine lookup and symmetry
+			// Calculate normalized position (0.0 to 1.0)
+			double pos = (double)i / (HANN_TABLE_SIZE - 1);
 			
-			// Map i (0 to 255) to angle (0 to 2*pi), then to quarter wave position
-			int32_t angle_256 = (i * 1024) / 255; // Scale to 0-1024 (representing 0 to 2*pi)
+			// Calculate 2*pi*pos angle
+			double angle = 2.0 * M_PI * pos;
 			
-			// Simple cosine approximation using quarter-wave symmetry
-			// cos(x) for x in [0, 2*pi] mapped to [0, 1024]
-			int32_t cos_val_4096; // Will be in range -4096 to +4096
+			// Calculate cosine using standard library for maximum accuracy
+			double cos_val = cos(angle);
 			
-			if (angle_256 <= 256) // 0 to pi/2
-			{
-				// Use parabolic approximation: cos(x) ≈ 1 - 2*x²/π²
-				int32_t x = (angle_256 * 16384) / 256; // Scale to 0-16384 for better precision
-				int32_t x_sq = (x * x) >> 14; // x² with scaling
-				cos_val_4096 = 4096 - (x_sq * 4096) / 26753; // Approximate cos
-			}
-			else if (angle_256 <= 512) // pi/2 to pi
-			{
-				int32_t x = 512 - angle_256; // Mirror around pi/2
-				x = (x * 16384) / 256;
-				int32_t x_sq = (x * x) >> 14;
-				cos_val_4096 = -(4096 - (x_sq * 4096) / 26753); // Negative quadrant
-			}
-			else if (angle_256 <= 768) // pi to 3*pi/2
-			{
-				int32_t x = angle_256 - 512; // Offset from pi
-				x = (x * 16384) / 256;
-				int32_t x_sq = (x * x) >> 14;
-				cos_val_4096 = -(4096 - (x_sq * 4096) / 26753); // Negative quadrant
-			}
-			else // 3*pi/2 to 2*pi
-			{
-				int32_t x = 1024 - angle_256; // Mirror around 3*pi/2
-				x = (x * 16384) / 256;
-				int32_t x_sq = (x * x) >> 14;
-				cos_val_4096 = 4096 - (x_sq * 4096) / 26753; // Positive quadrant
+			// Apply Hann window formula: 0.5 * (1 - cos(2*pi*n/(N-1)))
+			double hann_double = 0.5 * (1.0 - cos_val);
+			
+			// Convert to Q12 format (multiply by 4096)
+			int32_t hann_val = (int32_t)(hann_double * 4096.0 + 0.5); // +0.5 for rounding
+			
+			// Ensure perfect fade-in/fade-out at boundaries to eliminate clicks
+			if (i == 0 || i == HANN_TABLE_SIZE - 1) {
+				hann_val = 0; // Force zero at start and end
 			}
 			
-			// Hann window: 0.5 * (1 - cos(2*pi*n/(N-1))) * 4096
-			hannWindowTable_[i] = (4096 - cos_val_4096) >> 1;
+			// Clamp to valid range
+			if (hann_val < 0) hann_val = 0;
+			if (hann_val > 4096) hann_val = 4096;
 			
-			// Clamp to valid range (should not be needed with correct math)
-			if (hannWindowTable_[i] < 0) hannWindowTable_[i] = 0;
-			if (hannWindowTable_[i] > 4096) hannWindowTable_[i] = 4096;
+			hannWindowTable_[i] = hann_val;
 		}
 	}
 
