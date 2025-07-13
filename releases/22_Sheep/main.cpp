@@ -1065,16 +1065,16 @@ private:
 		// Update stochastic clock period based on grain size
 		// Wider range than grain size: 240 samples (10ms) to 4800 samples (200ms) at 24kHz
 		// Direct relationship: smaller grains = faster clock (shorter period), larger grains = slower clock (longer period)
-		int32_t normalizedGrainSize = grainSize_ - 64; // 0 to 23936 range
-		int32_t maxPeriod = 4800;					   // 200ms at 24kHz
-		int32_t minPeriod = 240;					   // 10ms at 24kHz
-		// Direct mapping: larger grain size = longer period (slower clock)
-		stochasticClockPeriod_ = minPeriod + ((normalizedGrainSize * (maxPeriod - minPeriod)) / 23936);
-
+		int32_t normalizedY = cachedYKnob_; // 0 to 4095
+		int32_t maxPeriod = 4800; // 200ms at 24kHz
+		int32_t minPeriod = 240;  // 10ms at 24kHz
+		// Inverse mapping: higher Y knob = shorter period
+		stochasticClockPeriod_ = maxPeriod - ((normalizedY * (maxPeriod - minPeriod)) / 4095);
 		// Removed conservative clamping for performance - calculation should always be in range
 
 		// Update stochastic clock counter
 		stochasticClockCounter_++;
+
 		if (stochasticClockCounter_ >= stochasticClockPeriod_)
 		{
 			stochasticClockCounter_ = 0;
