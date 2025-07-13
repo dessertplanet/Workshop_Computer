@@ -11,7 +11,7 @@
  * A granular delay effect with the following features:
  * - 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz)
  * - Up to 5 simultaneous grains 
- * - Linear grain sizes from micro (64 samples) to huge (24000 samples)
+ * - Linear grain sizes from micro (64 samples) to huge (125000 samples - full buffer length)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
  *
@@ -29,7 +29,7 @@
  * - Audio Outs: Granular processed audio (stereo)
  * - CV Out 1: Random noise value (updates when grains are triggered)
  * - CV Out 2: Playback phase of grain 0 (0V=start, 5V=end of grain)
- * - Pulse 1 Out: Triggers when any grain reaches 90% completion
+ * - Pulse 1 Out: Triggers when any grain reaches 90% completion (optimized for continuous looping)
  * - Pulse 2 Out: Stochastic clock - triggers when noise < X knob value, rate inversely proportional to grain size
  *
  * LED Feedback:
@@ -64,6 +64,10 @@ private:
 	// Safety limits
 	static const int32_t MAX_FRACTIONAL_ITERATIONS = 4;
 	static const int32_t MAX_SAFE_GRAIN_SPEED = 8192;
+	
+	// Grain system constants
+	static const int MAX_GRAINS = 16;  // Maximum number of simultaneous grains
+	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90;
 
 public:
 	Sheep()
@@ -77,6 +81,7 @@ public:
 		grainPlaybackSpeed_ = 4096;
 		grainSize_ = 1024;
 		maxActiveGrains_ = MAX_GRAINS; // Maximum number of active grains
+		cachedActiveGrainCount_ = 0; // Initialize grain count cache
 		loopMode_ = false;
 
 		pulseOut1Counter_ = 0;
@@ -285,7 +290,6 @@ private:
 	int32_t spreadAmount_ = 0;
 
 	// Grain system
-	static const int MAX_GRAINS = 16;
 	static const int32_t GRAIN_FREEZE_TIMEOUT = 24000 * 5;
 	struct Grain
 	{
@@ -309,6 +313,7 @@ private:
 	int32_t grainPlaybackSpeed_;
 	int32_t grainSize_;
 	int32_t maxActiveGrains_;
+	int32_t cachedActiveGrainCount_; // Cache grain count to avoid repeated counting in calculateGrainWeight()
 	bool loopMode_;
 
 	// Pulse and CV output state
@@ -441,12 +446,12 @@ private:
 		if (normalizedRatio > 4095)
 			normalizedRatio = 4095;
 
-		grainSize_ = 16 + ((normalizedRatio * 47984) / 4095);
+		grainSize_ = 16 + ((normalizedRatio * (BUFF_LENGTH_SAMPLES - 16)) / 4095);
 
 		if (grainSize_ < 16)
 			grainSize_ = 16;
-		if (grainSize_ > 48000)
-			grainSize_ = 48000;
+		if (grainSize_ > BUFF_LENGTH_SAMPLES)
+			grainSize_ = BUFF_LENGTH_SAMPLES;
 	}
 
 	int16_t virtualDetentedKnob(int16_t val)
@@ -602,6 +607,7 @@ private:
 			if (!grains_[i].active)
 			{
 				grains_[i].active = true;
+				cachedActiveGrainCount_++; // Update cached count when grain is activated
 				// Snapshot delay, spread, and grain size for this grain
 				grains_[i].delayDistance = delayDistance_;
 				grains_[i].spreadAmount = spreadAmount_;
@@ -779,6 +785,16 @@ private:
 		{
 			return 4096; // Full weight if grain size is invalid
 		}
+		
+		// Count active grains to determine if windowing is needed
+		// Use cached count for performance - updated only when grains are created/destroyed
+		// Only apply windowing when multiple grains are active (overlapping)
+		if (cachedActiveGrainCount_ <= 1)
+		{
+			return 4096; // Single grain - full weight for maximum clarity
+		}
+		
+		// Normal windowing for overlapping grains
 		// Position in grain: 0 to grainSize-1, normalized to 0-4095 (Q12)
 		int32_t posQ12 = (grain.sampleCount << 12) / grain.grainSize; // Q12 normalized position (0-4095)
 		if (posQ12 < 0)
@@ -997,21 +1013,22 @@ private:
 							}
 						}
 
-						// Check if grain has reached 75% completion and trigger Pulse 1 for continuous looping
+						// Check if grain has reached completion threshold and trigger Pulse 1
 						if (grains_[i].grainSize > 0 && !grains_[i].pulse90Triggered)
 						{
-							int32_t percent75 = (grains_[i].grainSize * 75) / 100; // 75% of grain size
-							if (grains_[i].sampleCount >= percent75 && pulseOut1Counter_ <= 0)
+							int32_t thresholdSamples = (grains_[i].grainSize * GRAIN_COMPLETION_THRESHOLD_PERCENT) / 100;
+							if (grains_[i].sampleCount >= thresholdSamples && pulseOut1Counter_ <= 0)
 							{
 								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
 								grains_[i].pulse90Triggered = true;			  // Mark as triggered for this grain
 							}
 						}
 
-						// Deactivate grain if it's finished (only when not frozen)
+						// Deactivate grain if it's finished
 						if (grains_[i].sampleCount >= grains_[i].grainSize)
 						{
 							grains_[i].active = false;
+							cachedActiveGrainCount_--; // Update cached count when grain is deactivated
 						}
 					}
 					else
