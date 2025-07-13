@@ -28,7 +28,7 @@
  * Outputs:
  * - Audio Outs: Granular processed audio (stereo)
  * - CV Out 1: Random noise value (updates when grains are triggered)
- * - CV Out 2: Playback phase of grain 0 (0V=start, 5V=end of grain)
+ * - CV Out 2: Rising sawtooth LFO (0V to 5V) with rate controlled by Y knob (inverse of stochastic pulse rate)
  * - Pulse 1 Out: Triggers when any grain reaches 90% completion (optimized for continuous looping)
  * - Pulse 2 Out: Stochastic clock - triggers when noise < X knob value, rate inversely proportional to grain size
  *
@@ -91,6 +91,10 @@ public:
 
 		cvOut1NoiseValue_ = 0;
 		cvOut2PhaseValue_ = 0;
+		
+		// Initialize triangle LFO for CV2
+		triangleLfoCounter_ = 0;
+		triangleLfoPeriod_ = 2400; // Default period
 
 		lastOutputL_ = 0;
 		lastOutputR_ = 0;
@@ -350,6 +354,10 @@ private:
 
 	int16_t cvOut1NoiseValue_;
 	int16_t cvOut2PhaseValue_;
+	
+	// Triangle LFO for CV2 output
+	int32_t triangleLfoCounter_;
+	int32_t triangleLfoPeriod_;
 	
 	// Audio output amplitude tracking for LED feedback
 	int16_t lastOutputL_;
@@ -1083,12 +1091,12 @@ private:
 	{
 		// Update stochastic clock period based on grain size
 		// Wider range than grain size: 240 samples (10ms) to 4800 samples (200ms) at 24kHz
-		// Inverse relationship: smaller grains = faster clock, larger grains = slower clock
+		// Direct relationship: smaller grains = faster clock (shorter period), larger grains = slower clock (longer period)
 		int32_t normalizedGrainSize = grainSize_ - 64; // 0 to 23936 range
 		int32_t maxPeriod = 4800;					   // 200ms at 24kHz
 		int32_t minPeriod = 240;					   // 10ms at 24kHz
-		// Inverse mapping: larger grain size = longer period (slower clock)
-		stochasticClockPeriod_ = maxPeriod - ((normalizedGrainSize * (maxPeriod - minPeriod)) / 23936);
+		// Direct mapping: larger grain size = longer period (slower clock)
+		stochasticClockPeriod_ = minPeriod + ((normalizedGrainSize * (maxPeriod - minPeriod)) / 23936);
 
 		// Removed conservative clamping for performance - calculation should always be in range
 
@@ -1191,32 +1199,27 @@ private:
 		// CV Out 1: Current noise value (updated when grains are triggered)
 		CVOut1(cvOut1NoiseValue_);
 
-		// CV Out 2: Playback phase of grain 0 (0 to 2047 = start to end of grain)
-		bool grain0Active = false;
-		for (int i = 0; i < MAX_GRAINS; i++)
-		{
-			if (grains_[i].active && i == 0)
-			{ // Find grain 0
-				grain0Active = true;
-				if (grains_[i].grainSize > 0)
-				{
-					// Calculate phase: 0 to 2047 based on grain progress
-					int32_t phase = (grains_[i].sampleCount * 2047) / grains_[i].grainSize;
-					if (phase > 2047)
-						phase = 2047;
-					if (phase < 0)
-						phase = 0;
-					cvOut2PhaseValue_ = (int16_t)phase;
-				}
-				break;
-			}
-		}
+		// CV Out 2: Rising sawtooth LFO (0V to 5V) with rate controlled by Y knob (grain size)
+		// Update triangle LFO period based on grain size (inverse of stochastic clock)
+		int32_t normalizedGrainSize = grainSize_ - 64; // 0 to 23936 range
+		int32_t maxPeriod = 120000;					   // 5 seconds at 24kHz (slow, 0.2 Hz)
+		int32_t minPeriod = 12000;					   // 0.5 seconds at 24kHz (fast, 2 Hz)
+		// Inverse mapping: larger grain size = shorter period (faster LFO, 0.2 Hz to 2 Hz range)
+		triangleLfoPeriod_ = maxPeriod - ((normalizedGrainSize * (maxPeriod - minPeriod)) / 23936);
 
-		// If grain 0 is not active, output 0V
-		if (!grain0Active)
+		// Update triangle LFO counter and calculate triangle wave
+		triangleLfoCounter_++;
+		if (triangleLfoCounter_ >= triangleLfoPeriod_)
 		{
-			cvOut2PhaseValue_ = 0;
+			triangleLfoCounter_ = 0;
 		}
+		
+		// Calculate rising sawtooth wave value (0 to 2047)
+		// Simple linear ramp: counter * max_value / period
+		cvOut2PhaseValue_ = (int16_t)((triangleLfoCounter_ * 2047) / triangleLfoPeriod_);
+		
+		// Clamp output to valid range (safety check)
+		if (cvOut2PhaseValue_ > 2047) cvOut2PhaseValue_ = 2047;
 
 		CVOut2(cvOut2PhaseValue_);
 	}
