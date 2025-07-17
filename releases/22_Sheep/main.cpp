@@ -1038,12 +1038,20 @@ private:
 							{
 								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
 								grains_[i].pulse90Triggered = true;              // Mark as triggered for this grain
-								// --- Begin PulseIn2 gate logic ---
-								// If PulseIn2 is plugged in and high, trigger a grain at this moment
-								if (Connected(Input::Pulse2) && PulseIn2()) {
-									triggerNewGrain();
+								// --- Begin Grain Trigger Normal Logic ---
+								// If PulseIn1 is not plugged in, handle grain firing based on PulseIn2 state
+								if (!Connected(Input::Pulse1)) {
+									if (Connected(Input::Pulse2)) {
+										// PulseIn2 is plugged in: only fire if high
+										if (PulseIn2()) {
+											triggerNewGrain();
+										}
+									} else {
+										// Neither pulse input is plugged in: always fire at internal clock rate
+										triggerNewGrain();
+									}
 								}
-								// --- End PulseIn2 gate logic ---
+								// --- End Grain Trigger Normal Logic ---
 							}
 						}
 
