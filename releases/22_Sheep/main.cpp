@@ -1037,7 +1037,13 @@ private:
 							if (grains_[i].sampleCount >= thresholdSamples && pulseOut1Counter_ <= 0)
 							{
 								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
-								grains_[i].pulse90Triggered = true;			  // Mark as triggered for this grain
+								grains_[i].pulse90Triggered = true;              // Mark as triggered for this grain
+								// --- Begin PulseIn2 gate logic ---
+								// If PulseIn2 is plugged in and high, trigger a grain at this moment
+								if (Connected(Input::Pulse2) && PulseIn2()) {
+									triggerNewGrain();
+								}
+								// --- End PulseIn2 gate logic ---
 							}
 						}
 

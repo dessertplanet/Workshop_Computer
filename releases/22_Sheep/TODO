@@ -1,0 +1,3 @@
+- Possibly swap second grain trigger for a grain gate
+- Normal the grain output to grain trigger
+- when unclocked or when in gate mode, adapt grainsize to be more like density
