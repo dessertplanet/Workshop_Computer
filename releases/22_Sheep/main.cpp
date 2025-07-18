@@ -10,8 +10,8 @@
  *
  * A granular delay effect with the following features:
  * - 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz)
- * - Up to 5 simultaneous grains 
- * - Linear grain sizes from micro (64 samples) to huge (125000 samples - full buffer length)
+ * - Up to 16 simultaneous grains 
+ * - Linear grain sizes from micro (16 samples) to medium (12000 samples - 0.5 seconds)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
  *
@@ -46,6 +46,7 @@
  */
 
 #define BUFF_LENGTH_SAMPLES 125000 // 125,000 samples (5.2 seconds at 24kHz)
+#define MAX_GRAIN_SIZE 8000 // 8,000 samples (0.33 seconds at 24kHz) - maximum grain size
 
 class Sheep : public ComputerCard
 {
@@ -466,12 +467,12 @@ private:
 		if (normalizedRatio > 4095)
 			normalizedRatio = 4095;
 
-		grainSize_ = 16 + ((normalizedRatio * (BUFF_LENGTH_SAMPLES - 16)) / 4095);
+		grainSize_ = 16 + ((normalizedRatio * (MAX_GRAIN_SIZE - 16)) / 4095);
 
 		if (grainSize_ < 16)
 			grainSize_ = 16;
-		if (grainSize_ > BUFF_LENGTH_SAMPLES)
-			grainSize_ = BUFF_LENGTH_SAMPLES;
+		if (grainSize_ > MAX_GRAIN_SIZE)
+			grainSize_ = MAX_GRAIN_SIZE;
 	}
 
 	int16_t virtualDetentedKnob(int16_t val)
