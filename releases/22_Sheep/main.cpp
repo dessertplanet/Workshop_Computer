@@ -11,7 +11,7 @@
  * A granular delay effect with the following features:
  * - 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz)
  * - Up to 16 simultaneous grains 
- * - Linear grain sizes from micro (16 samples) to medium (12000 samples - 0.5 seconds)
+ * - Linear grain sizes from micro (32 samples) to medium (8000 samples - 0.33 seconds)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
  *
@@ -46,7 +46,8 @@
  */
 
 #define BUFF_LENGTH_SAMPLES 125000 // 125,000 samples (5.2 seconds at 24kHz)
-#define MAX_GRAIN_SIZE 8000 // 8,000 samples (0.33 seconds at 24kHz) - maximum grain size
+#define MAX_GRAIN_SIZE 24000 // 8,000 samples (0.33 seconds at 24kHz) - maximum grain size
+#define MIN_GRAIN_SIZE 32 // 32 samples (1.33ms at 24kHz) - minimum grain size
 
 class Sheep : public ComputerCard
 {
@@ -433,15 +434,15 @@ private:
 	{
 		if (Connected(Input::CV2))
 		{
-			// CV2 controls pitch, Main knob is attenuverter
+			// CV2 controls pitch, Main knob is attenuverter (use center detent only)
 			int32_t cv2Val = CVIn2();
 			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
 			grainPlaybackSpeed_ = applyPitchAttenuverter(cv2Val, mainKnobVal);
 		}
 		else
 		{
-			// Main knob controls pitch directly
-			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
+			// Main knob controls pitch directly (use multiple detents for musical speeds)
+			int32_t mainKnobVal = pitchDetentedKnob(cachedMainKnob_);
 
 			// Map -2x to +2x with pause at center
 			if (mainKnobVal <= 2048)
@@ -500,10 +501,10 @@ private:
 		if (normalizedRatio > 4095)
 			normalizedRatio = 4095;
 
-		grainSize_ = 16 + ((normalizedRatio * (MAX_GRAIN_SIZE - 16)) / 4095);
+		grainSize_ = MIN_GRAIN_SIZE + ((normalizedRatio * (MAX_GRAIN_SIZE - MIN_GRAIN_SIZE)) / 4095);
 
-		if (grainSize_ < 16)
-			grainSize_ = 16;
+		if (grainSize_ < MIN_GRAIN_SIZE)
+			grainSize_ = MIN_GRAIN_SIZE;
 		if (grainSize_ > MAX_GRAIN_SIZE)
 			grainSize_ = MAX_GRAIN_SIZE;
 	}
@@ -523,6 +524,51 @@ private:
 		if (cabs(val - 2048) < VIRTUAL_DETENT_THRESHOLD)
 		{
 			val = 2048;
+		}
+
+		return val;
+	}
+
+	// Pitch control detents for direct pitch control mode (when CV2 is not connected)
+	int16_t pitchDetentedKnob(int16_t val)
+	{
+		if (val > 4090)
+		{
+			val = 4095;
+		}
+		else if (val < 5)
+		{
+			val = 0;
+		}
+
+		// Larger threshold for pitch detents to make them easier to find
+		static const int32_t PITCH_DETENT_THRESHOLD = 20;
+
+		// Multiple detents for musically useful speeds
+		// Center detent: 0x (pause/freeze)
+		if (cabs(val - 2048) < PITCH_DETENT_THRESHOLD)
+		{
+			val = 2048;
+		}
+		// +1x detent (normal forward speed)
+		else if (cabs(val - 3584) < PITCH_DETENT_THRESHOLD)
+		{
+			val = 3584;
+		}
+		// +0.5x detent (half forward speed)
+		else if (cabs(val - 3072) < PITCH_DETENT_THRESHOLD)
+		{
+			val = 3072;
+		}
+		// -0.5x detent (half reverse speed)
+		else if (cabs(val - 1024) < PITCH_DETENT_THRESHOLD)
+		{
+			val = 1024;
+		}
+		// -1x detent (normal reverse speed)
+		else if (cabs(val - 512) < PITCH_DETENT_THRESHOLD)
+		{
+			val = 512;
 		}
 
 		return val;
