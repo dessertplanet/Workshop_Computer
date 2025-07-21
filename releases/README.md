@@ -13,7 +13,7 @@
 | 12_am_coupler | AM radio transmitter / coupler | 1.0 | C++ / ComputerCard / RPi Pico SDK | Chris Johnson | Released |
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0 | C++ / ComputerCard / RPi Pico SDK | Chris Johnson | Released |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface. | 1.2 | C (RPi Pico SDK) | Chris Johnson | Released |
-| 22_sheep | A gritty, lo-ft time-stretching and pitch-shifting granular delay and digital degradation playground | 1.0 | Pico SDK | Dune Desormeaux | Released |
+| 22_sheep | A gritty, lo-fi time-stretching and pitch-shifting granular delay and digital degradation playground | 1.0 | Pico SDK | Dune Desormeaux | Released |
 | 23_SlowMod | Chaotic quad-LFO with VCAs | 0.1 | C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE. | divmod/@olt | Released |
 | 24_crafted_volts | Manually set control voltages (CV) with the input knobs and switch. It also attenuverts (attenuates and inverts) incoming voltages. | (see source repo) | Rust (Embassy framework) | Brian Dorsey | Released |
 | 25_utility_pair | 25 small utilities, which can be combined in pairs | 1.0 | C++ / ComputerCard / PicoSDK | Chris Johnson | Released |
