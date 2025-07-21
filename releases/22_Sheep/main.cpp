@@ -6,29 +6,28 @@
 #endif
 
 /*
- * Sheep: A Granular Delay
- *
- * A granular delay effect with the following features:
+ * Sheep: A crunchy granular delay and digital degradation effect
+ * by Dune Desormeaux (github.com/dessertplanet)
  * - 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz)
  * - Up to 16 simultaneous grains 
- * - Linear grain sizes from micro (32 samples) to medium (8000 samples - 0.33 seconds)
+ * - Linear grain sizes from micro (32 samples = ~0.001 seconds) to macro (24000 samples = 1 second)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
  *
  * Controls:
  * - Main Knob: Grain playback speed/direction (-2x to +2x, center=pause) OR pitch attenuverter when CV2 connected
  * - X Knob: Grain position spread (0=fixed delay, right=random spread) OR attenuverter when CV1 connected (left=invert, center=off, right=normal)
- * - Y Knob: Grain size (linear control from micro to huge grains)
- * - CV1: Grain position control (0-5V covers full range, negative values wrap from end) with X knob as attenuverter
- * - CV2: Pitch control (-5V to +5V = -2x to +2x speed) with Main knob as attenuverter
+ * - Y Knob: Grain size
+ * - CV1: Grain position control (0-6V covers full range, negative values wrap from end) with X knob as attenuverter
+ * - CV2: Pitch control (-6V to +6V = -2x to +2x speed) with Main knob as attenuverter
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop/glitch Mode
- * - Pulse 1 In: Triggers new grains
- * - Pulse 2 In: Alternative grain trigger (independent from Pulse 1)
- *
+ * - Pulse 1 In: grain TRIGGER (rising edge)
+ * - Pulse 2 In: Grain GATE
+ * 
  * Outputs:
  * - Audio Outs: Granular processed audio (stereo)
  * - CV Out 1: Random noise value (updates when grains are triggered)
- * - CV Out 2: Rising sawtooth LFO (0V to 5V) with rate controlled by Y knob (inverse of stochastic pulse rate)
+ * - CV Out 2: Rising sawtooth LFO (0V to 6V) fixed rate, aligned to circular buffer phase
  * - Pulse 1 Out: Triggers when any grain reaches 90% completion (optimized for continuous looping)
  * - Pulse 2 Out: Stochastic clock - triggers when noise < X knob value, rate inversely proportional to grain size
  *
@@ -36,13 +35,6 @@
  * - LEDs 0,1: Audio output activity (brightness = number of active grains)
  * - LEDs 2,3: CV output levels (brightness = CV voltage magnitude)
  * - LEDs 4,5: Pulse output states (on/off)
- *
- * Performance Optimizations:
- * - Knob values cached and updated at 1000Hz (instead of 24kHz) for reduced CPU overhead
- * - LED feedback updated at 1000Hz (instead of 24kHz) for improved efficiency
- * - Grain size/position parameters updated at 1000Hz (only affect new grains, not existing ones)
- * - Playback speed updated at 24kHz (affects all active grains in real-time)
- * - Fixed maximum of 3 active grains (no dynamic allocation based on grain size)
  */
 
 #define BUFF_LENGTH_SAMPLES 125000 // 125,000 samples (5.2 seconds at 24kHz)
