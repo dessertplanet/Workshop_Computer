@@ -6,29 +6,28 @@
 #endif
 
 /*
- * Sheep: A Granular Delay
- *
- * A granular delay effect with the following features:
+ * Sheep: A crunchy granular delay and digital degradation effect
+ * by Dune Desormeaux (github.com/dessertplanet)
  * - 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz)
- * - Up to 5 simultaneous grains 
- * - Linear grain sizes from micro (64 samples) to huge (125000 samples - full buffer length)
+ * - Up to 16 simultaneous grains 
+ * - Linear grain sizes from micro (32 samples = ~0.001 seconds) to macro (24000 samples = 1 second)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
  *
  * Controls:
  * - Main Knob: Grain playback speed/direction (-2x to +2x, center=pause) OR pitch attenuverter when CV2 connected
  * - X Knob: Grain position spread (0=fixed delay, right=random spread) OR attenuverter when CV1 connected (left=invert, center=off, right=normal)
- * - Y Knob: Grain size (linear control from micro to huge grains)
- * - CV1: Grain position control (0-5V covers full range, negative values wrap from end) with X knob as attenuverter
- * - CV2: Pitch control (-5V to +5V = -2x to +2x speed) with Main knob as attenuverter
+ * - Y Knob: Grain size
+ * - CV1: Grain position control (0-6V covers full range, negative values wrap from end) with X knob as attenuverter
+ * - CV2: Pitch control (-6V to +6V = -2x to +2x speed) with Main knob as attenuverter
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop/glitch Mode
- * - Pulse 1 In: Triggers new grains
- * - Pulse 2 In: Alternative grain trigger (independent from Pulse 1)
- *
+ * - Pulse 1 In: grain TRIGGER (rising edge)
+ * - Pulse 2 In: Grain GATE
+ * 
  * Outputs:
  * - Audio Outs: Granular processed audio (stereo)
  * - CV Out 1: Random noise value (updates when grains are triggered)
- * - CV Out 2: Rising sawtooth LFO (0V to 5V) with rate controlled by Y knob (inverse of stochastic pulse rate)
+ * - CV Out 2: Rising sawtooth LFO (0V to 6V) fixed rate, aligned to circular buffer phase
  * - Pulse 1 Out: Triggers when any grain reaches 90% completion (optimized for continuous looping)
  * - Pulse 2 Out: Stochastic clock - triggers when noise < X knob value, rate inversely proportional to grain size
  *
@@ -36,16 +35,11 @@
  * - LEDs 0,1: Audio output activity (brightness = number of active grains)
  * - LEDs 2,3: CV output levels (brightness = CV voltage magnitude)
  * - LEDs 4,5: Pulse output states (on/off)
- *
- * Performance Optimizations:
- * - Knob values cached and updated at 1000Hz (instead of 24kHz) for reduced CPU overhead
- * - LED feedback updated at 1000Hz (instead of 24kHz) for improved efficiency
- * - Grain size/position parameters updated at 1000Hz (only affect new grains, not existing ones)
- * - Playback speed updated at 24kHz (affects all active grains in real-time)
- * - Fixed maximum of 3 active grains (no dynamic allocation based on grain size)
  */
 
 #define BUFF_LENGTH_SAMPLES 125000 // 125,000 samples (5.2 seconds at 24kHz)
+#define MAX_GRAIN_SIZE 24000 // 8,000 samples (0.33 seconds at 24kHz) - maximum grain size
+#define MIN_GRAIN_SIZE 32 // 32 samples (1.33ms at 24kHz) - minimum grain size
 
 class Sheep : public ComputerCard
 {
@@ -67,7 +61,7 @@ private:
 	
 	// Grain system constants
 	static const int MAX_GRAINS = 16;  // Maximum number of simultaneous grains
-	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90; // used for pulse 1 output
+	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90; // used for pulse 1 output when clocked
 
 public:
 	Sheep()
@@ -206,13 +200,16 @@ public:
 
 		updatePlaybackSpeed();
 
-		bool shouldTriggerGrain = PulseIn1RisingEdge() || PulseIn2RisingEdge();
+		bool shouldTriggerGrain = PulseIn1RisingEdge();
 
 		if (switchPos == Switch::Up)
 		{
 			if (shouldTriggerGrain)
 			{
-				triggerNewGrain();
+				// Check Pulse Input 2 gate before triggering
+				if (!Connected(Input::Pulse2) || PulseIn2()) {
+					triggerNewGrain();
+				}
 			}
 
 			int16_t outL = generateStretchedSample(0);
@@ -238,7 +235,10 @@ public:
 
 			if (shouldTriggerGrain)
 			{
-				triggerNewGrain();
+				// Check Pulse Input 2 gate before triggering
+				if (!Connected(Input::Pulse2) || PulseIn2()) {
+					triggerNewGrain();
+				}
 			}
 
 			int16_t outL = generateStretchedSample(0);
@@ -278,6 +278,33 @@ public:
 		}
 
 		updateGrains();
+		
+		// Auto-trigger initial grain in unclocked mode if no grains are active
+		// This ensures the self-triggering chain gets started
+		if (!Connected(Input::Pulse1)) {
+			// Count active grains
+			int32_t activeCount = 0;
+			for (int i = 0; i < MAX_GRAINS; i++) {
+				if (grains_[i].active) {
+					activeCount++;
+				}
+			}
+			
+			// If no grains are active in unclocked mode, trigger one to start the chain
+			// But respect Pulse 2 gate if it's connected
+			if (activeCount == 0) {
+				if (Connected(Input::Pulse2)) {
+					// Pulse 2 is connected: only auto-trigger if Pulse 2 is high
+					if (PulseIn2()) {
+						triggerNewGrain();
+					}
+				} else {
+					// No pulse inputs connected: always auto-trigger
+					triggerNewGrain();
+				}
+			}
+		}
+		
 		updateCVOutputs();
 		updatePulseOutputs();
 
@@ -399,15 +426,15 @@ private:
 	{
 		if (Connected(Input::CV2))
 		{
-			// CV2 controls pitch, Main knob is attenuverter
+			// CV2 controls pitch, Main knob is attenuverter (use center detent only)
 			int32_t cv2Val = CVIn2();
 			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
 			grainPlaybackSpeed_ = applyPitchAttenuverter(cv2Val, mainKnobVal);
 		}
 		else
 		{
-			// Main knob controls pitch directly
-			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
+			// Main knob controls pitch directly (use multiple detents for musical speeds)
+			int32_t mainKnobVal = pitchDetentedKnob(cachedMainKnob_);
 
 			// Map -2x to +2x with pause at center
 			if (mainKnobVal <= 2048)
@@ -466,12 +493,12 @@ private:
 		if (normalizedRatio > 4095)
 			normalizedRatio = 4095;
 
-		grainSize_ = 16 + ((normalizedRatio * (BUFF_LENGTH_SAMPLES - 16)) / 4095);
+		grainSize_ = MIN_GRAIN_SIZE + ((normalizedRatio * (MAX_GRAIN_SIZE - MIN_GRAIN_SIZE)) / 4095);
 
-		if (grainSize_ < 16)
-			grainSize_ = 16;
-		if (grainSize_ > BUFF_LENGTH_SAMPLES)
-			grainSize_ = BUFF_LENGTH_SAMPLES;
+		if (grainSize_ < MIN_GRAIN_SIZE)
+			grainSize_ = MIN_GRAIN_SIZE;
+		if (grainSize_ > MAX_GRAIN_SIZE)
+			grainSize_ = MAX_GRAIN_SIZE;
 	}
 
 	int16_t virtualDetentedKnob(int16_t val)
@@ -489,6 +516,51 @@ private:
 		if (cabs(val - 2048) < VIRTUAL_DETENT_THRESHOLD)
 		{
 			val = 2048;
+		}
+
+		return val;
+	}
+
+	// Pitch control detents for direct pitch control mode (when CV2 is not connected)
+	int16_t pitchDetentedKnob(int16_t val)
+	{
+		if (val > 4090)
+		{
+			val = 4095;
+		}
+		else if (val < 5)
+		{
+			val = 0;
+		}
+
+		// Larger threshold for pitch detents to make them easier to find
+		static const int32_t PITCH_DETENT_THRESHOLD = 20;
+
+		// Multiple detents for musically useful speeds
+		// Center detent: 0x (pause/freeze)
+		if (cabs(val - 2048) < PITCH_DETENT_THRESHOLD)
+		{
+			val = 2048;
+		}
+		// +1x detent (normal forward speed)
+		else if (cabs(val - 3584) < PITCH_DETENT_THRESHOLD)
+		{
+			val = 3584;
+		}
+		// +0.5x detent (half forward speed)
+		else if (cabs(val - 3072) < PITCH_DETENT_THRESHOLD)
+		{
+			val = 3072;
+		}
+		// -0.5x detent (half reverse speed)
+		else if (cabs(val - 1024) < PITCH_DETENT_THRESHOLD)
+		{
+			val = 1024;
+		}
+		// -1x detent (normal reverse speed)
+		else if (cabs(val - 512) < PITCH_DETENT_THRESHOLD)
+		{
+			val = 512;
 		}
 
 		return val;
@@ -598,6 +670,24 @@ private:
 				break; // Safety break if we can't find a grain to deactivate
 			}
 		}
+	}
+
+	// Calculate unclocked grain trigger threshold based on Y knob for overlap control
+	// Returns percentage (0-100) of grain completion at which to trigger next grain
+	int32_t __not_in_flash_func(calculateUnclockTriggerThreshold)()
+	{
+		// Y knob controls overlap: Y=0 -> high threshold (less overlap), Y=max -> low threshold (more overlap)
+		int32_t yValue = cachedYKnob_; // 0 to 4095
+		
+		// Inverted linear mapping: 90% at Y=0 (less overlap), decreasing to 10% at Y=max (more overlap)
+		// threshold = 90 - (Y * 80 / 4095)
+		int32_t triggerThreshold = 90 - ((yValue * 80) / 4095); // 90% to 10% threshold
+		
+		// Ensure threshold is within valid range
+		if (triggerThreshold < 10) triggerThreshold = 10;   // Minimum 10% (maximum overlap)
+		if (triggerThreshold > 90) triggerThreshold = 90;   // Maximum 90% (minimum overlap)
+		
+		return triggerThreshold;
 	}
 
 	void __not_in_flash_func(triggerNewGrain)()
@@ -1033,11 +1123,35 @@ private:
 						// Check if grain has reached completion threshold and trigger Pulse 1
 						if (grains_[i].grainSize > 0 && !grains_[i].pulse90Triggered)
 						{
-							int32_t thresholdSamples = (grains_[i].grainSize * GRAIN_COMPLETION_THRESHOLD_PERCENT) / 100;
+							// Use different thresholds for clocked vs unclocked modes
+							int32_t thresholdPercent;
+							if (Connected(Input::Pulse1)) {
+								// Clocked mode: use fixed 90% threshold for pulse output timing
+								thresholdPercent = GRAIN_COMPLETION_THRESHOLD_PERCENT;
+							} else {
+								// Unclocked mode: use Y knob-controlled threshold for overlap behavior
+								thresholdPercent = calculateUnclockTriggerThreshold();
+							}
+							
+							int32_t thresholdSamples = (grains_[i].grainSize * thresholdPercent) / 100;
 							if (grains_[i].sampleCount >= thresholdSamples && pulseOut1Counter_ <= 0)
 							{
 								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
-								grains_[i].pulse90Triggered = true;			  // Mark as triggered for this grain
+								grains_[i].pulse90Triggered = true;              // Mark as triggered for this grain
+								// --- Begin Grain Trigger Logic ---
+								// If PulseIn1 is not plugged in, handle grain firing based on PulseIn2 state
+								if (!Connected(Input::Pulse1)) {
+									if (Connected(Input::Pulse2)) {
+										// PulseIn2 is plugged in: only fire if high
+										if (PulseIn2()) {
+											triggerNewGrain();
+										}
+									} else {
+										// Neither pulse input is plugged in: always fire with Y knob-controlled timing
+										triggerNewGrain();
+									}
+								}
+								// --- End Grain Trigger Logic ---
 							}
 						}
 
