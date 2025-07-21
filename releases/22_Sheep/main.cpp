@@ -68,7 +68,7 @@ private:
 	
 	// Grain system constants
 	static const int MAX_GRAINS = 16;  // Maximum number of simultaneous grains
-	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90; // used for pulse 1 output
+	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90; // used for pulse 1 output when clocked
 
 public:
 	Sheep()
@@ -207,13 +207,16 @@ public:
 
 		updatePlaybackSpeed();
 
-		bool shouldTriggerGrain = PulseIn1RisingEdge() || PulseIn2RisingEdge();
+		bool shouldTriggerGrain = PulseIn1RisingEdge();
 
 		if (switchPos == Switch::Up)
 		{
 			if (shouldTriggerGrain)
 			{
-				triggerNewGrain();
+				// Check Pulse Input 2 gate before triggering
+				if (!Connected(Input::Pulse2) || PulseIn2()) {
+					triggerNewGrain();
+				}
 			}
 
 			int16_t outL = generateStretchedSample(0);
@@ -239,7 +242,10 @@ public:
 
 			if (shouldTriggerGrain)
 			{
-				triggerNewGrain();
+				// Check Pulse Input 2 gate before triggering
+				if (!Connected(Input::Pulse2) || PulseIn2()) {
+					triggerNewGrain();
+				}
 			}
 
 			int16_t outL = generateStretchedSample(0);
@@ -279,6 +285,33 @@ public:
 		}
 
 		updateGrains();
+		
+		// Auto-trigger initial grain in unclocked mode if no grains are active
+		// This ensures the self-triggering chain gets started
+		if (!Connected(Input::Pulse1)) {
+			// Count active grains
+			int32_t activeCount = 0;
+			for (int i = 0; i < MAX_GRAINS; i++) {
+				if (grains_[i].active) {
+					activeCount++;
+				}
+			}
+			
+			// If no grains are active in unclocked mode, trigger one to start the chain
+			// But respect Pulse 2 gate if it's connected
+			if (activeCount == 0) {
+				if (Connected(Input::Pulse2)) {
+					// Pulse 2 is connected: only auto-trigger if Pulse 2 is high
+					if (PulseIn2()) {
+						triggerNewGrain();
+					}
+				} else {
+					// No pulse inputs connected: always auto-trigger
+					triggerNewGrain();
+				}
+			}
+		}
+		
 		updateCVOutputs();
 		updatePulseOutputs();
 
@@ -599,6 +632,24 @@ private:
 				break; // Safety break if we can't find a grain to deactivate
 			}
 		}
+	}
+
+	// Calculate unclocked grain trigger threshold based on Y knob for overlap control
+	// Returns percentage (0-100) of grain completion at which to trigger next grain
+	int32_t __not_in_flash_func(calculateUnclockTriggerThreshold)()
+	{
+		// Y knob controls overlap: Y=0 -> high threshold (less overlap), Y=max -> low threshold (more overlap)
+		int32_t yValue = cachedYKnob_; // 0 to 4095
+		
+		// Inverted linear mapping: 90% at Y=0 (less overlap), decreasing to 10% at Y=max (more overlap)
+		// threshold = 90 - (Y * 80 / 4095)
+		int32_t triggerThreshold = 90 - ((yValue * 80) / 4095); // 90% to 10% threshold
+		
+		// Ensure threshold is within valid range
+		if (triggerThreshold < 10) triggerThreshold = 10;   // Minimum 10% (maximum overlap)
+		if (triggerThreshold > 90) triggerThreshold = 90;   // Maximum 90% (minimum overlap)
+		
+		return triggerThreshold;
 	}
 
 	void __not_in_flash_func(triggerNewGrain)()
@@ -1034,12 +1085,22 @@ private:
 						// Check if grain has reached completion threshold and trigger Pulse 1
 						if (grains_[i].grainSize > 0 && !grains_[i].pulse90Triggered)
 						{
-							int32_t thresholdSamples = (grains_[i].grainSize * GRAIN_COMPLETION_THRESHOLD_PERCENT) / 100;
+							// Use different thresholds for clocked vs unclocked modes
+							int32_t thresholdPercent;
+							if (Connected(Input::Pulse1)) {
+								// Clocked mode: use fixed 90% threshold for pulse output timing
+								thresholdPercent = GRAIN_COMPLETION_THRESHOLD_PERCENT;
+							} else {
+								// Unclocked mode: use Y knob-controlled threshold for overlap behavior
+								thresholdPercent = calculateUnclockTriggerThreshold();
+							}
+							
+							int32_t thresholdSamples = (grains_[i].grainSize * thresholdPercent) / 100;
 							if (grains_[i].sampleCount >= thresholdSamples && pulseOut1Counter_ <= 0)
 							{
 								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
 								grains_[i].pulse90Triggered = true;              // Mark as triggered for this grain
-								// --- Begin Grain Trigger Normal Logic ---
+								// --- Begin Grain Trigger Logic ---
 								// If PulseIn1 is not plugged in, handle grain firing based on PulseIn2 state
 								if (!Connected(Input::Pulse1)) {
 									if (Connected(Input::Pulse2)) {
@@ -1048,11 +1109,11 @@ private:
 											triggerNewGrain();
 										}
 									} else {
-										// Neither pulse input is plugged in: always fire at internal clock rate
+										// Neither pulse input is plugged in: always fire with Y knob-controlled timing
 										triggerNewGrain();
 									}
 								}
-								// --- End Grain Trigger Normal Logic ---
+								// --- End Grain Trigger Logic ---
 							}
 						}
 
