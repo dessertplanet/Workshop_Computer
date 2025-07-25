@@ -1,10 +1,6 @@
 #include "ComputerCard.h"
 #include <cmath>
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
 /*
  * Sheep: A crunchy granular delay and digital degradation effect
  * by Dune Desormeaux (github.com/dessertplanet)
@@ -629,48 +625,6 @@ private:
 			result = -4096; // -1x min (4096 - 8192, but clamped)
 
 		return result;
-	}
-
-	// Enforce grain limit by deactivating excess grains (oldest first, based on startPos)
-	void __not_in_flash_func(enforceGrainLimit)()
-	{
-		// Count currently active grains
-		int32_t activeCount = 0;
-		for (int i = 0; i < MAX_GRAINS; i++)
-		{
-			if (grains_[i].active)
-			{
-				activeCount++;
-			}
-		}
-
-		// If we have more active grains than the current limit, deactivate the oldest ones
-		while (activeCount > maxActiveGrains_)
-		{
-			// Find the oldest grain (furthest read position from start)
-			int oldestGrainIndex = -1;
-			int32_t maxSampleCount = -1;
-
-			for (int i = 0; i < MAX_GRAINS; i++)
-			{
-				if (grains_[i].active && grains_[i].sampleCount > maxSampleCount)
-				{
-					maxSampleCount = grains_[i].sampleCount;
-					oldestGrainIndex = i;
-				}
-			}
-
-			// Deactivate the oldest grain
-			if (oldestGrainIndex >= 0)
-			{
-				grains_[oldestGrainIndex].active = false;
-				activeCount--;
-			}
-			else
-			{
-				break; // Safety break if we can't find a grain to deactivate
-			}
-		}
 	}
 
 	// Calculate unclocked grain trigger threshold based on Y knob for overlap control
