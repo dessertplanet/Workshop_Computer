@@ -111,6 +111,7 @@ public:
 			grains_[i].freezeCounter = 0;
 			grains_[i].looping = false;
 			grains_[i].pulse90Triggered = false;
+			grains_[i].grainSpeed = 4096; // Initialize to 1x speed (Q12 format)
 		}
 
 		// Calculate Hann window lookup table at startup
@@ -197,8 +198,6 @@ public:
 			spreadAmount_ = 0;
 			minGrainDistance_ = 0; // No minimum distance when CV1 is connected
 		}
-
-		updatePlaybackSpeed();
 
 		bool shouldTriggerGrain = PulseIn1RisingEdge();
 
@@ -314,6 +313,7 @@ public:
 		{
 			updateCounter_ = 0;
 			updateCachedKnobValues();
+			updatePlaybackSpeed();
 			updateGrainParameters();
 			updateLEDFeedback();
 		}
@@ -346,6 +346,7 @@ private:
 		int32_t delayDistance;
 		int32_t spreadAmount;
 		int32_t grainSize;
+		int32_t grainSpeed;  // Store speed for this grain's lifecycle
 	};
 	Grain grains_[MAX_GRAINS];
 
@@ -719,10 +720,11 @@ private:
 				// Update last grain trigger time for minimum distance tracking
 				lastGrainTriggerTime_ = globalSampleCounter_;
 				
-				// Snapshot delay, spread, and grain size for this grain
+				// Snapshot delay, spread, grain size, and speed for this grain
 				grains_[i].delayDistance = delayDistance_;
 				grains_[i].spreadAmount = spreadAmount_;
 				grains_[i].grainSize = grainSize_;
+				grains_[i].grainSpeed = grainPlaybackSpeed_;  // Snapshot current speed for grain's lifecycle
 
 				// Reset pulse trigger flag for this grain
 				grains_[i].pulse90Triggered = false;
@@ -983,8 +985,8 @@ private:
 		{
 			if (grains_[i].active)
 			{
-				// Get grain playback speed
-				int32_t grainSpeed = grainPlaybackSpeed_;
+				// Get grain playback speed from this grain's stored speed
+				int32_t grainSpeed = grains_[i].grainSpeed;
 
 				// Handle looping grains differently
 				if (grains_[i].looping)
