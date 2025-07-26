@@ -59,6 +59,9 @@ private:
 	static const int32_t MAX_FRACTIONAL_ITERATIONS = 4;
 	static const int32_t MAX_SAFE_GRAIN_SPEED = 8192;
 
+	// Speed hysteresis to prevent scratchiness from knob noise
+	static const int32_t SPEED_HYSTERESIS_THRESHOLD = 32;
+
 	// Grain system constants
 	static const int MAX_GRAINS = 16;							  // Maximum number of simultaneous grains
 	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90; // used for pulse 1 output when clocked
@@ -73,6 +76,7 @@ public:
 
 		stretchRatio_ = 4096;
 		grainPlaybackSpeed_ = 4096;
+		previousGrainPlaybackSpeed_ = 4096; // Initialize to 1x speed for hysteresis
 		grainSize_ = 1024;
 		maxActiveGrains_ = MAX_GRAINS; // Maximum number of active grains
 		cachedActiveGrainCount_ = 0;   // Initialize grain count cache
@@ -358,6 +362,7 @@ private:
 
 	int32_t stretchRatio_;
 	int32_t grainPlaybackSpeed_;
+	int32_t previousGrainPlaybackSpeed_; // Track last applied speed for hysteresis
 	int32_t grainSize_;
 	int32_t maxActiveGrains_;
 	int32_t cachedActiveGrainCount_; // Cache grain count to avoid repeated counting in calculateGrainWeight()
@@ -431,39 +436,54 @@ private:
 	// Update playback speed (affects all active grains)
 	void __not_in_flash_func(updatePlaybackSpeed)()
 	{
+		int32_t newSpeed;
+
 		if (Connected(Input::CV2))
 		{
 			// CV2 controls pitch, Main knob is attenuverter (use center detent only)
+			// No hysteresis for CV2 - apply immediately for responsive CV control
 			int32_t cv2Val = CVIn2();
 			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
-			grainPlaybackSpeed_ = applyPitchAttenuverter(cv2Val, mainKnobVal);
+			newSpeed = applyPitchAttenuverter(cv2Val, mainKnobVal);
 		}
 		else
 		{
 			// Main knob controls pitch directly (use multiple detents for musical speeds)
+			// Apply hysteresis to prevent scratchiness from knob noise
 			int32_t mainKnobVal = pitchDetentedKnob(cachedMainKnob_);
 
-			// Map -2x to +2x with pause at center
+			// Calculate new speed after detent processing
 			if (mainKnobVal <= 2048)
 			{
-				grainPlaybackSpeed_ = -8192 + ((mainKnobVal * 8192) >> 11);
+				newSpeed = -8192 + ((mainKnobVal * 8192) >> 11);
 			}
 			else
 			{
 				int32_t rightKnob = mainKnobVal - 2048;
-				grainPlaybackSpeed_ = (rightKnob * 8192) >> 11;
+				newSpeed = (rightKnob * 8192) >> 11;
+			}
+
+			// Apply hysteresis - only update if change is significant
+			if (cabs(newSpeed - previousGrainPlaybackSpeed_) <= SPEED_HYSTERESIS_THRESHOLD)
+			{
+				// Change is too small - keep previous speed to prevent noise-induced changes
+				newSpeed = previousGrainPlaybackSpeed_;
 			}
 		}
 
 		// Limit speed for safety
-		if (grainPlaybackSpeed_ > MAX_SAFE_GRAIN_SPEED)
+		if (newSpeed > MAX_SAFE_GRAIN_SPEED)
 		{
-			grainPlaybackSpeed_ = MAX_SAFE_GRAIN_SPEED;
+			newSpeed = MAX_SAFE_GRAIN_SPEED;
 		}
-		if (grainPlaybackSpeed_ < -MAX_SAFE_GRAIN_SPEED)
+		if (newSpeed < -MAX_SAFE_GRAIN_SPEED)
 		{
-			grainPlaybackSpeed_ = -MAX_SAFE_GRAIN_SPEED;
+			newSpeed = -MAX_SAFE_GRAIN_SPEED;
 		}
+
+		// Update both current and previous speed
+		grainPlaybackSpeed_ = newSpeed;
+		previousGrainPlaybackSpeed_ = newSpeed;
 	}
 
 	// Update grain parameters (affects newly triggered grains only)
