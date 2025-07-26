@@ -1,11 +1,15 @@
 #include "ComputerCard.h"
 #include <cmath>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 /*
  * Sheep: A crunchy granular delay and digital degradation effect
  * by Dune Desormeaux (github.com/dessertplanet)
  * - 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz)
- * - Up to 16 simultaneous grains 
+ * - Up to 16 simultaneous grains
  * - Linear grain sizes from micro (32 samples = ~0.001 seconds) to macro (24000 samples = 1 second)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
@@ -19,7 +23,7 @@
  * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop/glitch Mode
  * - Pulse 1 In: grain TRIGGER (rising edge)
  * - Pulse 2 In: Grain GATE
- * 
+ *
  * Outputs:
  * - Audio Outs: Granular processed audio (stereo)
  * - CV Out 1: Random noise value (updates when grains are triggered)
@@ -34,8 +38,8 @@
  */
 
 #define BUFF_LENGTH_SAMPLES 125000 // 125,000 samples (5.2 seconds at 24kHz)
-#define MAX_GRAIN_SIZE 24000 // 8,000 samples (0.33 seconds at 24kHz) - maximum grain size
-#define MIN_GRAIN_SIZE 32 // 32 samples (1.33ms at 24kHz) - minimum grain size
+#define MAX_GRAIN_SIZE 24000	   // 8,000 samples (0.33 seconds at 24kHz) - maximum grain size
+#define MIN_GRAIN_SIZE 32		   // 32 samples (1.33ms at 24kHz) - minimum grain size
 
 class Sheep : public ComputerCard
 {
@@ -44,8 +48,8 @@ private:
 	static constexpr int HANN_TABLE_SIZE = 256;
 	int32_t hannWindowTable_[HANN_TABLE_SIZE];
 	// Timing constants
-	static const int32_t SAFETY_MARGIN_SAMPLES = 120;		  // 5ms safety margin
-	static const int32_t GRAIN_END_PULSE_DURATION = 100;	  // 4.2ms pulse duration
+	static const int32_t SAFETY_MARGIN_SAMPLES = 120;	 // 5ms safety margin
+	static const int32_t GRAIN_END_PULSE_DURATION = 100; // 4.2ms pulse duration
 	static const int32_t MAX_PULSE_HALF_PERIOD = 16384;
 	static const int32_t PULSE_COUNTER_OVERFLOW_LIMIT = 65536;
 	static const int32_t VIRTUAL_DETENT_THRESHOLD = 12;
@@ -54,9 +58,9 @@ private:
 	// Safety limits
 	static const int32_t MAX_FRACTIONAL_ITERATIONS = 4;
 	static const int32_t MAX_SAFE_GRAIN_SPEED = 8192;
-	
+
 	// Grain system constants
-	static const int MAX_GRAINS = 16;  // Maximum number of simultaneous grains
+	static const int MAX_GRAINS = 16;							  // Maximum number of simultaneous grains
 	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90; // used for pulse 1 output when clocked
 
 public:
@@ -71,7 +75,7 @@ public:
 		grainPlaybackSpeed_ = 4096;
 		grainSize_ = 1024;
 		maxActiveGrains_ = MAX_GRAINS; // Maximum number of active grains
-		cachedActiveGrainCount_ = 0; // Initialize grain count cache
+		cachedActiveGrainCount_ = 0;   // Initialize grain count cache
 		loopMode_ = false;
 
 		pulseOut1Counter_ = 0;
@@ -81,16 +85,12 @@ public:
 
 		cvOut1NoiseValue_ = 0;
 		cvOut2PhaseValue_ = 0;
-		
-		// Initialize triangle LFO for CV2
-		triangleLfoCounter_ = 0;
-		triangleLfoPeriod_ = 2400; // Default period
 
 		lastOutputL_ = 0;
 		lastOutputR_ = 0;
 
 		updateCounter_ = UPDATE_RATE_DIVIDER - 1;
-		
+
 		// Initialize grain timing variables
 		globalSampleCounter_ = 0;
 		minGrainDistance_ = 0;
@@ -104,7 +104,6 @@ public:
 			grains_[i].sampleCount = 0;
 			grains_[i].startPos = 0;
 			grains_[i].loopSize = 0;
-			grains_[i].freezeCounter = 0;
 			grains_[i].looping = false;
 			grains_[i].pulse90Triggered = false;
 			grains_[i].grainSpeed = 4096; // Initialize to 1x speed (Q12 format)
@@ -117,28 +116,31 @@ public:
 		{
 			// Calculate normalized position (0.0 to 1.0)
 			double pos = (double)i / (HANN_TABLE_SIZE - 1);
-			
+
 			// Calculate 2*pi*pos angle
 			double angle = 2.0 * M_PI * pos;
-			
+
 			// Calculate cosine using standard library for maximum accuracy
 			double cos_val = cos(angle);
-			
+
 			// Apply Hann window formula: 0.5 * (1 - cos(2*pi*n/(N-1)))
 			double hann_double = 0.5 * (1.0 - cos_val);
-			
+
 			// Convert to Q12 format (multiply by 4096)
 			int32_t hann_val = (int32_t)(hann_double * 4096.0 + 0.5); // +0.5 for rounding
-			
+
 			// Ensure perfect fade-in/fade-out at boundaries to eliminate clicks
-			if (i == 0 || i == HANN_TABLE_SIZE - 1) {
+			if (i == 0 || i == HANN_TABLE_SIZE - 1)
+			{
 				hann_val = 0; // Force zero at start and end
 			}
-			
+
 			// Clamp to valid range
-			if (hann_val < 0) hann_val = 0;
-			if (hann_val > 4096) hann_val = 4096;
-			
+			if (hann_val < 0)
+				hann_val = 0;
+			if (hann_val > 4096)
+				hann_val = 4096;
+
 			hannWindowTable_[i] = hann_val;
 		}
 	}
@@ -147,7 +149,7 @@ public:
 	{
 		// Increment global sample counter for grain timing
 		globalSampleCounter_++;
-		
+
 		Switch switchPos = SwitchVal();
 
 		// Record audio when not in freeze mode (freeze mode stops recording but allows playback)
@@ -202,7 +204,8 @@ public:
 			if (shouldTriggerGrain)
 			{
 				// Check Pulse Input 2 gate before triggering
-				if (!Connected(Input::Pulse2) || PulseIn2()) {
+				if (!Connected(Input::Pulse2) || PulseIn2())
+				{
 					triggerNewGrain();
 				}
 			}
@@ -231,7 +234,8 @@ public:
 			if (shouldTriggerGrain)
 			{
 				// Check Pulse Input 2 gate before triggering
-				if (!Connected(Input::Pulse2) || PulseIn2()) {
+				if (!Connected(Input::Pulse2) || PulseIn2())
+				{
 					triggerNewGrain();
 				}
 			}
@@ -273,33 +277,41 @@ public:
 		}
 
 		updateGrains();
-		
+
 		// Auto-trigger initial grain in unclocked mode if no grains are active
 		// This ensures the self-triggering chain gets started
-		if (!Connected(Input::Pulse1)) {
+		if (!Connected(Input::Pulse1))
+		{
 			// Count active grains
 			int32_t activeCount = 0;
-			for (int i = 0; i < MAX_GRAINS; i++) {
-				if (grains_[i].active) {
+			for (int i = 0; i < MAX_GRAINS; i++)
+			{
+				if (grains_[i].active)
+				{
 					activeCount++;
 				}
 			}
-			
+
 			// If no grains are active in unclocked mode, trigger one to start the chain
 			// But respect Pulse 2 gate if it's connected
-			if (activeCount == 0) {
-				if (Connected(Input::Pulse2)) {
+			if (activeCount == 0)
+			{
+				if (Connected(Input::Pulse2))
+				{
 					// Pulse 2 is connected: only auto-trigger if Pulse 2 is high
-					if (PulseIn2()) {
+					if (PulseIn2())
+					{
 						triggerNewGrain();
 					}
-				} else {
+				}
+				else
+				{
 					// No pulse inputs connected: always auto-trigger
 					triggerNewGrain();
 				}
 			}
 		}
-		
+
 		updateCVOutputs();
 		updatePulseOutputs();
 
@@ -320,13 +332,12 @@ private:
 	int32_t writeHead_ = 0;
 	int32_t delayDistance_ = 8000;
 	int32_t spreadAmount_ = 0;
-	
+
 	// Minimum grain distance control (left side of X knob)
-	int32_t minGrainDistance_ = 0;        // Minimum samples between grain triggers (0 = no minimum)
-	int32_t lastGrainTriggerTime_ = 0;    // Sample counter when last grain was triggered
+	int32_t minGrainDistance_ = 0;	   // Minimum samples between grain triggers (0 = no minimum)
+	int32_t lastGrainTriggerTime_ = 0; // Sample counter when last grain was triggered
 
 	// Grain system
-	static const int32_t GRAIN_FREEZE_TIMEOUT = 24000 * 5;
 	struct Grain
 	{
 		int32_t readPos;
@@ -334,7 +345,6 @@ private:
 		int32_t sampleCount;
 		int32_t startPos;
 		int32_t loopSize;
-		int32_t freezeCounter;
 		bool active;
 		bool looping;
 		bool pulse90Triggered;
@@ -342,7 +352,7 @@ private:
 		int32_t delayDistance;
 		int32_t spreadAmount;
 		int32_t grainSize;
-		int32_t grainSpeed;  // Store speed for this grain's lifecycle
+		int32_t grainSpeed; // Store speed for this grain's lifecycle
 	};
 	Grain grains_[MAX_GRAINS];
 
@@ -361,11 +371,11 @@ private:
 
 	int16_t cvOut1NoiseValue_;
 	int16_t cvOut2PhaseValue_;
-	
+
 	// Triangle LFO for CV2 output
 	int32_t triangleLfoCounter_;
 	int32_t triangleLfoPeriod_;
-	
+
 	// Audio output amplitude tracking for LED feedback
 	int16_t lastOutputL_;
 	int16_t lastOutputR_;
@@ -373,7 +383,7 @@ private:
 	// Control update throttling
 	static const int32_t UPDATE_RATE_DIVIDER = 24;
 	int32_t updateCounter_;
-	
+
 	// Global sample counter for timing
 	int32_t globalSampleCounter_;
 
@@ -633,15 +643,17 @@ private:
 	{
 		// Y knob controls overlap: Y=0 -> high threshold (less overlap), Y=max -> low threshold (more overlap)
 		int32_t yValue = cachedYKnob_; // 0 to 4095
-		
+
 		// Inverted linear mapping: 90% at Y=0 (less overlap), decreasing to 10% at Y=max (more overlap)
 		// threshold = 90 - (Y * 80 / 4095)
 		int32_t triggerThreshold = 90 - ((yValue * 80) / 4095); // 90% to 10% threshold
-		
+
 		// Ensure threshold is within valid range
-		if (triggerThreshold < 10) triggerThreshold = 10;   // Minimum 10% (maximum overlap)
-		if (triggerThreshold > 90) triggerThreshold = 90;   // Maximum 90% (minimum overlap)
-		
+		if (triggerThreshold < 10)
+			triggerThreshold = 10; // Minimum 10% (maximum overlap)
+		if (triggerThreshold > 90)
+			triggerThreshold = 90; // Maximum 90% (minimum overlap)
+
 		return triggerThreshold;
 	}
 
@@ -670,15 +682,15 @@ private:
 			{
 				grains_[i].active = true;
 				cachedActiveGrainCount_++; // Update cached count when grain is activated
-				
+
 				// Update last grain trigger time for minimum distance tracking
 				lastGrainTriggerTime_ = globalSampleCounter_;
-				
+
 				// Snapshot delay, spread, grain size, and speed for this grain
 				grains_[i].delayDistance = delayDistance_;
 				grains_[i].spreadAmount = spreadAmount_;
 				grains_[i].grainSize = grainSize_;
-				grains_[i].grainSpeed = grainPlaybackSpeed_;  // Snapshot current speed for grain's lifecycle
+				grains_[i].grainSpeed = grainPlaybackSpeed_; // Snapshot current speed for grain's lifecycle
 
 				// Reset pulse trigger flag for this grain
 				grains_[i].pulse90Triggered = false;
@@ -829,7 +841,6 @@ private:
 				grains_[i].readFrac = 0;
 				grains_[i].startPos = grains_[i].readPos;
 				grains_[i].sampleCount = 0;
-				grains_[i].freezeCounter = 0;
 				grains_[i].loopSize = grains_[i].grainSize;
 				break;
 			}
@@ -839,19 +850,19 @@ private:
 	int32_t __not_in_flash_func(calculateGrainWeight)(int grainIndex)
 	{
 		Grain &grain = grains_[grainIndex];
-		
+
 		// In loop/glitch mode, bypass windowing for harsh discontinuities
 		if (grain.looping)
 		{
 			return 4096; // Full weight - no windowing for glitch effects
 		}
-		
+
 		// Safety check to prevent division by zero
 		if (grain.grainSize <= 0)
 		{
 			return 4096; // Full weight if grain size is invalid
 		}
-		
+
 		// Count active grains to determine if windowing is needed
 		// Use cached count for performance - updated only when grains are created/destroyed
 		// Only apply windowing when multiple grains are active (overlapping)
@@ -859,7 +870,7 @@ private:
 		{
 			return 4096; // Single grain - full weight for maximum clarity
 		}
-		
+
 		// Normal windowing for overlapping grains
 		// Position in grain: 0 to grainSize-1, normalized to 0-4095 (Q12)
 		int32_t posQ12 = (grain.sampleCount << 12) / grain.grainSize; // Q12 normalized position (0-4095)
@@ -995,134 +1006,131 @@ private:
 				}
 				else
 				{
-					// Normal grain behavior				// Only update grain if speed is non-zero (fixes freeze bug)
-					if (grainSpeed != 0)
+					// Normal grain behavior
+					grains_[i].sampleCount++;
+
+					// Store original position for boundary checking
+					int32_t originalPos = grains_[i].readPos;
+					int32_t originalFrac = grains_[i].readFrac;
+
+					// Advance read position with fractional tracking
+					grains_[i].readFrac += grainSpeed;
+
+					// CRASH PROTECTION: Bounded iteration limits to prevent runaway loops
+					int32_t iterationCount = 0;
+
+					// Handle integer overflow from fractional part with bounded iterations
+					while (grains_[i].readFrac >= 4096 && iterationCount < MAX_FRACTIONAL_ITERATIONS)
 					{
-						grains_[i].sampleCount++;
+						grains_[i].readPos++;
+						grains_[i].readFrac -= 4096;
+						iterationCount++;
 
-						// Store original position for boundary checking
-						int32_t originalPos = grains_[i].readPos;
-						int32_t originalFrac = grains_[i].readFrac;
-
-						// Advance read position with fractional tracking
-						grains_[i].readFrac += grainSpeed;
-
-						// CRASH PROTECTION: Bounded iteration limits to prevent runaway loops
-						int32_t iterationCount = 0;
-
-						// Handle integer overflow from fractional part with bounded iterations
-						while (grains_[i].readFrac >= 4096 && iterationCount < MAX_FRACTIONAL_ITERATIONS)
+						// Handle buffer wraparound
+						if (grains_[i].readPos >= BUFF_LENGTH_SAMPLES)
 						{
-							grains_[i].readPos++;
-							grains_[i].readFrac -= 4096;
-							iterationCount++;
+							grains_[i].readPos -= BUFF_LENGTH_SAMPLES;
+						}
+					}
 
-							// Handle buffer wraparound
-							if (grains_[i].readPos >= BUFF_LENGTH_SAMPLES)
+					// If we hit the iteration limit, clamp the fractional part
+					if (grains_[i].readFrac >= 4096)
+					{
+						grains_[i].readFrac = 4095; // Clamp to just under 1.0
+					}
+
+					// Reset iteration counter for negative speed handling
+					iterationCount = 0;
+
+					// Handle negative speeds (reverse playback) with bounded iterations
+					while (grains_[i].readFrac < 0 && iterationCount < MAX_FRACTIONAL_ITERATIONS)
+					{
+						grains_[i].readPos--;
+						grains_[i].readFrac += 4096;
+						iterationCount++;
+
+						// Handle buffer wraparound
+						if (grains_[i].readPos < 0)
+						{
+							grains_[i].readPos += BUFF_LENGTH_SAMPLES;
+						}
+					}
+
+					// If we hit the iteration limit, clamp the fractional part
+					if (grains_[i].readFrac < 0)
+					{
+						grains_[i].readFrac = 0; // Clamp to 0
+					}
+
+					// WRITE HEAD BOUNDARY CHECK: Prevent grains from reading past write head
+					// Only apply this check when buffer is recording (not frozen)
+					bool bufferIsFrozen = (SwitchVal() == Switch::Up);
+					if (!bufferIsFrozen)
+					{
+						const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
+						int32_t maxSafePos = writeHead_ - safetyMargin;
+						if (maxSafePos < 0)
+							maxSafePos += BUFF_LENGTH_SAMPLES;
+
+						// Calculate distance from grain to write head (accounting for circular buffer)
+						int32_t distanceToWrite = writeHead_ - grains_[i].readPos;
+						if (distanceToWrite < 0)
+							distanceToWrite += BUFF_LENGTH_SAMPLES;
+
+						// If grain is too close to write head, clamp it to safe position
+						if (distanceToWrite < safetyMargin)
+						{
+							grains_[i].readPos = maxSafePos;
+							grains_[i].readFrac = 0; // Reset fractional part when clamped
+						}
+					}
+
+					// Check if grain has reached completion threshold and trigger Pulse 1
+					if (grains_[i].grainSize > 0 && !grains_[i].pulse90Triggered)
+					{
+						// Use different thresholds for clocked vs unclocked modes
+						int32_t thresholdPercent;
+						if (Connected(Input::Pulse1))
+						{
+							// Clocked mode: use fixed 90% threshold for pulse output timing
+							thresholdPercent = GRAIN_COMPLETION_THRESHOLD_PERCENT;
+						}
+						else
+						{
+							// Unclocked mode: use Y knob-controlled threshold for overlap behavior
+							thresholdPercent = calculateUnclockTriggerThreshold();
+						}
+
+						int32_t thresholdSamples = (grains_[i].grainSize * thresholdPercent) / 100;
+						if (grains_[i].sampleCount >= thresholdSamples && pulseOut1Counter_ <= 0)
+						{
+							pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
+							grains_[i].pulse90Triggered = true;			  // Mark as triggered for this grain
+							// If PulseIn1 is not plugged in, handle grain firing based on PulseIn2 state
+							if (!Connected(Input::Pulse1))
 							{
-								grains_[i].readPos -= BUFF_LENGTH_SAMPLES;
-							}
-						}
-
-						// If we hit the iteration limit, clamp the fractional part
-						if (grains_[i].readFrac >= 4096)
-						{
-							grains_[i].readFrac = 4095; // Clamp to just under 1.0
-						}
-
-						// Reset iteration counter for negative speed handling
-						iterationCount = 0;
-
-						// Handle negative speeds (reverse playback) with bounded iterations
-						while (grains_[i].readFrac < 0 && iterationCount < MAX_FRACTIONAL_ITERATIONS)
-						{
-							grains_[i].readPos--;
-							grains_[i].readFrac += 4096;
-							iterationCount++;
-
-							// Handle buffer wraparound
-							if (grains_[i].readPos < 0)
-							{
-								grains_[i].readPos += BUFF_LENGTH_SAMPLES;
-							}
-						}
-
-						// If we hit the iteration limit, clamp the fractional part
-						if (grains_[i].readFrac < 0)
-						{
-							grains_[i].readFrac = 0; // Clamp to 0
-						}
-
-						// WRITE HEAD BOUNDARY CHECK: Prevent grains from reading past write head
-						// Only apply this check when buffer is recording (not frozen)
-						bool bufferIsFrozen = (SwitchVal() == Switch::Up);
-						if (!bufferIsFrozen)
-						{
-							const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
-							int32_t maxSafePos = writeHead_ - safetyMargin;
-							if (maxSafePos < 0)
-								maxSafePos += BUFF_LENGTH_SAMPLES;
-
-							// Calculate distance from grain to write head (accounting for circular buffer)
-							int32_t distanceToWrite = writeHead_ - grains_[i].readPos;
-							if (distanceToWrite < 0)
-								distanceToWrite += BUFF_LENGTH_SAMPLES;
-
-							// If grain is too close to write head, clamp it to safe position
-							if (distanceToWrite < safetyMargin)
-							{
-								grains_[i].readPos = maxSafePos;
-								grains_[i].readFrac = 0; // Reset fractional part when clamped
-							}
-						}
-
-						// Check if grain has reached completion threshold and trigger Pulse 1
-						if (grains_[i].grainSize > 0 && !grains_[i].pulse90Triggered)
-						{
-							// Use different thresholds for clocked vs unclocked modes
-							int32_t thresholdPercent;
-							if (Connected(Input::Pulse1)) {
-								// Clocked mode: use fixed 90% threshold for pulse output timing
-								thresholdPercent = GRAIN_COMPLETION_THRESHOLD_PERCENT;
-							} else {
-								// Unclocked mode: use Y knob-controlled threshold for overlap behavior
-								thresholdPercent = calculateUnclockTriggerThreshold();
-							}
-							
-							int32_t thresholdSamples = (grains_[i].grainSize * thresholdPercent) / 100;
-							if (grains_[i].sampleCount >= thresholdSamples && pulseOut1Counter_ <= 0)
-							{
-								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
-								grains_[i].pulse90Triggered = true;              // Mark as triggered for this grain
-								// --- Begin Grain Trigger Logic ---
-								// If PulseIn1 is not plugged in, handle grain firing based on PulseIn2 state
-								if (!Connected(Input::Pulse1)) {
-									if (Connected(Input::Pulse2)) {
-										// PulseIn2 is plugged in: only fire if high
-										if (PulseIn2()) {
-											triggerNewGrain();
-										}
-									} else {
-										// Neither pulse input is plugged in: always fire with Y knob-controlled timing
+								if (Connected(Input::Pulse2))
+								{
+									// PulseIn2 is plugged in: only fire if high
+									if (PulseIn2())
+									{
 										triggerNewGrain();
 									}
 								}
-								// --- End Grain Trigger Logic ---
+								else
+								{
+									// Neither pulse input is plugged in: always fire with Y knob-controlled timing
+									triggerNewGrain();
+								}
 							}
 						}
-
-						// Deactivate grain if it's finished
-						if (grains_[i].sampleCount >= grains_[i].grainSize)
-						{
-							grains_[i].active = false;
-							cachedActiveGrainCount_--; // Update cached count when grain is deactivated
-						}
 					}
-					else
+
+					// Deactivate grain if it's finished
+					if (grains_[i].sampleCount >= grains_[i].grainSize)
 					{
-						// When speed is 0, grain is frozen
-						// Removed freeze timeout for performance - grains can stay frozen indefinitely
-						// This relies on user input or mode changes to clear stuck grains
+						grains_[i].active = false;
+						cachedActiveGrainCount_--; // Update cached count when grain is deactivated
 					}
 				}
 			}
@@ -1136,8 +1144,8 @@ private:
 		// Wider range than grain size: 240 samples (10ms) to 4800 samples (200ms) at 24kHz
 		// Direct relationship: smaller grains = faster clock (shorter period), larger grains = slower clock (longer period)
 		int32_t normalizedY = cachedYKnob_; // 0 to 4095
-		int32_t maxPeriod = 4800; // 200ms at 24kHz
-		int32_t minPeriod = 240;  // 10ms at 24kHz
+		int32_t maxPeriod = 4800;			// 200ms at 24kHz
+		int32_t minPeriod = 240;			// 10ms at 24kHz
 		// Inverse mapping: higher Y knob = shorter period
 		stochasticClockPeriod_ = maxPeriod - ((normalizedY * (maxPeriod - minPeriod)) / 4095);
 		// Removed conservative clamping for performance - calculation should always be in range
@@ -1244,7 +1252,8 @@ private:
 
 		// CV Out 2: Write head position mapped to 0-5V (0 to 2047)
 		cvOut2PhaseValue_ = (int16_t)((writeHead_ * 2047) / (BUFF_LENGTH_SAMPLES - 1));
-		if (cvOut2PhaseValue_ > 2047) cvOut2PhaseValue_ = 2047;
+		if (cvOut2PhaseValue_ > 2047)
+			cvOut2PhaseValue_ = 2047;
 		CVOut2(cvOut2PhaseValue_);
 	}
 
