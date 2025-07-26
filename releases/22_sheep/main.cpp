@@ -959,6 +959,9 @@ private:
 					// In loop mode, grains loop within their original captured segment
 					// They advance through their grain but loop back to the start when finished
 					// This creates repeating stutters of the captured audio segment
+
+					grainSpeed = grainPlaybackSpeed_; // Use global playback speed for looping grains
+
 					if (grainSpeed != 0)
 					{
 						// Increment sample count for windowing calculation
