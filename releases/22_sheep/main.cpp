@@ -63,7 +63,7 @@ private:
 	static const int32_t SPEED_HYSTERESIS_THRESHOLD = 32;
 
 	// Grain system constants
-	static const int MAX_GRAINS = 16;							  // Maximum number of simultaneous grains
+	static const int MAX_GRAINS = 14;							  // Maximum number of simultaneous grains
 	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90; // used for pulse 1 output when clocked
 
 public:
@@ -77,6 +77,7 @@ public:
 		stretchRatio_ = 4096;
 		grainPlaybackSpeed_ = 4096;
 		previousGrainPlaybackSpeed_ = 4096; // Initialize to 1x speed for hysteresis
+		previousLoopingControlValue_ = 4096; // Initialize to 1x speed for looping hysteresis
 		grainSize_ = 1024;
 		maxActiveGrains_ = MAX_GRAINS; // Maximum number of active grains
 		cachedActiveGrainCount_ = 0;   // Initialize grain count cache
@@ -111,6 +112,7 @@ public:
 			grains_[i].looping = false;
 			grains_[i].pulse90Triggered = false;
 			grains_[i].grainSpeed = 4096; // Initialize to 1x speed (Q12 format)
+			grains_[i].baselineControlValue = 4096; // Initialize baseline control value
 		}
 
 		// Calculate Hann window lookup table at startup
@@ -357,12 +359,14 @@ private:
 		int32_t spreadAmount;
 		int32_t grainSize;
 		int32_t grainSpeed; // Store speed for this grain's lifecycle
+		int32_t baselineControlValue; // Control value when grain enters loop mode
 	};
 	Grain grains_[MAX_GRAINS];
 
 	int32_t stretchRatio_;
 	int32_t grainPlaybackSpeed_;
 	int32_t previousGrainPlaybackSpeed_; // Track last applied speed for hysteresis
+	int32_t previousLoopingControlValue_; // Track last applied control value for looping hysteresis
 	int32_t grainSize_;
 	int32_t maxActiveGrains_;
 	int32_t cachedActiveGrainCount_; // Cache grain count to avoid repeated counting in calculateGrainWeight()
@@ -431,6 +435,71 @@ private:
 			interpolated = -2048;
 
 		return (int16_t)interpolated;
+	}
+
+	// Calculate looping grain speed with scaled offset from original speed
+	int32_t __not_in_flash_func(calculateLoopingGrainSpeed)(int32_t originalSpeed, int32_t baselineControlValue)
+	{
+		int32_t currentControlValue;
+
+		if (Connected(Input::CV2))
+		{
+			// CV2 controls pitch, Main knob is attenuverter (use center detent only)
+			// No hysteresis for CV2 - apply immediately for responsive CV control
+			int32_t cv2Val = CVIn2();
+			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
+			currentControlValue = applyPitchAttenuverter(cv2Val, mainKnobVal);
+		}
+		else
+		{
+			// Main knob controls pitch directly (use multiple detents for musical speeds)
+			// Apply hysteresis to prevent scratchiness from knob noise
+			int32_t mainKnobVal = pitchDetentedKnob(cachedMainKnob_);
+
+			// Calculate new speed after detent processing
+			if (mainKnobVal <= 2048)
+			{
+				currentControlValue = -8192 + ((mainKnobVal * 8192) >> 11);
+			}
+			else
+			{
+				int32_t rightKnob = mainKnobVal - 2048;
+				currentControlValue = (rightKnob * 8192) >> 11;
+			}
+
+			// Apply hysteresis using separate tracking for looping mode
+			if (cabs(currentControlValue - previousLoopingControlValue_) <= SPEED_HYSTERESIS_THRESHOLD)
+			{
+				// Change is too small - keep previous looping control value to prevent noise-induced changes
+				currentControlValue = previousLoopingControlValue_;
+			}
+			else
+			{
+				// Update the looping control tracking variable
+				previousLoopingControlValue_ = currentControlValue;
+			}
+		}
+
+		// Calculate offset from baseline (not center) - this prevents immediate jumps when entering loop mode
+		int32_t offset = currentControlValue - baselineControlValue;
+
+		// Apply scaled offset: finalSpeed = originalSpeed + (originalSpeed * offset / 4096)
+		// This gives ±100% speed variation around the original grain speed
+		int64_t temp64 = (int64_t)originalSpeed * offset;
+		int32_t scaledOffset = (int32_t)(temp64 >> 12); // Divide by 4096
+		int32_t finalSpeed = originalSpeed + scaledOffset;
+
+		// Apply safety limits
+		if (finalSpeed > MAX_SAFE_GRAIN_SPEED)
+		{
+			finalSpeed = MAX_SAFE_GRAIN_SPEED;
+		}
+		if (finalSpeed < -MAX_SAFE_GRAIN_SPEED)
+		{
+			finalSpeed = -MAX_SAFE_GRAIN_SPEED;
+		}
+
+		return finalSpeed;
 	}
 
 	// Update playback speed (affects all active grains)
@@ -980,7 +1049,7 @@ private:
 					// They advance through their grain but loop back to the start when finished
 					// This creates repeating stutters of the captured audio segment
 
-					grainSpeed = grainPlaybackSpeed_; // Use global playback speed for looping grains
+					grainSpeed = calculateLoopingGrainSpeed(grains_[i].grainSpeed, grains_[i].baselineControlValue); // Use original speed with scaled offset from baseline
 
 					if (grainSpeed != 0)
 					{
@@ -1220,6 +1289,28 @@ private:
 	{
 		loopMode_ = true;
 
+		// Calculate current control value to use as baseline for all grains entering loop mode
+		int32_t currentControlValue;
+		if (Connected(Input::CV2))
+		{
+			int32_t cv2Val = CVIn2();
+			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
+			currentControlValue = applyPitchAttenuverter(cv2Val, mainKnobVal);
+		}
+		else
+		{
+			int32_t mainKnobVal = pitchDetentedKnob(cachedMainKnob_);
+			if (mainKnobVal <= 2048)
+			{
+				currentControlValue = -8192 + ((mainKnobVal * 8192) >> 11);
+			}
+			else
+			{
+				int32_t rightKnob = mainKnobVal - 2048;
+				currentControlValue = (rightKnob * 8192) >> 11;
+			}
+		}
+
 		// Check if any grains are currently active
 		bool hasActiveGrains = false;
 		for (int i = 0; i < MAX_GRAINS; i++)
@@ -1228,6 +1319,7 @@ private:
 			{
 				hasActiveGrains = true;
 				grains_[i].looping = true;
+				grains_[i].baselineControlValue = currentControlValue; // Capture baseline when entering loop mode
 				// Use the grain's stored loop size (set when grain was created)
 				// This prevents race condition where grainSize_ changes after grain creation
 				// Keep current sampleCount for smooth transition to loop mode
@@ -1244,6 +1336,7 @@ private:
 				if (grains_[i].active && !grains_[i].looping)
 				{
 					grains_[i].looping = true;
+					grains_[i].baselineControlValue = currentControlValue; // Capture baseline for new grain
 					// Keep initial sampleCount for proper windowing
 					break; // Only need to convert the first one we find
 				}
