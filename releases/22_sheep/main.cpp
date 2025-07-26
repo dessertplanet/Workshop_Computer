@@ -453,7 +453,6 @@ private:
 		else
 		{
 			// Main knob controls pitch directly (use multiple detents for musical speeds)
-			// Apply hysteresis to prevent scratchiness from knob noise
 			int32_t mainKnobVal = pitchDetentedKnob(cachedMainKnob_);
 
 			// Calculate new speed after detent processing
@@ -466,18 +465,6 @@ private:
 				int32_t rightKnob = mainKnobVal - 2048;
 				currentControlValue = (rightKnob * 8192) >> 11;
 			}
-
-			// Apply hysteresis using separate tracking for looping mode
-			if (cabs(currentControlValue - previousLoopingControlValue_) <= SPEED_HYSTERESIS_THRESHOLD)
-			{
-				// Change is too small - keep previous looping control value to prevent noise-induced changes
-				currentControlValue = previousLoopingControlValue_;
-			}
-			else
-			{
-				// Update the looping control tracking variable
-				previousLoopingControlValue_ = currentControlValue;
-			}
 		}
 
 		// Calculate offset from baseline (not center) - this prevents immediate jumps when entering loop mode
@@ -488,6 +475,21 @@ private:
 		int64_t temp64 = (int64_t)originalSpeed * offset;
 		int32_t scaledOffset = (int32_t)(temp64 >> 12); // Divide by 4096
 		int32_t finalSpeed = originalSpeed + scaledOffset;
+
+		// Apply hysteresis to the final calculated speed (not CV2 mode for responsive CV control)
+		if (!Connected(Input::CV2))
+		{
+			if (cabs(finalSpeed - previousLoopingControlValue_) <= SPEED_HYSTERESIS_THRESHOLD)
+			{
+				// Change is too small - keep previous final speed to prevent noise-induced changes
+				finalSpeed = previousLoopingControlValue_;
+			}
+			else
+			{
+				// Update the looping control tracking variable with the new final speed
+				previousLoopingControlValue_ = finalSpeed;
+			}
+		}
 
 		// Apply safety limits
 		if (finalSpeed > MAX_SAFE_GRAIN_SPEED)
@@ -1194,11 +1196,17 @@ private:
 						}
 
 						int32_t thresholdSamples = (grains_[i].grainSize * thresholdPercent) / 100;
-						if (grains_[i].sampleCount >= thresholdSamples && pulseOut1Counter_ <= 0)
+						if (grains_[i].sampleCount >= thresholdSamples)
 						{
-							pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
-							grains_[i].pulse90Triggered = true;			  // Mark as triggered for this grain
-							// If PulseIn1 is not plugged in, handle grain firing based on PulseIn2 state
+							grains_[i].pulse90Triggered = true; // Mark as triggered for this grain
+							
+							// Trigger pulse output only if counter is ready (maintains 100-sample pulse width)
+							if (pulseOut1Counter_ <= 0)
+							{
+								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
+							}
+							
+							// Auto-trigger new grain regardless of pulse counter state (allows faster triggering)
 							if (!Connected(Input::Pulse1))
 							{
 								if (Connected(Input::Pulse2))
