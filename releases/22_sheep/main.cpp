@@ -10,7 +10,7 @@
  * by Dune Desormeaux (github.com/dessertplanet)
  * Thank you to Émilie Gillet for Clouds which was a huge inspiration here!
  * - 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz)
- * - Up to 16 simultaneous grains
+ * - Up to 14 simultaneous grains
  * - Linear grain sizes from micro (32 samples = ~0.001 seconds) to macro (24000 samples = 1 second)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
@@ -33,7 +33,7 @@
  * - Pulse 2 Out: Stochastic clock - triggers when noise < X knob value, rate inversely proportional to grain size
  *
  * LED Feedback:
- * - LEDs 0,1: Audio output activity (brightness = number of active grains)
+ * - LEDs 0,1: Audio output volume
  * - LEDs 2,3: CV output levels (brightness = CV voltage magnitude)
  * - LEDs 4,5: Pulse output states (on/off)
  */
@@ -111,6 +111,14 @@ public:
 		// Initialize 12kHz notch filter state variables
 		mix1L_ = mix2L_ = mixf1L_ = mixf2L_ = 0;
 		mix1R_ = mix2R_ = mixf1R_ = mixf2R_ = 0;
+
+#ifdef LOFI_MODE
+		// Initialize enhanced 8-bit conversion state
+		ditherErrorL_ = 0;
+		ditherErrorR_ = 0;
+		filteredErrorL_ = 0;
+		filteredErrorR_ = 0;
+#endif
 
 
 		for (int i = 0; i < MAX_GRAINS; i++)
@@ -442,6 +450,14 @@ private:
 	// 12kHz notch filter state variables (to remove mux interference)
 	int32_t mix1L_, mix2L_, mixf1L_, mixf2L_;  // Left channel
 	int32_t mix1R_, mix2R_, mixf1R_, mixf2R_;  // Right channel
+
+#ifdef LOFI_MODE
+	// Enhanced 8-bit conversion state variables
+	int32_t ditherErrorL_;   // Error diffusion state for left channel
+	int32_t ditherErrorR_;   // Error diffusion state for right channel
+	int32_t filteredErrorL_; // High-pass filtered error state for left channel
+	int32_t filteredErrorR_; // High-pass filtered error state for right channel
+#endif
 
 
 	// Interpolated sample reading with wraparound
@@ -1456,31 +1472,80 @@ private:
 	}
 
 #ifdef LOFI_MODE
+	// Enhanced 8-bit conversion helper functions
+	
+	// Fast triangular dither generation using existing RNG
+	int32_t __not_in_flash_func(generateTriangularDither)()
+	{
+		// Generate two uniform random values and subtract for triangular PDF
+		// This gives better spectral characteristics than uniform dither
+		uint32_t r1 = rnd12() & 0x1F; // 0-31 (5 bits)
+		uint32_t r2 = rnd12() & 0x1F; // 0-31 (5 bits)
+		return (int32_t)r1 - (int32_t)r2; // -31 to +31, triangular distribution
+	}
+
+	// Enhanced 8-bit quantization with dithering, error diffusion, and noise shaping
+	int8_t __not_in_flash_func(quantizeToEightBit)(int32_t sample12bit, int32_t &errorState, int32_t &filteredErrorState)
+	{
+		// Add previous error (error diffusion)
+		sample12bit += errorState;
+		
+		// Add triangular dither (±2 LSB in 8-bit domain = ±32 in 12-bit)
+		int32_t dither = generateTriangularDither();
+		sample12bit += dither;
+		
+		// Quantize to 8-bit (shift right by 4 bits)
+		int32_t quantized8 = sample12bit >> 4;
+		
+		// Clamp to 8-bit signed range
+		if (quantized8 > 127) quantized8 = 127;
+		if (quantized8 < -128) quantized8 = -128;
+		
+		// Calculate raw quantization error for next sample
+		int32_t reconstructed12 = quantized8 << 4; // Convert back to 12-bit
+		int32_t rawError = (sample12bit - dither) - reconstructed12; // Error without dither
+		
+		// High-pass filter the error before feedback (idea pinched from Émilie!)
+		// One-pole high-pass filter: y[n] = x[n] - 0.75*x[n] + 0.75*y[n-1]
+		// This pushes quantization noise above ~2kHz where it's less audible
+		int32_t filteredError = rawError - ((rawError * 3072) >> 12) + ((filteredErrorState * 3072) >> 12);
+		filteredErrorState = filteredError; // Update filter state
+		
+		// Use filtered error for feedback with decay to prevent accumulation
+		errorState = (filteredError * 7) >> 3; // Multiply by 7/8 (87.5% retention)
+		
+		return (int8_t)quantized8;
+	}
+
+	// Enhanced 8-bit expansion (simplified for performance)
+	int16_t __not_in_flash_func(expandFromEightBit)(int8_t sample8bit)
+	{
+		// Convert 8-bit to 12-bit (simple bit shift)
+		return ((int16_t)sample8bit) << 4;
+	}
 	// 8-bit audio functions for LoFi mode - pack into 16-bit storage
 	uint16_t packStereo(int16_t left, int16_t right)
 	{
-		// Pack two 8-bit signed values into 16-bit storage
-		// Clamp to 8-bit range first
-		if (left > 127) left = 127;
-		if (left < -128) left = -128;
-		if (right > 127) right = 127;
-		if (right < -128) right = -128;
-		
-		uint16_t leftBits = (left + 128) & 0xFF;   // Convert to 8-bit unsigned
-		uint16_t rightBits = (right + 128) & 0xFF; // Convert to 8-bit unsigned
-		return (leftBits << 8) | rightBits;
+		// Enhanced 8-bit conversion with dithering, error diffusion, and noise shaping
+		// Convert two 12-bit signed values to enhanced 8-bit values and pack into a single 16-bit word
+		int8_t left8 = quantizeToEightBit(left, ditherErrorL_, filteredErrorL_);
+		int8_t right8 = quantizeToEightBit(right, ditherErrorR_, filteredErrorR_);
+		return (static_cast<uint8_t>(left8) << 8) | static_cast<uint8_t>(right8);
 	}
 
 	int16_t unpackStereo(uint16_t stereo, int8_t index)
 	{
-		if (index == 0) {
-			// Left channel: upper 8 bits
-			uint16_t leftBits = (stereo >> 8) & 0xFF;
-			return (int16_t)(leftBits - 128);  // Convert back to signed
-		} else {
-			// Right channel: lower 8 bits
-			uint16_t rightBits = stereo & 0xFF;
-			return (int16_t)(rightBits - 128);  // Convert back to signed
+		// Enhanced 8-bit expansion with subtle filtering
+		// Unpack a 16-bit word into two signed 8-bit values and convert to enhanced 12-bit values
+		if (index == 0)
+		{
+			int8_t left8 = (stereo >> 8) & 0xFF;
+			return expandFromEightBit(left8);
+		}
+		else
+		{
+			int8_t right8 = stereo & 0xFF;
+			return expandFromEightBit(right8);
 		}
 	}
 #else

@@ -46,6 +46,7 @@ add_card(${CARD_NAME}_hifi)
 add_custom_command(
     TARGET ${CARD_NAME}_lofi
     POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_SOURCE_DIR}/UF2
     COMMAND ${CMAKE_COMMAND} -E copy
             ${CMAKE_CURRENT_BINARY_DIR}/${CARD_NAME}_lofi.uf2
             ${CMAKE_CURRENT_SOURCE_DIR}/UF2/${CARD_NAME}_lofi.uf2
@@ -54,6 +55,7 @@ add_custom_command(
 add_custom_command(
     TARGET ${CARD_NAME}_hifi
     POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_SOURCE_DIR}/UF2
     COMMAND ${CMAKE_COMMAND} -E copy
             ${CMAKE_CURRENT_BINARY_DIR}/${CARD_NAME}_hifi.uf2
             ${CMAKE_CURRENT_SOURCE_DIR}/UF2/${CARD_NAME}_hifi.uf2
