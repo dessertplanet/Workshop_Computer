@@ -2,7 +2,7 @@
 #include <cmath>
 
 #ifndef M_PI
-#define M_PI 3.14159265358979323846
+	#define M_PI 3.14159265358979323846
 #endif
 
 /*
@@ -426,10 +426,6 @@ private:
 
 	int16_t cvOut1NoiseValue_;
 	int16_t cvOut2PhaseValue_;
-
-	// Triangle LFO for CV2 output
-	int32_t triangleLfoCounter_;
-	int32_t triangleLfoPeriod_;
 
 	// Audio output amplitude tracking for LED feedback
 	int16_t lastOutputL_;
