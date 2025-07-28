@@ -2,14 +2,18 @@
 #include <cmath>
 
 #ifndef M_PI
-#define M_PI 3.14159265358979323846
+	#define M_PI 3.14159265358979323846
 #endif
 
 /*
  * Sheep: A crunchy granular delay and digital degradation effect
  * by Dune Desormeaux (github.com/dessertplanet)
- * - 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz)
- * - Up to 16 simultaneous grains 
+ * Thank you to Émilie Gillet for Clouds which was a huge inspiration here!
+ * Sheep features:
+ * - 2 UF2's to choose from based on fidelity + buffer length:
+ * - Lofi: 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz with dither)
+ * - Hifi: 2.6-second stereo circular buffer for audio capture (62.5k 12-bit samples at 24kHz)
+ * - Up to 14 simultaneous grains
  * - Linear grain sizes from micro (32 samples = ~0.001 seconds) to macro (24000 samples = 1 second)
  * - Bidirectional playback (-2x to +2x speed)
  * - Loop/glitch mode for captured segment looping
@@ -20,10 +24,10 @@
  * - Y Knob: Grain size
  * - CV1: Grain position control (0-6V covers full range, negative values wrap from end) with X knob as attenuverter
  * - CV2: Pitch control (-6V to +6V = -2x to +2x speed) with Main knob as attenuverter
- * - Switch: Up=Freeze Buffer, Middle=Wet, Down=Loop/glitch Mode
+ * - Switch: Up=Freeze Buffer, Middle=Normal, Down=Loop/glitch Mode
  * - Pulse 1 In: grain TRIGGER (rising edge)
  * - Pulse 2 In: Grain GATE
- * 
+ *
  * Outputs:
  * - Audio Outs: Granular processed audio (stereo)
  * - CV Out 1: Random noise value (updates when grains are triggered)
@@ -32,14 +36,22 @@
  * - Pulse 2 Out: Stochastic clock - triggers when noise < X knob value, rate inversely proportional to grain size
  *
  * LED Feedback:
- * - LEDs 0,1: Audio output activity (brightness = number of active grains)
+ * - LEDs 0,1: Audio output volume
  * - LEDs 2,3: CV output levels (brightness = CV voltage magnitude)
  * - LEDs 4,5: Pulse output states (on/off)
  */
 
-#define BUFF_LENGTH_SAMPLES 125000 // 125,000 samples (5.2 seconds at 24kHz)
-#define MAX_GRAIN_SIZE 24000 // 8,000 samples (0.33 seconds at 24kHz) - maximum grain size
-#define MIN_GRAIN_SIZE 32 // 32 samples (1.33ms at 24kHz) - minimum grain size
+// Audio format configuration - controlled by build system
+#ifdef LOFI_MODE
+	#define BUFF_LENGTH_SAMPLES 125000 // 125,000 samples = 5.2 seconds at 24kHz (8-bit audio)
+	#define AUDIO_RANGE 128            // ±128 for 8-bit audio
+#else
+	#define BUFF_LENGTH_SAMPLES 62500  // 62,500 samples = 2.6 seconds at 24kHz (12-bit audio)
+	#define AUDIO_RANGE 2048           // ±2048 for 12-bit audio
+#endif
+
+#define MAX_GRAIN_SIZE 24000	   // 24,000 samples (1.0 seconds at 24kHz) - maximum grain size
+#define MIN_GRAIN_SIZE 32		   // 32 samples (1.33ms at 24kHz) - minimum grain size
 
 class Sheep : public ComputerCard
 {
@@ -47,20 +59,21 @@ private:
 	// 256-entry Hann window lookup table (Q12 format) - calculated at startup
 	static constexpr int HANN_TABLE_SIZE = 256;
 	int32_t hannWindowTable_[HANN_TABLE_SIZE];
+	
 	// Timing constants
-	static const int32_t SAFETY_MARGIN_SAMPLES = 120;		  // 5ms safety margin
-	static const int32_t GRAIN_END_PULSE_DURATION = 100;	  // 4.2ms pulse duration
-	static const int32_t MAX_PULSE_HALF_PERIOD = 16384;
-	static const int32_t PULSE_COUNTER_OVERFLOW_LIMIT = 65536;
+	static const int32_t SAFETY_MARGIN_SAMPLES = 120;	 // 5ms safety margin
+	static const int32_t GRAIN_END_PULSE_DURATION = 100; // 4.2ms pulse duration
 	static const int32_t VIRTUAL_DETENT_THRESHOLD = 12;
-	static const int32_t VIRTUAL_DETENT_EDGE_THRESHOLD = 5;
 
 	// Safety limits
 	static const int32_t MAX_FRACTIONAL_ITERATIONS = 4;
 	static const int32_t MAX_SAFE_GRAIN_SPEED = 8192;
-	
+
+	// Speed hysteresis to prevent scratchiness from knob noise
+	static const int32_t SPEED_HYSTERESIS_THRESHOLD = 32;
+
 	// Grain system constants
-	static const int MAX_GRAINS = 16;  // Maximum number of simultaneous grains
+	static const int MAX_GRAINS = 14;							  // Maximum number of simultaneous grains
 	static const int32_t GRAIN_COMPLETION_THRESHOLD_PERCENT = 90; // used for pulse 1 output when clocked
 
 public:
@@ -73,9 +86,11 @@ public:
 
 		stretchRatio_ = 4096;
 		grainPlaybackSpeed_ = 4096;
+		previousGrainPlaybackSpeed_ = 4096; // Initialize to 1x speed for hysteresis
+		previousLoopingControlValue_ = 4096; // Initialize to 1x speed for looping hysteresis
 		grainSize_ = 1024;
 		maxActiveGrains_ = MAX_GRAINS; // Maximum number of active grains
-		cachedActiveGrainCount_ = 0; // Initialize grain count cache
+		cachedActiveGrainCount_ = 0;   // Initialize grain count cache
 		loopMode_ = false;
 
 		pulseOut1Counter_ = 0;
@@ -85,20 +100,29 @@ public:
 
 		cvOut1NoiseValue_ = 0;
 		cvOut2PhaseValue_ = 0;
-		
-		// Initialize triangle LFO for CV2
-		triangleLfoCounter_ = 0;
-		triangleLfoPeriod_ = 2400; // Default period
 
 		lastOutputL_ = 0;
 		lastOutputR_ = 0;
 
 		updateCounter_ = UPDATE_RATE_DIVIDER - 1;
-		
+
 		// Initialize grain timing variables
 		globalSampleCounter_ = 0;
 		minGrainDistance_ = 0;
 		lastGrainTriggerTime_ = 0;
+
+		// Initialize 12kHz notch filter state variables
+		mix1L_ = mix2L_ = mixf1L_ = mixf2L_ = 0;
+		mix1R_ = mix2R_ = mixf1R_ = mixf2R_ = 0;
+
+#ifdef LOFI_MODE
+		// Initialize enhanced 8-bit conversion state
+		ditherErrorL_ = 0;
+		ditherErrorR_ = 0;
+		filteredErrorL_ = 0;
+		filteredErrorR_ = 0;
+#endif
+
 
 		for (int i = 0; i < MAX_GRAINS; i++)
 		{
@@ -108,9 +132,10 @@ public:
 			grains_[i].sampleCount = 0;
 			grains_[i].startPos = 0;
 			grains_[i].loopSize = 0;
-			grains_[i].freezeCounter = 0;
 			grains_[i].looping = false;
 			grains_[i].pulse90Triggered = false;
+			grains_[i].grainSpeed = 4096; // Initialize to 1x speed (Q12 format)
+			grains_[i].baselineControlValue = 4096; // Initialize baseline control value
 		}
 
 		// Calculate Hann window lookup table at startup
@@ -120,37 +145,41 @@ public:
 		{
 			// Calculate normalized position (0.0 to 1.0)
 			double pos = (double)i / (HANN_TABLE_SIZE - 1);
-			
+
 			// Calculate 2*pi*pos angle
 			double angle = 2.0 * M_PI * pos;
-			
+
 			// Calculate cosine using standard library for maximum accuracy
 			double cos_val = cos(angle);
-			
+
 			// Apply Hann window formula: 0.5 * (1 - cos(2*pi*n/(N-1)))
 			double hann_double = 0.5 * (1.0 - cos_val);
-			
+
 			// Convert to Q12 format (multiply by 4096)
 			int32_t hann_val = (int32_t)(hann_double * 4096.0 + 0.5); // +0.5 for rounding
-			
+
 			// Ensure perfect fade-in/fade-out at boundaries to eliminate clicks
-			if (i == 0 || i == HANN_TABLE_SIZE - 1) {
+			if (i == 0 || i == HANN_TABLE_SIZE - 1)
+			{
 				hann_val = 0; // Force zero at start and end
 			}
-			
+
 			// Clamp to valid range
-			if (hann_val < 0) hann_val = 0;
-			if (hann_val > 4096) hann_val = 4096;
-			
+			if (hann_val < 0)
+				hann_val = 0;
+			if (hann_val > 4096)
+				hann_val = 4096;
+
 			hannWindowTable_[i] = hann_val;
 		}
+
 	}
 
 	virtual void ProcessSample()
 	{
 		// Increment global sample counter for grain timing
 		globalSampleCounter_++;
-		
+
 		Switch switchPos = SwitchVal();
 
 		// Record audio when not in freeze mode (freeze mode stops recording but allows playback)
@@ -159,7 +188,28 @@ public:
 			// Clip inputs to prevent overflow
 			int16_t leftIn = clipAudio(AudioIn1());
 			int16_t rightIn = clipAudio(AudioIn2());
-			uint16_t stereoSample = packStereo(leftIn, rightIn);
+
+			// Apply 12kHz notch filter to remove mux interference
+			int32_t ooa0 = 16302, a2oa0 = 16221; // Q = 100, very narrow notch
+			
+			// Filter left channel
+			int32_t leftFiltered = (ooa0 * (leftIn + mix2L_) - a2oa0 * mixf2L_) >> 14;
+			mix2L_ = mix1L_;
+			mix1L_ = leftIn;
+			mixf2L_ = mixf1L_;
+			mixf1L_ = leftFiltered;
+			
+			// Filter right channel
+			int32_t rightFiltered = (ooa0 * (rightIn + mix2R_) - a2oa0 * mixf2R_) >> 14;
+			mix2R_ = mix1R_;
+			mix1R_ = rightIn;
+			mixf2R_ = mixf1R_;
+			mixf1R_ = rightFiltered;
+
+			// Clip filtered outputs and pack into buffer
+			leftIn = clipAudio(leftFiltered);
+			rightIn = clipAudio(rightFiltered);
+			auto stereoSample = packStereo(leftIn, rightIn);
 			buffer_[writeHead_] = stereoSample;
 		}
 
@@ -198,8 +248,6 @@ public:
 			minGrainDistance_ = 0; // No minimum distance when CV1 is connected
 		}
 
-		updatePlaybackSpeed();
-
 		bool shouldTriggerGrain = PulseIn1RisingEdge();
 
 		if (switchPos == Switch::Up)
@@ -207,7 +255,8 @@ public:
 			if (shouldTriggerGrain)
 			{
 				// Check Pulse Input 2 gate before triggering
-				if (!Connected(Input::Pulse2) || PulseIn2()) {
+				if (!Connected(Input::Pulse2) || PulseIn2())
+				{
 					triggerNewGrain();
 				}
 			}
@@ -236,7 +285,8 @@ public:
 			if (shouldTriggerGrain)
 			{
 				// Check Pulse Input 2 gate before triggering
-				if (!Connected(Input::Pulse2) || PulseIn2()) {
+				if (!Connected(Input::Pulse2) || PulseIn2())
+				{
 					triggerNewGrain();
 				}
 			}
@@ -278,33 +328,41 @@ public:
 		}
 
 		updateGrains();
-		
+
 		// Auto-trigger initial grain in unclocked mode if no grains are active
 		// This ensures the self-triggering chain gets started
-		if (!Connected(Input::Pulse1)) {
+		if (!Connected(Input::Pulse1))
+		{
 			// Count active grains
 			int32_t activeCount = 0;
-			for (int i = 0; i < MAX_GRAINS; i++) {
-				if (grains_[i].active) {
+			for (int i = 0; i < MAX_GRAINS; i++)
+			{
+				if (grains_[i].active)
+				{
 					activeCount++;
 				}
 			}
-			
+
 			// If no grains are active in unclocked mode, trigger one to start the chain
 			// But respect Pulse 2 gate if it's connected
-			if (activeCount == 0) {
-				if (Connected(Input::Pulse2)) {
+			if (activeCount == 0)
+			{
+				if (Connected(Input::Pulse2))
+				{
 					// Pulse 2 is connected: only auto-trigger if Pulse 2 is high
-					if (PulseIn2()) {
+					if (PulseIn2())
+					{
 						triggerNewGrain();
 					}
-				} else {
+				}
+				else
+				{
 					// No pulse inputs connected: always auto-trigger
 					triggerNewGrain();
 				}
 			}
 		}
-		
+
 		updateCVOutputs();
 		updatePulseOutputs();
 
@@ -314,23 +372,27 @@ public:
 		{
 			updateCounter_ = 0;
 			updateCachedKnobValues();
+			updatePlaybackSpeed();
 			updateGrainParameters();
 			updateLEDFeedback();
 		}
 	}
 
 private:
-	uint16_t buffer_[BUFF_LENGTH_SAMPLES];
+#ifdef LOFI_MODE
+	uint16_t buffer_[BUFF_LENGTH_SAMPLES];  // 16-bit storage for two 8-bit samples
+#else
+	uint32_t buffer_[BUFF_LENGTH_SAMPLES];  // 32-bit storage for two 12-bit samples
+#endif
 	int32_t writeHead_ = 0;
 	int32_t delayDistance_ = 8000;
 	int32_t spreadAmount_ = 0;
-	
+
 	// Minimum grain distance control (left side of X knob)
-	int32_t minGrainDistance_ = 0;        // Minimum samples between grain triggers (0 = no minimum)
-	int32_t lastGrainTriggerTime_ = 0;    // Sample counter when last grain was triggered
+	int32_t minGrainDistance_ = 0;	   // Minimum samples between grain triggers (0 = no minimum)
+	int32_t lastGrainTriggerTime_ = 0; // Sample counter when last grain was triggered
 
 	// Grain system
-	static const int32_t GRAIN_FREEZE_TIMEOUT = 24000 * 5;
 	struct Grain
 	{
 		int32_t readPos;
@@ -338,7 +400,6 @@ private:
 		int32_t sampleCount;
 		int32_t startPos;
 		int32_t loopSize;
-		int32_t freezeCounter;
 		bool active;
 		bool looping;
 		bool pulse90Triggered;
@@ -346,11 +407,15 @@ private:
 		int32_t delayDistance;
 		int32_t spreadAmount;
 		int32_t grainSize;
+		int32_t grainSpeed; // Store speed for this grain's lifecycle
+		int32_t baselineControlValue; // Control value when grain enters loop mode
 	};
 	Grain grains_[MAX_GRAINS];
 
 	int32_t stretchRatio_;
 	int32_t grainPlaybackSpeed_;
+	int32_t previousGrainPlaybackSpeed_; // Track last applied speed for hysteresis
+	int32_t previousLoopingControlValue_; // Track last applied control value for looping hysteresis
 	int32_t grainSize_;
 	int32_t maxActiveGrains_;
 	int32_t cachedActiveGrainCount_; // Cache grain count to avoid repeated counting in calculateGrainWeight()
@@ -364,11 +429,7 @@ private:
 
 	int16_t cvOut1NoiseValue_;
 	int16_t cvOut2PhaseValue_;
-	
-	// Triangle LFO for CV2 output
-	int32_t triangleLfoCounter_;
-	int32_t triangleLfoPeriod_;
-	
+
 	// Audio output amplitude tracking for LED feedback
 	int16_t lastOutputL_;
 	int16_t lastOutputR_;
@@ -376,7 +437,7 @@ private:
 	// Control update throttling
 	static const int32_t UPDATE_RATE_DIVIDER = 24;
 	int32_t updateCounter_;
-	
+
 	// Global sample counter for timing
 	int32_t globalSampleCounter_;
 
@@ -384,6 +445,19 @@ private:
 	int32_t cachedMainKnob_;
 	int32_t cachedXKnob_;
 	int32_t cachedYKnob_;
+
+	// 12kHz notch filter state variables (to remove mux interference)
+	int32_t mix1L_, mix2L_, mixf1L_, mixf2L_;  // Left channel
+	int32_t mix1R_, mix2R_, mixf1R_, mixf2R_;  // Right channel
+
+#ifdef LOFI_MODE
+	// Enhanced 8-bit conversion state variables
+	int32_t ditherErrorL_;   // Error diffusion state for left channel
+	int32_t ditherErrorR_;   // Error diffusion state for right channel
+	int32_t filteredErrorL_; // High-pass filtered error state for left channel
+	int32_t filteredErrorR_; // High-pass filtered error state for right channel
+#endif
+
 
 	// Interpolated sample reading with wraparound
 	int16_t __not_in_flash_func(getInterpolatedSample)(int32_t bufferPos, int32_t frac, int channel)
@@ -413,50 +487,132 @@ private:
 		int32_t interpolated = sample1 + ((diff * frac) >> 12);
 
 		// Clamp result
-		if (interpolated > 2047)
-			interpolated = 2047;
-		if (interpolated < -2048)
-			interpolated = -2048;
+		if (interpolated > (AUDIO_RANGE - 1))
+			interpolated = (AUDIO_RANGE - 1);
+		if (interpolated < -AUDIO_RANGE)
+			interpolated = -AUDIO_RANGE;
 
 		return (int16_t)interpolated;
 	}
 
-	// Update playback speed (affects all active grains)
-	void __not_in_flash_func(updatePlaybackSpeed)()
+	// Calculate looping grain speed with scaled offset from original speed
+	int32_t __not_in_flash_func(calculateLoopingGrainSpeed)(int32_t originalSpeed, int32_t baselineControlValue)
 	{
+		int32_t currentControlValue;
+
 		if (Connected(Input::CV2))
 		{
 			// CV2 controls pitch, Main knob is attenuverter (use center detent only)
+			// No hysteresis for CV2 - apply immediately for responsive CV control
 			int32_t cv2Val = CVIn2();
 			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
-			grainPlaybackSpeed_ = applyPitchAttenuverter(cv2Val, mainKnobVal);
+			currentControlValue = applyPitchAttenuverter(cv2Val, mainKnobVal);
 		}
 		else
 		{
 			// Main knob controls pitch directly (use multiple detents for musical speeds)
 			int32_t mainKnobVal = pitchDetentedKnob(cachedMainKnob_);
 
-			// Map -2x to +2x with pause at center
+			// Calculate new speed after detent processing
 			if (mainKnobVal <= 2048)
 			{
-				grainPlaybackSpeed_ = -8192 + ((mainKnobVal * 8192) >> 11);
+				currentControlValue = -8192 + ((mainKnobVal * 8192) >> 11);
 			}
 			else
 			{
 				int32_t rightKnob = mainKnobVal - 2048;
-				grainPlaybackSpeed_ = (rightKnob * 8192) >> 11;
+				currentControlValue = (rightKnob * 8192) >> 11;
+			}
+		}
+
+		// Calculate offset from baseline (not center) - this prevents immediate jumps when entering loop mode
+		int32_t offset = currentControlValue - baselineControlValue;
+
+		// Apply scaled offset: finalSpeed = originalSpeed + (originalSpeed * offset / 4096)
+		// This gives ±100% speed variation around the original grain speed
+		int64_t temp64 = (int64_t)originalSpeed * offset;
+		int32_t scaledOffset = (int32_t)(temp64 >> 12); // Divide by 4096
+		int32_t finalSpeed = originalSpeed + scaledOffset;
+
+		// Apply hysteresis to the final calculated speed (not CV2 mode for responsive CV control)
+		if (!Connected(Input::CV2))
+		{
+			if (cabs(finalSpeed - previousLoopingControlValue_) <= SPEED_HYSTERESIS_THRESHOLD)
+			{
+				// Change is too small - keep previous final speed to prevent noise-induced changes
+				finalSpeed = previousLoopingControlValue_;
+			}
+			else
+			{
+				// Update the looping control tracking variable with the new final speed
+				previousLoopingControlValue_ = finalSpeed;
+			}
+		}
+
+		// Apply safety limits
+		if (finalSpeed > MAX_SAFE_GRAIN_SPEED)
+		{
+			finalSpeed = MAX_SAFE_GRAIN_SPEED;
+		}
+		if (finalSpeed < -MAX_SAFE_GRAIN_SPEED)
+		{
+			finalSpeed = -MAX_SAFE_GRAIN_SPEED;
+		}
+
+		return finalSpeed;
+	}
+
+	// Update playback speed (affects all active grains)
+	void __not_in_flash_func(updatePlaybackSpeed)()
+	{
+		int32_t newSpeed;
+
+		if (Connected(Input::CV2))
+		{
+			// CV2 controls pitch, Main knob is attenuverter (use center detent only)
+			// No hysteresis for CV2 - apply immediately for responsive CV control
+			int32_t cv2Val = CVIn2();
+			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
+			newSpeed = applyPitchAttenuverter(cv2Val, mainKnobVal);
+		}
+		else
+		{
+			// Main knob controls pitch directly (use multiple detents for musical speeds)
+			// Apply hysteresis to prevent scratchiness from knob noise
+			int32_t mainKnobVal = pitchDetentedKnob(cachedMainKnob_);
+
+			// Calculate new speed after detent processing
+			if (mainKnobVal <= 2048)
+			{
+				newSpeed = -8192 + ((mainKnobVal * 8192) >> 11);
+			}
+			else
+			{
+				int32_t rightKnob = mainKnobVal - 2048;
+				newSpeed = (rightKnob * 8192) >> 11;
+			}
+
+			// Apply hysteresis - only update if change is significant
+			if (cabs(newSpeed - previousGrainPlaybackSpeed_) <= SPEED_HYSTERESIS_THRESHOLD)
+			{
+				// Change is too small - keep previous speed to prevent noise-induced changes
+				newSpeed = previousGrainPlaybackSpeed_;
 			}
 		}
 
 		// Limit speed for safety
-		if (grainPlaybackSpeed_ > MAX_SAFE_GRAIN_SPEED)
+		if (newSpeed > MAX_SAFE_GRAIN_SPEED)
 		{
-			grainPlaybackSpeed_ = MAX_SAFE_GRAIN_SPEED;
+			newSpeed = MAX_SAFE_GRAIN_SPEED;
 		}
-		if (grainPlaybackSpeed_ < -MAX_SAFE_GRAIN_SPEED)
+		if (newSpeed < -MAX_SAFE_GRAIN_SPEED)
 		{
-			grainPlaybackSpeed_ = -MAX_SAFE_GRAIN_SPEED;
+			newSpeed = -MAX_SAFE_GRAIN_SPEED;
 		}
+
+		// Update both current and previous speed
+		grainPlaybackSpeed_ = newSpeed;
+		previousGrainPlaybackSpeed_ = newSpeed;
 	}
 
 	// Update grain parameters (affects newly triggered grains only)
@@ -630,63 +786,23 @@ private:
 		return result;
 	}
 
-	// Enforce grain limit by deactivating excess grains (oldest first, based on startPos)
-	void __not_in_flash_func(enforceGrainLimit)()
-	{
-		// Count currently active grains
-		int32_t activeCount = 0;
-		for (int i = 0; i < MAX_GRAINS; i++)
-		{
-			if (grains_[i].active)
-			{
-				activeCount++;
-			}
-		}
-
-		// If we have more active grains than the current limit, deactivate the oldest ones
-		while (activeCount > maxActiveGrains_)
-		{
-			// Find the oldest grain (furthest read position from start)
-			int oldestGrainIndex = -1;
-			int32_t maxSampleCount = -1;
-
-			for (int i = 0; i < MAX_GRAINS; i++)
-			{
-				if (grains_[i].active && grains_[i].sampleCount > maxSampleCount)
-				{
-					maxSampleCount = grains_[i].sampleCount;
-					oldestGrainIndex = i;
-				}
-			}
-
-			// Deactivate the oldest grain
-			if (oldestGrainIndex >= 0)
-			{
-				grains_[oldestGrainIndex].active = false;
-				activeCount--;
-			}
-			else
-			{
-				break; // Safety break if we can't find a grain to deactivate
-			}
-		}
-	}
-
 	// Calculate unclocked grain trigger threshold based on Y knob for overlap control
 	// Returns percentage (0-100) of grain completion at which to trigger next grain
 	int32_t __not_in_flash_func(calculateUnclockTriggerThreshold)()
 	{
 		// Y knob controls overlap: Y=0 -> high threshold (less overlap), Y=max -> low threshold (more overlap)
 		int32_t yValue = cachedYKnob_; // 0 to 4095
-		
+
 		// Inverted linear mapping: 90% at Y=0 (less overlap), decreasing to 10% at Y=max (more overlap)
 		// threshold = 90 - (Y * 80 / 4095)
 		int32_t triggerThreshold = 90 - ((yValue * 80) / 4095); // 90% to 10% threshold
-		
+
 		// Ensure threshold is within valid range
-		if (triggerThreshold < 10) triggerThreshold = 10;   // Minimum 10% (maximum overlap)
-		if (triggerThreshold > 90) triggerThreshold = 90;   // Maximum 90% (minimum overlap)
-		
+		if (triggerThreshold < 10)
+			triggerThreshold = 10; // Minimum 10% (maximum overlap)
+		if (triggerThreshold > 90)
+			triggerThreshold = 90; // Maximum 90% (minimum overlap)
+
 		return triggerThreshold;
 	}
 
@@ -715,14 +831,15 @@ private:
 			{
 				grains_[i].active = true;
 				cachedActiveGrainCount_++; // Update cached count when grain is activated
-				
+
 				// Update last grain trigger time for minimum distance tracking
 				lastGrainTriggerTime_ = globalSampleCounter_;
-				
-				// Snapshot delay, spread, and grain size for this grain
+
+				// Snapshot delay, spread, grain size, and speed for this grain
 				grains_[i].delayDistance = delayDistance_;
 				grains_[i].spreadAmount = spreadAmount_;
 				grains_[i].grainSize = grainSize_;
+				grains_[i].grainSpeed = grainPlaybackSpeed_; // Snapshot current speed for grain's lifecycle
 
 				// Reset pulse trigger flag for this grain
 				grains_[i].pulse90Triggered = false;
@@ -873,7 +990,6 @@ private:
 				grains_[i].readFrac = 0;
 				grains_[i].startPos = grains_[i].readPos;
 				grains_[i].sampleCount = 0;
-				grains_[i].freezeCounter = 0;
 				grains_[i].loopSize = grains_[i].grainSize;
 				break;
 			}
@@ -883,19 +999,19 @@ private:
 	int32_t __not_in_flash_func(calculateGrainWeight)(int grainIndex)
 	{
 		Grain &grain = grains_[grainIndex];
-		
+
 		// In loop/glitch mode, bypass windowing for harsh discontinuities
 		if (grain.looping)
 		{
 			return 4096; // Full weight - no windowing for glitch effects
 		}
-		
+
 		// Safety check to prevent division by zero
 		if (grain.grainSize <= 0)
 		{
 			return 4096; // Full weight if grain size is invalid
 		}
-		
+
 		// Count active grains to determine if windowing is needed
 		// Use cached count for performance - updated only when grains are created/destroyed
 		// Only apply windowing when multiple grains are active (overlapping)
@@ -903,7 +1019,7 @@ private:
 		{
 			return 4096; // Single grain - full weight for maximum clarity
 		}
-		
+
 		// Normal windowing for overlapping grains
 		// Position in grain: 0 to grainSize-1, normalized to 0-4095 (Q12)
 		int32_t posQ12 = (grain.sampleCount << 12) / grain.grainSize; // Q12 normalized position (0-4095)
@@ -983,8 +1099,8 @@ private:
 		{
 			if (grains_[i].active)
 			{
-				// Get grain playback speed
-				int32_t grainSpeed = grainPlaybackSpeed_;
+				// Get grain playback speed from this grain's stored speed
+				int32_t grainSpeed = grains_[i].grainSpeed;
 
 				// Handle looping grains differently
 				if (grains_[i].looping)
@@ -992,6 +1108,9 @@ private:
 					// In loop mode, grains loop within their original captured segment
 					// They advance through their grain but loop back to the start when finished
 					// This creates repeating stutters of the captured audio segment
+
+					grainSpeed = calculateLoopingGrainSpeed(grains_[i].grainSpeed, grains_[i].baselineControlValue); // Use original speed with scaled offset from baseline
+
 					if (grainSpeed != 0)
 					{
 						// Increment sample count for windowing calculation
@@ -1039,134 +1158,137 @@ private:
 				}
 				else
 				{
-					// Normal grain behavior				// Only update grain if speed is non-zero (fixes freeze bug)
-					if (grainSpeed != 0)
+					// Normal grain behavior
+					grains_[i].sampleCount++;
+
+					// Store original position for boundary checking
+					int32_t originalPos = grains_[i].readPos;
+					int32_t originalFrac = grains_[i].readFrac;
+
+					// Advance read position with fractional tracking
+					grains_[i].readFrac += grainSpeed;
+
+					// CRASH PROTECTION: Bounded iteration limits to prevent runaway loops
+					int32_t iterationCount = 0;
+
+					// Handle integer overflow from fractional part with bounded iterations
+					while (grains_[i].readFrac >= 4096 && iterationCount < MAX_FRACTIONAL_ITERATIONS)
 					{
-						grains_[i].sampleCount++;
+						grains_[i].readPos++;
+						grains_[i].readFrac -= 4096;
+						iterationCount++;
 
-						// Store original position for boundary checking
-						int32_t originalPos = grains_[i].readPos;
-						int32_t originalFrac = grains_[i].readFrac;
-
-						// Advance read position with fractional tracking
-						grains_[i].readFrac += grainSpeed;
-
-						// CRASH PROTECTION: Bounded iteration limits to prevent runaway loops
-						int32_t iterationCount = 0;
-
-						// Handle integer overflow from fractional part with bounded iterations
-						while (grains_[i].readFrac >= 4096 && iterationCount < MAX_FRACTIONAL_ITERATIONS)
+						// Handle buffer wraparound
+						if (grains_[i].readPos >= BUFF_LENGTH_SAMPLES)
 						{
-							grains_[i].readPos++;
-							grains_[i].readFrac -= 4096;
-							iterationCount++;
+							grains_[i].readPos -= BUFF_LENGTH_SAMPLES;
+						}
+					}
 
-							// Handle buffer wraparound
-							if (grains_[i].readPos >= BUFF_LENGTH_SAMPLES)
-							{
-								grains_[i].readPos -= BUFF_LENGTH_SAMPLES;
-							}
+					// If we hit the iteration limit, clamp the fractional part
+					if (grains_[i].readFrac >= 4096)
+					{
+						grains_[i].readFrac = 4095; // Clamp to just under 1.0
+					}
+
+					// Reset iteration counter for negative speed handling
+					iterationCount = 0;
+
+					// Handle negative speeds (reverse playback) with bounded iterations
+					while (grains_[i].readFrac < 0 && iterationCount < MAX_FRACTIONAL_ITERATIONS)
+					{
+						grains_[i].readPos--;
+						grains_[i].readFrac += 4096;
+						iterationCount++;
+
+						// Handle buffer wraparound
+						if (grains_[i].readPos < 0)
+						{
+							grains_[i].readPos += BUFF_LENGTH_SAMPLES;
+						}
+					}
+
+					// If we hit the iteration limit, clamp the fractional part
+					if (grains_[i].readFrac < 0)
+					{
+						grains_[i].readFrac = 0; // Clamp to 0
+					}
+
+					// WRITE HEAD BOUNDARY CHECK: Prevent grains from reading past write head
+					// Only apply this check when buffer is recording (not frozen)
+					bool bufferIsFrozen = (SwitchVal() == Switch::Up);
+					if (!bufferIsFrozen)
+					{
+						const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
+						int32_t maxSafePos = writeHead_ - safetyMargin;
+						if (maxSafePos < 0)
+							maxSafePos += BUFF_LENGTH_SAMPLES;
+
+						// Calculate distance from grain to write head (accounting for circular buffer)
+						int32_t distanceToWrite = writeHead_ - grains_[i].readPos;
+						if (distanceToWrite < 0)
+							distanceToWrite += BUFF_LENGTH_SAMPLES;
+
+						// If grain is too close to write head, clamp it to safe position
+						if (distanceToWrite < safetyMargin)
+						{
+							grains_[i].readPos = maxSafePos;
+							grains_[i].readFrac = 0; // Reset fractional part when clamped
+						}
+					}
+
+					// Check if grain has reached completion threshold and trigger Pulse 1
+					if (grains_[i].grainSize > 0 && !grains_[i].pulse90Triggered)
+					{
+						// Use different thresholds for clocked vs unclocked modes
+						int32_t thresholdPercent;
+						if (Connected(Input::Pulse1))
+						{
+							// Clocked mode: use fixed 90% threshold for pulse output timing
+							thresholdPercent = GRAIN_COMPLETION_THRESHOLD_PERCENT;
+						}
+						else
+						{
+							// Unclocked mode: use Y knob-controlled threshold for overlap behavior
+							thresholdPercent = calculateUnclockTriggerThreshold();
 						}
 
-						// If we hit the iteration limit, clamp the fractional part
-						if (grains_[i].readFrac >= 4096)
+						int32_t thresholdSamples = (grains_[i].grainSize * thresholdPercent) / 100;
+						if (grains_[i].sampleCount >= thresholdSamples)
 						{
-							grains_[i].readFrac = 4095; // Clamp to just under 1.0
-						}
-
-						// Reset iteration counter for negative speed handling
-						iterationCount = 0;
-
-						// Handle negative speeds (reverse playback) with bounded iterations
-						while (grains_[i].readFrac < 0 && iterationCount < MAX_FRACTIONAL_ITERATIONS)
-						{
-							grains_[i].readPos--;
-							grains_[i].readFrac += 4096;
-							iterationCount++;
-
-							// Handle buffer wraparound
-							if (grains_[i].readPos < 0)
-							{
-								grains_[i].readPos += BUFF_LENGTH_SAMPLES;
-							}
-						}
-
-						// If we hit the iteration limit, clamp the fractional part
-						if (grains_[i].readFrac < 0)
-						{
-							grains_[i].readFrac = 0; // Clamp to 0
-						}
-
-						// WRITE HEAD BOUNDARY CHECK: Prevent grains from reading past write head
-						// Only apply this check when buffer is recording (not frozen)
-						bool bufferIsFrozen = (SwitchVal() == Switch::Up);
-						if (!bufferIsFrozen)
-						{
-							const int32_t safetyMargin = SAFETY_MARGIN_SAMPLES;
-							int32_t maxSafePos = writeHead_ - safetyMargin;
-							if (maxSafePos < 0)
-								maxSafePos += BUFF_LENGTH_SAMPLES;
-
-							// Calculate distance from grain to write head (accounting for circular buffer)
-							int32_t distanceToWrite = writeHead_ - grains_[i].readPos;
-							if (distanceToWrite < 0)
-								distanceToWrite += BUFF_LENGTH_SAMPLES;
-
-							// If grain is too close to write head, clamp it to safe position
-							if (distanceToWrite < safetyMargin)
-							{
-								grains_[i].readPos = maxSafePos;
-								grains_[i].readFrac = 0; // Reset fractional part when clamped
-							}
-						}
-
-						// Check if grain has reached completion threshold and trigger Pulse 1
-						if (grains_[i].grainSize > 0 && !grains_[i].pulse90Triggered)
-						{
-							// Use different thresholds for clocked vs unclocked modes
-							int32_t thresholdPercent;
-							if (Connected(Input::Pulse1)) {
-								// Clocked mode: use fixed 90% threshold for pulse output timing
-								thresholdPercent = GRAIN_COMPLETION_THRESHOLD_PERCENT;
-							} else {
-								// Unclocked mode: use Y knob-controlled threshold for overlap behavior
-								thresholdPercent = calculateUnclockTriggerThreshold();
-							}
+							grains_[i].pulse90Triggered = true; // Mark as triggered for this grain
 							
-							int32_t thresholdSamples = (grains_[i].grainSize * thresholdPercent) / 100;
-							if (grains_[i].sampleCount >= thresholdSamples && pulseOut1Counter_ <= 0)
+							// Trigger pulse output only if counter is ready (maintains 100-sample pulse width)
+							if (pulseOut1Counter_ <= 0)
 							{
 								pulseOut1Counter_ = GRAIN_END_PULSE_DURATION; // 100 samples
-								grains_[i].pulse90Triggered = true;              // Mark as triggered for this grain
-								// --- Begin Grain Trigger Logic ---
-								// If PulseIn1 is not plugged in, handle grain firing based on PulseIn2 state
-								if (!Connected(Input::Pulse1)) {
-									if (Connected(Input::Pulse2)) {
-										// PulseIn2 is plugged in: only fire if high
-										if (PulseIn2()) {
-											triggerNewGrain();
-										}
-									} else {
-										// Neither pulse input is plugged in: always fire with Y knob-controlled timing
+							}
+							
+							// Auto-trigger new grain regardless of pulse counter state (allows faster triggering)
+							if (!Connected(Input::Pulse1))
+							{
+								if (Connected(Input::Pulse2))
+								{
+									// PulseIn2 is plugged in: only fire if high
+									if (PulseIn2())
+									{
 										triggerNewGrain();
 									}
 								}
-								// --- End Grain Trigger Logic ---
+								else
+								{
+									// Neither pulse input is plugged in: always fire with Y knob-controlled timing
+									triggerNewGrain();
+								}
 							}
 						}
-
-						// Deactivate grain if it's finished
-						if (grains_[i].sampleCount >= grains_[i].grainSize)
-						{
-							grains_[i].active = false;
-							cachedActiveGrainCount_--; // Update cached count when grain is deactivated
-						}
 					}
-					else
+
+					// Deactivate grain if it's finished
+					if (grains_[i].sampleCount >= grains_[i].grainSize)
 					{
-						// When speed is 0, grain is frozen
-						// Removed freeze timeout for performance - grains can stay frozen indefinitely
-						// This relies on user input or mode changes to clear stuck grains
+						grains_[i].active = false;
+						cachedActiveGrainCount_--; // Update cached count when grain is deactivated
 					}
 				}
 			}
@@ -1180,8 +1302,8 @@ private:
 		// Wider range than grain size: 240 samples (10ms) to 4800 samples (200ms) at 24kHz
 		// Direct relationship: smaller grains = faster clock (shorter period), larger grains = slower clock (longer period)
 		int32_t normalizedY = cachedYKnob_; // 0 to 4095
-		int32_t maxPeriod = 4800; // 200ms at 24kHz
-		int32_t minPeriod = 240;  // 10ms at 24kHz
+		int32_t maxPeriod = 4800;			// 200ms at 24kHz
+		int32_t minPeriod = 240;			// 10ms at 24kHz
 		// Inverse mapping: higher Y knob = shorter period
 		stochasticClockPeriod_ = maxPeriod - ((normalizedY * (maxPeriod - minPeriod)) / 4095);
 		// Removed conservative clamping for performance - calculation should always be in range
@@ -1233,6 +1355,28 @@ private:
 	{
 		loopMode_ = true;
 
+		// Calculate current control value to use as baseline for all grains entering loop mode
+		int32_t currentControlValue;
+		if (Connected(Input::CV2))
+		{
+			int32_t cv2Val = CVIn2();
+			int32_t mainKnobVal = virtualDetentedKnob(cachedMainKnob_);
+			currentControlValue = applyPitchAttenuverter(cv2Val, mainKnobVal);
+		}
+		else
+		{
+			int32_t mainKnobVal = pitchDetentedKnob(cachedMainKnob_);
+			if (mainKnobVal <= 2048)
+			{
+				currentControlValue = -8192 + ((mainKnobVal * 8192) >> 11);
+			}
+			else
+			{
+				int32_t rightKnob = mainKnobVal - 2048;
+				currentControlValue = (rightKnob * 8192) >> 11;
+			}
+		}
+
 		// Check if any grains are currently active
 		bool hasActiveGrains = false;
 		for (int i = 0; i < MAX_GRAINS; i++)
@@ -1241,6 +1385,7 @@ private:
 			{
 				hasActiveGrains = true;
 				grains_[i].looping = true;
+				grains_[i].baselineControlValue = currentControlValue; // Capture baseline when entering loop mode
 				// Use the grain's stored loop size (set when grain was created)
 				// This prevents race condition where grainSize_ changes after grain creation
 				// Keep current sampleCount for smooth transition to loop mode
@@ -1257,6 +1402,7 @@ private:
 				if (grains_[i].active && !grains_[i].looping)
 				{
 					grains_[i].looping = true;
+					grains_[i].baselineControlValue = currentControlValue; // Capture baseline for new grain
 					// Keep initial sampleCount for proper windowing
 					break; // Only need to convert the first one we find
 				}
@@ -1288,7 +1434,8 @@ private:
 
 		// CV Out 2: Write head position mapped to 0-5V (0 to 2047)
 		cvOut2PhaseValue_ = (int16_t)((writeHead_ * 2047) / (BUFF_LENGTH_SAMPLES - 1));
-		if (cvOut2PhaseValue_ > 2047) cvOut2PhaseValue_ = 2047;
+		if (cvOut2PhaseValue_ > 2047)
+			cvOut2PhaseValue_ = 2047;
 		CVOut2(cvOut2PhaseValue_);
 	}
 
@@ -1323,41 +1470,119 @@ private:
 		return lcg_seed >> 20;
 	}
 
+#ifdef LOFI_MODE
+	// Enhanced 8-bit conversion helper functions
+	
+	// Fast triangular dither generation using existing RNG
+	int32_t __not_in_flash_func(generateTriangularDither)()
+	{
+		// Generate two uniform random values and subtract for triangular PDF
+		// This gives better spectral characteristics than uniform dither
+		uint32_t r1 = rnd12() & 0x1F; // 0-31 (5 bits)
+		uint32_t r2 = rnd12() & 0x1F; // 0-31 (5 bits)
+		return (int32_t)r1 - (int32_t)r2; // -31 to +31, triangular distribution
+	}
+
+	// Enhanced 8-bit quantization with dithering, error diffusion, and noise shaping
+	int8_t __not_in_flash_func(quantizeToEightBit)(int32_t sample12bit, int32_t &errorState, int32_t &filteredErrorState)
+	{
+		// Add previous error (error diffusion)
+		sample12bit += errorState;
+		
+		// Add triangular dither (±2 LSB in 8-bit domain = ±32 in 12-bit)
+		int32_t dither = generateTriangularDither();
+		sample12bit += dither;
+		
+		// Quantize to 8-bit (shift right by 4 bits)
+		int32_t quantized8 = sample12bit >> 4;
+		
+		// Clamp to 8-bit signed range
+		if (quantized8 > 127) quantized8 = 127;
+		if (quantized8 < -128) quantized8 = -128;
+		
+		// Calculate raw quantization error for next sample
+		int32_t reconstructed12 = quantized8 << 4; // Convert back to 12-bit
+		int32_t rawError = (sample12bit - dither) - reconstructed12; // Error without dither
+		
+		// High-pass filter the error before feedback (idea pinched from Émilie!)
+		// One-pole high-pass filter: y[n] = x[n] - 0.75*x[n] + 0.75*y[n-1]
+		// This pushes quantization noise above ~2kHz where it's less audible
+		int32_t filteredError = rawError - ((rawError * 3072) >> 12) + ((filteredErrorState * 3072) >> 12);
+		filteredErrorState = filteredError; // Update filter state
+		
+		// Use filtered error for feedback with decay to prevent accumulation
+		errorState = (filteredError * 7) >> 3; // Multiply by 7/8 (87.5% retention)
+		
+		return (int8_t)quantized8;
+	}
+
+	// Enhanced 8-bit expansion (simplified for performance)
+	int16_t __not_in_flash_func(expandFromEightBit)(int8_t sample8bit)
+	{
+		// Convert 8-bit to 12-bit (simple bit shift)
+		return ((int16_t)sample8bit) << 4;
+	}
+	// 8-bit audio functions for LoFi mode - pack into 16-bit storage
 	uint16_t packStereo(int16_t left, int16_t right)
 	{
-		// convert two 12 bit signed values to signed 8 bit values and pack into a single 16 bit word
-		int8_t left8 = static_cast<int8_t>(left >> 4);
-		int8_t right8 = static_cast<int8_t>(right >> 4);
+		// Enhanced 8-bit conversion with dithering, error diffusion, and noise shaping
+		// Convert two 12-bit signed values to enhanced 8-bit values and pack into a single 16-bit word
+		int8_t left8 = quantizeToEightBit(left, ditherErrorL_, filteredErrorL_);
+		int8_t right8 = quantizeToEightBit(right, ditherErrorR_, filteredErrorR_);
 		return (static_cast<uint8_t>(left8) << 8) | static_cast<uint8_t>(right8);
 	}
 
 	int16_t unpackStereo(uint16_t stereo, int8_t index)
 	{
-		// unpack a 16 bit word into two signed 8 bit values and convert to signed 12 bit values (returning one of them based on index)
+		// Enhanced 8-bit expansion with subtle filtering
+		// Unpack a 16-bit word into two signed 8-bit values and convert to enhanced 12-bit values
 		if (index == 0)
 		{
 			int8_t left8 = (stereo >> 8) & 0xFF;
-			return static_cast<int16_t>(left8) << 4;
+			return expandFromEightBit(left8);
 		}
 		else
 		{
 			int8_t right8 = stereo & 0xFF;
-			return static_cast<int16_t>(right8) << 4;
+			return expandFromEightBit(right8);
 		}
 	}
+#else
+	// 12-bit audio functions for HiFi mode - pack into 32-bit storage
+	uint32_t packStereo(int16_t left, int16_t right)
+	{
+		// Pack two 12-bit signed values into lower 24 bits of uint32_t
+		uint32_t leftBits = (left + 2048) & 0xFFF;   // Convert to 12-bit unsigned
+		uint32_t rightBits = (right + 2048) & 0xFFF; // Convert to 12-bit unsigned
+		return (leftBits << 12) | rightBits;
+	}
+
+	int16_t unpackStereo(uint32_t stereo, int8_t index)
+	{
+		if (index == 0) {
+			// Left channel: upper 12 bits
+			uint32_t leftBits = (stereo >> 12) & 0xFFF;
+			return (int16_t)(leftBits - 2048);  // Convert back to signed
+		} else {
+			// Right channel: lower 12 bits
+			uint32_t rightBits = stereo & 0xFFF;
+			return (int16_t)(rightBits - 2048);  // Convert back to signed
+		}
+	}
+#endif
 
 	int32_t cabs(int32_t a)
 	{
 		return (a > 0) ? a : -a;
 	}
 
-	// Clip audio sample to valid range (±2048 for 12-bit audio)
+	// Clip audio sample to valid range (conditional based on audio mode)
 	int16_t __not_in_flash_func(clipAudio)(int32_t sample)
 	{
-		if (sample > 2047)
-			sample = 2047;
-		if (sample < -2048)
-			sample = -2048;
+		if (sample > (AUDIO_RANGE - 1))
+			sample = (AUDIO_RANGE - 1);
+		if (sample < -AUDIO_RANGE)
+			sample = -AUDIO_RANGE;
 		return (int16_t)sample;
 	}
 

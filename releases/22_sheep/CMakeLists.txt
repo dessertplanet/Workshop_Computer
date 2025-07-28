@@ -34,13 +34,29 @@ macro (add_card _name)
       pico_enable_stdio_usb(${_name} 1)
     endif()
   endmacro()
-  
-add_card(${CARD_NAME})
+
+# Create LoFi variant (8-bit audio, longer buffer)
+add_card(${CARD_NAME}_lofi)
+target_compile_definitions(${CARD_NAME}_lofi PRIVATE LOFI_MODE=1)
+
+# Create HiFi variant (12-bit audio, shorter buffer) 
+add_card(${CARD_NAME}_hifi)
+
+# Copy both UF2 files to UF2 directory with descriptive names
+add_custom_command(
+    TARGET ${CARD_NAME}_lofi
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_SOURCE_DIR}/UF2
+    COMMAND ${CMAKE_COMMAND} -E copy
+            ${CMAKE_CURRENT_BINARY_DIR}/${CARD_NAME}_lofi.uf2
+            ${CMAKE_CURRENT_SOURCE_DIR}/UF2/${CARD_NAME}_lofi.uf2
+)
 
 add_custom_command(
-    TARGET ${CARD_NAME}
+    TARGET ${CARD_NAME}_hifi
     POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_SOURCE_DIR}/UF2
     COMMAND ${CMAKE_COMMAND} -E copy
-            ${CMAKE_CURRENT_BINARY_DIR}/${CARD_NAME}.uf2
-            ${CMAKE_CURRENT_SOURCE_DIR}/UF2/
+            ${CMAKE_CURRENT_BINARY_DIR}/${CARD_NAME}_hifi.uf2
+            ${CMAKE_CURRENT_SOURCE_DIR}/UF2/${CARD_NAME}_hifi.uf2
 )
