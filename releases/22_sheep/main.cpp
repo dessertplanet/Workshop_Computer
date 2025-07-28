@@ -9,7 +9,10 @@
  * Sheep: A crunchy granular delay and digital degradation effect
  * by Dune Desormeaux (github.com/dessertplanet)
  * Thank you to Émilie Gillet for Clouds which was a huge inspiration here!
- * - 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz)
+ * Sheep features:
+ * - 2 UF2's to choose from based on fidelity + buffer length:
+ * - Lofi: 5.2-second stereo circular buffer for audio capture (125k 8-bit samples at 24kHz with dither)
+ * - Hifi: 2.6-second stereo circular buffer for audio capture (62.5k 12-bit samples at 24kHz)
  * - Up to 14 simultaneous grains
  * - Linear grain sizes from micro (32 samples = ~0.001 seconds) to macro (24000 samples = 1 second)
  * - Bidirectional playback (-2x to +2x speed)
