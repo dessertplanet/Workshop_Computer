@@ -38,8 +38,16 @@
  * - LEDs 4,5: Pulse output states (on/off)
  */
 
-#define BUFF_LENGTH_SAMPLES 62500 // 62,500 samples = 2.6 seconds at 24kHz (5.2 seconds stereo)
-#define MAX_GRAIN_SIZE 24000	   // 8,000 samples (0.33 seconds at 24kHz) - maximum grain size
+// Audio format configuration - controlled by build system
+#ifdef LOFI_MODE
+	#define BUFF_LENGTH_SAMPLES 125000 // 125,000 samples = 5.2 seconds at 24kHz (8-bit audio)
+	#define AUDIO_RANGE 128            // ±128 for 8-bit audio
+#else
+	#define BUFF_LENGTH_SAMPLES 62500  // 62,500 samples = 2.6 seconds at 24kHz (12-bit audio)
+	#define AUDIO_RANGE 2048           // ±2048 for 12-bit audio
+#endif
+
+#define MAX_GRAIN_SIZE 24000	   // 24,000 samples (1.0 seconds at 24kHz) - maximum grain size
 #define MIN_GRAIN_SIZE 32		   // 32 samples (1.33ms at 24kHz) - minimum grain size
 
 class Sheep : public ComputerCard
@@ -190,7 +198,7 @@ public:
 			// Clip filtered outputs and pack into buffer
 			leftIn = clipAudio(leftFiltered);
 			rightIn = clipAudio(rightFiltered);
-			uint32_t stereoSample = packStereo(leftIn, rightIn);
+			auto stereoSample = packStereo(leftIn, rightIn);
 			buffer_[writeHead_] = stereoSample;
 		}
 
@@ -360,7 +368,11 @@ public:
 	}
 
 private:
-	uint32_t buffer_[BUFF_LENGTH_SAMPLES];
+#ifdef LOFI_MODE
+	uint16_t buffer_[BUFF_LENGTH_SAMPLES];  // 16-bit storage for two 8-bit samples
+#else
+	uint32_t buffer_[BUFF_LENGTH_SAMPLES];  // 32-bit storage for two 12-bit samples
+#endif
 	int32_t writeHead_ = 0;
 	int32_t delayDistance_ = 8000;
 	int32_t spreadAmount_ = 0;
@@ -460,10 +472,10 @@ private:
 		int32_t interpolated = sample1 + ((diff * frac) >> 12);
 
 		// Clamp result
-		if (interpolated > 2047)
-			interpolated = 2047;
-		if (interpolated < -2048)
-			interpolated = -2048;
+		if (interpolated > (AUDIO_RANGE - 1))
+			interpolated = (AUDIO_RANGE - 1);
+		if (interpolated < -AUDIO_RANGE)
+			interpolated = -AUDIO_RANGE;
 
 		return (int16_t)interpolated;
 	}
@@ -1443,6 +1455,36 @@ private:
 		return lcg_seed >> 20;
 	}
 
+#ifdef LOFI_MODE
+	// 8-bit audio functions for LoFi mode - pack into 16-bit storage
+	uint16_t packStereo(int16_t left, int16_t right)
+	{
+		// Pack two 8-bit signed values into 16-bit storage
+		// Clamp to 8-bit range first
+		if (left > 127) left = 127;
+		if (left < -128) left = -128;
+		if (right > 127) right = 127;
+		if (right < -128) right = -128;
+		
+		uint16_t leftBits = (left + 128) & 0xFF;   // Convert to 8-bit unsigned
+		uint16_t rightBits = (right + 128) & 0xFF; // Convert to 8-bit unsigned
+		return (leftBits << 8) | rightBits;
+	}
+
+	int16_t unpackStereo(uint16_t stereo, int8_t index)
+	{
+		if (index == 0) {
+			// Left channel: upper 8 bits
+			uint16_t leftBits = (stereo >> 8) & 0xFF;
+			return (int16_t)(leftBits - 128);  // Convert back to signed
+		} else {
+			// Right channel: lower 8 bits
+			uint16_t rightBits = stereo & 0xFF;
+			return (int16_t)(rightBits - 128);  // Convert back to signed
+		}
+	}
+#else
+	// 12-bit audio functions for HiFi mode - pack into 32-bit storage
 	uint32_t packStereo(int16_t left, int16_t right)
 	{
 		// Pack two 12-bit signed values into lower 24 bits of uint32_t
@@ -1463,19 +1505,20 @@ private:
 			return (int16_t)(rightBits - 2048);  // Convert back to signed
 		}
 	}
+#endif
 
 	int32_t cabs(int32_t a)
 	{
 		return (a > 0) ? a : -a;
 	}
 
-	// Clip audio sample to valid range (±2048 for 12-bit audio)
+	// Clip audio sample to valid range (conditional based on audio mode)
 	int16_t __not_in_flash_func(clipAudio)(int32_t sample)
 	{
-		if (sample > 2047)
-			sample = 2047;
-		if (sample < -2048)
-			sample = -2048;
+		if (sample > (AUDIO_RANGE - 1))
+			sample = (AUDIO_RANGE - 1);
+		if (sample < -AUDIO_RANGE)
+			sample = -AUDIO_RANGE;
 		return (int16_t)sample;
 	}
 
