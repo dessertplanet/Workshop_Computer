@@ -1,8 +1,41 @@
 #include "ComputerCard.h"
-
 #include "pico/multicore.h"
-#include "bsp/board.h"
 #include "tusb.h"
+
+
+
+/*
+  
+   ComputerCard USB MIDI device example
+
+   This example demonstrates sending and receiving MIDI messages,
+   with the Workshop System Computer acting as a USB MIDI Device.
+
+   Since the WS Computer is here a USB Device, it must be connected
+   to a USB MIDI Host, such as a laptop/desktop computer.
+
+   Audio (the ProcessSample function) is processed on one core of the RP2040,
+   and MIDI is processed on the other core.
+
+
+   MIDI messages received:
+   - Note on/off messages turn on and off Pulse Out 1 and the top right LED.
+   - Note on pitch is sent to CV out 1 (1V per octave)
+   - MIDI CC 1 (Mod wheel) is sent to CV out 2, and to the middle right LED
+   
+   MIDI messages sent:
+   - Turning the main knob sends MIDI CC 1 (Mod Wheel) messages, on channel 1.
+
+
+   In this example, most of the jack/LED outputs from MIDI are controlled directly
+   from the MIDI core. More typically MIDI data would be used by the audio core.
+
+   As an example of inter-core communication, the volatile 'receivedCC1' member
+   variable stores the MIDI CC 1 value received in the MIDI core,
+   and the LED and CV out are set from this variable on the audio core.
+
+ */
+
 
 // Minimal MIDI message reading struct
 struct MIDIMessage
@@ -68,87 +101,114 @@ class MIDIDevice : public ComputerCard
 public:
 	MIDIDevice()
 	{
+		receivedCC1 = 0;
+		
 		// Start the second core
 		multicore_launch_core1(core1);
 	}
 
-	// Boilerplate to call member function as second core
+	// Boilerplate static function to call member function as second core
 	static void core1()
 	{
 		((MIDIDevice *)ThisPtr())->USBCore();
 	}
 
+	void HandleMIDIMessage(const MIDIMessage &m)
+	{
+		// Handle MIDI note on/off and mod wheel
+		// Real MIDI note on/off handling should be more sophisticated, at least counting
+		// the number of notes down, or possibly tracking the entire set of notes held down.
+		switch (m.command)
+		{
+		case MIDIMessage::NoteOn:
+			if (m.velocity > 0) // real note on (velocity > 0)
+			{
+				CVOut1MIDINote(m.note);
+				LedOn(1);
+				PulseOut1(true);
+			}
+			else // note on with velocity 0 = note off
+			{
+				LedOff(1);
+				PulseOut1(false);
+			}
+			break;
+					
+		case MIDIMessage::NoteOff:
+			LedOff(1);
+			PulseOut1(false);
+			break;
+					
+		case MIDIMessage::CC:
+			// Mod wheel -> CV out 2
+			if (m.cc == 1)
+			{
+				receivedCC1 = m.value;
+			}
+			break;
+					
+		default:
+			break;
+		}
+	}
 	
-	// Code for second RP2040 core, blocking
-	// Handles MIDI in/out messages
+	// Code for second RP2040 core. Blocking.
 	void USBCore()
 	{
 		uint8_t lastCCOut = 0;
-		uint8_t packet[32];
+		uint8_t buffer[64];
 
 		// Initialise TinyUSB
-		board_init();
 		tusb_init();
-		
+
+
+		// This loop waits for and processes MIDI messages
 		while (1)
 		{
 			tud_task();
+
+			////////////////////////////////////////
+			// Receiving MIDI
 			while (tud_midi_available())
 			{
-				// Read MIDI input
-				tud_midi_stream_read(packet, sizeof(packet));
-				MIDIMessage m(packet);
+				// Read MIDI input - this will be some number of MIDI messages (zero, one, or multiple)
+				uint32_t bytesToProcess = tud_midi_stream_read(buffer, sizeof(buffer));
+				uint8_t *bufPtr = buffer;
 
-				// Handle MIDI note on/off and mod wheel
-				switch (m.command)
+				while (bytesToProcess > 0)
 				{
-				case MIDIMessage::NoteOn:
-					if (m.velocity > 0) // real note on
-					{
-						CVOut1MIDINote(m.note);
-						LedOn(1);
-						PulseOut1(true);
-					}
-					else // note on with velocity 0 = note off
-					{
-						LedOff(1);
-						PulseOut1(false);
-					}
-					break;
+					// Read and process MIDI message
+					MIDIMessage m(bufPtr);
+					HandleMIDIMessage(m);
 					
-				case MIDIMessage::NoteOff:
-					LedOff(1);
-					PulseOut1(false);
-					break;
-					
-				case MIDIMessage::CC:
-					// Mod wheel -> CV out 2
-					if (m.cc == 1)
+					// Move pointer to next midi message in buffer, if there is one
+					// by scanning until we see a MIDI command byte (most significant bit set)
+					do 
 					{
-						CVOut2(m.value << 4);
-						LedBrightness(3, m.value << 4);
-					}
-					break;
-					
-				default:
-					break;
+						bufPtr++;
+						bytesToProcess--;
+					} while (bytesToProcess > 0 && (!(*bufPtr & 0x80)));			
 				}
 			}
 
+			////////////////////////////////////////
+			// Sending MIDI
+			
 			// Read main knob, and if value has changed, send 
 			// MIDI CC 1 (Mod wheel) on channel 1 with knob position
+			// (In a real application, would want to add some hysteresis to eliminate jitter)
 			uint8_t ccOut = KnobVal(Knob::Main) >> 5;
-			if (ccOut != lastCCOut)
+			if (ccOut != lastCCOut) // if value that would be sent has changed since last time,
 			{
-				uint8_t ccmesg[3] = {0xB0, 0x01, ccOut};
-				tud_midi_stream_write(0, ccmesg, 3);
+				uint8_t ccmesg[3] = {0xB0, 0x01, ccOut}; // construct...
+				tud_midi_stream_write(0, ccmesg, 3); // ...and send MIDI message
 				lastCCOut = ccOut;
 			}
 		}
 	}
 
 	
-	// 48kHz audio processing function
+	// 48kHz audio processing function; runs on audio core
 	virtual void ProcessSample()
 	{
 		// No audio I/O, so just flash an LED
@@ -156,7 +216,16 @@ public:
 		static int32_t frame=0;
 		LedOn(5,(frame>>13)&1);
 		frame++;
+
+
+		// Set CV out 2 and LED 3 according to value received from MIDI
+		CVOut2(receivedCC1 << 4);
+		LedBrightness(3, receivedCC1 << 4);
 	}
+
+private:
+	// Variable to communicate between the MIDI and audio cores
+	volatile uint32_t receivedCC1;
 };
 
 
