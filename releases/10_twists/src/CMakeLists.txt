@@ -48,7 +48,6 @@ add_executable(${PROJECT_NAME}
     braids/drivers/dac.cc
     braids/drivers/display.cc
     braids/drivers/switch.cc
-    braids/drivers/cv_out.cc
     stmlib/utils/random.cc
 )
 

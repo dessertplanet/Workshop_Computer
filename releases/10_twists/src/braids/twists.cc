@@ -1,3 +1,5 @@
+//#pragma GCC optimize ("O0")
+
 // Copyright 2012 Emilie Gillet.
 //
 // Author: Emilie Gillet (emilie.o.gillet@gmail.com)
@@ -26,6 +28,7 @@
 
 #include <algorithm>
 #include <queue>
+#include <cmath>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "hardware/adc.h"
@@ -46,6 +49,8 @@
 #include "braids/quantizer_scales.h"
 #include "braids/resources.h"
 #include "braids/midi_message.h"
+
+ #include "braids/drivers/calibration.h"
 
 #define PIN_PULSE1_IN       2
 #define PIN_PULSE1_OUT      8
@@ -71,6 +76,7 @@ VcoJitterSource jitter_source;
 Ui ui;
 UsbWorker usbWorker;
 CvOut cvOut;
+Calibration calibration;
 
 uint8_t current_scale = 0xff;
 size_t current_sample;
@@ -97,6 +103,9 @@ volatile uint16_t knobs[4] = {0,0,0,0}; // 0-4095
 volatile uint16_t cv[2] = {0,0}; // -2047 - 2048
 volatile uint16_t audio_in[2] = {2048, 2048};
 
+double slope = -0.002994170157;
+double intercept = 6.14013328;
+
 void timer_callback() {
   // Now, get ADC data from this cycle
 	// Should return immediately since this IRQ handler called only when ADC FIFO has data
@@ -116,7 +125,7 @@ void timer_callback() {
 
 	// (untested) best attempt at correction of DNL errors in ADC
 	uint16_t adc512 = adc + 512;
-	if (!(adc512 % 0x01FF)) adc += 4;
+	if (!(adc512 & 0x01FF)) adc += 4;
 	adc -= (adc512>>10) << 3;
 
   switch(adc_get_selected_input()) 
@@ -263,7 +272,7 @@ void Init() {
 	irq_set_enabled(ADC_IRQ_FIFO, true);
 	adc_run(true);
 
-  cvOut.Init();
+  calibration.init();
 }
 
 const uint16_t bit_reduction_masks[] = {
@@ -327,13 +336,12 @@ void RenderBlock() {
   // x = (12v * 12st * 128)
   // cv_pitch = ((4095 - cv[0]) * x) - (x / 2)
   // an alternative close approximation would be (((4095 - cv[0]) / 2) * 9) - 9216
-  int32_t cv_pitch = cv_in_lookup[cv[0]];
 
   // CV Pot = 0 - 4095 = -4v +4v
   int32_t pot_pitch = (knobs[0] * 3) - 6144;
 
   // if we're using midi, react to the latest message
-  int32_t pitch = cv_pitch + 7680;
+  int32_t pitch = (int32_t)(((slope * cv[0] + intercept) * 12.0 + 60.0) * 128.0);
   if(midi_active) {
     pitch += ((midi_note - 60) * 128);
     if(pot_pitch < -1000) {
@@ -414,23 +422,94 @@ void RenderBlock() {
   render_block = (render_block + 1) % kNumBlocks;
 }
 
+bool do_calibration() {
+  UIMode mode = ui.GetMode();
+  if(mode == UIMode::CALIBRATION1 || mode == UIMode::CALIBRATION2) {
+
+    if(mode == UIMode::CALIBRATION2) {
+      double sumX = 0;
+      double sumY = 0;
+      double sumX2 = 0;
+      double sumY2 = 0;
+      double sumProduct = 0;
+
+      int numPoints = 0;
+      float data[11000][2];
+      for(float f = -5.0f; f < 5.1f; f += 0.01f) {
+        cvOut.Set(0, calibration.voltageToCalibratedOut(0, f));
+        sleep_ms(10);
+        for(int i=0; i<10; i++) {
+          if(!(cv[0] > (512 - 16) && cv[0] < (512 + 16))
+              && !(cv[0] > (1536 - 16) && cv[0] < (1536 + 16))
+              && !(cv[0] > (2560 - 16) && cv[0] < (2560 + 16))
+              && !(cv[0] > (3584 - 16) && cv[0] < (3584 + 16))
+            ) {
+            data[numPoints][0] = (float)cv[0];
+            data[numPoints][1] = f;
+
+            sumX += data[numPoints][0];
+            sumY += data[numPoints][1];
+            sumX2 += data[numPoints][0] * data[numPoints][0];
+            sumY2 += data[numPoints][1] * data[numPoints][1];
+            sumProduct += data[numPoints][0] * data[numPoints][1];
+            numPoints++;
+          }
+        }
+
+      }
+      cvOut.Set(0, calibration.voltageToCalibratedOut(0, 0.0f));
+
+      double a = numPoints * sumProduct - sumX * sumY;
+      double b = numPoints * sumX2 - (sumX * sumX);
+      double c = numPoints * sumY2 - (sumY * sumY);
+      double correlationCoefficient = a / sqrt(b * c);
+
+      double meanX = sumX / numPoints;
+      double meanY = sumY / numPoints;
+
+      double sumDevX2 = 0;
+      double sumDevY2 = 0;
+      for(int i = 0; i < numPoints; i++) {
+        sumDevX2 += (data[i][0] - meanX) * (data[i][0] - meanX) ;
+        sumDevY2  += (data[i][1] - meanY) * (data[i][1] - meanY) ;
+      }
+
+      double stdDevX = sqrt(sumDevX2 / (numPoints - 1));
+      double stdDevY = sqrt(sumDevY2 / (numPoints - 1));
+      slope = correlationCoefficient * (stdDevY  / stdDevX);
+      intercept = meanY - slope * meanX;
+
+      // done
+      ui.SetMode(UIMode::PLAY);
+    }
+    return true;
+  } 
+  
+  return false;
+}
+
 uint32_t last = 0;
-int main(void) {
+int main() {
   stdio_init_all();
   Init();
+
   while (1) {
     if (current_scale != settings.GetValue(SETTING_QUANTIZER_SCALE)) {
       current_scale = settings.GetValue(SETTING_QUANTIZER_SCALE);
       quantizer.Configure(scales[current_scale]);
     }
-    
-    while (render_block != playback_block) {
-      RenderBlock();
+
+    if(!do_calibration()) {
+      while (render_block != playback_block) {
+        RenderBlock();
+      }
     }
+    
     uint32_t now = to_ms_since_boot(get_absolute_time());
     if(now != last) {
       last = now;
-      ui.Poll(knobs[3]);
+      ui.Poll(now, knobs[3]);
     }
   }
+
 }
