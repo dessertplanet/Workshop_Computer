@@ -1,7 +1,7 @@
 /*
 ComputerCard  - by Chris Johnson
 
-version 0.2.6  -  2025/07/31
+version 0.2.7   -  2025/03/08
 
 ComputerCard is a header-only C++ library, providing a class that
 manages the hardware aspects of the Music Thing Modular Workshop
@@ -153,20 +153,46 @@ protected:
 	/// Set CV 1 output from calibrated MIDI note number (values 0 to 127)
 	void __not_in_flash_func(CVOutMIDINote)(int i, uint8_t noteNum)
 	{
-		cvValue[i] = MIDIToDac(noteNum, i);
+		cvValue[i] = MIDIToDAC(noteNum, i);
 	}
 	
 	/// Set CV 1 output from calibrated MIDI note number (values 0 to 127)
 	void __not_in_flash_func(CVOut1MIDINote)(uint8_t noteNum)
 	{
-		cvValue[0] = MIDIToDac(noteNum, 0);
+		cvValue[0] = MIDIToDAC(noteNum, 0);
 	}
 	
 	/// Set CV 2 output from calibrated MIDI note number (values 0 to 127)
 	void __not_in_flash_func(CVOut2MIDINote)(uint8_t noteNum)
 	{
-		cvValue[1] = MIDIToDac(noteNum, 1);
+		cvValue[1] = MIDIToDAC(noteNum, 1);
 	}
+
+	
+	/// Set CV 1 output from calibrated MIDI note number (values 0 to 127)
+	bool __not_in_flash_func(CVOutMillivolts)(int i, int32_t millivolts)
+	{
+		bool limited = false;
+		cvValue[i] = MillivoltsToDAC(millivolts, i, limited);
+		return limited;
+	}
+	
+	/// Set CV 1 output from calibrated MIDI note number (values 0 to 127)
+	bool __not_in_flash_func(CVOut1Millivolts)(int32_t millivolts)
+	{
+		bool limited = false;
+		cvValue[0] = MillivoltsToDAC(millivolts, 0, limited);
+		return limited;
+	}
+	
+	/// Set CV 2 output from calibrated MIDI note number (values 0 to 127)
+	bool __not_in_flash_func(CVOut2Millivolts)(int32_t millivolts)
+	{
+		bool limited = false;
+		cvValue[1] = MillivoltsToDAC(millivolts, 1, limited);
+		return limited;
+	}
+
 	
 	/// Set Pulse output (true = on)
 	void __not_in_flash_func(PulseOut)(int i, bool val)
@@ -266,10 +292,24 @@ protected:
 	}
 
 	/// Return hardware version
-	HardwareVersion_t HardwareVersion() {return hw;}
+	HardwareVersion_t HardwareVersion() const
+	{
+		return hw;
+	}
 
 	/// Return ID number unique to flash card
-	uint64_t UniqueCardID()	{return uniqueID;}	
+	uint64_t UniqueCardID()	const
+	{
+		return uniqueID;
+	}	
+
+	/// Return true iff CV outputs are calibrated.
+	/// Returns false if using default calibration values.
+	bool CVOutsCalibrated() const
+	{
+		return cvOutsCalibrated;
+	}
+
 	
 	void Abort();
 
@@ -304,7 +344,8 @@ private:
 	int ReadIntFromEEPROM(unsigned int eeAddress);
 	void CalcCalCoeffs(int channel);
 	int ReadEEPROM();
-	uint32_t MIDIToDac(int midiNote, int channel);
+	uint32_t MIDIToDAC(int midiNote, int channel);
+	uint32_t MillivoltsToDAC(int millivolts, int channel, bool &limited);
 	
 	HardwareVersion_t hw;
 	HardwareVersion_t ProbeHardwareVersion();
@@ -327,6 +368,7 @@ private:
 	
 	volatile uint8_t runADCMode;
 
+	bool cvOutsCalibrated;
 
 // Buffers that DMA reads into / out of
 	uint16_t ADC_Buffer[2][8];
@@ -347,6 +389,9 @@ private:
 	}
 	uint32_t next_norm_probe();
 
+	
+    void CorrectADCDNL(uint16_t &value) const;
+	
 	void BufferFull();
 
 	void AudioWorker();
@@ -552,7 +597,13 @@ void ComputerCard::Abort()
 	runADCMode = RUN_ADC_MODE_REQUEST_ADC_STOP;
 }
 
-	  
+void __not_in_flash_func(ComputerCard::CorrectADCDNL)(uint16_t &value) const
+{
+	uint16_t adc512 = value + 512;
+	value += ((value & 0x3FF) == 0x1FF) << 2;
+	value += (adc512 >> 10) << 3;
+	value = uint32_t(value * 520349) >> 19; // Multiply by factor that maps 0-4095 input into 0-4095 output
+}
 
 // Per-audio-sample ISR, called when two sets of ADC samples have been collected from all four inputs
 void __not_in_flash_func(ComputerCard::BufferFull)()
@@ -587,12 +638,14 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	// Set CV inputs, with ~240Hz LPF on CV input
 	int cvi = mux_state % 2;
 
-	// Attempted compensation of ADC DNL errors. Not really tested.
-	uint16_t adc512=ADC_Buffer[cpuPhase][3]+512;
-	if (!(adc512 % 0x01FF)) ADC_Buffer[cpuPhase][3] += 4;
-	ADC_Buffer[cpuPhase][3] += (adc512>>10) << 3;
+	// Compensation of ADC DNL errors.
+	CorrectADCDNL(ADC_Buffer[cpuPhase][7]); // CV inputs
+	CorrectADCDNL(ADC_Buffer[cpuPhase][0]); // Audio inputs
+	CorrectADCDNL(ADC_Buffer[cpuPhase][4]);
+	CorrectADCDNL(ADC_Buffer[cpuPhase][1]);
+	CorrectADCDNL(ADC_Buffer[cpuPhase][5]);
 	
-	cvsm[cvi] = (15 * (cvsm[cvi]) + 16 * ADC_Buffer[cpuPhase][3]) >> 4;
+	cvsm[cvi] = (15 * (cvsm[cvi]) + 16 * ADC_Buffer[cpuPhase][7]) >> 4;
 	cv[cvi] = 2048 - (cvsm[cvi] >> 4);
 
 
@@ -639,7 +692,7 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 		// CV sampled at 24kHz comes in over two successive samples
 		if (norm_probe_count == 14 || norm_probe_count == 15)
 		{
-			plug_state[2+cvi] = (plug_state[2+cvi]<<1)+(ADC_Buffer[cpuPhase][3]<1800);
+			plug_state[2+cvi] = (plug_state[2+cvi]<<1)+(ADC_Buffer[cpuPhase][7]<1800);
 		}
 
 		// Audio and pulse measured every sample at 48kHz
@@ -894,8 +947,8 @@ ComputerCard::ComputerCard()
 	hw = ProbeHardwareVersion();
 	
 	// Read EEPROM calibration values
-	ReadEEPROM();
-
+	cvOutsCalibrated = (ReadEEPROM() == 0);
+	
 	// Read unique card ID
 	flash_get_unique_id((uint8_t *) &uniqueID);
 	// Do some mixing up of the bits using full-cycle 64-bit LCG
@@ -1051,11 +1104,32 @@ void ComputerCard::CalcCalCoeffs(int channel)
 }
 
 
-uint32_t ComputerCard::MIDIToDac(int midiNote, int channel)
+uint32_t ComputerCard::MIDIToDAC(int midiNote, int channel)
 {
 	int32_t dacValue = ((calCoeffs[channel].mi * (midiNote - 60)) >> 4) + calCoeffs[channel].bi;
 	if (dacValue > 524287) dacValue = 524287;
 	if (dacValue < 0) dacValue = 0;
+	return dacValue;
+}
+
+/// Converts voltage in millivolts to corresponding 19-bit sigma-delta PWM DAC value
+/// Returns true if requested voltage is outside of full range of DAC values
+/// millivolts should be in range -6000 to 6000.
+/// Accuracy is dependent, of course, on the calibration coefficients
+uint32_t ComputerCard::MillivoltsToDAC(int millivolts, int channel, bool &limited)
+{
+	limited = false;
+	int32_t dacValue = ((((calCoeffs[channel].mi * millivolts) >> 9) * 1573) >> 12) + calCoeffs[channel].bi;
+	if (dacValue > 524287)
+	{
+		dacValue = 524287;
+		limited = true;
+	}
+	if (dacValue < 0)
+	{
+		dacValue = 0;
+		limited = true;
+	}
 	return dacValue;
 }
 
