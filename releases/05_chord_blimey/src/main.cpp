@@ -4,7 +4,7 @@
     Tom Waters / Random Works Modular 2024
 
     Send a trigger into Pulse In 1 and get an arpeggio from CV Out & Pulse Out 1
-    
+
     Pulse Out 2 fires when the last note has finished
     It also fires at startup so you can patch it to Pulse In 1 for looping arpeggios
 
@@ -29,28 +29,38 @@
 #include "computer.h"
 #include "ui.h"
 
+// --- Arp helpers ---
+static inline int chord_size(const int *row)
+{
+    int n = 0;
+    while (row[n] != -1)
+        n++;
+    return n;
+}
+
 #define TRIGGER_LENGTH 10
 
 Computer computer;
 UI ui;
 
 int chords[12][7] = {
-    {0, 4, 7, -1},              // M
-    {0, 4, 7, 11, -1},          // M7
-    {0, 4, 7, 11, 14, -1},      // M9
-    {0, 4, 7, 11, 14, 17, -1},  // M11
-    {0, 5, 7, -1},              // SUS4
-    {0, 4, 8, -1},              // AUG
-    {0, 3, 6, -1},              // DIM
-    {0, 4, 7, 10, -1},          // DOM7
-    {0, 3, 7, 10, 14, 17, -1},  // m11
-    {0, 3, 7, 10, 14, -1},      // m9
-    {0, 3, 7, 10, -1},          // m7
-    {0, 3, 7, -1}               // m
+    {0, 4, 7, -1},             // M
+    {0, 4, 7, 11, -1},         // M7
+    {0, 4, 7, 11, 14, -1},     // M9
+    {0, 4, 7, 11, 14, 17, -1}, // M11
+    {0, 5, 7, -1},             // SUS4
+    {0, 4, 8, -1},             // AUG
+    {0, 3, 6, -1},             // DIM
+    {0, 4, 7, 10, -1},         // DOM7
+    {0, 3, 7, 10, 14, 17, -1}, // m11
+    {0, 3, 7, 10, 14, -1},     // m9
+    {0, 3, 7, 10, -1},         // m7
+    {0, 3, 7, -1}              // m
 };
 
 bool pulse_in_got[2] = {false, false};
-void pulsein_callback(uint gpio, uint32_t events) {
+void pulsein_callback(uint gpio, uint32_t events)
+{
     pulse_in_got[gpio - PIN_PULSE1_IN] = true;
 }
 
@@ -63,7 +73,8 @@ uint32_t last_note_time = 0;
 int arp_count = 0;
 int arp_length = -1;
 
-int main() {
+int main()
+{
     stdio_init_all();
     computer.init();
     computer.calibrateIfSwitchDown();
@@ -74,61 +85,86 @@ int main() {
     // output trigger on pulse 2 to start looping if patched
     computer.setTimedPulse(2, TRIGGER_LENGTH);
 
-    while (true) {
+    while (true)
+    {
         uint32_t now = to_ms_since_boot(get_absolute_time());
         computer.poll();
         ui.checkSwitch();
         arp_length = ui.getArpLength();
 
+        // If mode changed, restart the cycle immediately in the new direction
+        if (ui.consumeModeChanged())
+        {
+            if (chord_play)
+            {
+                arp_count = 0;      // restart from beginning of pattern
+                last_note_time = 0; // play immediately on next tick
+            }
+        }
+
         // if we get a pulse start a new arp
-        if(pulse_in_got[0]) {
+        if (pulse_in_got[0])
+        {
             pulse_in_got[0] = false;
             chord_note = 0;
             arp_count = 0;
 
             ui.spinRandomOuts();
-            
+
             chord = ui.getChord();
             chord_play = true;
-            last_note_time == 0;
+            last_note_time = 0; // reset so we play immediately
         }
 
         // if time for a new note
         uint note_length = ui.getNoteLengthMS();
-        if(chord_play && (now - last_note_time >= note_length || last_note_time == 0)) {
+        if (chord_play && (now - last_note_time >= note_length || last_note_time == 0))
+        {
+            // Determine chord size and the total length of this arpeggio cycle
+            int csize = chord_size(chords[chord]);                    // notes in this chord
+            int total_steps = (arp_length >= 0) ? arp_length : csize; // notes to emit this cycle
 
-            if(chords[chord][chord_note] == -1 || (arp_length >= 0 && arp_count >= arp_length)) {
-                // next pulse after last note -> output pulse 2
+            // End-of-arp condition
+            if (csize <= 0 || arp_count >= total_steps)
+            {
                 computer.setTimedPulse(2, TRIGGER_LENGTH);
                 chord_play = false;
                 continue;
             }
-            else
+
+            // set next note time and update UI
+            last_note_time = now;
+            ui.update();
+
+            // step number within the full cycle according to current mode
+            int s = (ui.getArpMode() == ARP_UP) ? arp_count : (total_steps - 1 - arp_count);
+
+            // derive pitch from step number: base degree and octave shift
+            int base_idx = (csize > 0) ? (s % csize) : 0;
+            int octave_shift = (csize > 0) ? (s / csize) : 0; // 0 for first pass, 1 for second, etc.
+            chord_note = base_idx;                            // same degree mapping for UP and DOWN; direction is encoded in s
+
+            float chord_root_volts = ui.getRootVolts();
+            if (octave_shift > 0)
             {
-                // set next note time
-                last_note_time = now;
-                ui.update();
-
-                float chord_root_volts = ui.getRootVolts();
-                if(arp_count > chord_note) {
-                    chord_root_volts += 1.0;
-                }
-                
-                float chord_note_volts = chord_root_volts + ((float)chords[chord][chord_note] * VOLT_SEMITONE);
-                computer.setCVOutVolts(1, chord_note_volts);
-                computer.setCVOutVolts(2, chord_root_volts);
-
-                computer.setTimedPulse(1, TRIGGER_LENGTH);
-                if(ui.last_switch_change == 0 || now - ui.last_switch_change >= 3000) {
-                    computer.setLEDs(1 << chord_note);
-                }
-                chord_note++;
-                arp_count++;
-
-                if(chords[chord][chord_note] == -1 && arp_count < arp_length) {
-                    chord_note = 0;
-                }
+                chord_root_volts += (float)octave_shift; // +1V per full pass
             }
+
+            float chord_note_volts = chord_root_volts + ((float)chords[chord][chord_note] * VOLT_SEMITONE);
+            computer.setCVOutVolts(1, chord_note_volts);
+            computer.setCVOutVolts(2, chord_root_volts);
+
+            computer.setTimedPulse(1, TRIGGER_LENGTH);
+
+            // show step number (wrap across 6 LEDs) only if suppression time passed
+            if ((now - ui.last_switch_change) >= UI::LED_SUPPRESS_MS)
+            {
+                int led_index = (total_steps > 0) ? (s % 6) : 0;
+                computer.setLEDs(1 << led_index);
+            }
+
+            // advance to next step in this cycle
+            arp_count++;
         }
     }
 
