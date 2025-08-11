@@ -121,8 +121,28 @@ int main()
         if (chord_play && (now - last_note_time >= note_length || last_note_time == 0))
         {
             // Determine chord size and the total length of this arpeggio cycle
-            int csize = chord_size(chords[chord]);                    // notes in this chord
-            int total_steps = (arp_length >= 0) ? arp_length : csize; // notes to emit this cycle
+            int csize = chord_size(chords[chord]);                   // notes in this chord
+            int base_steps = (arp_length >= 0) ? arp_length : csize; // base notes to emit this cycle
+
+            // For UPUP and DOWNDOWN modes, double the total steps (each note played twice)
+            ArpMode mode = ui.getArpMode();
+            int total_steps;
+            if (mode == ARP_UPUP || mode == ARP_DOWNDOWN)
+            {
+                total_steps = base_steps * 2;
+            }
+            else if (mode == ARP_UPDOWN_INC)
+            {
+                total_steps = base_steps * 2;
+            }
+            else if (mode == ARP_UPDOWN_EXC)
+            {
+                total_steps = (base_steps <= 1) ? 1 : (base_steps * 2 - 2);
+            }
+            else
+            {
+                total_steps = base_steps; // UP or DOWN
+            }
 
             // End-of-arp condition
             if (csize <= 0 || arp_count >= total_steps)
@@ -137,12 +157,69 @@ int main()
             ui.update();
 
             // step number within the full cycle according to current mode
-            int s = (ui.getArpMode() == ARP_UP) ? arp_count : (total_steps - 1 - arp_count);
+            int s;
+            int t = arp_count; // 0..total_steps-1 within a single cycle
+
+            switch (mode)
+            {
+            case ARP_UP:
+                s = t;
+                break;
+
+            case ARP_DOWN:
+                s = total_steps - 1 - t;
+                break;
+
+            case ARP_UPUP:
+                // 0,0,1,1,2,2 (ascending)
+                s = t / 2;
+                break;
+
+            case ARP_DOWNDOWN:
+                // ...3,3,2,2,1,1,0,0 (descending)
+                s = (base_steps - 1) - (t / 2);
+                break;
+
+            case ARP_UPDOWN_INC:
+                // Up then down, inclusive (peak is played twice)
+                // Sequence length = 2 * base_steps
+                // t: 0..base_steps-1 (up), base_steps..2*base_steps-1 (down incl endpoints)
+                if (t < base_steps)
+                {
+                    s = t;
+                }
+                else
+                {
+                    s = (2 * base_steps - 1) - t;
+                }
+                break;
+
+            case ARP_UPDOWN_EXC:
+                // Up then down, exclusive (no double-count of endpoints)
+                // Sequence length = 2 * base_steps - 2  (unless base_steps <= 1 -> 1)
+                if (total_steps <= 1)
+                {
+                    s = 0;
+                }
+                else if (t < base_steps)
+                {
+                    s = t; // up 0..base_steps-1
+                }
+                else
+                {
+                    s = total_steps - t; // down base_steps-2 .. 1
+                }
+                break;
+
+            default:
+                s = t; // safe fallback
+                break;
+            }
 
             // derive pitch from step number: base degree and octave shift
             int base_idx = (csize > 0) ? (s % csize) : 0;
             int octave_shift = (csize > 0) ? (s / csize) : 0; // 0 for first pass, 1 for second, etc.
-            chord_note = base_idx;                            // same degree mapping for UP and DOWN; direction is encoded in s
+            chord_note = base_idx;                            // same degree mapping for all modes; direction is encoded in s
 
             float chord_root_volts = ui.getRootVolts();
             if (octave_shift > 0)

@@ -61,11 +61,10 @@ void UI::checkSwitch()
 {
     uint32_t now = to_ms_since_boot(get_absolute_time());
 
-    // Suppress LED updates during LED_SUPPRESS_MS after a switch change
-    if ((now - last_switch_change) < LED_SUPPRESS_MS)
+    // Clear LED hold when the time has elapsed
+    if (led_hold_active && (int32_t)(now - led_hold_until) >= 0)
     {
-        // During suppression time, do not update LEDs with normal operation changes
-        // Keep LED pattern set here
+        led_hold_active = false;
     }
 
     // switch
@@ -88,8 +87,11 @@ void UI::checkSwitch()
                 {
                     fix_length = 1;
                 }
-                last_switch_change = now;
-                _computer->setLEDs(0x3f >> (6 - fix_length));
+                if (!led_hold_active)
+                {
+                    last_switch_change = now;
+                    _computer->setLEDs(0x3f >> (6 - fix_length));
+                }
             }
             // reset DOWN press state
             down_pending_short = false;
@@ -109,14 +111,20 @@ void UI::checkSwitch()
         {
             // existing behavior: MID means fixed-length ON
             fix_length_on = true;
-            last_switch_change = now;
-            _computer->setLEDs(0x3f >> (6 - fix_length));
+            if (!led_hold_active)
+            {
+                last_switch_change = now;
+                _computer->setLEDs(0x3f >> (6 - fix_length));
+            }
         }
         else
         { // UP
             // existing behavior: full-length mode (fixed-length OFF)
             fix_length_on = false;
-            last_switch_change = 0;
+            if (!led_hold_active)
+            {
+                last_switch_change = 0;
+            }
         }
 
         prev_switch_state = switch_state;
@@ -128,15 +136,44 @@ void UI::checkSwitch()
     {
         if ((now - down_press_start) >= LONGPRESS_MS)
         {
-            // LONG PRESS: toggle arp direction mode
-            arp_mode = (arp_mode == ARP_UP) ? ARP_DOWN : ARP_UP;
+            // LONG PRESS: cycle through arp direction modes (6 modes)
+            arp_mode = (ArpMode)((arp_mode + 1) % 6);
             mode_changed = true; // notify main to adopt new mode
             down_long_consumed = true;
             down_pending_short = false; // suppress short press action
 
             // Brief LED hint so user sees the change (no pulse here to avoid TRIGGER_LENGTH dep)
-            // leftmost LED = UP, rightmost LED = DOWN
-            _computer->setLEDs(arp_mode == ARP_UP ? 0b0001 : 0b1000);
+            // Different LED patterns for each mode
+            uint8_t led_pattern;
+            switch (arp_mode)
+            {
+            case ARP_UP:
+                led_pattern = 0b000001;
+                break; // rightmost
+            case ARP_DOWN:
+                led_pattern = 0b100000;
+                break; // leftmost
+            case ARP_UPUP:
+                led_pattern = 0b000011;
+                break; // two rightmost
+            case ARP_DOWNDOWN:
+                led_pattern = 0b110000;
+                break; // two leftmost
+            case ARP_UPDOWN_INC:
+                led_pattern = 0b010010;
+                break; // symmetric middle hint
+            case ARP_UPDOWN_EXC:
+                led_pattern = 0b001100;
+                break; // adjacent middle hint
+            default:
+                led_pattern = 0b000001;
+                break;
+            }
+            _computer->setLEDs(led_pattern);
+            // Start LED hold so this hint remains visible; also mark last_switch_change
+            led_hold_active = true;
+            led_hold_until = now + LED_SUPPRESS_MS;
+            last_switch_change = now; // ensures main.cpp suppresses step LEDs during hold
         }
     }
 }

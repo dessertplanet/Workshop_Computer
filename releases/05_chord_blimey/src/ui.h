@@ -7,11 +7,15 @@
 #define VOLT_SEMITONE 0.0833333333333333 // 1 / 12
 #define MUX_BY_VOLT 0.0002442002442      // 1 / 4095
 
-// Arpeggiator direction modes (simple: UP or DOWN)
+// Arpeggiator direction modes
 enum ArpMode
 {
     ARP_UP = 0,
-    ARP_DOWN = 1
+    ARP_DOWN = 1,
+    ARP_UPUP = 2,
+    ARP_DOWNDOWN = 3,
+    ARP_UPDOWN_INC = 4,
+    ARP_UPDOWN_EXC = 5
 };
 
 class UI
@@ -44,6 +48,10 @@ private:
     uint8_t fix_length = 6;
     bool fix_length_on = false;
     ComputerSwitchState prev_switch_state;
+
+    // LED hold after a mode change so the hint stays visible
+    bool led_hold_active = false; // when true, do not overwrite UI LED hint
+    uint32_t led_hold_until = 0;  // ms since boot when hold ends
 
     Computer *_computer;
 
