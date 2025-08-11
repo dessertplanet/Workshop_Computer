@@ -1,5 +1,7 @@
 # 13 Noisebox
 
+<img width="615" height="1653" alt="noisecard" src="https://github.com/user-attachments/assets/c455c2f0-8165-4350-8eac-9da56125c553" />
+
 My first card! A port of 13 Befaco Noise Plethora algorithms (some of which are not 1:1, which might just be part of the charm, so don't expect them to sound exactly the same, it's noise!)
 
 **Main Knob:** Controls which algorithm you are currently selecting.
