@@ -2,6 +2,7 @@
     Chord Blimey!
     A simple arpeggiator for Music Thing Workshop System Computer
     Tom Waters / Random Works Modular 2024
+    Modified by Moses Hoyt 2025
 
     Send a trigger into Pulse In 1 and get an arpeggio from CV Out & Pulse Out 1
 
@@ -12,6 +13,7 @@
     The big Knob controls the speed
     The X Knob controls the root note
     The Y Knob controls the chord
+    The toggle switch controls the number of notes in the chord and the arpeggiator direction
 
     CV 1 In controls the root note (added to X Knob)
     CV 2 In controls the chord 0v - 1v (added to Y Knob)

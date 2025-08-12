@@ -13,3 +13,4 @@ Icon?
 *.dmp
 .fseventsd
 build/
+.vscode/
