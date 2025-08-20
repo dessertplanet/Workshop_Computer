@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
@@ -12,10 +13,40 @@ const RELEASES_DIR = path.join(ROOT, 'releases');
 const OUT_DIR = path.join(ROOT, 'site');
 
 // Resolve repo details (for GitHub raw links)
-const DEFAULT_REPO = 'jr0dsgarage/Workshop_Computer';
-const REPO = process.env.GITHUB_REPOSITORY || DEFAULT_REPO;
+const DEFAULT_REPO = 'TomWhitwell/Workshop_Computer';
 const DEFAULT_BRANCH = 'main';
-const BRANCH = process.env.GITHUB_REF_NAME || DEFAULT_BRANCH;
+
+function detectRepoFromGit() {
+  try {
+    const url = execSync('git config --get remote.origin.url', { cwd: ROOT, encoding: 'utf8' }).trim();
+    // Support ssh and https remotes
+    // Examples:
+    // git@github.com:owner/repo.git
+    // https://github.com/owner/repo.git
+    // ssh://git@github.com/owner/repo.git
+    const m = url.match(/github\.com[:\/]([^\s]+?)(?:\.git)?$/i);
+    if (m && m[1]) {
+      return m[1].replace(/\.git$/i, '');
+    }
+  } catch {}
+  return null;
+}
+
+function detectRefFromGit() {
+  try {
+    const sha = execSync('git rev-parse HEAD', { cwd: ROOT, encoding: 'utf8' }).trim();
+    if (sha) return sha;
+  } catch {}
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: ROOT, encoding: 'utf8' }).trim();
+    if (branch && branch !== 'HEAD') return branch;
+  } catch {}
+  return null;
+}
+
+// On GitHub, prefer GITHUB_REPOSITORY and GITHUB_SHA (falls back to branch name). Locally, fall back to git.
+const REPO = process.env.GITHUB_REPOSITORY || detectRepoFromGit() || DEFAULT_REPO;
+const BRANCH = process.env.GITHUB_SHA || process.env.GITHUB_REF_NAME || detectRefFromGit() || DEFAULT_BRANCH;
 
 function slugify(name) {
   return name
