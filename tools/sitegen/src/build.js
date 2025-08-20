@@ -172,6 +172,24 @@ function sevenSegmentSvg(numStr) {
   return `<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${totalWidth}\" height=\"${H}\" viewBox=\"0 0 ${totalWidth} ${H}\" aria-hidden=\"true\" focusable=\"false\" role=\"img\">${parts.join('')}</svg>`;
 }
 
+// Map freeform status strings to canonical classes used in CSS
+function mapStatusToClass(raw) {
+  const t = String(raw || '').toLowerCase().trim();
+  if (/(released|ready|stable|production)/.test(t)) return 'status-stable';
+  if (/beta/.test(t)) return 'status-beta';
+  if (/alpha/.test(t)) return 'status-alpha';
+  if (/(\brc\b|release candidate)/.test(t)) return 'status-rc';
+  if (/(proof of concept|poc|experimental)/.test(t)) return 'status-experimental';
+  if (/(wip|work in progress|functional.*wip)/.test(t)) return 'status-wip';
+  if (/(working but simple|simple)/.test(t)) return 'status-draft';
+  if (/(mostly complete)/.test(t)) return 'status-rc';
+  if (/(deprecated|obsolete)/.test(t)) return 'status-deprecated';
+  if (/maintenance/.test(t)) return 'status-maintenance';
+  if (/archived/.test(t)) return 'status-archived';
+  if (/(none|n\/a|unknown|^$)/.test(t)) return 'status-unknown';
+  return 'status-unknown';
+}
+
 function renderLayout({ title, content, relativeRoot = '.' }) {
   return `<!doctype html>
 <html lang="en" class="theme-dark" data-theme="dark">
@@ -185,7 +203,7 @@ function renderLayout({ title, content, relativeRoot = '.' }) {
 <body>
   <header class="site-header">
     <div class="container header-bar">
-      <h1 class="site-title"><a href="${relativeRoot}/index.html">Workshop Computer Releases</a></h1>
+      <h1 class="site-title"><a href="${relativeRoot}/index.html">Workshop Computer Program Cards</a></h1>
       <button id="themeToggle" class="theme-toggle" type="button" role="switch" aria-checked="true" aria-label="Toggle color scheme">
         <span class="track"><span class="thumb"></span><span class="icons" aria-hidden="true">☀️<span class="gap"></span>🌙</span></span>
       </button>
@@ -221,11 +239,12 @@ const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6ed
 .card-num svg{height:42px;width:auto;display:block}
 .card-body{padding:16px;display:flex;flex-direction:column;flex:1}
 .card-body .btn{margin-top:12px}
-.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;justify-content:center}
 .meta{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
 .pill{border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);font-size:12px}
 .btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;margin-top:12px}
 .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
+.btn.download{background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff;border:1px solid var(--border)}
 .section{margin:24px 0}
 .section h2{margin:0 0 8px 0}
 .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:color-mix(in srgb, var(--bg), #000 10%);border:1px solid var(--border);border-radius:6px;padding:2px 6px}
@@ -263,13 +282,19 @@ blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;backgro
 
 /* status pill */
 .status-pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:#dde3ea;color:#0b1220}
-.status-pill.status-stable{background:#cdeccd}
-.status-pill.status-beta{background:#ffe4b5}
-.status-pill.status-experimental{background:#f7d6e6}
-.status-pill.status-draft{background:#e6eef7}
-.status-pill.status-deprecated{background:#facdd1}
-.status-pill.status-wip{background:#fff3b0}
-.status-pill.status-unknown{background:#dde3ea}
+/* pastel palette per status */
+.status-pill.status-stable{background:#c8f7c5}        /* pastel green */
+.status-pill.status-beta{background:#ffe6b3}          /* pastel orange */
+.status-pill.status-alpha{background:#ffd1dc}         /* pastel pink */
+.status-pill.status-rc{background:#d8f0ff}            /* pastel cyan */
+.status-pill.status-release-candidate{background:#d8f0ff}
+.status-pill.status-experimental{background:#e3d7ff}  /* pastel lavender */
+.status-pill.status-draft{background:#e6eef7}         /* pastel blue-gray */
+.status-pill.status-wip{background:#fff3b0}           /* pastel yellow */
+.status-pill.status-deprecated{background:#ffd6d6}    /* pastel red */
+.status-pill.status-maintenance{background:#d9f0e6}   /* pastel mint */
+.status-pill.status-archived{background:#e0e0e0}      /* pastel gray */
+.status-pill.status-unknown{background:#dde3ea}       /* default light */
 `;
 
 function makeRawUrl(relPathFromRepoRoot) {
@@ -352,15 +377,14 @@ function releaseCard(rel) {
   const version = info.version || 'unknown';
   const language = info.language || 'unknown';
   const statusRaw = (info.status || 'unknown').toString();
-  const statusClass = `status-${statusRaw.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`;
+  const statusClass = mapStatusToClass(statusRaw);
   const metaItems = [
     `<li><span class=\"label\">Creator</span><span class=\"value\">${creator}</span></li>`,
     `<li><span class=\"label\">Version</span><span class=\"value\">${version}</span></li>`,
     `<li><span class=\"label\">Language</span><span class=\"value\">${language}</span></li>`,
     `<li><span class=\"label\">Status</span><span class=\"value\"><span class=\"status-pill ${statusClass}\">${statusRaw}</span></span></li>`,
   ].join('');
-  const hasDownload = rel.downloads && rel.downloads.length > 0;
-  const mainDownload = hasDownload ? rel.downloads[0] : null;
+  const uf2Download = (rel.downloads || []).find(d => /\.uf2$/i.test(d.name));
   return `<article class="card">
   <div class="card-head">
     <h3 class="card-title">${display.title}</h3>
@@ -369,7 +393,10 @@ function releaseCard(rel) {
   <div class="card-body">
     <p>${desc}</p>
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
-    <a class="btn" href="programs/${slug}/index.html">View Details</a>
+    <div class="actions">
+  <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
+  ${uf2Download ? `<a class="btn download" href="${uf2Download.url}" download>💾 Download</a>` : ''}
+    </div>
   </div>
 </article>`;
 }
