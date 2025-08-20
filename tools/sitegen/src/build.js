@@ -457,7 +457,7 @@ function detailPage(rel) {
     <p>${desc}</p>
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
     <div class="actions">
-      <a class="btn" href="../index.html">Back to All Programs</a>
+  <a class="btn" href="../../index.html">Back to All Programs</a>
       ${uf2Downloads.map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join(' ')}
     </div>
 
