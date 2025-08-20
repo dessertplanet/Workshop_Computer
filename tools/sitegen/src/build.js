@@ -219,7 +219,9 @@ const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6ed
 .card-title{margin:0;font-size:18px}
 .card-num{display:flex;align-items:center}
 .card-num svg{height:42px;width:auto;display:block}
-.card-body{padding:16px}
+.card-body{padding:16px;display:flex;flex-direction:column;flex:1}
+.card-body .btn{margin-top:12px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
 .meta{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
 .pill{border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);font-size:12px}
 .btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;margin-top:12px}
@@ -250,6 +252,24 @@ blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;backgro
 .theme-light .intro-card a{color:#000}
 /* dark mode: all cards use #212830 background */
 .theme-dark .card{background:#212830}
+/* meta list on cards */
+.meta-list{list-style:none;padding:0;margin:8px 0 0}
+.meta-list li{margin:6px 0;display:grid;grid-template-columns:140px 1fr;align-items:baseline;column-gap:12px;border-bottom:1px solid var(--border);padding-bottom:6px}
+.meta-list{margin-top:auto}
+.meta-list .label{color:var(--pcb-start);font-weight:700}
+.meta-list .value{color:var(--text)}
+.theme-dark .meta-list .value{color:#fff}
+.theme-light .meta-list .value{color:#000}
+
+/* status pill */
+.status-pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:#dde3ea;color:#0b1220}
+.status-pill.status-stable{background:#cdeccd}
+.status-pill.status-beta{background:#ffe4b5}
+.status-pill.status-experimental{background:#f7d6e6}
+.status-pill.status-draft{background:#e6eef7}
+.status-pill.status-deprecated{background:#facdd1}
+.status-pill.status-wip{background:#fff3b0}
+.status-pill.status-unknown{background:#dde3ea}
 `;
 
 function makeRawUrl(relPathFromRepoRoot) {
@@ -326,8 +346,21 @@ async function discoverRelease(folderName) {
 
 function releaseCard(rel) {
   const { info, slug, display } = rel;
-  const desc = info.description ? String(info.description) : '';
+  const desc = info.description ? String(info.description) : 'No description available.';
   const num = display.number;
+  const creator = info.creator || 'unknown';
+  const version = info.version || 'unknown';
+  const language = info.language || 'unknown';
+  const statusRaw = (info.status || 'unknown').toString();
+  const statusClass = `status-${statusRaw.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`;
+  const metaItems = [
+    `<li><span class=\"label\">Creator</span><span class=\"value\">${creator}</span></li>`,
+    `<li><span class=\"label\">Version</span><span class=\"value\">${version}</span></li>`,
+    `<li><span class=\"label\">Language</span><span class=\"value\">${language}</span></li>`,
+    `<li><span class=\"label\">Status</span><span class=\"value\"><span class=\"status-pill ${statusClass}\">${statusRaw}</span></span></li>`,
+  ].join('');
+  const hasDownload = rel.downloads && rel.downloads.length > 0;
+  const mainDownload = hasDownload ? rel.downloads[0] : null;
   return `<article class="card">
   <div class="card-head">
     <h3 class="card-title">${display.title}</h3>
@@ -335,12 +368,7 @@ function releaseCard(rel) {
   </div>
   <div class="card-body">
     <p>${desc}</p>
-    <div class="meta">
-      ${info.version ? `<span class="pill">v${info.version}</span>` : ''}
-      ${info.status ? `<span class="pill">${info.status}</span>` : ''}
-      ${info.language ? `<span class="pill">${info.language}</span>` : ''}
-      ${info.creator ? `<span class="pill">by ${info.creator}</span>` : ''}
-    </div>
+    ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
     <a class="btn" href="programs/${slug}/index.html">View Details</a>
   </div>
 </article>`;
