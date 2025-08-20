@@ -464,9 +464,22 @@ function detailPage(rel) {
     <div class="section">
       <h2>README</h2>
       <hr style="margin-top:32px;">
-  <div class="readme">${readmeHtml}</div>
-  
+      <div class="readme">${readmeHtml}</div>
     </div>
+
+    <!-- PDF Preview Section -->
+    ${docs.length ? `
+    <div class="section">
+      <h2>Documentation PDF</h2>
+        <hr style="margin-top:16px; margin-bottom:16px;">
+        <object data="${docs[0].url}" type="application/pdf" width="100%" height="700px">
+          <p>PDF preview not available.</p>
+        </object>
+        <div style="margin-top:16px;text-align:center">
+          <a class="btn download" href="${docs[0].url}" download>Download ${docs[0].name}</a>
+        </div>
+    </div>
+    ` : ''}
   </div>
 </article>
 `
