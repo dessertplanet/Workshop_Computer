@@ -352,9 +352,17 @@ async function discoverRelease(folderName) {
     const files = await fs.readdir(fullDocsDir, { withFileTypes: true });
     for (const f of files) {
       if (f.isFile() && f.name.toLowerCase().endsWith('.pdf')) {
+        // Copy PDF to output directory for local preview
         const relFromRelease = path.join(docsDirName, f.name);
         const relFromRepoRoot = path.join('releases', folderName, relFromRelease);
-        docs.push({ name: f.name, rel: toPosix(relFromRelease), url: makeRawUrl(relFromRepoRoot) });
+        const outPdfDir = path.join(OUT_DIR, 'programs', slug, docsDirName);
+        await ensureDir(outPdfDir);
+        const srcPath = path.join(abs, relFromRelease);
+        const destPath = path.join(outPdfDir, f.name);
+        await fs.copyFile(srcPath, destPath);
+        // Relative path from detail page to PDF
+        const relPathFromDetail = `${docsDirName}/${f.name}`;
+        docs.push({ name: f.name, rel: toPosix(relPathFromDetail), url: toPosix(relPathFromDetail) });
       }
     }
   }
