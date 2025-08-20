@@ -73,17 +73,21 @@ function normalizeInfo(raw, fallbackTitle) {
 
 function renderLayout({ title, content, relativeRoot = '.' }) {
   return `<!doctype html>
-<html lang="en">
+<html lang="en" class="theme-dark" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title ? String(title).replace(/</g, '&lt;') : 'Workshop Computer'}</title>
+  <script>(function(){try{var k='wc-theme';var d=document.documentElement;var prefersDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;var t=localStorage.getItem(k);if(t!=='dark'&&t!=='light'){t=prefersDark?'dark':'light';}d.classList.remove('theme-dark','theme-light');d.classList.add('theme-'+t);d.setAttribute('data-theme',t);}catch(e){}})();</script>
   <link rel="stylesheet" href="${relativeRoot}/assets/style.css" />
 </head>
 <body>
   <header class="site-header">
-    <div class="container">
-      <h1><a href="${relativeRoot}/index.html">Workshop Computer Releases</a></h1>
+    <div class="container header-bar">
+      <h1 class="site-title"><a href="${relativeRoot}/index.html">Workshop Computer Releases</a></h1>
+      <button id="themeToggle" class="theme-toggle" type="button" role="switch" aria-checked="true" aria-label="Toggle color scheme">
+        <span class="track"><span class="thumb"></span><span class="icons" aria-hidden="true">☀️<span class="gap"></span>🌙</span></span>
+      </button>
     </div>
   </header>
   <main class="container">
@@ -94,15 +98,19 @@ function renderLayout({ title, content, relativeRoot = '.' }) {
       <p>Built from this repository's releases folder. Deployed via GitHub Pages.</p>
     </div>
   </footer>
+  <script>(function(){var btn=document.getElementById('themeToggle');if(!btn)return;var k='wc-theme';function cur(){return document.documentElement.getAttribute('data-theme')||'dark';}function set(t){try{localStorage.setItem(k,t);}catch(e){}var d=document.documentElement;d.classList.remove('theme-dark','theme-light');d.classList.add('theme-'+t);d.setAttribute('data-theme',t);update();}function update(){var t=cur();btn.setAttribute('aria-checked',String(t==='dark'));}btn.addEventListener('click',function(){set(cur()==='dark'?'light':'dark');});update();})();</script>
 </body>
 </html>`;
 }
 
-const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6edf3;--accent:#2f81f7;--border:#27313b;--ok:#3fb950}
+const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6edf3;--accent:#2f81f7;--border:#27313b;--ok:#3fb950;--toggle-track:#0e1217;--toggle-thumb:#ffffff}
+.theme-dark{--thumb-x:26px}
+.theme-light{--bg:#f7f8fa;--card:#ffffff;--muted:#5b6875;--text:#0b1220;--accent:#0969da;--border:#d0d7de;--ok:#1a7f37;--toggle-track:#e9eef3;--toggle-thumb:#0b1220;--thumb-x:2px}
 *{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
 .container{max-width:1100px;margin:0 auto;padding:20px}
-.site-header{border-bottom:1px solid var(--border);background:#0e1217}
-.site-header h1{font-size:20px;margin:0}
+.site-header{border-bottom:1px solid var(--border);background:color-mix(in srgb, var(--bg), #000 10%)}
+.header-bar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.site-title{font-size:20px;margin:0}
 .site-header a{color:var(--text);text-decoration:none}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column}
@@ -113,14 +121,22 @@ const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6ed
 .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
 .section{margin:24px 0}
 .section h2{margin:0 0 8px 0}
-.kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:#0a0d12;border:1px solid var(--border);border-radius:6px;padding:2px 6px}
+.kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:color-mix(in srgb, var(--bg), #000 10%);border:1px solid var(--border);border-radius:6px;padding:2px 6px}
 table{width:100%;border-collapse:collapse}
 th,td{border-bottom:1px solid var(--border);padding:8px;text-align:left}
-pre,code{background:#0a0d12;border:1px solid var(--border);border-radius:6px;padding:2px 6px}
-blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;background:#0f1318}
+pre,code{background:color-mix(in srgb, var(--bg), #000 10%);border:1px solid var(--border);border-radius:6px;padding:2px 6px}
+blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;background:color-mix(in srgb, var(--bg), #000 8%)}
 .docs-list li{margin:6px 0}
 .downloads a{display:inline-block;margin-right:10px;margin-bottom:10px}
-.site-footer{border-top:1px solid var(--border);background:#0e1217;margin-top:40px}
+.site-footer{border-top:1px solid var(--border);background:color-mix(in srgb, var(--bg), #000 10%);margin-top:40px}
+
+/* theme toggle */
+.theme-toggle{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer}
+.theme-toggle .track{position:relative;display:inline-flex;align-items:center;gap:6px;width:58px;height:28px;border-radius:999px;background:var(--toggle-track);border:1px solid var(--border);padding:2px}
+.theme-toggle .thumb{position:absolute;top:2px;left:2px;width:24px;height:24px;border-radius:999px;background:var(--toggle-thumb);transition:transform .2s ease}
+.theme-toggle .thumb{transform:translateX(var(--thumb-x,26px))}
+.theme-toggle .icons{font-size:12px;line-height:1;width:100%;display:flex;justify-content:space-between;color:var(--muted)}
+.theme-toggle .gap{width:6px;display:inline-block}
 `;
 
 function makeRawUrl(relPathFromRepoRoot) {
