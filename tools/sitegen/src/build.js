@@ -1,3 +1,12 @@
+// Helper to render meta list for cards and detail pages
+function renderMetaList({ creator, version, language, statusRaw, statusClass }) {
+  return [
+    `<li><span class=\"label\">Creator</span><span class=\"value\">${creator}</span></li>`,
+    `<li><span class=\"label\">Version</span><span class=\"value\">${version}</span></li>`,
+    `<li><span class=\"label\">Language</span><span class=\"value\">${language}</span></li>`,
+    `<li><span class=\"label\">Status</span><span class=\"value\"><span class=\"status-pill ${statusClass}\">${statusRaw}</span></span></li>`,
+  ].join('');
+}
 import { promises as fs } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
@@ -412,12 +421,7 @@ function releaseCard(rel) {
   const language = info.language || 'unknown';
   const statusRaw = (info.status || 'unknown').toString();
   const statusClass = mapStatusToClass(statusRaw);
-  const metaItems = [
-    `<li><span class=\"label\">Creator</span><span class=\"value\">${creator}</span></li>`,
-    `<li><span class=\"label\">Version</span><span class=\"value\">${version}</span></li>`,
-    `<li><span class=\"label\">Language</span><span class=\"value\">${language}</span></li>`,
-    `<li><span class=\"label\">Status</span><span class=\"value\"><span class=\"status-pill ${statusClass}\">${statusRaw}</span></span></li>`,
-  ].join('');
+    const metaItems = renderMetaList({ creator, version, language, statusRaw, statusClass });
   const latestUf2 = rel.latestUf2;
   return `<article class="card">
   <div class="card-head">
@@ -443,12 +447,7 @@ function detailPage(rel) {
   const language = info.language || 'unknown';
   const statusRaw = (info.status || 'unknown').toString();
   const statusClass = mapStatusToClass(statusRaw);
-  const metaItems = [
-    `<li><span class="label">Creator</span><span class="value">${creator}</span></li>`,
-    `<li><span class="label">Version</span><span class="value">${version}</span></li>`,
-    `<li><span class="label">Language</span><span class="value">${language}</span></li>`,
-    `<li><span class="label">Status</span><span class="value"><span class="status-pill ${statusClass}">${statusRaw}</span></span></li>`,
-  ].join('');
+    const metaItems = renderMetaList({ creator, version, language, statusRaw, statusClass });
   const num = display.number;
   const uf2Downloads = (downloads || []).filter(d => /\.uf2$/i.test(d.name));
 
@@ -465,7 +464,7 @@ function detailPage(rel) {
     <p>${desc}</p>
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
     <div class="actions">
-  <a class="btn" href="../../index.html">Back to All Programs</a>
+  <a class="btn" href="../../index.html">⬅️ Back to All Programs</a>
       ${uf2Downloads.map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join(' ')}
     </div>
 
@@ -488,6 +487,10 @@ function detailPage(rel) {
         </div>
     </div>
     ` : ''}
+  </div>
+  <div class="actions" style="margin-top:16px; margin-bottom:24px; text-align:center;">
+  <a class="btn" href="../../index.html">⬅️ Back to All Programs</a>
+    ${uf2Downloads.map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join(' ')}
   </div>
 </article>
 `
