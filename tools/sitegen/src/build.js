@@ -71,6 +71,76 @@ function normalizeInfo(raw, fallbackTitle) {
   };
 }
 
+// Build friendly display title and number from folder name when info.title is missing
+function parseDisplayFromFolder(folderName) {
+  let number = '';
+  let base = folderName;
+  const m = folderName.match(/^(\d+)[-_\s]+(.+)$/);
+  if (m) {
+    number = m[1];
+    base = m[2];
+  }
+  // Replace separators with spaces
+  base = base.replace(/[_-]+/g, ' ').trim();
+  // Title-case words (simple heuristic)
+  base = base.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  return { number, title: base };
+}
+
+function sevenSegmentSvg(numStr) {
+  const DIGIT_MAP = {
+    '0': ['a','b','c','d','e','f'],
+    '1': ['b','c'],
+    '2': ['a','b','g','e','d'],
+    '3': ['a','b','g','c','d'],
+    '4': ['f','g','b','c'],
+    '5': ['a','f','g','c','d'],
+    '6': ['a','f','g','c','d','e'],
+    '7': ['a','b','c'],
+    '8': ['a','b','c','d','e','f','g'],
+    '9': ['a','b','c','d','f','g']
+  };
+  const digits = String(numStr || '').replace(/[^0-9]/g, '') || '0';
+  // Scaled by 1.5x, with thinner segments and slightly longer verticals
+  const W = 42, H = 72, T = 7, PAD = 3, GAP = 6, DIGIT_GAP = 9;
+  const half = H / 2;
+  const vertLenTop = half - T - (PAD + GAP);
+  const vertLenBot = vertLenTop;
+  function segRects(xOffset, onSet) {
+    const rx = 3, ry = 3;
+    const rects = [];
+    // a
+    rects.push({ id:'a', x: xOffset + 7.5, y: PAD, w: W - 15, h: T });
+    // d
+    rects.push({ id:'d', x: xOffset + 7.5, y: H - T - PAD, w: W - 15, h: T });
+    // g
+    rects.push({ id:'g', x: xOffset + 7.5, y: half - T/2, w: W - 15, h: T });
+    // f (upper-left)
+    rects.push({ id:'f', x: xOffset + PAD, y: PAD + T + (GAP - T/2), w: T, h: vertLenTop });
+    // e (lower-left)
+    rects.push({ id:'e', x: xOffset + PAD, y: half + GAP, w: T, h: vertLenBot });
+    // b (upper-right)
+    rects.push({ id:'b', x: xOffset + W - T - PAD, y: PAD + T + (GAP - T/2), w: T, h: vertLenTop });
+    // c (lower-right)
+    rects.push({ id:'c', x: xOffset + W - T - PAD, y: half + GAP, w: T, h: vertLenBot });
+    return rects.map(r => {
+      const on = onSet.has(r.id);
+      const fill = '#93820c';
+      const opacity = on ? '1' : '0.3';
+      return `<rect class=\"seg ${on ? 'on' : 'off'} ${r.id}\" x=\"${r.x}\" y=\"${r.y}\" width=\"${r.w}\" height=\"${r.h}\" rx=\"${rx}\" ry=\"${ry}\" fill=\"${fill}\" fill-opacity=\"${opacity}\"/>`;
+    }).join('');
+  }
+  const totalWidth = digits.length * W + (digits.length - 1) * DIGIT_GAP;
+  let x = 0;
+  const parts = [];
+  for (const ch of digits) {
+    const onSet = new Set(DIGIT_MAP[ch] || []);
+    parts.push(segRects(x, onSet));
+    x += W + DIGIT_GAP;
+  }
+  return `<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${totalWidth}\" height=\"${H}\" viewBox=\"0 0 ${totalWidth} ${H}\" aria-hidden=\"true\" focusable=\"false\" role=\"img\">${parts.join('')}</svg>`;
+}
+
 function renderLayout({ title, content, relativeRoot = '.' }) {
   return `<!doctype html>
 <html lang="en" class="theme-dark" data-theme="dark">
@@ -103,18 +173,22 @@ function renderLayout({ title, content, relativeRoot = '.' }) {
 </html>`;
 }
 
-const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6edf3;--accent:#2f81f7;--border:#27313b;--ok:#3fb950;--toggle-track:#0e1217;--toggle-thumb:#ffffff}
+const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6edf3;--accent:#2f81f7;--border:#27313b;--ok:#3fb950;--toggle-track:#0e1217;--toggle-thumb:#ffffff;--pcb-start:#2d7c30;--pcb-end:#195f20}
 .theme-dark{--thumb-x:26px}
 .theme-light{--bg:#f7f8fa;--card:#ffffff;--muted:#5b6875;--text:#0b1220;--accent:#0969da;--border:#d0d7de;--ok:#1a7f37;--toggle-track:#e9eef3;--toggle-thumb:#0b1220;--thumb-x:2px}
 *{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
 .container{max-width:1100px;margin:0 auto;padding:20px}
-.site-header{border-bottom:1px solid var(--border);background:color-mix(in srgb, var(--bg), #000 10%)}
+.site-header{border-bottom:1px solid var(--border);background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff}
 .header-bar{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .site-title{font-size:20px;margin:0}
-.site-header a{color:var(--text);text-decoration:none}
+.site-header a{color:#fff;text-decoration:none}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column}
-.card h3{margin:0 0 8px 0;font-size:18px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff}
+.card-title{margin:0;font-size:18px}
+.card-num{display:flex;align-items:center}
+.card-num svg{height:42px;width:auto;display:block}
+.card-body{padding:16px}
 .meta{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
 .pill{border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);font-size:12px}
 .btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;margin-top:12px}
@@ -137,6 +211,14 @@ blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;backgro
 .theme-toggle .thumb{transform:translateX(var(--thumb-x,26px))}
 .theme-toggle .icons{font-size:12px;line-height:1;width:100%;display:flex;justify-content:space-between;color:var(--muted)}
 .theme-toggle .gap{width:6px;display:inline-block}
+/* intro card */
+.intro-card{background:#212830;color:#fff;margin-bottom:16px;margin-top:-20px;border-top-left-radius:0;border-top-right-radius:0;border-top:0}
+.intro-card a{color:#fff}
+/* light mode intro card background */
+.theme-light .intro-card{background:#cfd6dd;color:#000;border-top-left-radius:0;border-top-right-radius:0;border-top:0}
+.theme-light .intro-card a{color:#000}
+/* dark mode: all cards use #212830 background */
+.theme-dark .card{background:#212830}
 `;
 
 function makeRawUrl(relPathFromRepoRoot) {
@@ -203,22 +285,33 @@ async function discoverRelease(folderName) {
   }
   await collectDownloads(abs);
 
-  return { slug, folderName, abs, info, readmeHtml, docs, downloads };
+  // Display fields
+  const display = info.title && info.title !== folderName
+    ? { title: info.title, number: (folderName.match(/^(\d+)/)?.[1] || '') }
+    : parseDisplayFromFolder(folderName);
+
+  return { slug, folderName, abs, info, readmeHtml, docs, downloads, display };
 }
 
 function releaseCard(rel) {
-  const { info, slug } = rel;
+  const { info, slug, display } = rel;
   const desc = info.description ? String(info.description) : '';
+  const num = display.number;
   return `<article class="card">
-  <h3>${info.title}</h3>
-  <p>${desc}</p>
-  <div class="meta">
-    ${info.version ? `<span class="pill">v${info.version}</span>` : ''}
-    ${info.status ? `<span class="pill">${info.status}</span>` : ''}
-    ${info.language ? `<span class="pill">${info.language}</span>` : ''}
-    ${info.creator ? `<span class="pill">by ${info.creator}</span>` : ''}
+  <div class="card-head">
+    <h3 class="card-title">${display.title}</h3>
+    ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
   </div>
-  <a class="btn" href="programs/${slug}/index.html">View Details</a>
+  <div class="card-body">
+    <p>${desc}</p>
+    <div class="meta">
+      ${info.version ? `<span class="pill">v${info.version}</span>` : ''}
+      ${info.status ? `<span class="pill">${info.status}</span>` : ''}
+      ${info.language ? `<span class="pill">${info.language}</span>` : ''}
+      ${info.creator ? `<span class="pill">by ${info.creator}</span>` : ''}
+    </div>
+    <a class="btn" href="programs/${slug}/index.html">View Details</a>
+  </div>
 </article>`;
 }
 
@@ -298,9 +391,11 @@ async function build() {
     title: 'Workshop Computer Releases',
     relativeRoot: '.',
     content: `
-<div class="section">
-  <p>Auto-generated listing of programs found in the <span class="kbd">/releases</span> folder.</p>
-</div>
+<article class="card intro-card">
+  <div class="card-body">
+    <p>The Workshop Computer is part of the <a href="https://www.musicthing.co.uk/workshopsystem/">Music Thing Workshop System</a>.  This site provides access to all the available program cards, their documentation, and downloadable firmware files (.uf2)</p>
+  </div>
+</article>
 <div class="grid">${cards}</div>`
   });
   await writeFileEnsured(path.join(OUT_DIR, 'index.html'), indexHtml);
