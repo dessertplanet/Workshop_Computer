@@ -240,6 +240,13 @@ const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6ed
 .card-body{padding:16px;display:flex;flex-direction:column;flex:1}
 .card-body .btn{margin-top:12px}
 .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;justify-content:center}
+/* large card for detail pages */
+.card.large{width:100%;margin:40px 0;font-size:20px}
+.card.large .card-title{font-size:28px}
+.card.large .card-num svg{height:64px}
+.card.large .card-body{padding:28px}
+.card.large .meta-list li{font-size:18px}
+.card.large .actions .btn{font-size:18px;padding:14px 20px}
 .meta{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
 .pill{border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);font-size:12px}
 .btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;margin-top:12px}
@@ -265,6 +272,14 @@ blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;backgro
 .theme-toggle .gap{width:6px;display:inline-block}
 /* intro card */
 .intro-card{background:#212830;color:#fff;margin-bottom:16px;margin-top:-20px;border-top-left-radius:0;border-top-right-radius:0;border-top:0}
+/* Make all links in dark mode a readable blue */
+.theme-dark a{color:#4ea1ff}
+.theme-dark .site-title a,
+.theme-dark .btn,
+.theme-dark .btn.details,
+.theme-dark .btn.download {
+  color: #fff !important;
+}
 .intro-card a{color:#fff}
 /* light mode intro card background */
 .theme-light .intro-card{background:#cfd6dd;color:#000;border-top-left-radius:0;border-top-right-radius:0;border-top:0}
@@ -346,6 +361,7 @@ async function discoverRelease(folderName) {
 
   // Downloads (UF2, zip, bin, hex)
   const downloads = [];
+  let latestUf2 = null;
   async function collectDownloads(dir) {
     const ents = await fs.readdir(dir, { withFileTypes: true });
     for (const ent of ents) {
@@ -355,7 +371,17 @@ async function discoverRelease(folderName) {
       } else if (/\.(uf2|zip|bin|hex)$/i.test(ent.name)) {
         const relFromRelease = path.relative(abs, p);
         const relFromRepoRoot = path.join('releases', folderName, relFromRelease);
-        downloads.push({ name: ent.name, rel: toPosix(relFromRelease), url: makeRawUrl(relFromRepoRoot) });
+        let mtime = 0;
+        try {
+          mtime = (await fs.stat(p)).mtimeMs;
+        } catch {}
+        const fileObj = { name: ent.name, rel: toPosix(relFromRelease), url: makeRawUrl(relFromRepoRoot), mtime };
+        downloads.push(fileObj);
+        if (/\.uf2$/i.test(ent.name)) {
+          if (!latestUf2 || fileObj.mtime > latestUf2.mtime) {
+            latestUf2 = fileObj;
+          }
+        }
       }
     }
   }
@@ -366,7 +392,7 @@ async function discoverRelease(folderName) {
     ? { title: info.title, number: (folderName.match(/^(\d+)/)?.[1] || '') }
     : parseDisplayFromFolder(folderName);
 
-  return { slug, folderName, abs, info, readmeHtml, docs, downloads, display };
+  return { slug, folderName, abs, info, readmeHtml, docs, downloads, display, latestUf2 };
 }
 
 function releaseCard(rel) {
@@ -384,7 +410,7 @@ function releaseCard(rel) {
     `<li><span class=\"label\">Language</span><span class=\"value\">${language}</span></li>`,
     `<li><span class=\"label\">Status</span><span class=\"value\"><span class=\"status-pill ${statusClass}\">${statusRaw}</span></span></li>`,
   ].join('');
-  const uf2Download = (rel.downloads || []).find(d => /\.uf2$/i.test(d.name));
+  const latestUf2 = rel.latestUf2;
   return `<article class="card">
   <div class="card-head">
     <h3 class="card-title">${display.title}</h3>
@@ -395,62 +421,52 @@ function releaseCard(rel) {
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
     <div class="actions">
   <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
-  ${uf2Download ? `<a class="btn download" href="${uf2Download.url}" download>💾 Download</a>` : ''}
+  ${latestUf2 ? `<a class="btn download" href="${latestUf2.url}" download>💾 Download</a>` : ''}
     </div>
   </div>
 </article>`;
 }
 
 function detailPage(rel) {
-  const { info, downloads, docs, readmeHtml } = rel;
-  const rows = [
-    info.version && `<tr><th>Version</th><td>${info.version}</td></tr>`,
-    info.status && `<tr><th>Status</th><td>${info.status}</td></tr>`,
-    info.language && `<tr><th>Language</th><td>${info.language}</td></tr>`,
-    info.creator && `<tr><th>Creator</th><td>${info.creator}</td></tr>`,
-  ].filter(Boolean).join('\n');
-
-  const downloadsHtml = downloads.length
-    ? downloads.map(d => `<a class="btn secondary" href="${d.url}" download>${d.name}</a>`).join('\n')
-    : '<p class="muted">No downloadable artifacts found.</p>';
-
-  const docsListHtml = docs.length
-    ? `<ul class="docs-list">${docs.map(d => `<li><a href="${d.url}" target="_blank" rel="noopener">${d.name}</a></li>`).join('\n')}</ul>`
-    : '<p class="muted">No documentation PDFs found.</p>';
-
-  const firstDocUrl = docs[0]?.url;
-  const embedHtml = firstDocUrl ? `<div class="section"><details><summary>Preview first PDF</summary>
-  <object data="${firstDocUrl}" type="application/pdf" width="100%" height="700px">
-    <p>PDF preview not available. <a href="${firstDocUrl}" target="_blank" rel="noopener">Open PDF</a></p>
-  </object>
-</details></div>` : '';
+  const { info, slug, display, downloads, docs, readmeHtml } = rel;
+  const desc = info.description ? String(info.description) : 'No description available.';
+  const creator = info.creator || 'unknown';
+  const version = info.version || 'unknown';
+  const language = info.language || 'unknown';
+  const statusRaw = (info.status || 'unknown').toString();
+  const statusClass = mapStatusToClass(statusRaw);
+  const metaItems = [
+    `<li><span class="label">Creator</span><span class="value">${creator}</span></li>`,
+    `<li><span class="label">Version</span><span class="value">${version}</span></li>`,
+    `<li><span class="label">Language</span><span class="value">${language}</span></li>`,
+    `<li><span class="label">Status</span><span class="value"><span class="status-pill ${statusClass}">${statusRaw}</span></span></li>`,
+  ].join('');
+  const num = display.number;
+  const uf2Downloads = (downloads || []).filter(d => /\.uf2$/i.test(d.name));
 
   return renderLayout({
     title: `${info.title} – Workshop Computer`,
     relativeRoot: '../..',
     content: `
-<div class="section">
-  <h1>${info.title}</h1>
-  ${info.description ? `<p>${info.description}</p>` : ''}
-</div>
+<article class="card large">
+  <div class="card-head">
+    <h1 class="card-title">${display.title}</h1>
+    ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
+  </div>
+  <div class="card-body">
+    <p>${desc}</p>
+    ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
+    <div class="actions">
+      <a class="btn" href="../index.html">Back to All Programs</a>
+      ${uf2Downloads.map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join(' ')}
+    </div>
 
-${rows ? `<div class=\"section\"><h2>Details</h2><table>${rows}</table></div>` : ''}
-
-<div class="section downloads">
-  <h2>Downloads</h2>
-  ${downloadsHtml}
-</div>
-
-<div class="section">
-  <h2>Documentation PDFs</h2>
-  ${docsListHtml}
-</div>
-${embedHtml}
-
-<div class="section">
-  <h2>README</h2>
-  <div class="readme">${readmeHtml}</div>
-</div>
+    <div class="section">
+      <h2>README</h2>
+      <div class="readme">${readmeHtml}</div>
+    </div>
+  </div>
+</article>
 `
   });
 }
