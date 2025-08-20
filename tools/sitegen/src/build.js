@@ -463,7 +463,9 @@ function detailPage(rel) {
 
     <div class="section">
       <h2>README</h2>
-      <div class="readme">${readmeHtml}</div>
+      <hr style="margin-top:32px;">
+  <div class="readme">${readmeHtml}</div>
+  
     </div>
   </div>
 </article>
