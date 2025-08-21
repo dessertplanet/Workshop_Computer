@@ -102,3 +102,7 @@ blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;backgro
 .status-pill.status-maintenance{background:#d9f0e6}   /* pastel mint */
 .status-pill.status-archived{background:#e0e0e0}      /* pastel gray */
 .status-pill.status-unknown{background:#dde3ea}       /* default light */
+
+/* responsive video embeds */
+.video-embed{position:relative;padding-bottom:56.25%;height:0;overflow:hidden;border:1px solid var(--border);border-radius:8px;background:color-mix(in srgb, var(--bg), #000 8%);margin:16px 0}
+.video-embed iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0}
