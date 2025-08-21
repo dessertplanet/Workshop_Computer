@@ -38,18 +38,34 @@ async function discoverRelease(folderName) {
   return discoverReleaseMod(RELEASES_DIR, folderName, outPrograms, makeRawUrl);
 }
 
+function escapeAttr(s) {
+  return String(s ?? '').replaceAll('"', '&quot;');
+}
+
+// Helpers for Release Type: preserve original YAML text, but dedupe case/space-insensitively
+function normalizeSpaces(s) {
+  return String(s || '').trim().replace(/\s+/g, ' ');
+}
+function typeKey(raw) {
+  // Lowercase, remove punctuation/symbols, collapse spaces
+  const s = normalizeSpaces(raw).toLowerCase().replace(/[^a-z0-9\s]+/g, ' ');
+  return s.replace(/\s+/g, ' ').trim();
+}
+
 function releaseCard(rel) {
   const { info, slug, display } = rel;
   const desc = info.description ? String(info.description) : 'No description available.';
   const num = display.number;
-  const creator = info.creator || 'unknown';
+  const creator = info.creator || 'Unknown';
   const version = info.version || 'unknown';
-  const language = info.language || 'unknown';
-  const statusRaw = (info.status || 'unknown').toString();
+  const language = info.language || 'Unknown';
+  const typeOrStatus = normalizeSpaces(info.type || info.status || 'Unknown');
+  const typeKeyVal = typeKey(typeOrStatus);
+  const statusRaw = (info.status || 'Unknown').toString();
   const statusClass = mapStatusToClass(statusRaw);
     const metaItems = renderMetaList({ creator, version, language, statusRaw, statusClass });
   const latestUf2 = rel.latestUf2;
-  return `<article class="card">
+  return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}">
   <div class="card-head">
     <h3 class="card-title">${display.title}</h3>
     ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
@@ -137,16 +153,39 @@ async function build() {
   const releaseFolders = (await listSubdirs(RELEASES_DIR)).sort();
 
   const releases = [];
+  const typeMap = new Map(); // key -> display (original YAML text, normalized spacing)
+  const creatorSet = new Set();
+  const languageSet = new Set();
   for (const folder of releaseFolders) {
     const relPath = path.join(RELEASES_DIR, folder);
     const hasFiles = (await fs.readdir(relPath)).length > 0;
     if (!hasFiles) continue;
     const rel = await discoverRelease(folder);
     releases.push(rel);
+    const info = rel.info || {};
+    const typeRaw = (info.type || info.status || 'Unknown').toString();
+    const key = typeKey(typeRaw) || 'unknown';
+    const display = normalizeSpaces(typeRaw) || 'Unknown';
+    if (!typeMap.has(key)) typeMap.set(key, display);
+    const creatorVal = (info.creator || 'Unknown').toString().trim() || 'Unknown';
+    const languageVal = (info.language || 'Unknown').toString().trim() || 'Unknown';
+    creatorSet.add(creatorVal);
+    languageSet.add(languageVal);
   }
 
   // Index page
   const cards = releases.map(releaseCard).join('\n');
+  const typeOptions = ['<option value="">All</option>'].concat(
+    Array.from(typeMap.entries())
+      .sort((a,b)=>a[1].toLowerCase().localeCompare(b[1].toLowerCase()))
+      .map(([,v])=>`<option value="${escapeAttr(v)}">${v}</option>`)
+  ).join('');
+  const creatorOptions = ['<option value="">All</option>'].concat(
+    Array.from(creatorSet).sort((a,b)=>a.localeCompare(b)).map(v=>`<option value="${escapeAttr(v)}">${v}</option>`)
+  ).join('');
+  const languageOptions = ['<option value="">All</option>'].concat(
+    Array.from(languageSet).sort((a,b)=>a.localeCompare(b)).map(v=>`<option value="${escapeAttr(v)}">${v}</option>`)
+  ).join('');
   const indexHtml = renderLayout({
     title: 'Workshop Computer Program Cards',
     relativeRoot: '.',
@@ -157,6 +196,18 @@ async function build() {
     <p>The Workshop Computer is part of the <a href="https://www.musicthing.co.uk/workshopsystem/">Music Thing Workshop System</a>.  This site provides access to all the available program cards, their documentation, and downloadable firmware files (.uf2)</p>
   </div>
 </article>
+<div class="filter-bar card" aria-label="Filter programs">
+  <div class="card-body">
+    <div class="filter-row">
+      <label for="filter-type">Release type</label>
+      <select id="filter-type">${typeOptions}</select>
+      <label for="filter-creator">Creator</label>
+      <select id="filter-creator">${creatorOptions}</select>
+      <label for="filter-language">Language</label>
+      <select id="filter-language">${languageOptions}</select>
+    </div>
+  </div>
+</div>
 <div class="grid">${cards}</div>`
   });
   await writeFileEnsured(path.join(OUT_DIR, 'index.html'), indexHtml);
@@ -184,3 +235,4 @@ build().catch(err => {
   console.error(err);
   process.exit(1);
 });
+
