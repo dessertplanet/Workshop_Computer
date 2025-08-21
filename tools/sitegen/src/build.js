@@ -232,8 +232,8 @@ function renderLayout({ title, content, relativeRoot = '.' }) {
 }
 
 const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6edf3;--accent:#2f81f7;--border:#27313b;--ok:#3fb950;--toggle-track:#0e1217;--toggle-thumb:#ffffff;--pcb-start:#2d7c30;--pcb-end:#195f20}
-.theme-dark{--thumb-x:26px}
-.theme-light{--bg:#f7f8fa;--card:#ffffff;--muted:#5b6875;--text:#0b1220;--accent:#0969da;--border:#d0d7de;--ok:#1a7f37;--toggle-track:#e9eef3;--toggle-thumb:#0b1220;--thumb-x:2px}
+.theme-dark{--thumb-x:28px}
+.theme-light{--bg:#f7f8fa;--card:#ffffff;--muted:#5b6875;--text:#0b1220;--accent:#0969da;--border:#d0d7de;--ok:#1a7f37;--toggle-track:#e9eef3;--toggle-thumb:#0b1220;--thumb-x:0px}
 *{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
 .container{max-width:1100px;margin:0 auto;padding:20px}
 .site-header{border-bottom:1px solid var(--border);background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff}
@@ -275,7 +275,7 @@ blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;backgro
 /* theme toggle */
 .theme-toggle{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer}
 .theme-toggle .track{position:relative;display:inline-flex;align-items:center;gap:6px;width:58px;height:28px;border-radius:999px;background:var(--toggle-track);border:1px solid var(--border);padding:2px}
-.theme-toggle .thumb{position:absolute;top:2px;left:2px;width:24px;height:24px;border-radius:999px;background:var(--toggle-thumb);transition:transform .2s ease}
+.theme-toggle .thumb{position:absolute;top:1px;left:2px;width:24px;height:24px;border-radius:999px;background:var(--toggle-thumb);transition:transform .2s ease}
 .theme-toggle .thumb{transform:translateX(var(--thumb-x,26px))}
 .theme-toggle .icons{font-size:12px;line-height:1;width:100%;display:flex;justify-content:space-between;color:var(--muted)}
 .theme-toggle .gap{width:6px;display:inline-block}
