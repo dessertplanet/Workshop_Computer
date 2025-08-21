@@ -8,6 +8,8 @@ import { debugLog } from './utils/logger.js';
 import { slugify, parseDisplayFromFolder } from './utils/strings.js';
 import { detectRepoFromGit, detectRefFromGit } from './utils/git.js';
 import { makeRawUrl as makeRawUrlExternal } from './links.js';
+import { renderLayout, BASE_CSS } from './render/layout.js';
+import { sevenSegmentSvg, mapStatusToClass, renderMetaList, renderActionButtons } from './render/components.js';
 
 // ========== Path & Globals ==========
 const __filename = fileURLToPath(import.meta.url);
@@ -44,204 +46,6 @@ function normalizeInfo(raw, fallbackTitle) {
     status: out.status || '',
   };
 }
-
-// Build friendly display title and number from folder name when info.title is missing
-
-// ========== UI Rendering Helpers ==========
-function sevenSegmentSvg(numStr) {
-  const DIGIT_MAP = {
-    '0': ['a','b','c','d','e','f'],
-    '1': ['b','c'],
-    '2': ['a','b','g','e','d'],
-    '3': ['a','b','g','c','d'],
-    '4': ['f','g','b','c'],
-    '5': ['a','f','g','c','d'],
-    '6': ['a','f','g','c','d','e'],
-    '7': ['a','b','c'],
-    '8': ['a','b','c','d','e','f','g'],
-    '9': ['a','b','c','d','f','g']
-  };
-  const digits = String(numStr || '').replace(/[^0-9]/g, '') || '0';
-  // Scaled by 1.5x, with thinner segments and slightly longer verticals
-  const W = 42, H = 72, T = 7, PAD = 3, GAP = 6, DIGIT_GAP = 9;
-  const half = H / 2;
-  const vertLenTop = half - T - (PAD + GAP);
-  const vertLenBot = vertLenTop;
-  function segRects(xOffset, onSet) {
-    const rx = 3, ry = 3;
-    const rects = [];
-    // a
-    rects.push({ id:'a', x: xOffset + 7.5, y: PAD, w: W - 15, h: T });
-    // d
-    rects.push({ id:'d', x: xOffset + 7.5, y: H - T - PAD, w: W - 15, h: T });
-    // g
-    rects.push({ id:'g', x: xOffset + 7.5, y: half - T/2, w: W - 15, h: T });
-    // f (upper-left)
-    rects.push({ id:'f', x: xOffset + PAD, y: PAD + T + (GAP - T/2), w: T, h: vertLenTop });
-    // e (lower-left)
-    rects.push({ id:'e', x: xOffset + PAD, y: half + GAP, w: T, h: vertLenBot });
-    // b (upper-right)
-    rects.push({ id:'b', x: xOffset + W - T - PAD, y: PAD + T + (GAP - T/2), w: T, h: vertLenTop });
-    // c (lower-right)
-    rects.push({ id:'c', x: xOffset + W - T - PAD, y: half + GAP, w: T, h: vertLenBot });
-    return rects.map(r => {
-      const on = onSet.has(r.id);
-      const fill = '#93820c';
-      const opacity = on ? '1' : '0.3';
-      return `<rect class=\"seg ${on ? 'on' : 'off'} ${r.id}\" x=\"${r.x}\" y=\"${r.y}\" width=\"${r.w}\" height=\"${r.h}\" rx=\"${rx}\" ry=\"${ry}\" fill=\"${fill}\" fill-opacity=\"${opacity}\"/>`;
-    }).join('');
-  }
-  const totalWidth = digits.length * W + (digits.length - 1) * DIGIT_GAP;
-  let x = 0;
-  const parts = [];
-  for (const ch of digits) {
-    const onSet = new Set(DIGIT_MAP[ch] || []);
-    parts.push(segRects(x, onSet));
-    x += W + DIGIT_GAP;
-  }
-  return `<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${totalWidth}\" height=\"${H}\" viewBox=\"0 0 ${totalWidth} ${H}\" aria-hidden=\"true\" focusable=\"false\" role=\"img\">${parts.join('')}</svg>`;
-}
-
-// Map freeform status strings to canonical classes used in CSS
-function mapStatusToClass(raw) {
-  const t = String(raw || '').toLowerCase().trim();
-  if (/(released|ready|stable|production)/.test(t)) return 'status-stable';
-  if (/beta/.test(t)) return 'status-beta';
-  if (/alpha/.test(t)) return 'status-alpha';
-  if (/(\brc\b|release candidate)/.test(t)) return 'status-rc';
-  if (/(proof of concept|poc|experimental)/.test(t)) return 'status-experimental';
-  if (/(wip|work in progress|functional.*wip)/.test(t)) return 'status-wip';
-  if (/(working but simple|simple)/.test(t)) return 'status-draft';
-  if (/(mostly complete)/.test(t)) return 'status-rc';
-  if (/(deprecated|obsolete)/.test(t)) return 'status-deprecated';
-  if (/maintenance/.test(t)) return 'status-maintenance';
-  if (/archived/.test(t)) return 'status-archived';
-  if (/(none|n\/a|unknown|^$)/.test(t)) return 'status-unknown';
-  return 'status-unknown';
-}
-
-function renderLayout({ title, content, relativeRoot = '.' }) {
-  return `<!doctype html>
-<html lang="en" class="theme-dark" data-theme="dark">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${title ? String(title).replace(/</g, '&lt;') : 'Workshop Computer'}</title>
-  <script>(function(){try{var k='wc-theme';var d=document.documentElement;var prefersDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;var t=localStorage.getItem(k);if(t!=='dark'&&t!=='light'){t=prefersDark?'dark':'light';}d.classList.remove('theme-dark','theme-light');d.classList.add('theme-'+t);d.setAttribute('data-theme',t);}catch(e){}})();</script>
-  <link rel="stylesheet" href="${relativeRoot}/assets/style.css" />
-</head>
-<body>
-  <header class="site-header">
-    <div class="container header-bar">
-      <h1 class="site-title"><a href="${relativeRoot}/index.html">Workshop Computer Program Cards</a></h1>
-      <button id="themeToggle" class="theme-toggle" type="button" role="switch" aria-checked="true" aria-label="Toggle color scheme">
-        <span class="track"><span class="thumb"></span><span class="icons" aria-hidden="true">☀️<span class="gap"></span>🌙</span></span>
-      </button>
-    </div>
-  </header>
-  <main class="container">
-    ${content}
-  </main>
-  <footer class="site-footer">
-    <div class="container">
-      <p>Built from this repository's releases folder. Deployed via GitHub Pages.</p>
-    </div>
-  </footer>
-  <script>(function(){var btn=document.getElementById('themeToggle');if(!btn)return;var k='wc-theme';function cur(){return document.documentElement.getAttribute('data-theme')||'dark';}function set(t){try{localStorage.setItem(k,t);}catch(e){}var d=document.documentElement;d.classList.remove('theme-dark','theme-light');d.classList.add('theme-'+t);d.setAttribute('data-theme',t);update();}function update(){var t=cur();btn.setAttribute('aria-checked',String(t==='dark'));}btn.addEventListener('click',function(){set(cur()==='dark'?'light':'dark');});update();})();</script>
-</body>
-</html>`;
-}
-
-// ========== Base CSS (written to /assets/style.css) ==========
-const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6edf3;--accent:#2f81f7;--border:#27313b;--ok:#3fb950;--toggle-track:#0e1217;--toggle-thumb:#ffffff;--pcb-start:#2d7c30;--pcb-end:#195f20}
-.theme-dark{--thumb-x:28px}
-.theme-light{--bg:#f7f8fa;--card:#ffffff;--muted:#5b6875;--text:#0b1220;--accent:#0969da;--border:#d0d7de;--ok:#1a7f37;--toggle-track:#e9eef3;--toggle-thumb:#0b1220;--thumb-x:0px}
-*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
-.container{max-width:1100px;margin:0 auto;padding:20px}
-.site-header{border-bottom:1px solid var(--border);background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff}
-.header-bar{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.site-title{font-size:20px;margin:0}
-.site-header a{color:#fff;text-decoration:none}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
-.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff}
-.card-title{margin:0;font-size:18px}
-.card-num{display:flex;align-items:center}
-.card-num svg{height:42px;width:auto;display:block}
-.card-body{padding:16px;display:flex;flex-direction:column;flex:1}
-.card-body .btn{margin-top:12px}
-.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;justify-content:center}
-/* large card for detail pages */
-.card.large{width:100%;margin:40px 0;font-size:20px}
-.card.large .card-title{font-size:28px}
-.card.large .card-num svg{height:64px}
-.card.large .card-body{padding:28px}
-.card.large .meta-list li{font-size:18px}
-.card.large .actions .btn{font-size:18px;padding:14px 20px}
-.meta{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
-.pill{border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);font-size:12px}
-.btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;margin-top:12px}
-.btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
-.btn.download{background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff;border:1px solid var(--border)}
-.section{margin:24px 0}
-.section h2{margin:0 0 8px 0}
-.kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:color-mix(in srgb, var(--bg), #000 10%);border:1px solid var(--border);border-radius:6px;padding:2px 6px}
-table{width:100%;border-collapse:collapse}
-th,td{border-bottom:1px solid var(--border);padding:8px;text-align:left}
-pre,code{background:color-mix(in srgb, var(--bg), #000 10%);border:1px solid var(--border);border-radius:6px;padding:2px 6px}
-blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;background:color-mix(in srgb, var(--bg), #000 8%)}
-.docs-list li{margin:6px 0}
-.downloads a{display:inline-block;margin-right:10px;margin-bottom:10px}
-.site-footer{border-top:1px solid var(--border);background:color-mix(in srgb, var(--bg), #000 10%);margin-top:40px}
-
-/* theme toggle */
-.theme-toggle{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer}
-.theme-toggle .track{position:relative;display:inline-flex;align-items:center;gap:6px;width:58px;height:28px;border-radius:999px;background:var(--toggle-track);border:1px solid var(--border);padding:2px}
-.theme-toggle .thumb{position:absolute;top:1px;left:2px;width:24px;height:24px;border-radius:999px;background:var(--toggle-thumb);transition:transform .2s ease}
-.theme-toggle .thumb{transform:translateX(var(--thumb-x,26px))}
-.theme-toggle .icons{font-size:12px;line-height:1;width:100%;display:flex;justify-content:space-between;color:var(--muted)}
-.theme-toggle .gap{width:6px;display:inline-block}
-/* intro card */
-.intro-card{background:#212830;color:#fff;margin-bottom:16px;margin-top:-20px;border-top-left-radius:0;border-top-right-radius:0;border-top:0}
-/* Make all links in dark mode a readable blue */
-.theme-dark a{color:#4ea1ff}
-.theme-dark .site-title a,
-.theme-dark .btn,
-.theme-dark .btn.details,
-.theme-dark .btn.download {
-  color: #fff !important;
-}
-.intro-card a{color:#fff}
-/* light mode intro card background */
-.theme-light .intro-card{background:#cfd6dd;color:#000;border-top-left-radius:0;border-top-right-radius:0;border-top:0}
-.theme-light .intro-card a{color:#000}
-/* dark mode: all cards use #212830 background */
-.theme-dark .card{background:#212830}
-/* meta list on cards */
-.meta-list{list-style:none;padding:0;margin:8px 0 0}
-.meta-list li{margin:6px 0;display:grid;grid-template-columns:140px 1fr;align-items:baseline;column-gap:12px;border-bottom:1px solid var(--border);padding-bottom:6px}
-.meta-list{margin-top:auto}
-.meta-list .label{color:var(--pcb-start);font-weight:700}
-.meta-list .value{color:var(--text)}
-.theme-dark .meta-list .value{color:#fff}
-.theme-light .meta-list .value{color:#000}
-
-/* status pill */
-.status-pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:#dde3ea;color:#0b1220}
-/* pastel palette per status */
-.status-pill.status-stable{background:#c8f7c5}        /* pastel green */
-.status-pill.status-beta{background:#ffe6b3}          /* pastel orange */
-.status-pill.status-alpha{background:#ffd1dc}         /* pastel pink */
-.status-pill.status-rc{background:#d8f0ff}            /* pastel cyan */
-.status-pill.status-release-candidate{background:#d8f0ff}
-.status-pill.status-experimental{background:#e3d7ff}  /* pastel lavender */
-.status-pill.status-draft{background:#e6eef7}         /* pastel blue-gray */
-.status-pill.status-wip{background:#fff3b0}           /* pastel yellow */
-.status-pill.status-deprecated{background:#ffd6d6}    /* pastel red */
-.status-pill.status-maintenance{background:#d9f0e6}   /* pastel mint */
-.status-pill.status-archived{background:#e0e0e0}      /* pastel gray */
-.status-pill.status-unknown{background:#dde3ea}       /* default light */
-`;
 
 function makeRawUrl(relPathFromRepoRoot) {
   return makeRawUrlExternal(REPO, BRANCH, relPathFromRepoRoot);
@@ -313,12 +117,14 @@ async function discoverRelease(folderName) {
         let mtime = 0;
         try {
           mtime = (await fs.stat(p)).mtimeMs;
-        } catch (e) { debugLog('stat failed for', p, e?.message || e); }
-        const fileObj = { name: ent.name, rel: toPosix(relFromRelease), url: makeRawUrl(relFromRepoRoot), mtime };
-        downloads.push(fileObj);
+        } catch {}
+        const encodedPath = encodePathSegments(relFromRepoRoot);
+        const url = makeRawUrl(encodedPath);
+        const item = { name: ent.name, rel: relFromRepoRoot, url, mtime };
+        downloads.push(item);
         if (/\.uf2$/i.test(ent.name)) {
-          if (!latestUf2 || fileObj.mtime > latestUf2.mtime) {
-            latestUf2 = fileObj;
+          if (!latestUf2 || mtime > latestUf2.mtime) {
+            latestUf2 = item;
           }
         }
       }
@@ -327,28 +133,20 @@ async function discoverRelease(folderName) {
   await collectDownloads(abs);
 
   // Display fields
-  const display = info.title && info.title !== folderName
-    ? { title: info.title, number: (folderName.match(/^(\d+)/)?.[1] || '') }
-    : parseDisplayFromFolder(folderName);
+  const parsed = parseDisplayFromFolder(folderName);
+  const finalTitle = info.title || parsed.title || folderName;
+  const display = { number: parsed.number, title: finalTitle };
 
-  return { slug, folderName, abs, info, readmeHtml, docs, downloads, display, latestUf2 };
-}
-
-// Meta list renderer (shared)
-function renderMetaList({ creator, version, language, statusRaw, statusClass }) {
-  return [
-    `<li><span class="label">Creator</span><span class="value">${creator}</span></li>`,
-    `<li><span class="label">Version</span><span class="value">${version}</span></li>`,
-    `<li><span class="label">Language</span><span class="value">${language}</span></li>`,
-    `<li><span class="label">Status</span><span class="value"><span class="status-pill ${statusClass}">${statusRaw}</span></span></li>`,
-  ].join('');
-}
-
-// Common action buttons (Back + UF2 downloads)
-function renderActionButtons(uf2Downloads) {
-  const back = `<a class="btn" href="../../index.html">⬅️ Back to All Programs</a>`;
-  const dl = (uf2Downloads || []).map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join(' ');
-  return `${back}${dl ? ' ' + dl : ''}`;
+  return {
+    folderName,
+    slug,
+    info: { ...info, title: finalTitle },
+    readmeHtml,
+    docs,
+    downloads,
+    latestUf2,
+    display,
+  };
 }
 
 function releaseCard(rel) {
@@ -425,7 +223,7 @@ function detailPage(rel) {
         <div class="section">
           <h3>Other PDFs</h3>
           <ul class="docs-list">
-            ${docs.slice(1).map(d => `<li><a class="btn download" href="${d.url}" download>� ${d.name}</a></li>`).join('')}
+        ${docs.slice(1).map(d => `<li><a class="btn download" href="${d.url}" download>📄 ${d.name}</a></li>`).join('')}
           </ul>
         </div>
         ` : ''}
