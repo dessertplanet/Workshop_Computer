@@ -1,8 +1,6 @@
 import { fsAsync as fs, ensureDir, writeFileEnsured, listSubdirs } from './utils/fs.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import YAML from 'yaml';
-import { marked } from 'marked';
 import { detectRepoFromGit, detectRefFromGit } from './utils/git.js';
 import { makeRawUrl as makeRawUrlExternal } from './links.js';
 import { renderLayout } from './render/layout.js';
