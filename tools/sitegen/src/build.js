@@ -5,6 +5,7 @@ import { detectRepoFromGit, detectRefFromGit } from './utils/git.js';
 import { makeRawUrl as makeRawUrlExternal } from './links.js';
 import { renderLayout } from './render/layout.js';
 import { sevenSegmentSvg, mapStatusToClass, renderMetaList, renderActionButtons } from './render/components.js';
+import { formatVersion } from './utils/strings.js';
 import { discoverRelease as discoverReleaseMod } from './discover/release.js';
 
 // ========== Path & Globals ==========
@@ -57,7 +58,7 @@ function releaseCard(rel) {
   const desc = info.description ? String(info.description) : 'No description available.';
   const num = display.number;
   const creator = info.creator || 'Unknown';
-  const version = info.version || 'unknown';
+  const version = formatVersion(info.version || 'unknown');
   const language = info.language || 'Unknown';
   const typeOrStatus = normalizeSpaces(info.type || info.status || 'Unknown');
   const typeKeyVal = typeKey(typeOrStatus);
@@ -85,7 +86,7 @@ function detailPage(rel) {
   const { info, slug, display, downloads, docs, readmeHtml } = rel;
   const desc = info.description ? String(info.description) : 'No description available.';
   const creator = info.creator || 'unknown';
-  const version = info.version || 'unknown';
+  const version = formatVersion(info.version || 'unknown');
   const language = info.language || 'unknown';
   const statusRaw = (info.status || 'unknown').toString();
   const statusClass = mapStatusToClass(statusRaw);

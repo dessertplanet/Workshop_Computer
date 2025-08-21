@@ -27,3 +27,13 @@ export function formatDisplayTitle(raw) {
   s = s.replace(/[_-]+/g, ' ').trim();
   return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 }
+
+// Ensure version strings contain a dot for simple numeric versions
+// e.g., "1" -> "1.0"; leave complex or non-numeric versions as-is
+export function formatVersion(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  if (s.includes('.')) return s;
+  if (/^\d+$/.test(s)) return `${s}.0`;
+  return s;
+}
