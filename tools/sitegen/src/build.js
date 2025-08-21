@@ -112,7 +112,7 @@ function detailPage(rel) {
     <div class="section">
       <h2>README</h2>
       <hr style="margin-top:32px;">
-      <div class="readme">${readmeHtml}</div>
+      <div class="readme markdown-body">${readmeHtml}</div>
     </div>
 
     <!-- PDF Preview Section -->

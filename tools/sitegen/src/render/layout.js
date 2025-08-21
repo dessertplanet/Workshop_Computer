@@ -6,6 +6,7 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title ? String(title).replace(/</g, '&lt;') : 'Workshop Computer'}</title>
   <script>(function(){try{var k='wc-theme';var d=document.documentElement;var prefersDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;var t=localStorage.getItem(k);if(t!=='dark'&&t!=='light'){t=prefersDark?'dark':'light';}d.classList.remove('theme-dark','theme-light');d.classList.add('theme-'+t);d.setAttribute('data-theme',t);}catch(e){}})();</script>
+  <link rel="stylesheet" href="${relativeRoot}/assets/github-markdown.css" />
   <link rel="stylesheet" href="${relativeRoot}/assets/style.css" />
   <style>
     .filter-bar{margin:0 0 16px 0}

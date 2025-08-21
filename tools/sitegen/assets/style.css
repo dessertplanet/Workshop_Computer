@@ -23,6 +23,10 @@
 .card.large .card-body{padding:28px}
 .card.large .meta-list li{font-size:18px}
 .card.large .actions .btn{font-size:18px;padding:14px 20px}
+.card.large .markdown-body{font-size:16px}
+.card.large .markdown-body h1{font-size:28px}
+.card.large .markdown-body h2{font-size:24px}
+.card.large .markdown-body h3{font-size:20px}
 .meta{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
 .pill{border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);font-size:12px}
 .btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;margin-top:12px}
