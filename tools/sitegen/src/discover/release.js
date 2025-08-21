@@ -35,6 +35,27 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     info = normalizeInfo({}, folderName);
   }
 
+  // Helper: rewrite relative links in README HTML to raw GitHub URLs
+  function rewriteHtmlLinksToRaw(html, repoRelBase) {
+    if (!html) return html;
+    const posixBase = path.posix.join(...repoRelBase.split(path.sep));
+    return html.replace(/\b(href|src)=(['"])([^'"#]+)(\#[^'"]*)?\2/gi, (full, attr, quote, url, hash = '') => {
+      const u = String(url).trim();
+      // Skip anchors, data URIs, protocol URLs, protocol-relative URLs
+      if (!u || u.startsWith('#') || /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\//.test(u) || /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:)/.test(u) || u.startsWith('data:')) {
+        return full;
+      }
+      let relPath;
+      if (u.startsWith('/')) {
+        relPath = u.replace(/^\/+/, '');
+      } else {
+        relPath = path.posix.normalize(path.posix.join(posixBase, u));
+      }
+      const newUrl = makeRawUrl(relPath) + (hash || '');
+      return `${attr}=${quote}${newUrl}${quote}`;
+    });
+  }
+
   // README.md
   const readmePath = path.join(abs, 'README.md');
   let readmeHtml = '<p>No README.md found.</p>';
@@ -47,8 +68,12 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   const outProgramDir = path.join(outDirPrograms, slug);
   const { docs } = await discoverDocs(abs, outProgramDir);
 
-  // downloads
+  // downloads and README asset link rewriting base
   const repoRelBase = path.join('releases', folderName);
+  // Rewrite relative links in README HTML to raw GitHub URLs
+  readmeHtml = rewriteHtmlLinksToRaw(readmeHtml, repoRelBase);
+  
+  // downloads
   const { downloads, latestUf2 } = await discoverDownloads(abs, repoRelBase, makeRawUrl);
 
   // display fields
