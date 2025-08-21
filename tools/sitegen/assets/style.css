@@ -1,0 +1,89 @@
+:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6edf3;--accent:#2f81f7;--border:#27313b;--ok:#3fb950;--toggle-track:#0e1217;--toggle-thumb:#ffffff;--pcb-start:#2d7c30;--pcb-end:#195f20}
+.theme-dark{--thumb-x:28px}
+.theme-light{--bg:#f7f8fa;--card:#ffffff;--muted:#5b6875;--text:#0b1220;--accent:#0969da;--border:#d0d7de;--ok:#1a7f37;--toggle-track:#e9eef3;--toggle-thumb:#0b1220;--thumb-x:0px}
+*{box-sizing:border-box}html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
+.container{max-width:1100px;margin:0 auto;padding:20px}
+.site-header{border-bottom:1px solid var(--border);background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff}
+.header-bar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.site-title{font-size:20px;margin:0}
+.site-header a{color:#fff;text-decoration:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;overflow:hidden}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff}
+.card-title{margin:0;font-size:18px}
+.card-num{display:flex;align-items:center}
+.card-num svg{height:42px;width:auto;display:block}
+.card-body{padding:16px;display:flex;flex-direction:column;flex:1}
+.card-body .btn{margin-top:12px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;justify-content:center}
+/* large card for detail pages */
+.card.large{width:100%;margin:40px 0;font-size:20px}
+.card.large .card-title{font-size:28px}
+.card.large .card-num svg{height:64px}
+.card.large .card-body{padding:28px}
+.card.large .meta-list li{font-size:18px}
+.card.large .actions .btn{font-size:18px;padding:14px 20px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
+.pill{border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);font-size:12px}
+.btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;margin-top:12px}
+.btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
+.btn.download{background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff;border:1px solid var(--border)}
+.section{margin:24px 0}
+.section h2{margin:0 0 8px 0}
+.kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:color-mix(in srgb, var(--bg), #000 10%);border:1px solid var(--border);border-radius:6px;padding:2px 6px}
+table{width:100%;border-collapse:collapse}
+th,td{border-bottom:1px solid var(--border);padding:8px;text-align:left}
+pre,code{background:color-mix(in srgb, var(--bg), #000 10%);border:1px solid var(--border);border-radius:6px;padding:2px 6px}
+blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;background:color-mix(in srgb, var(--bg), #000 8%)}
+.docs-list li{margin:6px 0}
+.downloads a{display:inline-block;margin-right:10px;margin-bottom:10px}
+.site-footer{border-top:1px solid var(--border);background:color-mix(in srgb, var(--bg), #000 10%);margin-top:40px}
+.site-footer .container{ text-align:center }
+
+/* theme toggle */
+.theme-toggle{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer}
+.theme-toggle .track{position:relative;display:inline-flex;align-items:center;gap:6px;width:58px;height:28px;border-radius:999px;background:var(--toggle-track);border:1px solid var(--border);padding:2px}
+.theme-toggle .thumb{position:absolute;top:1px;left:2px;width:24px;height:24px;border-radius:999px;background:var(--toggle-thumb);transition:transform .2s ease}
+.theme-toggle .thumb{transform:translateX(var(--thumb-x,26px))}
+.theme-toggle .icons{font-size:12px;line-height:1;width:100%;display:flex;justify-content:space-between;color:var(--muted)}
+.theme-toggle .gap{width:6px;display:inline-block}
+/* intro card */
+.intro-card{background:#212830;color:#fff;margin-bottom:16px;margin-top:-20px;border-top-left-radius:0;border-top-right-radius:0;border-top:0}
+/* Make all links in dark mode a readable blue */
+.theme-dark a{color:#4ea1ff}
+.theme-dark .site-title a,
+.theme-dark .btn,
+.theme-dark .btn.details,
+.theme-dark .btn.download {
+  color: #fff !important;
+}
+.intro-card a{color:#fff}
+/* light mode intro card background */
+.theme-light .intro-card{background:#cfd6dd;color:#000;border-top-left-radius:0;border-top-right-radius:0;border-top:0}
+.theme-light .intro-card a{color:#000}
+/* dark mode: all cards use #212830 background */
+.theme-dark .card{background:#212830}
+/* meta list on cards */
+.meta-list{list-style:none;padding:0;margin:8px 0 0}
+.meta-list li{margin:6px 0;display:grid;grid-template-columns:140px 1fr;align-items:baseline;column-gap:12px;border-bottom:1px solid var(--border);padding-bottom:6px}
+.meta-list{margin-top:auto}
+.meta-list .label{color:var(--pcb-start);font-weight:700}
+.meta-list .value{color:var(--text)}
+.theme-dark .meta-list .value{color:#fff}
+.theme-light .meta-list .value{color:#000}
+
+/* status pill */
+.status-pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border);background:#dde3ea;color:#0b1220}
+/* pastel palette per status */
+.status-pill.status-stable{background:#c8f7c5}        /* pastel green */
+.status-pill.status-beta{background:#ffe6b3}          /* pastel orange */
+.status-pill.status-alpha{background:#ffd1dc}         /* pastel pink */
+.status-pill.status-rc{background:#d8f0ff}            /* pastel cyan */
+.status-pill.status-release-candidate{background:#d8f0ff}
+.status-pill.status-experimental{background:#e3d7ff}  /* pastel lavender */
+.status-pill.status-draft{background:#e6eef7}         /* pastel blue-gray */
+.status-pill.status-wip{background:#fff3b0}           /* pastel yellow */
+.status-pill.status-deprecated{background:#ffd6d6}    /* pastel red */
+.status-pill.status-maintenance{background:#d9f0e6}   /* pastel mint */
+.status-pill.status-archived{background:#e0e0e0}      /* pastel gray */
+.status-pill.status-unknown{background:#dde3ea}       /* default light */
