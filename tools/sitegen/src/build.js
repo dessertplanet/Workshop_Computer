@@ -1,19 +1,15 @@
-// Helper to render meta list for cards and detail pages
-function renderMetaList({ creator, version, language, statusRaw, statusClass }) {
-  return [
-    `<li><span class=\"label\">Creator</span><span class=\"value\">${creator}</span></li>`,
-    `<li><span class=\"label\">Version</span><span class=\"value\">${version}</span></li>`,
-    `<li><span class=\"label\">Language</span><span class=\"value\">${language}</span></li>`,
-    `<li><span class=\"label\">Status</span><span class=\"value\"><span class=\"status-pill ${statusClass}\">${statusRaw}</span></span></li>`,
-  ].join('');
-}
-import { promises as fs } from 'node:fs';
+import { fsAsync as fs, ensureDir, writeFileEnsured, listSubdirs, fileExists, toPosix, encodePathSegments } from './utils/fs.js';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { marked } from 'marked';
+import { debugLog } from './utils/logger.js';
+import { slugify, parseDisplayFromFolder } from './utils/strings.js';
+import { detectRepoFromGit, detectRefFromGit } from './utils/git.js';
+import { makeRawUrl as makeRawUrlExternal } from './links.js';
 
+// ========== Path & Globals ==========
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -25,75 +21,13 @@ const OUT_DIR = path.join(ROOT, 'site');
 const DEFAULT_REPO = 'TomWhitwell/Workshop_Computer';
 const DEFAULT_BRANCH = 'main';
 
-function detectRepoFromGit() {
-  try {
-    const url = execSync('git config --get remote.origin.url', { cwd: ROOT, encoding: 'utf8' }).trim();
-    // Support ssh and https remotes
-    // Examples:
-    // git@github.com:owner/repo.git
-    // https://github.com/owner/repo.git
-    // ssh://git@github.com/owner/repo.git
-    const m = url.match(/github\.com[:\/]([^\s]+?)(?:\.git)?$/i);
-    if (m && m[1]) {
-      return m[1].replace(/\.git$/i, '');
-    }
-  } catch {}
-  return null;
-}
 
-function detectRefFromGit() {
-  try {
-    const sha = execSync('git rev-parse HEAD', { cwd: ROOT, encoding: 'utf8' }).trim();
-    if (sha) return sha;
-  } catch {}
-  try {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: ROOT, encoding: 'utf8' }).trim();
-    if (branch && branch !== 'HEAD') return branch;
-  } catch {}
-  return null;
-}
+/** Try to infer repo slug (owner/name) from local git */
 
 // On GitHub, prefer GITHUB_REPOSITORY and GITHUB_SHA (falls back to branch name). Locally, fall back to git.
 const REPO = process.env.GITHUB_REPOSITORY || detectRepoFromGit() || DEFAULT_REPO;
 const BRANCH = process.env.GITHUB_SHA || process.env.GITHUB_REF_NAME || detectRefFromGit() || DEFAULT_BRANCH;
 
-function slugify(name) {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)+/g, '');
-}
-
-function toPosix(p) {
-  return p.replace(/\\/g, '/');
-}
-
-function encodePathSegments(p) {
-  return toPosix(p).split('/').map(encodeURIComponent).join('/');
-}
-
-async function ensureDir(dir) {
-  await fs.mkdir(dir, { recursive: true });
-}
-
-async function writeFileEnsured(filePath, content) {
-  await ensureDir(path.dirname(filePath));
-  await fs.writeFile(filePath, content);
-}
-
-async function listSubdirs(dir) {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  return entries.filter(e => e.isDirectory()).map(e => e.name);
-}
-
-async function fileExists(file) {
-  try {
-    await fs.access(file);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function normalizeInfo(raw, fallbackTitle) {
   const out = {};
@@ -112,21 +46,8 @@ function normalizeInfo(raw, fallbackTitle) {
 }
 
 // Build friendly display title and number from folder name when info.title is missing
-function parseDisplayFromFolder(folderName) {
-  let number = '';
-  let base = folderName;
-  const m = folderName.match(/^(\d+)[-_\s]+(.+)$/);
-  if (m) {
-    number = m[1];
-    base = m[2];
-  }
-  // Replace separators with spaces
-  base = base.replace(/[_-]+/g, ' ').trim();
-  // Title-case words (simple heuristic)
-  base = base.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-  return { number, title: base };
-}
 
+// ========== UI Rendering Helpers ==========
 function sevenSegmentSvg(numStr) {
   const DIGIT_MAP = {
     '0': ['a','b','c','d','e','f'],
@@ -231,6 +152,7 @@ function renderLayout({ title, content, relativeRoot = '.' }) {
 </html>`;
 }
 
+// ========== Base CSS (written to /assets/style.css) ==========
 const BASE_CSS = `:root{--bg:#0b0d10;--card:#11151a;--muted:#9aa6b2;--text:#e6edf3;--accent:#2f81f7;--border:#27313b;--ok:#3fb950;--toggle-track:#0e1217;--toggle-thumb:#ffffff;--pcb-start:#2d7c30;--pcb-end:#195f20}
 .theme-dark{--thumb-x:28px}
 .theme-light{--bg:#f7f8fa;--card:#ffffff;--muted:#5b6875;--text:#0b1220;--accent:#0969da;--border:#d0d7de;--ok:#1a7f37;--toggle-track:#e9eef3;--toggle-thumb:#0b1220;--thumb-x:0px}
@@ -322,7 +244,7 @@ blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;backgro
 `;
 
 function makeRawUrl(relPathFromRepoRoot) {
-  return `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${encodePathSegments(relPathFromRepoRoot)}`;
+  return makeRawUrlExternal(REPO, BRANCH, relPathFromRepoRoot);
 }
 
 async function discoverRelease(folderName) {
@@ -368,7 +290,7 @@ async function discoverRelease(folderName) {
         await ensureDir(outPdfDir);
         const srcPath = path.join(abs, relFromRelease);
         const destPath = path.join(outPdfDir, f.name);
-        await fs.copyFile(srcPath, destPath);
+  await fs.copyFile(srcPath, destPath);
         // Relative path from detail page to PDF
         const relPathFromDetail = `${docsDirName}/${f.name}`;
         docs.push({ name: f.name, rel: toPosix(relPathFromDetail), url: toPosix(relPathFromDetail) });
@@ -391,7 +313,7 @@ async function discoverRelease(folderName) {
         let mtime = 0;
         try {
           mtime = (await fs.stat(p)).mtimeMs;
-        } catch {}
+        } catch (e) { debugLog('stat failed for', p, e?.message || e); }
         const fileObj = { name: ent.name, rel: toPosix(relFromRelease), url: makeRawUrl(relFromRepoRoot), mtime };
         downloads.push(fileObj);
         if (/\.uf2$/i.test(ent.name)) {
@@ -410,6 +332,23 @@ async function discoverRelease(folderName) {
     : parseDisplayFromFolder(folderName);
 
   return { slug, folderName, abs, info, readmeHtml, docs, downloads, display, latestUf2 };
+}
+
+// Meta list renderer (shared)
+function renderMetaList({ creator, version, language, statusRaw, statusClass }) {
+  return [
+    `<li><span class="label">Creator</span><span class="value">${creator}</span></li>`,
+    `<li><span class="label">Version</span><span class="value">${version}</span></li>`,
+    `<li><span class="label">Language</span><span class="value">${language}</span></li>`,
+    `<li><span class="label">Status</span><span class="value"><span class="status-pill ${statusClass}">${statusRaw}</span></span></li>`,
+  ].join('');
+}
+
+// Common action buttons (Back + UF2 downloads)
+function renderActionButtons(uf2Downloads) {
+  const back = `<a class="btn" href="../../index.html">⬅️ Back to All Programs</a>`;
+  const dl = (uf2Downloads || []).map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join(' ');
+  return `${back}${dl ? ' ' + dl : ''}`;
 }
 
 function releaseCard(rel) {
@@ -463,10 +402,7 @@ function detailPage(rel) {
   <div class="card-body">
     <p>${desc}</p>
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
-    <div class="actions">
-  <a class="btn" href="../../index.html">⬅️ Back to All Programs</a>
-      ${uf2Downloads.map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join(' ')}
-    </div>
+  <div class="actions">${renderActionButtons(uf2Downloads)}</div>
 
     <div class="section">
       <h2>README</h2>
@@ -485,13 +421,18 @@ function detailPage(rel) {
         <div style="margin-top:16px;text-align:center">
           <a class="btn download" href="${docs[0].url}" download>Download ${docs[0].name}</a>
         </div>
+        ${docs.length > 1 ? `
+        <div class="section">
+          <h3>Other PDFs</h3>
+          <ul class="docs-list">
+            ${docs.slice(1).map(d => `<li><a class="btn download" href="${d.url}" download>� ${d.name}</a></li>`).join('')}
+          </ul>
+        </div>
+        ` : ''}
     </div>
     ` : ''}
   </div>
-  <div class="actions" style="margin-top:16px; margin-bottom:24px; text-align:center;">
-  <a class="btn" href="../../index.html">⬅️ Back to All Programs</a>
-    ${uf2Downloads.map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join(' ')}
-  </div>
+  <div class="actions" style="margin-top:16px; margin-bottom:24px; text-align:center;">${renderActionButtons(uf2Downloads)}</div>
 </article>
 `
   });
