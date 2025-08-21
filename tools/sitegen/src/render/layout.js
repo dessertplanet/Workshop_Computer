@@ -55,7 +55,7 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
       var cards=document.querySelectorAll('.grid .card');
       var shown=0;
       cards.forEach(function(card){
-        var ct=(card.getAttribute('data-type-key')||'').toLowerCase();
+        var ct=normTypeKey(card.getAttribute('data-type')||'');
         var cr=(card.getAttribute('data-creator')||'').toLowerCase();
         var lg=(card.getAttribute('data-language')||'').toLowerCase();
         var ok=true;
