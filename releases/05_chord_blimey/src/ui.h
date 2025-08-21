@@ -15,7 +15,8 @@ enum ArpMode
     ARP_UPUP = 2,
     ARP_DOWNDOWN = 3,
     ARP_UPDOWN_INC = 4,
-    ARP_UPDOWN_EXC = 5
+    ARP_UPDOWN_EXC = 5,
+    ARP_RANDOM = 6
 };
 
 class UI
