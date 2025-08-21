@@ -8,8 +8,9 @@ import { debugLog } from './utils/logger.js';
 import { slugify, parseDisplayFromFolder } from './utils/strings.js';
 import { detectRepoFromGit, detectRefFromGit } from './utils/git.js';
 import { makeRawUrl as makeRawUrlExternal } from './links.js';
-import { renderLayout, BASE_CSS } from './render/layout.js';
+import { renderLayout } from './render/layout.js';
 import { sevenSegmentSvg, mapStatusToClass, renderMetaList, renderActionButtons } from './render/components.js';
+import { discoverRelease as discoverReleaseMod } from './discover/release.js';
 
 // ========== Path & Globals ==========
 const __filename = fileURLToPath(import.meta.url);
@@ -52,101 +53,8 @@ function makeRawUrl(relPathFromRepoRoot) {
 }
 
 async function discoverRelease(folderName) {
-  const abs = path.join(RELEASES_DIR, folderName);
-  const slug = slugify(folderName);
-
-  // Info
-  const infoPath = path.join(abs, 'info.yaml');
-  let info = { title: folderName };
-  if (await fileExists(infoPath)) {
-    const raw = await fs.readFile(infoPath, 'utf8');
-    try {
-      const parsed = YAML.parse(raw);
-      info = normalizeInfo(parsed, folderName);
-    } catch {
-      info = normalizeInfo({}, folderName);
-    }
-  } else {
-    info = normalizeInfo({}, folderName);
-  }
-
-  // README
-  const readmePath = path.join(abs, 'README.md');
-  let readmeHtml = '<p>No README.md found.</p>';
-  if (await fileExists(readmePath)) {
-    const md = await fs.readFile(readmePath, 'utf8');
-    readmeHtml = marked.parse(md);
-  }
-
-  // Docs (PDF)
-  const entries = await fs.readdir(abs, { withFileTypes: true });
-  const docsDirName = entries.find(e => e.isDirectory() && /^(docs|documentation)$/i.test(e.name))?.name;
-  const docs = [];
-  if (docsDirName) {
-    const fullDocsDir = path.join(abs, docsDirName);
-    const files = await fs.readdir(fullDocsDir, { withFileTypes: true });
-    for (const f of files) {
-      if (f.isFile() && f.name.toLowerCase().endsWith('.pdf')) {
-        // Copy PDF to output directory for local preview
-        const relFromRelease = path.join(docsDirName, f.name);
-        const relFromRepoRoot = path.join('releases', folderName, relFromRelease);
-        const outPdfDir = path.join(OUT_DIR, 'programs', slug, docsDirName);
-        await ensureDir(outPdfDir);
-        const srcPath = path.join(abs, relFromRelease);
-        const destPath = path.join(outPdfDir, f.name);
-  await fs.copyFile(srcPath, destPath);
-        // Relative path from detail page to PDF
-        const relPathFromDetail = `${docsDirName}/${f.name}`;
-        docs.push({ name: f.name, rel: toPosix(relPathFromDetail), url: toPosix(relPathFromDetail) });
-      }
-    }
-  }
-
-  // Downloads (UF2, zip, bin, hex)
-  const downloads = [];
-  let latestUf2 = null;
-  async function collectDownloads(dir) {
-    const ents = await fs.readdir(dir, { withFileTypes: true });
-    for (const ent of ents) {
-      const p = path.join(dir, ent.name);
-      if (ent.isDirectory()) {
-        await collectDownloads(p);
-      } else if (/\.(uf2|zip|bin|hex)$/i.test(ent.name)) {
-        const relFromRelease = path.relative(abs, p);
-        const relFromRepoRoot = path.join('releases', folderName, relFromRelease);
-        let mtime = 0;
-        try {
-          mtime = (await fs.stat(p)).mtimeMs;
-        } catch {}
-        const encodedPath = encodePathSegments(relFromRepoRoot);
-        const url = makeRawUrl(encodedPath);
-        const item = { name: ent.name, rel: relFromRepoRoot, url, mtime };
-        downloads.push(item);
-        if (/\.uf2$/i.test(ent.name)) {
-          if (!latestUf2 || mtime > latestUf2.mtime) {
-            latestUf2 = item;
-          }
-        }
-      }
-    }
-  }
-  await collectDownloads(abs);
-
-  // Display fields
-  const parsed = parseDisplayFromFolder(folderName);
-  const finalTitle = info.title || parsed.title || folderName;
-  const display = { number: parsed.number, title: finalTitle };
-
-  return {
-    folderName,
-    slug,
-    info: { ...info, title: finalTitle },
-    readmeHtml,
-    docs,
-    downloads,
-    latestUf2,
-    display,
-  };
+  const outPrograms = path.join(OUT_DIR, 'programs');
+  return discoverReleaseMod(RELEASES_DIR, folderName, outPrograms, makeRawUrl);
 }
 
 function releaseCard(rel) {
@@ -239,7 +147,10 @@ function detailPage(rel) {
 async function build() {
   await ensureDir(OUT_DIR);
   await ensureDir(path.join(OUT_DIR, 'assets'));
-  await writeFileEnsured(path.join(OUT_DIR, 'assets', 'style.css'), BASE_CSS);
+  // Copy physical CSS asset
+  const cssSrc = path.join(ROOT, 'tools', 'sitegen', 'assets', 'style.css');
+  const cssDest = path.join(OUT_DIR, 'assets', 'style.css');
+  await fs.copyFile(cssSrc, cssDest);
 
   const releaseFolders = (await listSubdirs(RELEASES_DIR)).sort();
 
