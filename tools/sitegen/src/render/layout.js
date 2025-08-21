@@ -1,4 +1,4 @@
-export function renderLayout({ title, content, relativeRoot = '.' }) {
+export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'https://github.com/TomWhitwell/Workshop_Computer' }) {
   return `<!doctype html>
 <html lang="en" class="theme-dark" data-theme="dark">
 <head>
@@ -22,7 +22,11 @@ export function renderLayout({ title, content, relativeRoot = '.' }) {
   </main>
   <footer class="site-footer">
     <div class="container">
-      <p>Built from this repository's releases folder. Deployed via GitHub Pages.</p>
+      <p>
+        <a href="${repoUrl}" target="_blank" rel="noopener">View on GitHub</a>
+        <span aria-hidden="true">•</span>
+        <a href="https://www.musicthing.co.uk/workshopsystem/" target="_blank" rel="noopener">Music Thing Workshop System</a>
+      </p>
     </div>
   </footer>
   <script>(function(){var btn=document.getElementById('themeToggle');if(!btn)return;var k='wc-theme';function cur(){return document.documentElement.getAttribute('data-theme')||'dark';}function set(t){try{localStorage.setItem(k,t);}catch(e){}var d=document.documentElement;d.classList.remove('theme-dark','theme-light');d.classList.add('theme-'+t);d.setAttribute('data-theme',t);update();}function update(){var t=cur();btn.setAttribute('aria-checked',String(t==='dark'));}btn.addEventListener('click',function(){set(cur()==='dark'?'light':'dark');});update();})();</script>

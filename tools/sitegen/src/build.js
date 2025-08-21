@@ -82,6 +82,7 @@ function detailPage(rel) {
   return renderLayout({
     title: `${info.title} – Workshop Computer`,
     relativeRoot: '../..',
+  repoUrl: `https://github.com/${REPO}`,
     content: `
 <article class="card large">
   <div class="card-head">
@@ -151,6 +152,7 @@ async function build() {
   const indexHtml = renderLayout({
     title: 'Workshop Computer Program Cards',
     relativeRoot: '.',
+  repoUrl: `https://github.com/${REPO}`,
     content: `
 <article class="card intro-card">
   <div class="card-body">
@@ -173,6 +175,7 @@ async function build() {
   await writeFileEnsured(path.join(OUT_DIR, '404.html'), renderLayout({
     title: 'Not found',
     relativeRoot: '.',
+  repoUrl: `https://github.com/${REPO}`,
     content: '<h1>404</h1><p>Page not found.</p>'
   }));
 

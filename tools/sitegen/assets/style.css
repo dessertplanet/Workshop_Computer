@@ -38,6 +38,7 @@ blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;backgro
 .docs-list li{margin:6px 0}
 .downloads a{display:inline-block;margin-right:10px;margin-bottom:10px}
 .site-footer{border-top:1px solid var(--border);background:color-mix(in srgb, var(--bg), #000 10%);margin-top:40px}
+.site-footer .container{ text-align:center }
 
 /* theme toggle */
 .theme-toggle{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer}
