@@ -1,11 +1,8 @@
-import { fsAsync as fs, ensureDir, writeFileEnsured, listSubdirs, fileExists, toPosix, encodePathSegments } from './utils/fs.js';
-import { execSync } from 'node:child_process';
+import { fsAsync as fs, ensureDir, writeFileEnsured, listSubdirs } from './utils/fs.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { marked } from 'marked';
-import { debugLog } from './utils/logger.js';
-import { slugify, parseDisplayFromFolder } from './utils/strings.js';
 import { detectRepoFromGit, detectRefFromGit } from './utils/git.js';
 import { makeRawUrl as makeRawUrlExternal } from './links.js';
 import { renderLayout } from './render/layout.js';
@@ -32,21 +29,7 @@ const REPO = process.env.GITHUB_REPOSITORY || detectRepoFromGit() || DEFAULT_REP
 const BRANCH = process.env.GITHUB_SHA || process.env.GITHUB_REF_NAME || detectRefFromGit() || DEFAULT_BRANCH;
 
 
-function normalizeInfo(raw, fallbackTitle) {
-  const out = {};
-  const mapKey = k => String(k || '').toLowerCase().replace(/\s+/g, '');
-  for (const [k, v] of Object.entries(raw || {})) {
-    out[mapKey(k)] = v;
-  }
-  return {
-    title: out.title || out.name || fallbackTitle,
-    description: out.description || '',
-    language: out.language || '',
-    creator: out.creator || '',
-    version: out.version || '',
-    status: out.status || '',
-  };
-}
+// (info parsing handled in discover/release.js)
 
 function makeRawUrl(relPathFromRepoRoot) {
   return makeRawUrlExternal(REPO, BRANCH, relPathFromRepoRoot);
