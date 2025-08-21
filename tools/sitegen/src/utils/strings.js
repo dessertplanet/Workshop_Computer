@@ -17,3 +17,13 @@ export function parseDisplayFromFolder(folderName) {
   base = base.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
   return { number, title: base };
 }
+
+export function formatDisplayTitle(raw) {
+  if (!raw) return '';
+  let s = String(raw).trim();
+  // Drop any numeric prefix like "00_", "03-", "11 "
+  s = s.replace(/^(\d+)[-_\s]+/, '');
+  // Replace underscores/dashes with spaces and title-case
+  s = s.replace(/[_-]+/g, ' ').trim();
+  return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}

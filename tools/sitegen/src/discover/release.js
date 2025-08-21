@@ -2,7 +2,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { marked } from 'marked';
 import { fsAsync as fs, fileExists } from '../utils/fs.js';
-import { slugify, parseDisplayFromFolder } from '../utils/strings.js';
+import { slugify, parseDisplayFromFolder, formatDisplayTitle } from '../utils/strings.js';
 import { discoverDocs } from './docs.js';
 import { discoverDownloads } from './downloads.js';
 
@@ -53,7 +53,7 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
 
   // display fields
   const parsed = parseDisplayFromFolder(folderName);
-  const finalTitle = info.title || parsed.title || folderName;
+  const finalTitle = info.title ? formatDisplayTitle(info.title) : (parsed.title || folderName);
   const display = { number: parsed.number, title: finalTitle };
 
   return {
