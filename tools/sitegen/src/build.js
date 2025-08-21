@@ -516,7 +516,7 @@ async function build() {
   // Index page
   const cards = releases.map(releaseCard).join('\n');
   const indexHtml = renderLayout({
-    title: 'Workshop Computer Releases',
+    title: 'Workshop Computer Program Cards',
     relativeRoot: '.',
     content: `
 <article class="card intro-card">
