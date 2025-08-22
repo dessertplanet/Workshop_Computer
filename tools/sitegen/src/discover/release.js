@@ -56,77 +56,6 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     });
   }
 
-  // Helper: convert YouTube links to embedded iframes
-  function youtubeStartSeconds(u) {
-    // parse t=1h2m3s or t=75s or t=75; also support start=
-    const parseTs = (val) => {
-      if (!val) return 0;
-      // 1h2m3s, 2m10s, 75s, 75
-      const m = String(val).match(/(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/i);
-      if (m) {
-        const h = parseInt(m[1]||'0',10), mnt = parseInt(m[2]||'0',10), s = parseInt(m[3]||'0',10);
-        if (h||mnt||s) return h*3600+mnt*60+s;
-      }
-      const n = parseInt(val,10);
-      return isNaN(n) ? 0 : Math.max(0,n);
-    };
-    try {
-      const url = new URL(u);
-      const sp = url.searchParams;
-      let t = sp.get('t') || sp.get('start') || '';
-      if (!t && url.hash && url.hash.includes('t=')) {
-        const hm = url.hash.match(/t=([^&#]+)/);
-        if (hm) t = hm[1];
-      }
-      return parseTs(t);
-    } catch { return 0; }
-  }
-
-  function getYouTubeEmbedUrl(u) {
-    try {
-      const url = new URL(u);
-      const host = url.hostname.replace(/^www\./,'');
-      let id = null;
-      if (host === 'youtu.be') {
-        id = url.pathname.split('/').filter(Boolean)[0] || null;
-      } else if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
-        if (url.pathname === '/watch') {
-          id = url.searchParams.get('v');
-        } else if (url.pathname.startsWith('/shorts/')) {
-          id = url.pathname.split('/').filter(Boolean)[1] || null;
-        }
-      }
-      if (!id) return null;
-      const start = youtubeStartSeconds(u);
-      const base = `https://www.youtube-nocookie.com/embed/${id}`;
-      const qs = start > 0 ? `?start=${start}&rel=0` : `?rel=0`;
-      return base + qs;
-    } catch { return null; }
-  }
-
-  function embedYouTube(html) {
-    if (!html) return html;
-    // Replace <p><a href="youtube...">...</a></p> first to avoid invalid <div> inside <p>
-    html = html.replace(/<p>\s*(<a\s+[^>]*href=(['"])([^'"#]+)\2[^>]*>[^<]*<\/a>)\s*<\/p>/gi, (full, aTag, q, href) => {
-      const embed = getYouTubeEmbedUrl(href);
-      if (!embed) return full;
-      return `<div class="video-embed"><iframe src="${embed}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe></div>`;
-    });
-    // Replace any remaining <a href="youtube...">...</a>
-    html = html.replace(/<a\s+[^>]*href=(['"])([^'"#]+)\1[^>]*>[^<]*<\/a>/gi, (full, q, href) => {
-      const embed = getYouTubeEmbedUrl(href);
-      if (!embed) return full;
-      return `<div class="video-embed"><iframe src="${embed}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe></div>`;
-    });
-    // Replace <a href="youtube..."><img ...></a>
-    html = html.replace(/<a\s+[^>]*href=(['"])([^'"#]+)\1[^>]*>\s*<img\b[^>]*>\s*<\/a>/gi, (full, hrefQ, href) => {
-      const embed = getYouTubeEmbedUrl(href);
-      if (!embed) return full;
-      return `<div class="video-embed"><iframe src="${embed}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe></div>`;
-    });
-    return html;
-  }
-
   // README.md
   const readmePath = path.join(abs, 'README.md');
   let readmeHtml = '<p>No README.md found.</p>';
@@ -143,8 +72,8 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   const repoRelBase = path.join('releases', folderName);
   // Rewrite relative links in README HTML to raw GitHub URLs
   readmeHtml = rewriteHtmlLinksToRaw(readmeHtml, repoRelBase);
-  // Convert YouTube links to embeds
-  readmeHtml = embedYouTube(readmeHtml);
+  // Inject YouTube embeds after links, preserving the links (minimal logic)
+  readmeHtml = injectYouTubeEmbeds(readmeHtml);
   
   // downloads
   const { downloads, latestUf2 } = await discoverDownloads(abs, repoRelBase, makeRawUrl);
@@ -164,4 +93,31 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     latestUf2,
     display,
   };
+}
+
+// Minimal YouTube embed injector: append an embed after YouTube links, keep link text
+function injectYouTubeEmbeds(html) {
+  if (!html) return html;
+  const anchorRe = /<a\s+[^>]*href=(['"])([^'"#]+)\1[^>]*>([\s\S]*?)<\/a>/gi;
+  return html.replace(anchorRe, (full, q, href, text) => {
+    const u = String(href);
+    let id = null;
+    // youtu.be/<id>
+    let m = u.match(/(?:^|\b)youtu\.be\/([A-Za-z0-9_-]{6,})/i);
+    if (m) id = m[1];
+    // youtube.com/watch?v=<id>
+    if (!id) {
+      m = u.match(/[?&]v=([A-Za-z0-9_-]{6,})/i);
+      if (m && /youtube\.com\//i.test(u)) id = m[1];
+    }
+    // youtube.com/shorts/<id>
+    if (!id) {
+      m = u.match(/youtube\.com\/shorts\/([A-Za-z0-9_-]{6,})/i);
+      if (m) id = m[1];
+    }
+    if (!id) return full; // not a YouTube link
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${id}?rel=0`;
+    const embed = `<div class=\"video-embed\"><iframe src=\"${embedUrl}\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share\" allowfullscreen title=\"YouTube video\"></iframe></div>`;
+    return `${full}${embed}`;
+  });
 }

@@ -7,6 +7,9 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
   <title>${title ? String(title).replace(/</g, '&lt;') : 'Workshop Computer'}</title>
   <script>(function(){try{var k='wc-theme';var d=document.documentElement;var prefersDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;var t=localStorage.getItem(k);if(t!=='dark'&&t!=='light'){t=prefersDark?'dark':'light';}d.classList.remove('theme-dark','theme-light');d.classList.add('theme-'+t);d.setAttribute('data-theme',t);}catch(e){}})();</script>
   <link rel="stylesheet" href="${relativeRoot}/assets/github-markdown.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="${relativeRoot}/assets/style.css" />
   <style>
     .filter-bar{margin:0 0 16px 0}
