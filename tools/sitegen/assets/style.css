@@ -15,7 +15,7 @@
 .card-num svg{height:42px;width:auto;display:block}
 .card-body{padding:16px;display:flex;flex-direction:column;flex:1}
 .card-body .btn{margin-top:12px}
-.markdown-body{font-family:"Inter",system-ui,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
+.markdown-body{font-family:"Inter",Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
 .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;justify-content:center}
 /* large card for detail pages */
 .card.large{width:100%;margin:40px 0;font-size:20px}
