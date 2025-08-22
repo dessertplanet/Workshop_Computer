@@ -44,17 +44,6 @@ blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;backgro
 .site-footer{border-top:1px solid var(--border);background:color-mix(in srgb, var(--bg), #000 10%);margin-top:40px}
 .site-footer .container{ text-align:center }
 
-/* filter controls */
-.filter-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-.filter-bar label{font-weight:600;color:var(--muted)}
-.filter-bar select{appearance:none;-webkit-appearance:none;-moz-appearance:none;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 28px 8px 10px;min-width:180px;line-height:1.2}
-.filter-bar select:focus{outline:2px solid var(--accent);outline-offset:1px}
-.theme-dark .filter-bar select{background:#1b222b;color:#fff}
-.theme-light .filter-bar select{background:#fff;color:#0b1220}
-/* try to style the dropdown menu as well (support varies by browser) */
-.theme-dark .filter-bar option{background:#1b222b;color:#fff}
-.theme-light .filter-bar option{background:#fff;color:#0b1220}
-
 /* theme toggle */
 .theme-toggle{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer}
 .theme-toggle .track{position:relative;display:inline-flex;align-items:center;gap:6px;width:58px;height:28px;border-radius:999px;background:var(--toggle-track);border:1px solid var(--border);padding:2px}
@@ -103,6 +92,6 @@ blockquote{border-left:4px solid var(--border);margin:0;padding:8px 12px;backgro
 .status-pill.status-archived{background:#e0e0e0}      /* pastel gray */
 .status-pill.status-unknown{background:#dde3ea}       /* default light */
 
-/* responsive video embeds */
+/* video embeds */
 .video-embed{position:relative;padding-bottom:56.25%;height:0;overflow:hidden;border:1px solid var(--border);border-radius:8px;background:color-mix(in srgb, var(--bg), #000 8%);margin:16px 0}
 .video-embed iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0}
