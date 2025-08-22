@@ -29,19 +29,7 @@
   --light-bg: #fff;
   --light-text: #0b1220;
 }
-  --muted: #9aa6b2;
-  --text: #e6edf3;
-  --accent: #2f81f7;
-  --border: #27313b;
-  --ok: #3fb950;
-  --toggle-track: #0e1217;
-  --toggle-thumb: #ffffff;
-  --pcb-start: #2d7c30;
-  --pcb-end: #195f20;
-  --dark-option-bg: #1b222b;
-  --light-option-bg: #fff;
-  --light-option-text: #0b1220;
-}
+/* Removed orphaned custom properties block to fix syntax error */
 .theme-dark{--thumb-x:28px}
 .theme-light{
   --bg: #f7f8fa;
@@ -104,6 +92,7 @@
 .filter-bar label{font-weight:600;color:var(--muted)}
 .filter-bar select {
   appearance: none;
+}
 .theme-dark .filter-bar select{background:var(--dark-option-bg);color:var(--light-option-bg)}
 .theme-dark a{color:#4ea1ff}
 .theme-dark .site-title a,
