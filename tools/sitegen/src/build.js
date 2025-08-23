@@ -69,21 +69,22 @@ function releaseCard(rel) {
 	const editorLink = (info.editor != '');
 	const editor = info.editor;
   return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}">
-  <a href="programs/${slug}/index.html"><div class="card-head">
+<div class="card-head">
     <h3 class="card-title">${display.title}</h3>
     ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
-  </div></a>
+  </div>
   <div class="card-body">
     <p>${desc}</p>
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
     <div class="actions">
-  ${latestUf2 ? `<a class="btn download" href="${latestUf2.url}" download>💾 Download</a>` : ''}
-  ${editorLink ? `<a class="btn editor" href="${editor}" download>Web editor</a>` : ''}
+  <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
+${latestUf2 ? `<a class="btn download" href="${latestUf2.url}">💾 Download</a>` : ''}
+  ${editorLink ? `<a class="btn editor" href="${editor}" download>⚙ Web editor</a>` : ''}
     </div>
   </div>
 </article>`;
 }
-//  <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
+//  
 
 function detailPage(rel) {
   const { info, slug, display, downloads, docs, readmeHtml } = rel;
@@ -96,6 +97,7 @@ function detailPage(rel) {
     const metaItems = renderMetaList({ creator, version, language, statusRaw, statusClass });
   const num = display.number;
   const uf2Downloads = (downloads || []).filter(d => /\.uf2$/i.test(d.name));
+	const editorURL = info.editor;
 
   return renderLayout({
     title: `${info.title} – Workshop Computer`,
@@ -110,7 +112,7 @@ function detailPage(rel) {
   <div class="card-body">
     <p>${desc}</p>
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
-  <div class="actions">${renderActionButtons(uf2Downloads)}</div>
+  <div class="actions">${renderActionButtons(uf2Downloads, editorURL)}</div>
 
     <div class="section">
       <h2>README</h2>
@@ -140,7 +142,7 @@ function detailPage(rel) {
     </div>
     ` : ''}
   </div>
-  <div class="actions" style="margin-top:16px; margin-bottom:24px; text-align:center;">${renderActionButtons(uf2Downloads)}</div>
+  <div class="actions" style="margin-top:16px; margin-bottom:24px; text-align:center;">${renderActionButtons(uf2Downloads, editorURL)}</div>
 </article>
 `
   });
