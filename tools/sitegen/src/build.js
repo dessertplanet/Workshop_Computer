@@ -68,7 +68,7 @@ function releaseCard(rel) {
 	const latestUf2 = rel.latestUf2;
 	const editorLink = (info.editor != '');
 	const editor = info.editor;
-  return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}">
+  return `<a href="programs/${slug}/index.html"><article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}">
   <div class="card-head">
     <h3 class="card-title">${display.title}</h3>
     ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
@@ -77,13 +77,13 @@ function releaseCard(rel) {
     <p>${desc}</p>
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
     <div class="actions">
-  <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
   ${latestUf2 ? `<a class="btn download" href="${latestUf2.url}" download>💾 Download</a>` : ''}
-  ${editorLink ? `<a class="btn editor" href="${editor}" download>Editor</a>` : ''}
+  ${editorLink ? `<a class="btn editor" href="${editor}" download>Web editor</a>` : ''}
     </div>
   </div>
-</article>`;
+</article></a>`;
 }
+//  <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
 
 function detailPage(rel) {
   const { info, slug, display, downloads, docs, readmeHtml } = rel;
