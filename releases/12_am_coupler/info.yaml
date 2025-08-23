@@ -1,6 +1,6 @@
 Description: AM radio transmitter / coupler
 Name: AM Coupler
-Language: C++ / ComputerCard / RPi Pico SDK
+Language: C++ (ComputerCard)
 Creator: Chris Johnson
 Version: 1.0
 Status: Released
