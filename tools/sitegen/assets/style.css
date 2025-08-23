@@ -10,6 +10,8 @@
   --toggle-thumb: #ffffff;
   --pcb-start: #2d7c30;
   --pcb-end: #195f20;
+  --editor-start: #7c2d30;
+  --editor-end: #5f1920;
   --dark-bg: #1b222b;
   --light-bg: #fff;
   --light-text: #0b1220;
@@ -75,6 +77,7 @@
 .btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;margin-top:12px}
 .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
 .btn.download{background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff;border:1px solid var(--border)}
+.btn.editor{background:linear-gradient(90deg,var(--editor-start),var(--editor-end));color:#fff;border:1px solid var(--border)}
 .section{margin:24px 0}
 .section h2{margin:0 0 8px 0}
 .theme-dark .filter-bar select{background:var(--dark-bg);color:var(--toggle-thumb)}

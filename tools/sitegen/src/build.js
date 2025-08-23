@@ -65,7 +65,9 @@ function releaseCard(rel) {
   const statusRaw = (info.status || 'Unknown').toString();
   const statusClass = mapStatusToClass(statusRaw);
     const metaItems = renderMetaList({ creator, version, language, statusRaw, statusClass });
-  const latestUf2 = rel.latestUf2;
+	const latestUf2 = rel.latestUf2;
+	const editorLink = (rel.editor != '');
+	const editor = rel.editor;
   return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}">
   <div class="card-head">
     <h3 class="card-title">${display.title}</h3>
@@ -77,6 +79,7 @@ function releaseCard(rel) {
     <div class="actions">
   <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
   ${latestUf2 ? `<a class="btn download" href="${latestUf2.url}" download>💾 Download</a>` : ''}
+  ${ ? `<a class="btn editor" href="${editor}" download>Editor</a>` : ''}
     </div>
   </div>
 </article>`;
