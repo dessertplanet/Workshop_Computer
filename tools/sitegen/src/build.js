@@ -68,11 +68,11 @@ function releaseCard(rel) {
 	const latestUf2 = rel.latestUf2;
 	const editorLink = (info.editor != '');
 	const editor = info.editor;
-  return `<a href="programs/${slug}/index.html"><article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}">
-  <div class="card-head">
+  return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}">
+  <a href="programs/${slug}/index.html"><div class="card-head">
     <h3 class="card-title">${display.title}</h3>
     ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
-  </div>
+  </div></a>
   <div class="card-body">
     <p>${desc}</p>
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
@@ -81,7 +81,7 @@ function releaseCard(rel) {
   ${editorLink ? `<a class="btn editor" href="${editor}" download>Web editor</a>` : ''}
     </div>
   </div>
-</article></a>`;
+</article>`;
 }
 //  <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
 
