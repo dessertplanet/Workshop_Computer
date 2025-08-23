@@ -1,4 +1,5 @@
 Description: AM radio transmitter / coupler
+Name: AM Coupler
 Language: C++ / ComputerCard / RPi Pico SDK
 Creator: Chris Johnson
 Version: 1.0
