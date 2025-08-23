@@ -66,8 +66,8 @@ function releaseCard(rel) {
   const statusClass = mapStatusToClass(statusRaw);
     const metaItems = renderMetaList({ creator, version, language, statusRaw, statusClass });
 	const latestUf2 = rel.latestUf2;
-	const editorLink = (rel.editor != '');
-	const editor = rel.editor;
+	const editorLink = (info.editor != '');
+	const editor = info.editor;
   return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}">
   <div class="card-head">
     <h3 class="card-title">${display.title}</h3>
