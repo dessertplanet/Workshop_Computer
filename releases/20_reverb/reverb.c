@@ -1480,7 +1480,8 @@ void __not_in_flash_func(process_sample)()
 
 int main()
 {
-	// Run at 144MHz, mild overclock
+	// Run at 200MHz, certified max clock as of pico-sdk 2.1.1
+	// https://github.com/raspberrypi/pico-sdk/releases/tag/2.1.1
 	set_sys_clock_khz(200000, true);
 
 	adc_run(false);

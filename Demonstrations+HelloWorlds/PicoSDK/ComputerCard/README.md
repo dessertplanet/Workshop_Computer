@@ -61,28 +61,27 @@ More generally, the process is:
 ComputerCard contains several examples in the `examples/` directory.
 For beginners just starting with ComputerCard, the first example to look at is `passthrough` to introduce the basic functions, followed by `sample_and_hold` for typical usage of these in a 'real' card.
 
-- `midi_device` — example of USB MIDI being used alongside ComputerCard. The MTM Computer acts as a USB device, to allow it to be connected to a (laptop/desktop) computer. Sends Computer knob values to the USB host as CC messages.
+- `midi_device` — example of USB MIDI being used alongside ComputerCard. The MTM Computer acts as a USB device, to allow it to be connected to a (laptop/desktop) computer or a phone/tablet. Sends Computer knob values to the USB host as CC messages.
 - `midi_host` — example of USB MIDI being used alongside ComputerCard. The MTM Computer acts as a USB host, to allow it to be connected to USB MIDI devices such as keyboards/controllers/etc.
-- `midi_device_host` — example of USB MIDI being used alongside ComputerCard. At startup, the MTM computer determines the type of USB port it is connected to, and becomes either a host or device as appropriate. Requires Computer 1.1.0 Hardware. 
+- `midi_device_host` — example of USB MIDI being used alongside ComputerCard. At startup, the MTM computer determines the type of USB port it is connected to, and becomes either a host or device as appropriate. Requires Computer 1.1.0 Hardware for host mode.
 - `normalisation_probe` — minimal example of patch cable detection. LEDs are lit when corresponding sockets have a jack plugged in.
-- `passthrough` — simple demonstration of using the jacks, knobs, switch and LEDs.
+- `passthrough` — simple demonstration of using the all the jacks and knobs, switch and LEDs.
 - `sample_and_hold` — dual sample and hold, demonstrating jacks, normalisation probe and pseudo-random numbers
 - `sample_upload` — an interface for users to upload audio samples (in WAV file format) to a Computer card, and play these back
 - `second_core` — demonstration of using the second RP2040 core for more CPU-intensive processing than is possible at the 48kHz sample rate
 - `sine_wave_float` — 440Hz sine wave generator, using floating-point numbers
 - `sine_wave_lookup` — 440Hz sine wave generator, demonstrating scanning and linear interpolation of a lookup table using integer arithmetic 
 - `usb_detect` — Displays on the LEDs whether the USB port on the MTM Computer is acting as a 'downstream facing port' (MTM Computer is USB Host), or 'upstream facing port' (MTM Computer is USB device). Requires Computer 1.1.0 Hardware. 
+- `usb_serial` — Outputs debugging information from a ComputerCard through the USB serial connection
 
 ### Notes
 - Make sure execution of `ComputerCard::ProcessSample` always runs quickly enough that it has returned before the next execution begins (1/48kHz = ~20μs). (See the [guidance below](#programming) on achieving this)
 - While multiple ComputerCard objects can be created and used sequentially, only one instance of a ComputerCard can be active (using `Run()`) at any one time.
 
 ### Limitations / potential future improvements
-- Only core 0 of the RP2040 is used
-    - In particular, this prevents the Pico SDK USB stdio from being used, as this code must run on core0 and interferes with the 48kHz audio callback
-- No built-in delta-sigma modulation of CV outputs, limiting CV precision of 1V/octave signals to about 7 cents
 - There is no way to configure CV/knob smoothing filters.
 - There is no way to change the sample rate
+- There is no built-in way to process blocks of samples, rather than individual samples.
 
 ## [Using the RPi Pico SDK (Linux command line)](#pico-sdk)
 - Clone and install the [RPi Pico SDK](https://github.com/raspberrypi/pico-sdk)
@@ -158,7 +157,8 @@ Early versions do not include a version number in the source code, but can be id
 | 0.2.3   | 2025/02/08 | 6dee0f6690ea3e6b9cb09c2814fd9cc5 |
 | 0.2.4   | 2025/02/28 | 2247e04b8719cdc6df8c625057e8cad1 |
 | 0.2.5   | 2025/03/02 | b76132bc5126e2cb2ee14617f72b7f64 |
-
+| 0.2.6   | 2025/07/31 | Version number in ComputerCard.h |
+| 0.2.7   | 2025/08/03 |                                  |
 #### 0.1.4
 Transfer of code to public Workshop_Computer repository.
 
@@ -191,8 +191,26 @@ Lots of fixes found during Utility Pair development:
 - Renamed `HardwareVersion` enum to `HardwareVersion_t`
 - Added `USBPowerState()` function and `USBPowerState_t` enum
 
+#### 0.2.6
+- Moved to precise 19-bit sigma-delta PWM for CV outputs
+-- New `CVOutPrecise` functions
+-- Precise values used by `CVOutMIDINote` functions
+-- May have _very_ minor differences in CV output latency, and on precise code timings, due to new interrupt that is not synchronised with audio sample.
+- Bug fixes to USB MIDI example to handle multiple MIDI messages sent in a short time frame
+- Bug fix in `CVOutMIDINote` where calibration was always that of CV out 1
+- New `usb_serial` example
+
+
+#### 0.2.7
+- Bug fix in ADC DNL nonlinearity correction (thanks Andrew Cooke)
+- Applying DNL nonlinearity correction to audio inputs, as well as CV
+- Added `CVOutMillivolts` functions for calibrated CV output voltages
+- Added `CVOutsCalibrated` function to detect if CV outputs have been calibrated
+- New `calibrated_cv_out` example
+
 
 # [Reference](#reference)
+
 
 The following is a list of public and protected methods of the `ComputerCard` class. 
 
@@ -259,17 +277,34 @@ In all jack input and output methods with a parameter `int i`, jack 1 (on the le
   
   `void CVOut2(int16_t val)`
 
-  Set the value of an CV output jack. Accepts signed 12-bit values, −2048 to 2047. The range of voltages output is approximately −6V (value −2048) to +6V (value 2047), and is uncalibrated.
+  Set the value of an CV output jack. Accepts signed 12-bit values, −2048 to 2047. Values outside this range will be clipped. The range of voltages output is approximately −6V (value −2048) to +6V (value 2047), and is uncalibrated. 
   
-  Unlike the audio outputs, the `CVOut` functions change the CV output immediately, so it is recommended that the value of each CV output is set only once per `ProcessSample` call.
+- `void CVOutPrecise(int i, int32_t val)`
+ 
+  `void CVOut1Precise(int32_t val)`
+  
+  `void CVOut2Precise(int32_t val)`
+
+  Set the value of an CV output jack. Accepts signed 19-bit values, −262144 to 262143. Values outside this range will be clipped. The range of voltages output is approximately −6V (value −262144) to +6V (value 262143), and is uncalibrated. Sigma-delta modulation is used to get 19-bit precision from 11-bit PWM.
+  
+
+  The `CVOut` functions change the CV output at the start of the next CV PWM cycle, which is not synchronised with the audio samples, so it is recommended that the value of each CV output is set only once per `ProcessSample` call.
   
 - `void CVOutMIDINote(int i, uint8_t noteNum)`
 
   `void CVOut1MIDINote(uint8_t noteNum)`
   
-  `CVOut2MIDINote(uint8_t noteNum)`
+  `void CVOut2MIDINote(uint8_t noteNum)`
   
   Set the value of an CV output jack. Accepts a 12-bit MIDI note number 0–127. If the calibration data has been saved, this will be used to produce calibrated output voltages. The precision of the voltage output is roughly 5.9mV (7 cents at 1 volt per octave).
+  
+- `bool CVOutMillivolts(int i, uint32_t millivolts)`
+
+  `bool CVOut1Millivolts(uint32_t millivolts)`
+  
+  `bool CVOut2Millivolts(uint32_t millivolts)`
+  
+  Set the value of an CV output jack to a voltage in millivolts. If the calibration data has been saved, this will be used to produce calibrated output voltages. Return true if the requested value is outside the range possible and the output has been limited; achievable range will vary depending on calibration values.
   
 - `void PulseOut(int i, bool val)`
 
@@ -278,7 +313,7 @@ In all jack input and output methods with a parameter `int i`, jack 1 (on the le
   `void PulseOut2(bool val)`
   
   
-  Set the value of a pulse output jack. Accepts a boolean, producing roughly 5V output for `true` and 0V for `false`.  
+  Set the value of a pulse output jack. Accepts a boolean, producing roughly 5V output for `true` and 0V for `false`.
   
   The `PulseOut` functions change the pulse output immediately, so to avoid the possibility of very short pulses, it is recommended that the value of each Pulse output is set only once per `ProcessSample` call.
   
@@ -395,6 +430,10 @@ For all LED functions, the `index` parameter takes a value 0–5 and identifies 
    Returns a 64-bit integer unique to the program card.
    This is the unique ID returned by the flash chip, with a scrambling function applied to ensure that all bits in the returned integer are unpredictable, even if many bits in the original unique ID are common between flash chips.
 
+- `bool CVOutsCalibrated()`
+
+Returns `true` if CV Output calibration data has been loaded, or false if no calibration data detected. 
+	
 - `void Abort()`
 
    When called from `ProcessSample`, stops the processing started when `Run()` was called, and returns from the (otherwise blocking) `Run` method. This allows `Run` to be called again, potentially on a different `ComputerCard` class.
@@ -410,13 +449,20 @@ For all LED functions, the `index` parameter takes a value 0–5 and identifies 
 
 ComputerCard is designed to allow audio signals (with bandwidths up to ~20kHz) to be processed at low latency. To do this, the computations for each sample must be calculated individually, by calling the users `ProcessSample()` function at 48kHz. The `ProcessSample()` function for one sample must finish before the one for the next sample starts, meaning that the user's code for each sample must execute in 1/48000th of a second, or ~20μs. This is perfectly feasible on the RP2040, but requires some attention to code performance. Specifically;
 
-1. calculations on audio signals usually need to be done with integers rather than floating point.
-2. relatively lengthy calculations (more than ~20μs) must either be done on a different RP2040 core to the audio, or split between `ProcessSample` calls to ensure than no one call goes above the maximum duration. In particular, USB handling must be on a different core. 
-3. Particularly for larger programs, it may be necessary to force the code called by `ProcessSample` into RAM, so that delays in fetching of code from the flash card do not cause `ProcessSample()` to exceed its allowed time.
+1. increasing clock speed 
+2. calculations on audio signals usually need to be done with integers rather than floating point.
+3. relatively lengthy calculations (more than ~20μs) must either be done on a different RP2040 core to the audio, or split between `ProcessSample` calls to ensure than no one call goes above the maximum duration. In particular, USB handling must be on a different core. 
+4. Particularly for larger programs, it may be necessary to force the code called by `ProcessSample` into RAM, so that delays in fetching of code from the flash card do not cause `ProcessSample()` to exceed its allowed time.
 
 We'll discuss each of these below
 
-## 1. Integer calculations
+## 1. Increasing clock speed
+
+The default clock rate of the RP2040 is 125MHz, and until February 2025 the fastest supported clock speed was 133MHz.
+
+As of Pico SDK v2.1.1, clock speeds up to 200MHz are supported (potentially with associated core voltage increase). This is officially done with a [preprocessor define](https://github.com/raspberrypi/pico-sdk/releases/tag/2.1.1), though I have had no issues with increasing the clock speed only, using `set_sys_clock_khz(200000, true);` at the start of the `main()` entry point.
+
+## 2. Integer calculations
 
 Floating-point operations on the RP2040 are software emulated, and are [much slower](https://forums.raspberrypi.com/viewtopic.php?t=308794#p1848188) than the native 32-bit integer addition, subtraction and multiplication.
 
@@ -443,17 +489,6 @@ An ever-present concern with integer operations such as these is the possibility
 - C++ integer promotion rules mean that the `int16_t` return value of `AudioIn` functions (in fact only containing a 12-bit range -2048 to 2047) are promoted to the (32-bit signed) `int` before operations. The relevant wrapping values are therefore $\pm 2^{31}$, far larger than any integers used here.
 - Saving `mix` to a 32-bit integer introduces wrapping at $\pm 2^{31}$, again not a problem here, given the 12-bit outputs of the `AudioIn` functions. (In fact, we could use an `int16_t` for the `mix` variable, but there is no need to do so.)
 
-In addition to this, **integer values passed to the `AudioOut` functions will wrap if they are outside the 12-bit range -2048 to 2047**. In the present example it is relatively easy to show that this will not occur, but if there is any doubt, it is worth clamping the variable before sending it to the output functions, as follows:
-```c++
-int32_t mix = (AudioIn1() + AudioIn2()) >> 1;
-
-if (mix<-2048) mix = -2048;
-if (mix>2047) mix = 2047;
-
-AudioOut1(mix);
-AudioOut2(mix);
-```
-
 Let's now extend our program so that it uses the main knob to crossfade between the two audio inputs.
 Denoting the knob value as $k$, varying from 0 to 1, our crossfade would be [^2]
 
@@ -474,7 +509,7 @@ Even though `k` is non-negative, we use an signed `int32_t` type (not `uint32_t`
 
 The choice of `4095 - k` not `4096 - k` means that this crossfade perfectly isolates each of the two inputs at the ends of the range 0–4095, at the expense of a very slight decline ($4095/4096$) in amplitude. 
 
-Let's again examine the possibility of overflow. The multiply operations here calculate the product of signed 12-bit and unsigned 12-bit numbers, resulting in a signed 24-bit number. We then add two of these, which would in general produce up to a signed 25-bit number, but here because of the `k` and `4095-k` multiplicands, the sum is in fact signed 24-bit. This is well within the signed 32-bit range of the integer type, so there is no risk of overflow during the evaluation of the expression. Shifting right by 12 bits produces a signed 12-bit result (-2048 to 2047) which will not wrap in the `AudioOut` functions.
+Let's again examine the possibility of overflow. The multiply operations here calculate the product of signed 12-bit and unsigned 12-bit numbers, resulting in a signed 24-bit number. We then add two of these, which would in general produce up to a signed 25-bit number, but here because of the `k` and `4095-k` multiplicands, the sum is in fact signed 24-bit. This is well within the signed 32-bit range of the integer type, so there is no risk of overflow during the evaluation of the expression. Shifting right by 12 bits produces a signed 12-bit result (-2048 to 2047) which will not clip in the `AudioOut` functions.
 
 
 ### Example: first-order IIR LPF
@@ -532,7 +567,7 @@ Three further comments:
 - On the RP2040, the `>>` operation on signed types rounds to negative infinity. Sometimes it may be worth adding a constant into the filter expression to alter this behaviour to round-to-nearest.  
 - The roundoff error on a low-pass filter such as this produces a very primative hysteresis-like effect, which may occasionally be useful. This is used in ComputerCard to reduce noise/jitter in knob values.
 
-## 2. Lengthy calculations
+## 3. Lengthy calculations
 Options for dealing with calculations that exceed the available ~20μs per sample are:
 - optimise these calculations, for example using lookup tables [^3]
 - offload long calculations onto the second RP2040 core.
@@ -543,8 +578,10 @@ The `second_core` example shows one way to execute longer/slower computations fo
 For USB processing, the TinyUSB function `tud_task` may take longer than one sample time, and so this needs to be done on a different core from the audio. See the `midi_device` example for how this can be done. I'm planning to add some multicore stuff into ComputerCard itself, in due course, including an option to run the audio callback on core1, not the default core0.
 
 
-[^3]: While floating point calculations are typically too slow to perform every sample, it's convenient to have them available for calculating lookup tables when the card first starts. Lookup tables can of course be calculated on a much more powerful computer and hard-coded as constant arrays.
+[^3]: While anything more than very simple floating point calculations are typically too slow to perform every sample, it's convenient to have them available for calculating lookup tables when the card first starts. Lookup tables can of course be calculated on a much more powerful computer and hard-coded as constant arrays.
 
-## 3. Putting code in RAM
+## 4. Putting code in RAM
 To force a function into RAM, rather than flash, surround the name in function definition by  [__not_in_flash_func()](https://www.raspberrypi.com/documentation/pico-sdk/runtime.html#group_pico_platform_1gad9ab05c9a8f0ab455a5e11773d610787). The `ComputerCard.h` file has various examples of this. 
+
+For cards of modest code size and RAM use, but very tight timing requirements, the entire code can be copied into RAM at startup using the `set(PICO_COPY_TO_RAM,1)` command in `CMakeLists.txt`.
 
