@@ -79,7 +79,7 @@ function releaseCard(rel) {
     <div class="actions">
   <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
   ${latestUf2 ? `<a class="btn download" href="${latestUf2.url}" download>💾 Download</a>` : ''}
-  ${ ? `<a class="btn editor" href="${editor}" download>Editor</a>` : ''}
+  ${editorLink ? `<a class="btn editor" href="${editor}" download>Editor</a>` : ''}
     </div>
   </div>
 </article>`;
