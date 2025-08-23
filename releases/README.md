@@ -5,7 +5,7 @@
 | 03_Turing_Machine | Turing Machine with tap tempo clock, 2 x pulse outputs, 4 x CV outputs | 0.1 | Arduino-Pico | Tom Whitwell | https://www.musicthing.co.uk/web_config/turing.html |  | Working but Simple |
 | 04_BYO_Benjolin | Rungler, Chaotic VCO, Noise Source, Turing Machine, Quantizer | 1.0 | Pico SDK | Dune Desormeaux |  |  | Released |
 | 05_chord_blimey | Generates CV/Pulse arpeggios | 0.9 | C (RPi Pico SDK) | Tom Waters |  |  | Mostly complete (for now) |
-| 06_usb_audio | USB audio output | 0.1 | C (RPi Pico SDK) | Chris Johnson |  |  | Proof of concept |
+| 06_usb_audio | USB audio output | 0.1 | C (RPi Pico SDK) | Chris Johnson |  | USB Audio | Proof of concept |
 | 07_bumpers | Synth bumpers | 1.0 | C++ (ComputerCard) | Chris Johnson |  |  | Released |
 | 08_bytebeat | Generates and mangles bytebeats | 0.1 | C++/Arduino-Pico | Matt Kuebrich |  |  | Functional but WIP |
 | 10_twists | A port of Mutable Instruments Braids with a web editor | 0.1 | C (RPi Pico SDK) | Random Works |  |  | Functional but WIP |
