@@ -30,6 +30,7 @@
 #include "pico/stdlib.h"
 #include "computer.h"
 #include "ui.h"
+#include "pico/rand.h"
 
 // --- Arp helpers ---
 static inline int chord_size(const int *row)
@@ -75,6 +76,41 @@ uint32_t last_note_time = 0;
 int arp_count = 0;
 int arp_length = -1;
 
+// --- RANDOM mode state ---
+static int rand_order[16]; // permutation buffer (max steps ≤ 16, actual use ≤ 6)
+static int rand_size = 0;  // current permutation length (equals base_steps)
+static int rand_prev_base_steps = -1;
+static int rand_prev_root_semi = -100000;
+static int rand_prev_chord = -1; // last observed chord selection for reseed detection
+static bool rand_valid = false;  // true = rand_order currently valid
+
+static inline int quantize_semitone_from_volts(float v)
+{
+    // Quantize to semitone number relative to 0V, matches VOLT_SEMITONE grid
+    return (int)floorf(v / VOLT_SEMITONE + 1e-6f);
+}
+
+static void reseed_random_order(int size)
+{
+    if (size < 1)
+        size = 1;
+    if (size > (int)(sizeof(rand_order) / sizeof(rand_order[0])))
+        size = (int)(sizeof(rand_order) / sizeof(rand_order[0]));
+    rand_size = size;
+    for (int i = 0; i < size; ++i)
+        rand_order[i] = i;
+    // Fisher–Yates shuffle using Pico RNG
+    for (int i = size - 1; i > 0; --i)
+    {
+        uint32_t r = get_rand_32();
+        int j = (int)(r % (uint32_t)(i + 1));
+        int tmp = rand_order[i];
+        rand_order[i] = rand_order[j];
+        rand_order[j] = tmp;
+    }
+    rand_valid = true;
+}
+
 int main()
 {
     stdio_init_all();
@@ -101,6 +137,11 @@ int main()
             {
                 arp_count = 0;      // restart from beginning of pattern
                 last_note_time = 0; // play immediately on next tick
+            }
+            // If entering RANDOM, force a new permutation next note
+            if (ui.getArpMode() == ARP_RANDOM)
+            {
+                rand_valid = false;
             }
         }
 
@@ -143,7 +184,39 @@ int main()
             }
             else
             {
-                total_steps = base_steps; // UP or DOWN
+                total_steps = base_steps; // UP or DOWN or RANDOM
+            }
+
+            // RANDOM mode: detect changes that require reseed & immediate restart
+            if (mode == ARP_RANDOM)
+            {
+                // Quantize root to semitone for stable detection
+                float rv = ui.getRootVolts();
+                int root_semi = quantize_semitone_from_volts(rv);
+                int observed_chord = ui.getChord(); // detect knob/CV change even mid-cycle
+
+                bool need_reseed = false;
+                if (!rand_valid)
+                    need_reseed = true;
+                if (rand_prev_base_steps != base_steps)
+                    need_reseed = true;
+                if (rand_prev_root_semi != root_semi)
+                    need_reseed = true;
+                if (rand_prev_chord != observed_chord)
+                    need_reseed = true;
+
+                if (need_reseed)
+                {
+                    reseed_random_order(base_steps);
+                    rand_prev_base_steps = base_steps;
+                    rand_prev_root_semi = root_semi;
+                    rand_prev_chord = observed_chord;
+                    // restart immediately to begin the new permutation cleanly
+                    arp_count = 0;
+                    last_note_time = 0;
+                    // Recompute timing gate for this tick
+                    continue; // go to next loop; we'll emit the first step of the new order on next pass
+                }
             }
 
             // End-of-arp condition
@@ -211,6 +284,16 @@ int main()
                 {
                     s = total_steps - t; // down base_steps-2 .. 1
                 }
+                break;
+
+            case ARP_RANDOM:
+                // Random but repeating order over the expanded step space (0..base_steps-1)
+                // Ensure rand_order is valid (it should be, due to the reseed logic above)
+                if (!rand_valid || rand_size != base_steps)
+                {
+                    reseed_random_order(base_steps);
+                }
+                s = rand_order[t];
                 break;
 
             default:
