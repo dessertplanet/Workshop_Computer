@@ -10,7 +10,7 @@
 | 08_bytebeat | Generates and mangles bytebeats | 0.1 | C++/Arduino-Pico | Matt Kuebrich |  |  | Functional but WIP |
 | 10_twists | A port of Mutable Instruments Braids with a web editor | 0.1 | C (RPi Pico SDK) | Random Works |  |  | Functional but WIP |
 | 11_goldfish | Weird delay/looper for audio and CV | 1.0 | Pico SDK | Dune Desormeaux |  |  | Ready |
-| 12_am_coupler | AM radio transmitter / coupler | 1.0 | C++ / ComputerCard / RPi Pico SDK | Chris Johnson |  |  | Released |
+| 12_am_coupler | AM radio transmitter / coupler | 1.0 | C++ / ComputerCard / RPi Pico SDK | Chris Johnson |  | AM Coupler | Released |
 | 13_noisebox |  |  |  |  |  |  |  |
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0 | C++ / ComputerCard / RPi Pico SDK | Chris Johnson |  |  | Released |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface. | 1.2 | C (RPi Pico SDK) | Chris Johnson | https://www.musicthing.co.uk/web_config/reverb.html | Reverb+ | Released |
