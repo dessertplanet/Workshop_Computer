@@ -31,7 +31,7 @@ export function sevenSegmentSvg(numStr) {
     rects.push({ id:'c', x: xOffset + W - T - PAD, y: half + GAP, w: T, h: vertLenBot });
     return rects.map(r => {
       const on = onSet.has(r.id);
-      const fill = '#93820c';
+      const fill = '#c2ab13';
       const opacity = on ? '1' : '0.3';
       return `<rect class="seg ${on ? 'on' : 'off'} ${r.id}" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${rx}" ry="${ry}" fill="${fill}" fill-opacity="${opacity}"/>`;
     }).join('');
