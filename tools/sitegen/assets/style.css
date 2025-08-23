@@ -10,6 +10,8 @@
   --toggle-thumb: #ffffff;
   --pcb-start: #2d7c30;
   --pcb-end: #195f20;
+  --editor-start: #7c2d30;
+  --editor-end: #5f1920;
   --dark-bg: #1b222b;
   --light-bg: #fff;
   --light-text: #0b1220;
@@ -56,9 +58,8 @@
 .card-num{display:flex;align-items:center}
 .card-num svg{height:42px;width:auto;display:block}
 .card-body{padding:16px;display:flex;flex-direction:column;flex:1}
-.card-body .btn{margin-top:12px}
-.markdown-body{font-family:"Inter",Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
-.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;justify-content:center}
+.markdown-body{font-family:"Inter",Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"; }
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;justify-content:center}
 /* large card for detail pages */
 .card.large{width:100%;margin:40px 0;font-size:20px}
 .card.large .card-title{font-size:28px}
@@ -72,9 +73,10 @@
 .card.large .markdown-body h3{font-size:20px}
 .meta{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}
 .pill{border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);font-size:12px}
-.btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;margin-top:12px}
+.btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px}
 .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
 .btn.download{background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff;border:1px solid var(--border)}
+.btn.editor{background:linear-gradient(90deg,var(--editor-start),var(--editor-end));color:#fff;border:none}
 .section{margin:24px 0}
 .section h2{margin:0 0 8px 0}
 .theme-dark .filter-bar select{background:var(--dark-bg);color:var(--toggle-thumb)}

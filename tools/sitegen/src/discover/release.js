@@ -17,6 +17,7 @@ export function normalizeInfo(raw, fallbackTitle) {
     creator: out.creator || '',
     version: out.version || '',
     status: out.status || '',
+    editor: out.editor || '',
   };
 }
 
