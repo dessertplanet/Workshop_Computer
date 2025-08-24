@@ -76,10 +76,10 @@ function releaseCard(rel) {
   <div class="card-body">
     <p>${desc}</p>
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
-    <div class="actions">
-  <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
-${latestUf2 ? `<a class="btn download" href="${latestUf2.url}">💾 Download</a>` : ''}
-  ${editorLink ? `<a class="btn editor" href="${editor}" download>🛠️ Web Editor</a>` : ''}
+    <div class="actions actions-grid">
+      <a class="btn wide" href="programs/${slug}/index.html">📄 View Details</a>
+      ${latestUf2 ? `<a class="btn download" href="${latestUf2.url}">💾 Download</a>` : `<span class="btn disabled" aria-disabled="true">💾 Download</span>`}
+      ${editorLink ? `<a class="btn editor" href="${editor}">🛠️ Web Editor</a>` : `<span class="btn disabled" aria-disabled="true">🛠️ Web Editor</span>`}
     </div>
   </div>
 </article>`;
