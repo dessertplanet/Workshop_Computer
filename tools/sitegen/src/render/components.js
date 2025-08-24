@@ -14,38 +14,52 @@ export function sevenSegmentSvg(numStr) {
     '8': ['a','b','c','d','e','f','g'],
     '9': ['a','b','c','d','f','g']
   };
+
   const digits = String(numStr || '').replace(/[^0-9]/g, '') || '0';
-  const W = 42, H = 72, T = 7, PAD = 3, GAP = 6, DIGIT_GAP = 9;
-  const half = H / 2;
-  const vertLenTop = half - T - (PAD + GAP);
-  const vertLenBot = vertLenTop;
-  function segRects(xOffset, onSet) {
-    const rx = 3, ry = 3;
-    const rects = [];
-    rects.push({ id:'a', x: xOffset + 7.5, y: PAD, w: W - 15, h: T });
-    rects.push({ id:'d', x: xOffset + 7.5, y: H - T - PAD, w: W - 15, h: T });
-    rects.push({ id:'g', x: xOffset + 7.5, y: half - T/2, w: W - 15, h: T });
-    rects.push({ id:'f', x: xOffset + PAD, y: PAD + T + (GAP - T/2), w: T, h: vertLenTop });
-    rects.push({ id:'e', x: xOffset + PAD, y: half + GAP, w: T, h: vertLenBot });
-    rects.push({ id:'b', x: xOffset + W - T - PAD, y: PAD + T + (GAP - T/2), w: T, h: vertLenTop });
-    rects.push({ id:'c', x: xOffset + W - T - PAD, y: half + GAP, w: T, h: vertLenBot });
-    return rects.map(r => {
-      const on = onSet.has(r.id);
-      const fill = '#c2ab13';
-      const opacity = on ? '1' : '0.3';
-      return `<rect class="seg ${on ? 'on' : 'off'} ${r.id}" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${rx}" ry="${ry}" fill="${fill}" fill-opacity="${opacity}"/>`;
-    }).join('');
+
+  // Exact outlines from normalized SVG
+  const SEG_SHAPES = {
+    a: `<path d="m 48.628112,52.7705 h 18.40177 L 72.56232,47.238063 C 71.892924,46.568667 71.199716,45.875459 70.355695,45.031438 H 45.302299 c -0.844021,0.844021 -1.537229,1.537229 -2.206625,2.206625 l 5.529792,5.529792 z"/>`,
+    b: `<path d="m 75.570632,50.246375 c -0.844021,-0.84402 -1.537229,-1.537229 -2.206625,-2.206625 l -5.529791,5.529792 v 18.515542 l 3.868208,3.680354 3.868208,-3.680354 V 50.24373 Z"/>`,
+    c: `<path d="m 71.699778,77.331771 -3.868208,3.680354 v 19.081745 l 5.532437,5.5298 c 0.669396,-0.6694 1.362604,-1.36261 2.206625,-2.20663 V 81.009479 l -3.868208,-3.680354 z"/>`,
+    d: `<path d="m 67.032528,100.89556 h -18.40177 l -5.12498,5.12498 2.611438,2.61144 h 24.238479 c 0.844021,-0.84402 1.537229,-1.53723 2.206625,-2.20663 l -5.532438,-5.52979 z"/>`,
+    e: `<polygon points="173.38,811.84 183.26,821.72 202.63,802.35 202.63,730.23 188,716.32 173.38,730.23" transform="matrix(0.26458333,0,0,0.26458333,-5.7834501,-112.19456)"/>`,
+    f: `<path d="m 47.82907,53.572188 -5.529792,-5.529792 c -0.669395,0.669396 -1.362604,1.362604 -2.206625,2.206625 v 21.841354 l 3.868209,3.680354 3.868208,-3.680354 V 53.574834 Z"/>`,
+    g: `<polygon points="275.13,727.27 289.75,713.36 275.13,699.46 205.73,699.46 191.11,713.36 205.73,727.27" transform="matrix(0.26458333,0,0,0.26458333,-5.7834501,-112.19456)"/>`,
+  };
+
+  // Measured digit width from outlines
+  const DIGIT_WIDTH = 36;  // adjust to taste
+  const DIGIT_GAP = 6;
+  const color = '#c2ab13';
+
+  function makeDigit(xOffset, onSet) {
+    const parts = [];
+    for (const id of Object.keys(SEG_SHAPES)) {
+      const on = onSet.has(id);
+      parts.push(
+        `<g transform="translate(${xOffset},0)">` +
+          SEG_SHAPES[id].replace(/\/>$/, ` fill="${color}" fill-opacity="${on ? 1 : 0.25}"/>`) +
+        `</g>`
+      );
+    }
+    return parts.join('');
   }
-  const totalWidth = digits.length * W + (digits.length - 1) * DIGIT_GAP;
+
   let x = 0;
-  const parts = [];
+  const pieces = [];
   for (const ch of digits) {
     const onSet = new Set(DIGIT_MAP[ch] || []);
-    parts.push(segRects(x, onSet));
-    x += W + DIGIT_GAP;
+    pieces.push(makeDigit(x, onSet));
+    x += DIGIT_WIDTH + DIGIT_GAP;
   }
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${H}" viewBox="0 0 ${totalWidth} ${H}" aria-hidden="true" focusable="false" role="img">${parts.join('')}</svg>`;
+
+  const totalWidth = digits.length * DIGIT_WIDTH + (digits.length - 1) * DIGIT_GAP;
+  const totalHeight = 65; // fits y range ~45–110
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${totalHeight}" viewBox="40 41 ${totalWidth} 70" aria-hidden="true" focusable="false" role="img">${pieces.join('')}</svg>`;
 }
+
 
 // Status mapping to CSS classes
 export function mapStatusToClass(raw) {
@@ -79,6 +93,6 @@ export function renderMetaList({ creator, version, language, statusRaw, statusCl
 export function renderActionButtons(uf2Downloads, editorURL) {
   const back = `<a class="btn" href="../../index.html">⬅️ Back to All Programs</a>`;
 	const dl = (uf2Downloads || []).map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join(' ');
-	const ed = `${editorURL!='' ? `<a class="btn editor" href="${editorURL}">⚙ Web editor</a>` : ''}`;
+	const ed = `${editorURL!='' ? `<a class="btn editor" href="${editorURL}">🛠️ Web Editor</a>` : ''}`;
   return `${back}${dl ? ' ' + dl : ''}${ed}`;
 }

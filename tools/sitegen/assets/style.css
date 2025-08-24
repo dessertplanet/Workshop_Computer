@@ -75,8 +75,9 @@
 .pill{border:1px solid var(--border);border-radius:999px;padding:2px 8px;color:var(--muted);font-size:12px}
 .btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px}
 .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
-.btn.download{background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff;border:1px solid var(--border)}
+.btn.download{background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff;}
 .btn.editor{background:linear-gradient(90deg,var(--editor-start),var(--editor-end));color:#fff;border:none}
+.btn:hover {opacity: 0.8;}
 .section{margin:24px 0}
 .section h2{margin:0 0 8px 0}
 .theme-dark .filter-bar select{background:var(--dark-bg);color:var(--toggle-thumb)}
