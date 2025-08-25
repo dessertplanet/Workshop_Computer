@@ -183,6 +183,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.
   ===================================================================== */
 /* Make all links in dark mode readable blue */
 .theme-dark a{color:#4ea1ff}
+/* But keep button text white for contrast on button backgrounds */
+.theme-dark .btn{color:#fff !important}
 
 /* =====================================================================
   Misc
