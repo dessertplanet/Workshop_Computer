@@ -216,12 +216,18 @@ async function build() {
 <div class="filter-bar card" aria-label="Filter programs">
   <div class="card-body">
     <div class="filter-row">
-      <label for="filter-type">Release type</label>
-      <select id="filter-type">${typeOptions}</select>
-      <label for="filter-creator">Creator</label>
-      <select id="filter-creator">${creatorOptions}</select>
-      <label for="filter-language">Language</label>
-      <select id="filter-language">${languageOptions}</select>
+      <div class="filter-group">
+        <label for="filter-type">Release type</label>
+        <select id="filter-type">${typeOptions}</select>
+      </div>
+      <div class="filter-group">
+        <label for="filter-creator">Creator</label>
+        <select id="filter-creator">${creatorOptions}</select>
+      </div>
+      <div class="filter-group">
+        <label for="filter-language">Language</label>
+        <select id="filter-language">${languageOptions}</select>
+      </div>
     </div>
   </div>
 </div>

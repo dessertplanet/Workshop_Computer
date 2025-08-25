@@ -13,9 +13,8 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
   <link rel="stylesheet" href="${relativeRoot}/assets/style.css" />
   <style>
     .filter-bar{margin:0 0 16px 0}
-    .filter-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-    .filter-row label{font-weight:600;color:var(--muted)}
-    .filter-row select{background:transparent;border:1px solid var(--border);color:var(--text);padding:8px;border-radius:8px}
+  .filter-row label{font-weight:600;color:var(--muted)}
+  .filter-row select{background:transparent;border:1px solid var(--border);color:var(--text);padding:8px;border-radius:8px;width:100%}
   </style>
 </head>
 <body>

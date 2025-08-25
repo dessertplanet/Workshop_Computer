@@ -98,7 +98,15 @@
 .site-footer .container{ text-align:center }
 
 /* filter controls */
-.filter-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.filter-row{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;align-items:end}
+.filter-group{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center}
+.filter-group label{white-space:nowrap}
+@media (max-width: 900px){
+  .filter-row{grid-template-columns:repeat(2,minmax(200px,1fr))}
+}
+@media (max-width: 560px){
+  .filter-row{grid-template-columns:1fr}
+}
 .filter-bar label{font-weight:600;color:var(--muted)}
 .filter-bar select {
   appearance: none;
