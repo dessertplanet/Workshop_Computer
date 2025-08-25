@@ -193,3 +193,7 @@
 .aside-actions .btn { width: 100%; display: block; text-align: center }
 .aside-actions .btn + .btn { margin-top: 8px }
 .aside-desc{margin-top:0;margin-bottom:12px;color:var(--muted)}
+
+/* Theme-specific background for the small info card (detail-aside) */
+.theme-dark .detail-aside.card { background: color-mix(in srgb, var(--bg), #ffffff 8%); }
+.theme-light .detail-aside.card { background: color-mix(in srgb, var(--light-bg), #000000 6%); }
