@@ -80,5 +80,5 @@ pico_enable_stdio_usb(${PROJECT_NAME} 0)
 pico_enable_stdio_uart(${PROJECT_NAME} 0)
 
 target_compile_definitions(${PROJECT_NAME} 
-   PRIVATE PICO_USE_FASTEST_SUPPORTED_CLOCK=1
+  PRIVATE PICO_USE_FASTEST_SUPPORTED_CLOCK=1
 )

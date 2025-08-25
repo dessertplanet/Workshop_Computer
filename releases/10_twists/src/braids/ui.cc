@@ -38,7 +38,11 @@ void Ui::Poll(uint32_t now, uint16_t switch_val) {
 void Ui::UpdateDisplay(uint32_t now) {
   if(mode_ == UIMode::PLAY) {
     display_.SetBits(1 << settings.GetValue(SETTING_SELECTED_AVAILABLE_SHAPE));
-  } else {
+  } 
+  else if(mode_ == UIMode::CALIBRATION2) {
+    display_.SetBits(1 << 1);
+  } 
+  else {
     int val = (now & 254) > 128 ? 1 : 0;
     display_.SetBits(val << (int)mode_ - 1);    
   }
