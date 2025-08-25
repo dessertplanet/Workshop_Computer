@@ -205,3 +205,7 @@
 /* Theme-specific background for the small info card (detail-aside) */
 .theme-dark .detail-aside.card { background: color-mix(in srgb, var(--bg), #ffffff 8%); }
 .theme-light .detail-aside.card { background: color-mix(in srgb, var(--light-bg), #000000 6%); }
+
+/* Ensure the intro card matches other cards in light mode */
+.theme-light .intro-card{background:var(--card) !important; color:var(--text) !important}
+.theme-light .intro-card a{color:var(--text) !important}
