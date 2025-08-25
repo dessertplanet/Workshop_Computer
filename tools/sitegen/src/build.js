@@ -76,10 +76,10 @@ function releaseCard(rel) {
   <div class="card-body">
     <p>${desc}</p>
     ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
-    <div class="actions">
-  <a class="btn" href="programs/${slug}/index.html">📄 View Details</a>
-${latestUf2 ? `<a class="btn download" href="${latestUf2.url}">💾 Download</a>` : ''}
-  ${editorLink ? `<a class="btn editor" href="${editor}" download>🛠️ Web Editor</a>` : ''}
+    <div class="actions actions-grid">
+      <a class="btn wide" href="programs/${slug}/index.html">📄 View Details</a>
+      ${latestUf2 ? `<a class="btn download" href="${latestUf2.url}">💾 Download</a>` : `<span class="btn disabled" aria-disabled="true">💾 Download</span>`}
+      ${editorLink ? `<a class="btn editor" href="${editor}">🛠️ Web Editor</a>` : `<span class="btn disabled" aria-disabled="true">🛠️ Web Editor</span>`}
     </div>
   </div>
 </article>`;
@@ -103,16 +103,24 @@ function detailPage(rel) {
     title: `${info.title} – Workshop Computer`,
     relativeRoot: '../..',
   repoUrl: `https://github.com/${REPO}`,
-    content: `
-<article class="card large">
+  content: `
+<article class="card large" id="top">
   <div class="card-head">
     <h1 class="card-title">${display.title}</h1>
     ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
   </div>
   <div class="card-body">
-    <p>${desc}</p>
-    ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
-  <div class="actions">${renderActionButtons(uf2Downloads, editorURL)}</div>
+
+  <aside class="detail-aside card" aria-label="Release info and downloads">
+      <div class="card-body">
+    <p class="aside-desc">${desc}</p>
+        ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
+        <div class="actions aside-actions">
+          ${uf2Downloads.length ? uf2Downloads.map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join('') : `<span class="btn disabled" aria-disabled="true">💾 No Download</span>`}
+          ${editorURL ? `<a class="btn editor" href="${editorURL}">🛠️ Web Editor</a>` : `<span class="btn disabled" aria-disabled="true">🛠️ Web Editor</span>`}
+        </div>
+      </div>
+    </aside>
 
     <div class="section">
       <h2>README</h2>
@@ -122,14 +130,14 @@ function detailPage(rel) {
 
     <!-- PDF Preview Section -->
     ${docs.length ? `
-    <div class="section">
+    <div class="section docs-section">
       <h2>Documentation PDF</h2>
         <hr style="margin-top:16px; margin-bottom:16px;">
         <object data="${docs[0].url}" type="application/pdf" width="100%" height="700px">
           <p>PDF preview not available.</p>
         </object>
         <div style="margin-top:16px;text-align:center">
-          <a class="btn download" href="${docs[0].url}" download>Download ${docs[0].name}</a>
+          <a class="btn download" href="${docs[0].url}" download>📜 Download ${docs[0].name}</a>
         </div>
         ${docs.length > 1 ? `
         <div class="section">
@@ -142,7 +150,10 @@ function detailPage(rel) {
     </div>
     ` : ''}
   </div>
-  <div class="actions" style="margin-top:16px; margin-bottom:24px; text-align:center;">${renderActionButtons(uf2Downloads, editorURL)}</div>
+  <div class="actions actions-duo">
+    <a class="btn" href="../../index.html">⬅️ Back to All Programs</a>
+  <a class="btn" href="#page-top">⬆️ Back to Top</a>
+  </div>
 </article>
 `
   });
@@ -205,12 +216,18 @@ async function build() {
 <div class="filter-bar card" aria-label="Filter programs">
   <div class="card-body">
     <div class="filter-row">
-      <label for="filter-type">Release type</label>
-      <select id="filter-type">${typeOptions}</select>
-      <label for="filter-creator">Creator</label>
-      <select id="filter-creator">${creatorOptions}</select>
-      <label for="filter-language">Language</label>
-      <select id="filter-language">${languageOptions}</select>
+      <div class="filter-group">
+        <label for="filter-type">Release type</label>
+        <select id="filter-type">${typeOptions}</select>
+      </div>
+      <div class="filter-group">
+        <label for="filter-creator">Creator</label>
+        <select id="filter-creator">${creatorOptions}</select>
+      </div>
+      <div class="filter-group">
+        <label for="filter-language">Language</label>
+        <select id="filter-language">${languageOptions}</select>
+      </div>
     </div>
   </div>
 </div>
