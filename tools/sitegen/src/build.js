@@ -103,16 +103,24 @@ function detailPage(rel) {
     title: `${info.title} – Workshop Computer`,
     relativeRoot: '../..',
   repoUrl: `https://github.com/${REPO}`,
-    content: `
-<article class="card large">
+  content: `
+<article class="card large" id="top">
   <div class="card-head">
     <h1 class="card-title">${display.title}</h1>
     ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
   </div>
   <div class="card-body">
-    <p>${desc}</p>
-    ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
-  <div class="actions">${renderActionButtons(uf2Downloads, editorURL)}</div>
+
+  <aside class="detail-aside card" aria-label="Release info and downloads">
+      <div class="card-body">
+    <p class="aside-desc">${desc}</p>
+        ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
+        <div class="actions aside-actions">
+          ${uf2Downloads.length ? uf2Downloads.map(d => `<a class="btn download" href="${d.url}" download>💾 Download ${d.name}</a>`).join('') : `<span class="btn disabled" aria-disabled="true">💾 No Download</span>`}
+          ${editorURL ? `<a class="btn editor" href="${editorURL}">🛠️ Web Editor</a>` : `<span class="btn disabled" aria-disabled="true">🛠️ Web Editor</span>`}
+        </div>
+      </div>
+    </aside>
 
     <div class="section">
       <h2>README</h2>
@@ -122,7 +130,7 @@ function detailPage(rel) {
 
     <!-- PDF Preview Section -->
     ${docs.length ? `
-    <div class="section">
+    <div class="section docs-section">
       <h2>Documentation PDF</h2>
         <hr style="margin-top:16px; margin-bottom:16px;">
         <object data="${docs[0].url}" type="application/pdf" width="100%" height="700px">
@@ -142,7 +150,10 @@ function detailPage(rel) {
     </div>
     ` : ''}
   </div>
-  <div class="actions" style="margin-top:16px; margin-bottom:24px; text-align:center;">${renderActionButtons(uf2Downloads, editorURL)}</div>
+  <div class="actions actions-duo">
+    <a class="btn" href="../../index.html">⬅️ Back to All Programs</a>
+  <a class="btn" href="#page-top">⬆️ Back to Top</a>
+  </div>
 </article>
 `
   });

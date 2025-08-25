@@ -19,7 +19,7 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
   </style>
 </head>
 <body>
-  <header class="site-header">
+  <header class="site-header" id="page-top">
     <div class="container header-bar">
       <h1 class="site-title"><a href="${relativeRoot}/index.html">Workshop Computer Program Cards</a></h1>
       <button id="themeToggle" class="theme-toggle" type="button" role="switch" aria-checked="true" aria-label="Toggle color scheme">
