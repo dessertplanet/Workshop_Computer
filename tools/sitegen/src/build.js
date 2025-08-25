@@ -137,7 +137,7 @@ function detailPage(rel) {
           <p>PDF preview not available.</p>
         </object>
         <div style="margin-top:16px;text-align:center">
-          <a class="btn download" href="${docs[0].url}" download>Download ${docs[0].name}</a>
+          <a class="btn download" href="${docs[0].url}" download>📜 Download ${docs[0].name}</a>
         </div>
         ${docs.length > 1 ? `
         <div class="section">
