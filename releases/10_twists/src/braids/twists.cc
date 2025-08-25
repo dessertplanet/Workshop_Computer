@@ -35,6 +35,7 @@
 
 #include "stmlib/utils/dsp.h"
 
+#include "braids/drivers/gate_input.h"
 #include "braids/drivers/switch.h"
 #include "braids/drivers/dac.h"
 #include "braids/drivers/cv_out.h"
@@ -51,7 +52,7 @@
 
  #include "braids/drivers/calibration.h"
 
-#define PIN_PULSE1_IN       2
+
 #define PIN_PULSE1_OUT      8
 #define PIN_PULSE2_OUT      9
 #define PIN_MUX_LOGIC_A     24
@@ -69,6 +70,7 @@ const size_t kBlockSize = 24;
 MacroOscillator osc;
 Envelope envelope;
 Dac dac;
+GateInput gate_input;
 Quantizer quantizer;
 SignatureWaveshaper ws;
 VcoJitterSource jitter_source;
@@ -112,10 +114,9 @@ void __not_in_flash_func(timer_callback)() {
 
   dac.Write(audio_samples[playback_block][current_sample]);
   
-  bool trigger_detected = gpio_get(PIN_PULSE1_IN);
+  bool trigger_detected = gate_input.raised();
   sync_samples[playback_block][current_sample] = trigger_detected;
-  trigger_detected_flag = trigger_detected;
-  trigger_detected = false;
+  trigger_detected_flag = trigger_detected_flag | trigger_detected;
 
   current_sample = current_sample + 1;
   if (current_sample >= kBlockSize) {
@@ -221,10 +222,6 @@ void RunUSBWorker() {
 
 void Init() {
   // Pulse
-  gpio_init(PIN_PULSE1_IN);
-  gpio_set_dir(PIN_PULSE1_IN, GPIO_IN);
-  gpio_pull_up(PIN_PULSE1_IN);
-
   gpio_init(PIN_PULSE1_OUT);
   gpio_set_dir(PIN_PULSE1_OUT, GPIO_OUT);
   gpio_put(PIN_PULSE1_OUT, true);
@@ -235,6 +232,7 @@ void Init() {
   multicore_lockout_victim_init();
   settings.Init();
   ui.Init();
+  gate_input.Init();
   dac.Init();
   osc.Init();
   quantizer.Init();

@@ -45,6 +45,7 @@ add_executable(${PROJECT_NAME}
     braids/ui.cc
     braids/usb_worker.cc
     braids/usb_descriptors.cc
+    braids/drivers/gate_input.cc
     braids/drivers/dac.cc
     braids/drivers/display.cc
     braids/drivers/switch.cc
