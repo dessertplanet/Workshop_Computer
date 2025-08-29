@@ -192,11 +192,11 @@ void USBMIDICallback(MIDIMessage message) {
         }
 
         if(out1_channel == 0 || message.channel == out1_channel) {
-          cvOut.SetFloat(0, note_volts);
+          cvOut.Set(0, calibration.voltageToCalibratedOut(0, note_volts));
           gpio_put(PIN_PULSE1_OUT, false);
         }
         if(out2_channel == 0 || message.channel == out2_channel) {
-          cvOut.SetFloat(1, note_volts);
+          cvOut.Set(1, calibration.voltageToCalibratedOut(1, note_volts));
           gpio_put(PIN_PULSE2_OUT, false);
         }
       }
