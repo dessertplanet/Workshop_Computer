@@ -197,42 +197,20 @@ protected:
 	/// Set Pulse output (true = on)
 	void __not_in_flash_func(PulseOut)(int i, bool val)
 	{
-		
-		pwm_set_gpio_level(PULSE_1_RAW_OUT + i, val?0:5);
+		gpio_put(PULSE_1_RAW_OUT + i, !val);
 	}
 	
 	/// Set Pulse 1 output (true = on)
 	void __not_in_flash_func(PulseOut1)(bool val)
 	{
-		pwm_set_gpio_level(PULSE_1_RAW_OUT, val?0:5);
+		gpio_put(PULSE_1_RAW_OUT, !val);
 	}
 	
 	/// Set Pulse 2 output (true = on)
 	void __not_in_flash_func(PulseOut2)(bool val)
 	{
-		pwm_set_gpio_level(PULSE_2_RAW_OUT, val?0:5);
+		gpio_put(PULSE_2_RAW_OUT, !val);
 	}
-
-	
-	/// Set Pulse output (with experimental partially-on state)
-	void __not_in_flash_func(PulseOut)(int i, PulseOutLevel val)
-	{
-		
-		pwm_set_gpio_level(PULSE_1_RAW_OUT + i, val);
-	}
-	
-	/// Set Pulse 1 output (with experimental partially-on state)
-	void __not_in_flash_func(PulseOut1)(PulseOutLevel val)
-	{
-		pwm_set_gpio_level(PULSE_1_RAW_OUT, val?1:5);
-	}
-	
-	/// Set Pulse 2 output (with experimental partially-on state) 
-	void __not_in_flash_func(PulseOut2)(PulseOutLevel val)
-	{
-		pwm_set_gpio_level(PULSE_2_RAW_OUT, val?1:5);
-	}
-
 	
 	/// Return audio in (-2048 to 2047)
 	int16_t __not_in_flash_func(AudioIn)(int i){return i?adcInR:adcInL;}
