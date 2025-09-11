@@ -4,3 +4,6 @@
 [submodule "releases/40_corvus/submodules/littlefs"]
 	path = releases/40_corvus/submodules/littlefs
 	url = https://github.com/littlefs-project/littlefs.git
+[submodule "releases/40_corvus/submodules/miditocv"]
+	path = releases/40_corvus/submodules/miditocv
+	url = https://github.com/schollz/miditocv.git
