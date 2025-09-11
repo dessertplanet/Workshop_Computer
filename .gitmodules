@@ -1,0 +1,6 @@
+[submodule "releases/40_corvus/submodules/crow"]
+	path = releases/40_corvus/submodules/crow
+	url = https://github.com/monome/crow.git
+[submodule "releases/40_corvus/submodules/littlefs"]
+	path = releases/40_corvus/submodules/littlefs
+	url = https://github.com/littlefs-project/littlefs.git
