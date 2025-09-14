@@ -87,9 +87,13 @@ public:
     void end_script_upload();
     bool process_script_upload_data(const char* data, size_t length);
     
-    // Hardware abstraction (Phase 3)
-    void crow_set_output(int channel, float volts);
+    
+    // Hardware interface methods (access ComputerCard protected members)
+    float computercard_to_crow_volts(int16_t cc_value);
+    int16_t crow_to_computercard_value(float crow_volts);
     float crow_get_input(int channel);
+    void crow_set_output(int channel, float volts);
+    void crow_hardware_update();
     
     // Main run method that handles ComputerCard initialization
     void RunCrowEmulator();

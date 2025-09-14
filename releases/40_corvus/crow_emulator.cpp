@@ -10,6 +10,9 @@
 // Static instance pointer for multicore callback
 CrowEmulator* CrowEmulator::instance = nullptr;
 
+// Global ComputerCard pointer for hardware abstraction
+ComputerCard* g_computer_card = nullptr;
+
 CrowEmulator::CrowEmulator() : 
     rx_buffer_pos(0),
     multicore_ready(false),
@@ -29,6 +32,9 @@ CrowEmulator::CrowEmulator() :
         printf("Failed to allocate script upload buffer\n");
     }
     
+    // Set global pointer for hardware abstraction
+    g_computer_card = this;
+    
     // Initialize crow emulation
     crow_init();
 }
@@ -43,19 +49,22 @@ void CrowEmulator::ProcessSample()
     // Phase 2.1: Basic lua processing on Core 0
     crow_lua_process_events();
     
-    // Update input values for lua
+    // Phase 3: Update hardware abstraction layer
+    crow_hardware_update();
+    
+    // Update input values for lua using hardware abstraction
     if (g_crow_lua) {
-        g_crow_lua->set_input_volts(1, crow_get_input(1));
-        g_crow_lua->set_input_volts(2, crow_get_input(2));
+        g_crow_lua->set_input_volts(1, crow_get_input(0));  // Convert to 0-based indexing
+        g_crow_lua->set_input_volts(2, crow_get_input(1));
     }
     
-    // Get lua output values and apply them
+    // Get lua output values and apply them using hardware abstraction
     for (int i = 1; i <= 4; i++) {
         float volts;
         bool volts_new, trigger;
         if (g_crow_lua && g_crow_lua->get_output_volts_and_trigger(i, &volts, &volts_new, &trigger)) {
             if (volts_new) {
-                crow_set_output(i, volts);
+                crow_set_output(i - 1, volts);  // Convert to 0-based indexing
             }
         }
     }
@@ -348,41 +357,6 @@ void CrowEmulator::core1_main()
     }
 }
 
-// Hardware abstraction functions (Phase 3 placeholders)
-void CrowEmulator::crow_set_output(int channel, float volts)
-{
-    // TODO: Phase 3 - Implement hardware mapping
-    // For now, just clamp and route to appropriate output
-    volts = (volts < -5.0f) ? -5.0f : ((volts > 10.0f) ? 10.0f : volts);
-    
-    switch (channel) {
-        case 1:
-        case 2:
-            // Audio outputs (convert volts to audio samples)
-            AudioOut(channel - 1, (int16_t)(volts * 204.7f)); // rough conversion
-            break;
-        case 3:
-        case 4:
-            // CV outputs
-            CVOut(channel - 3, (int16_t)(volts * 204.7f)); // rough conversion
-            break;
-        default:
-            break;
-    }
-}
-
-float CrowEmulator::crow_get_input(int channel)
-{
-    // TODO: Phase 3 - Implement hardware mapping
-    switch (channel) {
-        case 1:
-            return AudioIn1() / 204.7f; // rough conversion
-        case 2:
-            return AudioIn2() / 204.7f; // rough conversion
-        default:
-            return 0.0f;
-    }
-}
 
 // Script upload management (Phase 2.2)
 void CrowEmulator::start_script_upload()
@@ -460,4 +434,77 @@ void CrowEmulator::RunCrowEmulator()
     // ComputerCard::Run() calls AudioWorker() which sets up audio processing
     // and calls ProcessSample() at 48kHz in an infinite loop
     Run();
+}
+
+// Hardware interface implementations (Phase 3: Hardware Abstraction Layer)
+// These methods can access protected ComputerCard members since CrowEmulator inherits from ComputerCard
+
+float CrowEmulator::computercard_to_crow_volts(int16_t cc_value)
+{
+    // ComputerCard uses ±2048 range for ±6V
+    static constexpr float CC_RANGE_VOLTS = 6.0f;      // ±6V range
+    static constexpr float CC_RANGE_VALUES = 4096.0f;  // ±2048 = 4096 total range
+    static constexpr float VOLTS_PER_VALUE = CC_RANGE_VOLTS / CC_RANGE_VALUES;
+    
+    return cc_value * VOLTS_PER_VALUE;
+}
+
+int16_t CrowEmulator::crow_to_computercard_value(float crow_volts)
+{
+    // ComputerCard uses ±2048 range for ±6V
+    static constexpr float CC_RANGE_VOLTS = 6.0f;      // ±6V range
+    static constexpr float CC_RANGE_VALUES = 4096.0f;  // ±2048 = 4096 total range
+    static constexpr float VALUES_PER_VOLT = CC_RANGE_VALUES / CC_RANGE_VOLTS;
+    
+    // Clamp to valid range
+    if (crow_volts > 6.0f) crow_volts = 6.0f;
+    if (crow_volts < -6.0f) crow_volts = -6.0f;
+    
+    int16_t result = (int16_t)(crow_volts * VALUES_PER_VOLT);
+    
+    // Clamp to ±2047 (12-bit signed range)
+    if (result > 2047) result = 2047;
+    if (result < -2048) result = -2048;
+    
+    return result;
+}
+
+float CrowEmulator::crow_get_input(int channel)
+{
+    // Map crow input channels to ComputerCard audio inputs
+    // channel 0 → AudioIn1, channel 1 → AudioIn2
+    int16_t cc_value;
+    switch (channel) {
+        case 0: cc_value = AudioIn1(); break;
+        case 1: cc_value = AudioIn2(); break;
+        default: return 0.0f; // Invalid channel
+    }
+    
+    return computercard_to_crow_volts(cc_value);
+}
+
+void CrowEmulator::crow_set_output(int channel, float volts)
+{
+    // Map crow output channels to ComputerCard outputs
+    // channel 0 → AudioOut1, channel 1 → AudioOut2
+    // channel 2 → CVOut1, channel 3 → CVOut2
+    int16_t cc_value = crow_to_computercard_value(volts);
+    
+    switch (channel) {
+        case 0: AudioOut1(cc_value); break;
+        case 1: AudioOut2(cc_value); break;
+        case 2: CVOut1(cc_value); break;
+        case 3: CVOut2(cc_value); break;
+        default: break; // Invalid channel
+    }
+}
+
+void CrowEmulator::crow_hardware_update()
+{
+    // This is called from ProcessSample() at 48kHz
+    // For now, no additional processing needed beyond the direct I/O mapping
+    // Future enhancements could include:
+    // - Input change detection
+    // - Output ramping/smoothing
+    // - Hardware calibration
 }
