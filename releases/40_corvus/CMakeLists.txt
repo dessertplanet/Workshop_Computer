@@ -27,11 +27,18 @@ macro (add_card _name)
     add_executable(${ARGV})
     if (TARGET ${_name})
       target_include_directories(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR})
-      target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore fhardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi)
+      target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi tinyusb_device)
       pico_add_extra_outputs(${_name})
-      target_sources(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR}/main.cpp)
-      target_compile_definitions(${_name} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
-      pico_enable_stdio_usb(${_name} 1)
+      target_sources(${_name} PUBLIC 
+        ${CMAKE_CURRENT_LIST_DIR}/main.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/crow_emulator.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/computer_card_impl.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c)
+      target_compile_definitions(${_name} PRIVATE 
+        PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
+      # Use only UART for stdio to avoid USB descriptor conflicts
+      pico_enable_stdio_uart(${_name} 1)
+      pico_enable_stdio_usb(${_name} 0)
     endif()
   endmacro()
 

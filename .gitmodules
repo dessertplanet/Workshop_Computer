@@ -7,3 +7,9 @@
 [submodule "releases/40_corvus/submodules/miditocv"]
 	path = releases/40_corvus/submodules/miditocv
 	url = https://github.com/schollz/miditocv.git
+[submodule "releases/40_corvus/submodules/pico-lfs-test"]
+	path = releases/40_corvus/submodules/pico-lfs-test
+	url = https://github.com/catfact/pico-lfs-test
+[submodule "releases/40_corvus/submodules/druid"]
+	path = releases/40_corvus/submodules/druid
+	url = https://github.com/monome/druid

@@ -1,66 +1,45 @@
-#include "ComputerCard.h"
-#include "pico/multicore.h"
-#include "pico/stdlib.h" // for sleep_ms and printf
+#include "pico/stdlib.h"
 #include <cstdio>
+#include "tusb.h"
+#include "crow_emulator.h"
 
 /*
+Crow Emulator for Workshop Computer
 
-Output of data over a USB serial port, for e.g. debugging
+This program emulates the monome crow module using the ComputerCard framework.
+It provides drop-in compatibility with existing crow scripts and norns integration.
 
-This requires multicore processing, as USB is too slow to execute in ProcessSample.
+Hardware mapping:
+- Workshop Audio In 1/2 → Crow Input 1/2
+- Workshop Audio Out 1/2 → Crow Output 1/2  
+- Workshop CV Out 1/2 → Crow Output 3/4
 
-To use, connect USB to a computer and run a serial terminal at 115200 baud
- */
-
-
-class USBSerial : public ComputerCard
-{
-	// Variables for communication between the two cores
-	volatile uint32_t v1, v2;
-	
-public:
-	USBSerial()
-	{
-		// Start the second core
-		multicore_launch_core1(core1);
-	}
-
-	// Boilerplate to call member function as second core
-	static void core1()
-	{
-		((USBSerial *)ThisPtr())->SlowProcessingCore();
-	}
-
-	
-	// Code for second RP2040 core, blocking
-	void SlowProcessingCore()
-	{
-		// Display CV input values every ~10ms
-		while (1)
-		{
-			printf("%ld\t%ld\n", v1, v2);
-			sleep_ms(10);
-		}
-	}
-
-	
-	// 48kHz audio processing function
-	virtual void ProcessSample()
-	{
-		// Copy the two CV inputs into v1 and v2, for transmission to printf
-		v1 = CVIn1();
-		v2 = CVIn2();
-
-	}
-};
-
+USB Communication:
+- Appears as USB CDC serial device (like real crow)
+- Supports crow command protocol (^^v, ^^i, etc.)
+- Multicore processing: Core 0 = audio, Core 1 = USB/serial
+*/
 
 int main()
 {
-	stdio_init_all();
-
-	USBSerial usbs;
-	usbs.Run();
+    stdio_init_all();
+    
+    // Initialize TinyUSB
+    tusb_init();
+    
+    printf("Workshop Computer Crow Emulator\n");
+    printf("Initializing...\n");
+    
+    CrowEmulator crow_emu;
+    
+    printf("Starting crow emulation...\n");
+    crow_emu.RunCrowEmulator(); // This calls ProcessSample at 48kHz and never returns
 }
 
-  
+// TinyUSB device task - required for USB processing
+// This will be called by the TinyUSB device stack periodically
+void tud_task_hook(void)
+{
+    // TinyUSB device task is handled automatically by the stack
+    // No additional processing needed here
+}
