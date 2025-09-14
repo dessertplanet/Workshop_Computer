@@ -52,12 +52,15 @@ private:
     char* script_upload_buffer;
     size_t script_upload_size;
     size_t script_upload_pos;
+    
+    // Phase 5: Status LED management using ComputerCard methods
+    uint32_t status_led_counter;    // Counter for status LED patterns
+    uint32_t error_led_counter;     // Counter for error LED flashing
     static const size_t MAX_SCRIPT_SIZE = 8192; // 8KB max script size
     
-    // Static pointer for multicore callback
-    static CrowEmulator* instance;
-
 public:
+    // Static pointer for multicore callback (public for error handling bridge)
+    static CrowEmulator* instance;
     CrowEmulator();
     
     // Audio processing method (overrides ComputerCard::ProcessSample)
@@ -97,6 +100,10 @@ public:
     float crow_get_input(int channel);
     void crow_set_output(int channel, float volts);
     void crow_hardware_update();
+    
+    // Phase 5: Status LED and error handling methods
+    void update_status_leds();
+    void send_error_message(const char* error_msg);
     
     // Main run method that handles ComputerCard initialization
     void RunCrowEmulator();

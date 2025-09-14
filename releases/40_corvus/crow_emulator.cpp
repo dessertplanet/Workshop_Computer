@@ -2,11 +2,13 @@
 #include "pico/multicore.h"
 #include <cstdarg>
 #include <cstring>
+#include <cmath>
 
 // Include our header (ComputerCard.h is included via computer_card_impl.cpp)
 #include "crow_emulator.h"
 #include "crow_metro.h"
 #include "crow_detect.h"
+#include "crow_error.h"
 
 // Static instance pointer for multicore callback
 CrowEmulator* CrowEmulator::instance = nullptr;
@@ -22,7 +24,9 @@ CrowEmulator::CrowEmulator() :
     script_upload_mode(false),
     script_upload_buffer(nullptr),
     script_upload_size(0),
-    script_upload_pos(0)
+    script_upload_pos(0),
+    status_led_counter(0),
+    error_led_counter(0)
 {
     instance = this;
     memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
@@ -35,6 +39,9 @@ CrowEmulator::CrowEmulator() :
     
     // Set global pointer for hardware abstraction
     g_computer_card = this;
+    
+    // Initialize error handling system
+    crow_error_init();
     
     // Initialize crow emulation
     crow_init();
@@ -83,8 +90,8 @@ void CrowEmulator::ProcessSample()
     AudioOut1(AudioIn1());
     AudioOut2(AudioIn2());
     
-    // Sign of life LED
-    LedBrightness(0, 4095); // LED 0 full brightness
+    // Phase 5: Simple status LED management using ComputerCard methods
+    update_status_leds();
 }
 
 void CrowEmulator::crow_init()
@@ -529,4 +536,76 @@ void CrowEmulator::crow_hardware_update()
     // - Input change detection
     // - Output ramping/smoothing
     // - Hardware calibration
+}
+
+// Phase 5: Simple status LED management using ComputerCard methods
+void CrowEmulator::update_status_leds()
+{
+    status_led_counter++;
+    
+    // Status LED (LED 0): Normal operation heartbeat
+    // Slow breathing pattern every 2 seconds (96,000 samples at 48kHz)
+    uint32_t heartbeat_period = 96000;
+    float phase = (float)(status_led_counter % heartbeat_period) / heartbeat_period;
+    float breath = (sin(phase * 2.0f * M_PI) + 1.0f) * 0.5f; // 0.0 to 1.0
+    uint16_t heartbeat_brightness = (uint16_t)(1024 * breath); // Max 25% brightness
+    
+    // Error LED (LED 1): Flash on errors
+    uint16_t error_brightness = 0;
+    if (crow_error_has_error()) {
+        error_led_counter++;
+        // Fast flash every 0.25 seconds (12,000 samples at 48kHz)
+        uint32_t error_period = 12000;
+        bool error_on = (error_led_counter % error_period) < (error_period / 2);
+        error_brightness = error_on ? 4095 : 0; // Full brightness flash
+    } else {
+        error_led_counter = 0;
+    }
+    
+    // USB connection LED (LED 2): Shows USB connection status
+    uint16_t usb_brightness = usb_connected ? 2048 : 0; // 50% brightness when connected
+    
+    // Script status LED (LED 3): Shows script activity
+    uint16_t script_brightness = 0;
+    if (script_upload_mode) {
+        // Fast blink during script upload
+        uint32_t upload_period = 4800; // 0.1 seconds at 48kHz
+        bool upload_on = (status_led_counter % upload_period) < (upload_period / 2);
+        script_brightness = upload_on ? 3072 : 0; // 75% brightness flash
+    } else {
+        // Dim glow when not uploading (indicates ready for scripts)
+        script_brightness = 256; // 6.25% brightness
+    }
+    
+    // Apply LED settings using ComputerCard methods
+    LedBrightness(0, heartbeat_brightness);
+    LedBrightness(1, error_brightness);
+    LedBrightness(2, usb_brightness);
+    LedBrightness(3, script_brightness);
+    
+    // LEDs 4 and 5 can be used for additional status or user control
+    LedBrightness(4, 0);
+    LedBrightness(5, 0);
+}
+
+// Enhanced error handling with USB integration
+void CrowEmulator::send_error_message(const char* error_msg)
+{
+    if (error_msg && tud_cdc_connected()) {
+        tud_cdc_write_str("!");
+        tud_cdc_write_str(error_msg);
+        tud_cdc_write_str("\n\r");
+        tud_cdc_write_flush();
+    }
+    
+    // Also trigger error LED
+    error_led_counter = 0; // Reset counter to start flashing immediately
+}
+
+// Implementation for crow_error.cpp bridge function
+extern "C" void crow_send_error_to_usb(const char* message)
+{
+    if (CrowEmulator::instance) {
+        CrowEmulator::instance->send_error_message(message);
+    }
 }
