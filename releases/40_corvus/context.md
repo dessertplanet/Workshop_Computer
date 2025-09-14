@@ -475,18 +475,35 @@ void crow_lua_process_events() {
 8. ✅ **Clean Compilation**: All Phase 2.3 features compile successfully
 9. ✅ **Firmware Generation**: Updated corvus.uf2 (656KB) with full crow lua API
 
-### 🎯 NEXT STEPS (Phase 2.4 - Real-time Event Integration)
-1. **Metro System**: Implement crow's metro system with lua callbacks
-2. **Clock Integration**: Add BPM, clock division, and tempo synchronization
-3. **Event Callbacks**: Implement init(), step(), and input change events
-4. **Performance Optimization**: Profile execution time and implement time limiting
-5. **Advanced Features**: Slew rate limiting, action sequences, envelope generation
+### 🔍 COMPLETED (Architecture Research - September 2024)
+1. ✅ **Crow Submodule Investigation**: Examined `submodules/crow/lib/lualink.c` and related files
+2. ✅ **Architecture Discovery**: Found crow uses single global `lua_State`, not separate environments
+3. ✅ **Documentation Update**: Added new development practices and architecture findings
+4. ✅ **Verification Process**: Established crow submodule as authoritative reference
+5. ✅ **Future Planning**: Documented architecture simplification strategy for next phases
 
-### 📋 UPCOMING (Phase 2.3 - Core Crow Functions)
-1. **Output System**: Implement `output[n].volts = x` and related functions
-2. **Input System**: Add `input[n].volts` and event callbacks
-3. **Hardware Integration**: Connect lua functions to ComputerCard I/O
-4. **Voltage/Trigger Processing**: Real-time hardware state management
+### ✅ COMPLETED (Architecture Simplification - September 2024)
+1. ✅ **Architecture Alignment**: Simplified CrowLua to match crow's single global `lua_State` approach
+2. ✅ **Interface Simplification**: Refactored from environment-based API to crow-style functions
+3. ✅ **Header Refactoring**: Updated `crow_lua.h` to remove environment isolation concept
+4. ✅ **Implementation Rewrite**: Completely rewrote `crow_lua.cpp` for single global environment
+5. ✅ **Emulator Updates**: Updated `crow_emulator.cpp` to use simplified CrowLua interface
+6. ✅ **Successful Compilation**: All changes compile successfully with updated API
+7. ✅ **Firmware Generation**: New corvus.uf2 (654KB) built with simplified architecture
+
+**Key Changes Made**:
+- **crow_lua.h**: Removed `NUM_ENVIRONMENTS`, environment management functions, replaced with crow-style API
+- **crow_lua.cpp**: Single global lua_State with `output = {}` and `input = {}` tables (matches crow)
+- **crow_emulator.cpp**: Updated REPL and script upload to use `eval_script()` and `load_user_script()`
+- **Global Architecture**: Now matches crow's actual implementation with single shared lua environment
+
+### 🎯 NEXT STEPS (Phase 2.4 - Real-time Event Integration)
+**Note**: Architecture now aligned with crow - ready for event system implementation
+1. **Metro System**: Research crow's metro implementation, then port with lua callbacks
+2. **Clock Integration**: Examine crow's clock system, add BPM and tempo synchronization  
+3. **Event Callbacks**: Study crow's event handlers, implement init(), step(), input events
+4. **Performance Optimization**: Profile execution time and implement time limiting
+5. **Testing**: Validate against real crow scripts with simplified architecture
 
 ## LittleFS Filesystem Analysis (Future Phases)
 
@@ -676,5 +693,79 @@ bool crow_fs_save_script_safe(const char* script, size_t len) {
 4. **Phase 3.3**: Add advanced features as needed
 
 The pico-lfs-test submodule provides an excellent, battle-tested foundation that can be directly adapted when filesystem support becomes necessary. All patterns are specifically optimized for Pico's constraints and proven in real-world usage.
+
+## Development Practices & Architecture Verification
+
+### New Development Practice: Crow Submodule Verification
+**Established September 2024**: Before starting any new phase, examine relevant crow submodule files to ensure our implementation matches the real crow architecture.
+
+**Key Principle**: The crow submodule (`submodules/crow/`) is the authoritative reference for all architectural decisions.
+
+**Verification Process**:
+1. **Pre-Phase Research**: Examine relevant crow source files before implementing new features
+2. **Architecture Comparison**: Compare our implementation against crow's actual approach
+3. **Documentation**: Record findings and architectural decisions in this context
+4. **Iterative Alignment**: Use crow submodule as the definitive specification
+
+### Critical Architecture Discovery: Lua Environment Architecture
+
+**Finding**: Crow uses a **SINGLE** global `lua_State`, not separate environments per output.
+
+**Evidence from `submodules/crow/lib/lualink.c`**:
+```c
+lua_State* L; // global access for 'reset-environment'
+
+lua_State* Lua_Init(void)
+{
+    L = luaL_newstate();
+    luaL_openlibs(L);
+    Lua_linkctolua(L);
+    l_bootstrap_init(L);
+    return L;
+}
+```
+
+**Event Handlers Use Single State**:
+```c
+void L_handle_asl_done( event_t* e )
+{
+    lua_getglobal(L, "output"); // Single global L
+    lua_pushinteger(L, e->index.i + 1); // 1-indexed
+    lua_gettable(L, 1);
+    lua_getfield(L, 2, "done");
+    Lua_call_usercode(L, 0, 0);
+    lua_settop(L, 0);
+}
+```
+
+### Architecture Implications
+
+**Current Implementation**: 4 separate `lua_State*` instances (over-engineered vs real crow)
+**Crow Reality**: Single shared lua environment with:
+- **Single Global Environment**: All outputs share the same lua_State and namespace
+- **Event-Based Coordination**: Separation comes from event system and callback structure  
+- **Table-Based Organization**: `output[1]`, `output[2]`, etc. are table indices in same environment
+- **No Memory Isolation**: All outputs share memory space and can access each other's variables
+
+### Planned Architecture Simplification (Future Phase 2.4+)
+
+**Goal**: Simplify to match crow's actual single-environment architecture
+**Benefits**:
+- More faithful to real crow implementation
+- Simpler code maintenance
+- Better script compatibility
+- Reduced memory overhead
+
+**Key Changes Needed**:
+- **CrowLua class**: Refactor from 4 `lua_State*` to single shared instance
+- **Output management**: Use lua tables `output[1-4]` instead of separate environments
+- **Event system**: Implement crow-style event callbacks with single state
+- **Cross-core sync**: Maintain existing critical_section_t approach with single state
+
+**Implementation Strategy**:
+1. Maintain current functionality while refactoring internal architecture
+2. Use crow's actual event handler patterns as reference
+3. Ensure script compatibility throughout transition
+4. Document architectural alignment with crow submodule
 
 This context document should be updated as development progresses and new insights emerge.

@@ -210,7 +210,7 @@ void CrowEmulator::handle_command(C_cmd_t cmd)
             break;
         case C_repl:
             // Handle lua REPL command
-            if (g_crow_lua && crow_lua_eval_repl(rx_buffer, rx_buffer_pos)) {
+            if (g_crow_lua && g_crow_lua->eval_script(rx_buffer, rx_buffer_pos, "repl")) {
                 // Lua command executed successfully - response already sent via printf
             } else {
                 send_usb_string("lua error");
@@ -409,7 +409,7 @@ void CrowEmulator::end_script_upload()
         printf("Script upload complete, %zu bytes received\n", script_upload_pos);
         
         // Send script to lua system for compilation and execution
-        if (g_crow_lua && crow_lua_update_script(0, script_upload_buffer)) {
+        if (g_crow_lua && g_crow_lua->load_user_script(script_upload_buffer)) {
             send_usb_string("script loaded successfully");
         } else {
             send_usb_string("!script compilation error");

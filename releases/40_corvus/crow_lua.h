@@ -23,11 +23,7 @@ private:
     uint32_t last_gc_time;
     static const uint32_t GC_INTERVAL_MS = 20; // 20ms between GC cycles
     
-    // Environment management (adapted from miditocv)
-    static const int NUM_ENVIRONMENTS = 4; // 4 outputs for crow
-    
     // Helper functions
-    bool with_lua_env(int index);
     void setup_crow_globals();
     
 public:
@@ -38,18 +34,17 @@ public:
     bool init();
     void deinit();
     
-    // Core lua operations
-    bool eval_simple(const char* script, size_t script_len, const char* chunkname);
-    bool update_environment(int index, const char* code);
+    // Core lua operations (simplified to match crow's single environment)
+    bool eval_script(const char* script, size_t script_len, const char* chunkname);
+    bool load_user_script(const char* code);
     
-    // Hardware abstraction (crow-specific)
+    // Hardware abstraction (crow-style - single global state)
     bool get_output_volts_and_trigger(int channel, float* volts, bool* volts_new, bool* trigger);
     void set_input_volts(int channel, float volts);
     
-    // Event callbacks (adapted from miditocv pattern)
-    bool run_on_init(int index);
-    bool run_on_step(int index);  
-    float get_bpm(int index);
+    // Event callbacks (crow-style)
+    bool call_init();
+    bool call_step();
     
     // REPL integration
     bool is_lua_command(const char* command);
@@ -60,8 +55,8 @@ public:
     void process_periodic_tasks(uint32_t current_time_ms);
     uint32_t get_memory_usage();
     
-    // Cross-core synchronization
-    void schedule_script_update(int index, const char* script);
+    // Cross-core synchronization (simplified)
+    void schedule_script_update(const char* script);
     bool process_pending_updates();
     
     // Error handling

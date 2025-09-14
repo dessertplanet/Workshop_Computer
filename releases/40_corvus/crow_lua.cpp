@@ -7,14 +7,82 @@
 // Global instance
 CrowLua* g_crow_lua = nullptr;
 
-// Basic crow lua globals (minimal set for now)
+// Crow lua globals - simplified single environment matching real crow
 static const char* crow_globals_lua = R"(
--- Crow globals initialization
-print("Crow Lua environment initializing...")
+-- Crow globals initialization (single environment like real crow)
+print("Crow Lua initializing...")
 
--- Create output and input tables
+-- Create global output and input tables (matches crow architecture)
 output = {}
 input = {}
+
+-- Initialize output tables with crow-style interface
+for i = 1, 4 do
+    output[i] = {
+        volts = 0,
+        _volts_changed = false,
+        _trigger = false,
+        
+        -- Crow output functions
+        action = function(self, func) 
+            if func then self._action = func end
+        end,
+        slew = function(self, time, shape)
+            -- TODO: Implement slew rate limiting
+        end,
+        dyn = function(self, ...)
+            -- TODO: Implement dynamics
+        end
+    }
+    
+    -- Set up metamethods for output[i].volts assignment
+    setmetatable(output[i], {
+        __newindex = function(t, k, v)
+            if k == "volts" then
+                rawset(t, k, v)
+                rawset(t, "_volts_changed", true)
+            elseif k == "action" and type(v) == "function" then
+                rawset(t, "_action", v)
+            else
+                rawset(t, k, v)
+            end
+        end,
+        __call = function(t, ...)
+            -- Allow output[n]() function calls
+            local args = {...}
+            if #args > 0 then
+                t.volts = args[1]
+            end
+            return t.volts
+        end
+    })
+end
+
+-- Initialize input tables
+for i = 1, 2 do  -- Only inputs 1 and 2 for audio inputs
+    input[i] = {
+        volts = 0,
+        _last_volts = 0,
+        
+        -- Input event handlers
+        change = function(self, func, threshold)
+            if func then 
+                self._change_handler = func 
+                self._change_threshold = threshold or 0.1
+            end
+        end,
+        stream = function(self, func)
+            if func then self._stream_handler = func end
+        end
+    }
+    
+    setmetatable(input[i], {
+        __call = function(t, ...)
+            -- Allow input[n]() to return current volts
+            return t.volts
+        end
+    })
+end
 
 -- Enhanced crow utility functions (Phase 2.3)
 function linlin(x, xmin, xmax, ymin, ymax)
@@ -43,16 +111,6 @@ function expexp(x, xmin, xmax, ymin, ymax)
     if x >= xmax then return ymax end
     local norm_x = math.log(x / xmin) / math.log(xmax / xmin)
     return ymin * math.pow(ymax / ymin, norm_x)
-end
-
--- Time and clock functions
-function clock_time()
-    -- TODO: Connect to actual system clock
-    return 0
-end
-
-function clock_tempo(bpm)
-    -- TODO: Implement tempo setting
 end
 
 -- Math utilities
@@ -93,161 +151,51 @@ function hz_to_v(hz)
     return math.log(hz / 440) / math.log(2) - (3/12)
 end
 
--- Environment management (adapted from miditocv)
-envs = {}
-
-function new_env(code)
-    local env = {
-        -- Crow-specific environment setup with enhanced output system
-        output = {},
-        input = {},
-        volts = 0,
-        trigger = false,
-        volts_new = false,
-        -- Utility functions available in environment
-        linlin = linlin,
-        linexp = linexp,
-        math = math,
-        print = print
-    }
-    
-    -- Initialize output tables with volts property and metamethods
-    for i = 1, 4 do
-        env.output[i] = {
-            volts = 0,
-            _trigger = false,
-            _volts_changed = false,
-            -- Crow output functions
-            action = function(self, func) 
-                if func then self._action = func end
-            end,
-            slew = function(self, time, shape)
-                -- TODO: Implement slew rate limiting
-            end
-        }
-        
-        -- Set up metamethods for output[i].volts assignment
-        setmetatable(env.output[i], {
-            __newindex = function(t, k, v)
-                if k == "volts" then
-                    rawset(t, k, v)
-                    rawset(t, "_volts_changed", true)
-                    rawset(env, "volts", v)  -- Update env.volts for compatibility
-                    rawset(env, "volts_new", true)
-                elseif k == "action" and type(v) == "function" then
-                    rawset(t, "_action", v)
-                else
-                    rawset(t, k, v)
-                end
-            end,
-            __call = function(t, ...)
-                -- Allow output[n]() function calls
-                local args = {...}
-                if #args > 0 then
-                    t.volts = args[1]
-                end
-                return t.volts
-            end
-        })
-    end
-    
-    -- Initialize input tables
-    for i = 1, 2 do  -- Only inputs 1 and 2 for audio inputs
-        env.input[i] = {
-            volts = 0,
-            _last_volts = 0,
-            -- Input event handlers
-            change = function(self, func, threshold)
-                if func then 
-                    self._change_handler = func 
-                    self._change_threshold = threshold or 0.1
-                end
-            end,
-            stream = function(self, func)
-                if func then self._stream_handler = func end
-            end
-        }
-        
-        setmetatable(env.input[i], {
-            __call = function(t, ...)
-                -- Allow input[n]() to return current volts
-                return t.volts
-            end
-        })
-    end
-    
-    -- Global output table in environment
-    env.output.volts = function(ch, v)
-        if ch and ch >= 1 and ch <= 4 then
-            if v then
-                env.output[ch].volts = v
-            end
-            return env.output[ch].volts
-        end
-        return 0
-    end
-    
-    -- Load code into environment if provided
-    if code and code ~= "" then
-        local chunk, err = load(code, "user_script", "t", env)
-        if chunk then
-            local ok, result = pcall(chunk)
-            if not ok then
-                print("Error in user script: " .. tostring(result))
-            end
-        else
-            print("Compile error: " .. tostring(err))
-        end
-    end
-    
-    return env
+-- Time and clock functions
+function time()
+    -- TODO: Connect to actual system clock
+    return 0
 end
 
-function update_env(index, code)
-    envs[index] = new_env(code)
+function clock(tempo)
+    -- TODO: Implement tempo setting
+    if tempo then
+        -- Set tempo
+    end
+    -- Return current tempo
+    return 120
 end
 
--- Enhanced output state management for Phase 2.3
+-- Output state management (simplified for single global environment)
 function get_output_state(channel)
-    if envs[channel] then
-        local env = envs[channel]
-        local volts = 0
-        local volts_new = false
-        local trigger = false
+    if output[channel] then
+        local volts = output[channel].volts or 0
+        local volts_new = output[channel]._volts_changed or false
+        local trigger = output[channel]._trigger or false
         
-        -- Check if output[channel] exists and get its volts
-        if env.output and env.output[channel] then
-            volts = env.output[channel].volts or 0
-            volts_new = env.output[channel]._volts_changed or false
-            trigger = env.output[channel]._trigger or false
-            
-            -- Reset change flags after reading
-            env.output[channel]._volts_changed = false
-            env.output[channel]._trigger = false
-        else
-            -- Fallback to legacy env.volts for compatibility
-            volts = env.volts or 0
-            volts_new = env.volts_new or false  
-            trigger = env.trigger or false
-        end
-        
-        -- Reset legacy flags
-        env.volts_new = false
-        env.trigger = false
+        -- Reset change flags after reading
+        output[channel]._volts_changed = false
+        output[channel]._trigger = false
         
         return volts, volts_new, trigger
     end
     return 0, false, false
 end
 
--- Helper function to set output volts from C code
-function set_output_volts(channel, volts)
-    for i, env in pairs(envs) do
-        if env.output and env.output[channel] then
-            env.output[channel].volts = volts
-            env.output[channel]._volts_changed = true
-        end
+-- Helper function to set input volts from C code
+function set_input_volts(channel, volts)
+    if input[channel] then
+        input[channel].volts = volts
     end
+end
+
+-- User script placeholder functions
+function init()
+    -- Default empty init function
+end
+
+function step()
+    -- Default empty step function
 end
 
 print("Crow Lua globals loaded")
@@ -271,7 +219,7 @@ bool CrowLua::init() {
         return true;
     }
     
-    printf("Initializing Crow Lua VM...\n");
+    printf("Initializing Crow Lua VM (simplified single environment)...\n");
     
     // Create lua state
     L = luaL_newstate();
@@ -299,15 +247,8 @@ bool CrowLua::init() {
         return false;
     }
     
-    // Initialize environments for each output
-    for (int i = 1; i <= NUM_ENVIRONMENTS; i++) {
-        if (!update_environment(i, "")) {
-            printf("Failed to initialize environment %d\n", i);
-        }
-    }
-    
     lua_initialized = true;
-    printf("Crow Lua VM initialized successfully\n");
+    printf("Crow Lua VM initialized successfully (crow-style single environment)\n");
     return true;
 }
 
@@ -319,7 +260,7 @@ void CrowLua::deinit() {
     lua_initialized = false;
 }
 
-bool CrowLua::eval_simple(const char* script, size_t script_len, const char* chunkname) {
+bool CrowLua::eval_script(const char* script, size_t script_len, const char* chunkname) {
     if (!lua_initialized || !L) {
         return false;
     }
@@ -344,57 +285,16 @@ bool CrowLua::eval_simple(const char* script, size_t script_len, const char* chu
     return true;
 }
 
-bool CrowLua::update_environment(int index, const char* code) {
-    if (!lua_initialized || !L || index < 1 || index > NUM_ENVIRONMENTS) {
+bool CrowLua::load_user_script(const char* code) {
+    if (!lua_initialized || !L || !code) {
         return false;
     }
     
-    critical_section_enter_blocking(&lua_critical_section);
-    
-    lua_getglobal(L, "update_env");
-    if (!lua_isfunction(L, -1)) {
-        lua_pop(L, 1);
-        critical_section_exit(&lua_critical_section);
-        return false;
-    }
-    
-    lua_pushinteger(L, index);
-    lua_pushstring(L, code ? code : "");
-    
-    if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
-        printf("Error updating environment %d: %s\n", index, lua_tostring(L, -1));
-        lua_pop(L, 1);
-        critical_section_exit(&lua_critical_section);
-        return false;
-    }
-    
-    critical_section_exit(&lua_critical_section);
-    return true;
-}
-
-bool CrowLua::with_lua_env(int index) {
-    if (!lua_initialized || !L || index < 1 || index > NUM_ENVIRONMENTS) {
-        return false;
-    }
-    
-    lua_getglobal(L, "envs");
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        return false;
-    }
-    
-    lua_pushinteger(L, index);
-    lua_gettable(L, -2);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 2);
-        return false;
-    }
-    
-    return true;
+    return eval_script(code, strlen(code), "user_script");
 }
 
 bool CrowLua::get_output_volts_and_trigger(int channel, float* volts, bool* volts_new, bool* trigger) {
-    if (!lua_initialized || !L || channel < 1 || channel > NUM_ENVIRONMENTS) {
+    if (!lua_initialized || !L || channel < 1 || channel > 4) {
         return false;
     }
     
@@ -425,110 +325,73 @@ bool CrowLua::get_output_volts_and_trigger(int channel, float* volts, bool* volt
 }
 
 void CrowLua::set_input_volts(int channel, float volts) {
-    if (!lua_initialized || !L || channel < 1 || channel > 4) {
+    if (!lua_initialized || !L || channel < 1 || channel > 2) {
         return;
     }
     
     critical_section_enter_blocking(&lua_critical_section);
     
-    // Set input[channel].volts = volts
-    lua_getglobal(L, "input");
-    if (lua_istable(L, -1)) {
+    lua_getglobal(L, "set_input_volts");
+    if (lua_isfunction(L, -1)) {
         lua_pushinteger(L, channel);
-        lua_newtable(L);  // Create input[channel] table if needed
-        lua_pushstring(L, "volts");
         lua_pushnumber(L, volts);
-        lua_settable(L, -3);  // input[channel].volts = volts
-        lua_settable(L, -3);  // input[channel] = table
+        if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+            printf("Error setting input volts for channel %d: %s\n", channel, lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
     }
-    lua_pop(L, 1);
     
     critical_section_exit(&lua_critical_section);
 }
 
-float CrowLua::get_bpm(int index) {
-    if (!lua_initialized || !L) {
-        return -1;
-    }
-    
-    critical_section_enter_blocking(&lua_critical_section);
-    
-    if (!with_lua_env(index)) {
-        critical_section_exit(&lua_critical_section);
-        return -1;
-    }
-    
-    lua_getfield(L, -1, "bpm");
-    if (!lua_isnumber(L, -1)) {
-        lua_pop(L, 3);  // Pop bpm, envs[index], envs
-        critical_section_exit(&lua_critical_section);
-        return -1;
-    }
-    
-    float bpm = (float)lua_tonumber(L, -1);
-    lua_pop(L, 3);  // Pop bpm, envs[index], envs
-    critical_section_exit(&lua_critical_section);
-    return bpm;
-}
-
-bool CrowLua::run_on_init(int index) {
+bool CrowLua::call_init() {
     if (!lua_initialized || !L) {
         return false;
     }
     
     critical_section_enter_blocking(&lua_critical_section);
     
-    if (!with_lua_env(index)) {
-        critical_section_exit(&lua_critical_section);
-        return false;
-    }
-    
-    lua_getfield(L, -1, "init");
+    lua_getglobal(L, "init");
     if (!lua_isfunction(L, -1)) {
-        lua_pop(L, 3);  // Pop init, envs[index], envs
+        lua_pop(L, 1);
         critical_section_exit(&lua_critical_section);
         return false;
     }
     
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-        printf("Error running init for environment %d: %s\n", index, lua_tostring(L, -1));
-        lua_pop(L, 3);  // Pop error, envs[index], envs
+        printf("Error running init: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
         critical_section_exit(&lua_critical_section);
         return false;
     }
     
-    lua_pop(L, 2);  // Pop envs[index], envs
     critical_section_exit(&lua_critical_section);
     return true;
 }
 
-bool CrowLua::run_on_step(int index) {
+bool CrowLua::call_step() {
     if (!lua_initialized || !L) {
         return false;
     }
     
     critical_section_enter_blocking(&lua_critical_section);
     
-    if (!with_lua_env(index)) {
-        critical_section_exit(&lua_critical_section);
-        return false;
-    }
-    
-    lua_getfield(L, -1, "step");
+    lua_getglobal(L, "step");
     if (!lua_isfunction(L, -1)) {
-        lua_pop(L, 3);  // Pop step, envs[index], envs
+        lua_pop(L, 1);
         critical_section_exit(&lua_critical_section);
         return false;
     }
     
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-        printf("Error running step for environment %d: %s\n", index, lua_tostring(L, -1));
-        lua_pop(L, 3);  // Pop error, envs[index], envs
+        printf("Error running step: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
         critical_section_exit(&lua_critical_section);
         return false;
     }
     
-    lua_pop(L, 2);  // Pop envs[index], envs
     critical_section_exit(&lua_critical_section);
     return true;
 }
@@ -551,6 +414,19 @@ void CrowLua::process_periodic_tasks(uint32_t current_time_ms) {
     }
 }
 
+uint32_t CrowLua::get_memory_usage() {
+    if (!lua_initialized || !L) {
+        return 0;
+    }
+    
+    critical_section_enter_blocking(&lua_critical_section);
+    lua_gc(L, LUA_GCCOUNT, 0);
+    int kb = lua_gc(L, LUA_GCCOUNT, 0);
+    critical_section_exit(&lua_critical_section);
+    
+    return (uint32_t)kb * 1024;
+}
+
 bool CrowLua::is_lua_command(const char* command) {
     if (!command) return false;
     
@@ -563,10 +439,26 @@ bool CrowLua::is_lua_command(const char* command) {
 }
 
 bool CrowLua::execute_repl_command(const char* command, size_t length) {
-    return eval_simple(command, length, "repl");
+    return eval_script(command, length, "repl");
 }
 
-// C-style interface implementation
+void CrowLua::schedule_script_update(const char* script) {
+    // For simplicity, just load the script immediately
+    // In a more complex implementation, this could be queued
+    load_user_script(script);
+}
+
+bool CrowLua::process_pending_updates() {
+    // No pending updates in this simplified implementation
+    return true;
+}
+
+const char* CrowLua::get_last_error() {
+    // TODO: Implement error tracking
+    return "No error information available";
+}
+
+// C-style interface implementation (updated for simplified API)
 extern "C" {
     bool crow_lua_init() {
         if (!g_crow_lua) {
@@ -589,8 +481,9 @@ extern "C" {
     }
     
     bool crow_lua_update_script(int index, const char* script) {
+        // Updated to use simplified API (no more per-environment scripts)
         if (!g_crow_lua) return false;
-        return g_crow_lua->update_environment(index, script);
+        return g_crow_lua->load_user_script(script);
     }
     
     void crow_lua_process_events() {
@@ -599,10 +492,8 @@ extern "C" {
         uint32_t current_time = to_ms_since_boot(get_absolute_time());
         g_crow_lua->process_periodic_tasks(current_time);
         
-        // Process events for each environment
-        for (int i = 1; i <= 4; i++) {
-            g_crow_lua->run_on_step(i);
-        }
+        // Call step function (simplified - no per-environment processing)
+        g_crow_lua->call_step();
     }
     
     void crow_lua_garbage_collect() {
