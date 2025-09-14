@@ -1,5 +1,6 @@
 #include "crow_lua.h"
 #include "crow_metro.h"
+#include "crow_slopes.h"
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -624,5 +625,26 @@ extern "C" {
         if (g_crow_lua) {
             g_crow_lua->garbage_collect();
         }
+    }
+    
+    // Slopes lua bindings
+    void crow_lua_register_slopes_functions(lua_State* L) {
+        if (!L) return;
+        
+        // Register slopes_toward function
+        lua_register(L, "slopes_toward", [](lua_State* L) -> int {
+            int channel = luaL_checkinteger(L, 1) - 1;  // Convert to 0-based
+            float destination = luaL_checknumber(L, 2);
+            float time_s = luaL_checknumber(L, 3);
+            const char* shape_str = luaL_optstring(L, 4, "linear");
+            
+            float time_ms = time_s * 1000.0f;
+            crow_shape_t shape = crow_str_to_shape(shape_str);
+            
+            crow_slopes_toward(channel, destination, time_ms, shape, nullptr);
+            return 0;
+        });
+        
+        printf("Slopes lua functions registered\n");
     }
 }

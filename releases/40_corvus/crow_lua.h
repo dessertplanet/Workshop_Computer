@@ -78,4 +78,7 @@ extern "C" {
     bool crow_lua_update_script(int index, const char* script);
     void crow_lua_process_events();
     void crow_lua_garbage_collect();
+    
+    // Slopes and ASL lua bindings
+    void crow_lua_register_slopes_functions(lua_State* L);
 }

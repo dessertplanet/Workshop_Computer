@@ -49,6 +49,9 @@ void CrowEmulator::ProcessSample()
     // Phase 4.1: Process slopes system (envelopes and LFOs)
     crow_slopes_process_sample();
     
+    // Phase 4.2: Process ASL system (Attack/Sustain/Release)
+    crow_asl_process_sample();
+    
     // Phase 2.1: Basic lua processing on Core 0
     crow_lua_process_events();
     
@@ -95,6 +98,9 @@ void CrowEmulator::crow_init()
     
     // Initialize slopes system (Phase 4.1)
     crow_slopes_init();
+    
+    // Initialize ASL system (Phase 4.2)
+    crow_asl_init();
     
     // Initialize USB communication
     init_usb_communication();

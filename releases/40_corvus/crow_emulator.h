@@ -12,6 +12,7 @@
 
 #include "crow_lua.h"
 #include "crow_slopes.h"
+#include "crow_asl.h"
 
 // Crow command types (from crow's caw.h)
 typedef enum {
