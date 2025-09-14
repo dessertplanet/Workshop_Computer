@@ -126,6 +126,7 @@ void crow_asl_register_lua_functions(lua_State* L);
 
 // Processing
 void crow_asl_process_sample(void);
+void crow_asl_process_block(float* input_blocks[4], int block_size);
 
 // Completion callback for slopes integration
 void crow_asl_slope_done_callback(int channel);

@@ -15,6 +15,15 @@
 #include "crow_asl.h"
 #include "crow_casl.h"
 
+// Include wrDsp and wrLib for vector processing and event handling
+extern "C" {
+#include "wrBlocks.h"
+#include "wrEvent.h"
+}
+
+// Block processing constants
+#define CROW_BLOCK_SIZE 32
+
 // Crow command types (from crow's caw.h)
 typedef enum {
     C_none = 0,
@@ -58,13 +67,19 @@ private:
     uint32_t error_led_counter;     // Counter for error LED flashing
     static const size_t MAX_SCRIPT_SIZE = 8192; // 8KB max script size
     
+    // Block processing buffers for vector operations
+    float input_block[4][CROW_BLOCK_SIZE];    // 4 input channels
+    float output_block[4][CROW_BLOCK_SIZE];   // 4 output channels
+    int block_position;                        // Current position in block (0-31)
+    
 public:
     // Static pointer for multicore callback (public for error handling bridge)
     static CrowEmulator* instance;
     CrowEmulator();
     
-    // Audio processing method (overrides ComputerCard::ProcessSample)
+    // Audio processing methods (overrides ComputerCard::ProcessSample)
     void ProcessSample() override;
+    void ProcessBlock();  // Vector processing method for CROW_BLOCK_SIZE samples
     
     // USB Communication
     void init_usb_communication();

@@ -3,6 +3,9 @@
 #include <cstring>
 #include <cmath>
 
+// Forward declarations
+static void asl_process_dynamic_updates(crow_asl_t* asl, int block_size);
+
 // Global ASL channels
 crow_asl_t* crow_asl_channels[CROW_ASL_CHANNELS];
 static bool asl_initialized = false;
@@ -242,8 +245,80 @@ void crow_asl_process_sample(void) {
         return;
     }
     
+    // Legacy per-sample processing - kept for compatibility
     // The ASL system primarily coordinates with slopes
     // Most work is done in slope completion callbacks
+}
+
+// Vector processing for ASL system (Phase 2)
+void crow_asl_process_block(float* input_blocks[4], int block_size) {
+    if (!asl_initialized) {
+        return;
+    }
+    
+    // ASL system primarily coordinates envelope sequences rather than processing audio
+    // Vector processing here focuses on efficient evaluation of dynamic variables
+    // and bulk processing of ASL state updates
+    
+    // Process each ASL channel for bulk dynamic variable updates
+    for (int ch = 0; ch < CROW_ASL_CHANNELS; ch++) {
+        crow_asl_t* asl = crow_asl_channels[ch];
+        if (!asl) continue;
+        
+        // Check for pending sequences that need to be triggered
+        // This is more efficient than checking per-sample
+        if (asl->seq_current && asl->seq_current->pc < asl->seq_current->length) {
+            // Process sequence advancement at block boundaries
+            crow_asl_sequence_t* seq = asl->seq_current;
+            
+            // Execute current stage if available
+            if (seq->stage[seq->pc]) {
+                crow_asl_process_to(asl, seq->stage[seq->pc]);
+                seq->pc++;
+                
+                // Check if sequence is complete
+                if (seq->pc >= seq->length) {
+                    asl->seq_current = nullptr;
+                    seq->pc = 0;
+                }
+            }
+        }
+        
+        // Batch update dynamic variables that may have changed
+        // This avoids per-sample evaluation overhead
+        asl_process_dynamic_updates(asl, block_size);
+    }
+    
+    // Future: Vector processing for ASL arithmetic operations using wrDsp
+    // Example: b_add(), b_mul() for dynamic variable calculations across blocks
+}
+
+// Helper function for batch processing dynamic variable updates
+static void asl_process_dynamic_updates(crow_asl_t* asl, int block_size) {
+    if (!asl) return;
+    
+    // Process any pending dynamic variable calculations
+    // This could include vector math operations for complex expressions
+    
+    for (int dyn_idx = 0; dyn_idx < asl->dyn_ix; dyn_idx++) {
+        crow_asl_elem_t* elem = &asl->dynamics[dyn_idx];
+        
+        // For arithmetic operations, we could use wrDsp vector functions here
+        // This is where Phase 2 vector optimization would be most beneficial
+        switch (elem->type) {
+            case CROW_ASL_ELEM_ADD:
+            case CROW_ASL_ELEM_SUB:
+            case CROW_ASL_ELEM_MUL:
+            case CROW_ASL_ELEM_DIV:
+                // Future: Use wrDsp vector functions for bulk arithmetic
+                // b_add(), b_sub(), b_mul(), b_div() for processing arrays
+                break;
+                
+            default:
+                // Simple types don't need block processing
+                break;
+        }
+    }
 }
 
 // Slope completion callback

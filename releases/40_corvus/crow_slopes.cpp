@@ -5,6 +5,15 @@
 #include <cmath>
 #include <cstdio>
 
+extern "C" {
+    #include "wrBlocks.h"
+}
+
+// Forward declarations for internal functions
+static void slopes_motion_v(crow_slope_t* slope, float* out, int block_size);
+static void slopes_breakpoint_v(crow_slope_t* slope, float* out, int block_size);
+static void slopes_shaper_v(crow_slope_t* slope, float* out, int block_size);
+
 // Global state
 static crow_slope_t slopes[CROW_SLOPE_CHANNELS];
 static bool slopes_initialized = false;
@@ -131,6 +140,11 @@ void crow_slopes_process_sample(void) {
         return;
     }
     
+    // TODO: Phase 2 - Convert to vector operations using wrDsp
+    // TODO: Replace per-sample processing with crow_slopes_process_block()
+    // TODO: Use wrDsp b_add/b_mul functions for vector envelope processing
+    // FUTURE: Process 32 samples at once for 3-5x performance improvement
+    
     for (int i = 0; i < CROW_SLOPE_CHANNELS; i++) {
         crow_slope_t* slope = &slopes[i];
         
@@ -190,6 +204,141 @@ void crow_slopes_process_sample(void) {
             slope->shaped = (shaped_value * slope->scale) + slope->last;
         }
     }
+}
+
+// Process a block of samples for all channels using vector operations
+// This is the Phase 2 vector processing implementation
+void crow_slopes_process_block(float* input_blocks[4], float* output_blocks[4], int block_size) {
+    if (!slopes_initialized) {
+        // Zero output blocks if not initialized
+        for (int ch = 0; ch < CROW_SLOPE_CHANNELS; ch++) {
+            b_cp(output_blocks[ch], 0.0f, block_size);
+        }
+        return;
+    }
+    
+    // Process each channel's slope using vector operations
+    for (int ch = 0; ch < CROW_SLOPE_CHANNELS; ch++) {
+        crow_slope_t* slope = &slopes[ch];
+        float* out = output_blocks[ch];
+        
+        if (slope->countdown <= 0.0f) {
+            // Slope is inactive - output constant value
+            b_cp(out, slope->shaped, block_size);
+            if (slope->countdown > -1024.0f) {
+                slope->countdown -= (float)block_size; // Count overflow samples
+            }
+        } else if (slope->countdown > (float)block_size) {
+            // No callback within this block - pure motion
+            slopes_motion_v(slope, out, block_size);
+        } else {
+            // Callback occurs within this block - handle breakpoint
+            slopes_breakpoint_v(slope, out, block_size);
+        }
+    }
+}
+
+// Vector motion processing (no callback in this block)
+static void slopes_motion_v(crow_slope_t* slope, float* out, int block_size) {
+    if (slope->scale == 0.0f || slope->delta == 0.0f) {
+        // Delay only - constant output
+        b_cp(out, slope->here, block_size);
+    } else {
+        // Generate linear interpolation ramp
+        out[0] = slope->here + slope->delta;
+        for (int i = 1; i < block_size; i++) {
+            out[i] = out[i-1] + slope->delta;
+        }
+    }
+    
+    slope->countdown -= (float)block_size;
+    slope->here = out[block_size - 1];
+    
+    // Apply shaping and scaling using vector operations
+    slopes_shaper_v(slope, out, block_size);
+}
+
+// Vector breakpoint processing (callback occurs within block)
+static void slopes_breakpoint_v(crow_slope_t* slope, float* out, int block_size) {
+    int callback_sample = (int)slope->countdown;
+    
+    // Process samples before callback
+    if (callback_sample > 0) {
+        for (int i = 0; i < callback_sample && i < block_size; i++) {
+            slope->here += slope->delta;
+            out[i] = slope->here;
+        }
+        slope->countdown -= (float)callback_sample;
+    }
+    
+    // Handle callback
+    if (callback_sample < block_size) {
+        slope->here = 1.0f; // Clamp to endpoint
+        
+        // Trigger callback
+        if (slope->action) {
+            crow_slope_callback_t action = slope->action;
+            slope->action = nullptr;
+            slope->shaped = slope->dest; // Ensure we reach destination
+            action(slope->index);
+        }
+        
+        // Fill remaining samples with final value
+        for (int i = callback_sample; i < block_size; i++) {
+            out[i] = slope->here;
+        }
+        
+        slope->countdown = -1.0f; // Mark inactive
+        slope->delta = 0.0f;
+    }
+    
+    // Apply shaping and scaling
+    slopes_shaper_v(slope, out, block_size);
+}
+
+// Vector shaping operations
+static void slopes_shaper_v(crow_slope_t* slope, float* out, int block_size) {
+    // Apply shape curve using vector operations where possible
+    switch (slope->shape) {
+        case CROW_SHAPE_Sine:
+            // Apply sine shaping using b_map with function pointer
+            b_map(crow_shape_sine, out, block_size);
+            break;
+            
+        case CROW_SHAPE_Log:
+            // Apply log shaping
+            b_map(crow_shape_log, out, block_size);
+            break;
+            
+        case CROW_SHAPE_Expo:
+            // Apply exponential shaping  
+            b_map(crow_shape_exp, out, block_size);
+            break;
+            
+        case CROW_SHAPE_Linear:
+            // No shaping needed
+            break;
+            
+        default:
+            // Apply other shapes per-sample (fallback)
+            for (int i = 0; i < block_size; i++) {
+                switch (slope->shape) {
+                    case CROW_SHAPE_Now:     out[i] = crow_shape_now(out[i]); break;
+                    case CROW_SHAPE_Wait:    out[i] = crow_shape_wait(out[i]); break;
+                    case CROW_SHAPE_Over:    out[i] = crow_shape_over(out[i]); break;
+                    case CROW_SHAPE_Under:   out[i] = crow_shape_under(out[i]); break;
+                    case CROW_SHAPE_Rebound: out[i] = crow_shape_rebound(out[i]); break;
+                }
+            }
+            break;
+    }
+    
+    // Apply scaling and offset using wrDsp vector operations:
+    // output = (shaped_value * scale) + last
+    b_add(b_mul(out, slope->scale, block_size), slope->last, block_size);
+    
+    // Save final state
+    slope->shaped = out[block_size - 1];
 }
 
 // Shape functions (all normalized 0.0-1.0 input/output)

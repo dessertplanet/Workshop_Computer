@@ -82,6 +82,9 @@ typedef struct {
     float envelope;                   // Peak envelope
 } detect_peak_t;
 
+// Forward declaration for wrEvent
+struct event_extract;
+
 // Main detection structure
 typedef struct crow_detect {
     uint8_t channel;                  // Input channel (0-1)
@@ -91,6 +94,9 @@ typedef struct crow_detect {
     // State memory
     float last;                       // Last input value
     uint8_t state;                    // Hysteresis state (0/1)
+    
+    // wrEvent integration for enhanced detection
+    struct event_extract* wrEvent_extractor;  // wrEvent trigger extractor
     
     // Mode-specific states
     detect_stream_t stream;
@@ -105,6 +111,7 @@ typedef struct crow_detect {
 void crow_detect_init(int channels);
 void crow_detect_deinit();
 void crow_detect_process_sample();
+void crow_detect_process_block(float* input_blocks[4], int block_size);
 
 // Per-channel detection functions
 crow_detect_t* crow_detect_get_channel(uint8_t channel);

@@ -28,7 +28,9 @@ macro (add_card _name)
     if (TARGET ${_name})
       target_include_directories(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR})
       target_include_directories(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR}/submodules/miditocv/lua-5.4.6/src)
-      target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi hardware_flash hardware_sync tinyusb_device lua_core)
+      target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi hardware_flash hardware_sync tinyusb_device lua_core wrDsp wrLib)
+      target_include_directories(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR}/submodules/wrDsp)
+      target_include_directories(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR}/submodules/wrLib)
       pico_add_extra_outputs(${_name})
       target_sources(${_name} PUBLIC 
         ${CMAKE_CURRENT_LIST_DIR}/main.cpp
@@ -89,6 +91,46 @@ add_library(lua_core STATIC
 
 target_include_directories(lua_core PUBLIC submodules/miditocv/lua-5.4.6/src)
 target_compile_definitions(lua_core PRIVATE LUA_32BITS)
+
+# Add wrDsp library sources for vector processing
+add_library(wrDsp STATIC
+    submodules/wrDsp/wrBlocks.c
+    submodules/wrDsp/wrClip.c
+    submodules/wrDsp/wrDelay.c
+    submodules/wrDsp/wrFilter.c
+    submodules/wrDsp/wrFuncGen.c
+    submodules/wrDsp/wrHead.c
+    submodules/wrDsp/wrHistory.c
+    submodules/wrDsp/wrInterpolate.c
+    submodules/wrDsp/wrLpGate.c
+    submodules/wrDsp/wrMix.c
+    submodules/wrDsp/wrOscSine.c
+    submodules/wrDsp/wrResamp.c
+    submodules/wrDsp/wrShaper.c
+    submodules/wrDsp/wrTransport.c
+    submodules/wrDsp/wrVtl.c
+    # wrWaveGuide.c temporarily excluded due to syntax errors
+)
+
+target_include_directories(wrDsp PUBLIC submodules/wrDsp)
+target_include_directories(wrDsp PUBLIC submodules/wrLib)
+
+# Add wrLib library sources for utilities
+add_library(wrLib STATIC
+    submodules/wrLib/str_buffer.c
+    submodules/wrLib/wrConvert.c
+    submodules/wrLib/wrEvent.c
+    submodules/wrLib/wrMath.c
+    submodules/wrLib/wrMeters.c
+    submodules/wrLib/wrPoly.c
+    submodules/wrLib/wrQueue.c
+    submodules/wrLib/wrTrig.c
+    submodules/wrLib/wrVactrol.c
+    submodules/wrLib/wrWav.c
+)
+
+target_include_directories(wrLib PUBLIC submodules/wrLib)
+target_include_directories(wrLib PUBLIC submodules/wrDsp)
 
 # Create card
 add_card(${CARD_NAME})

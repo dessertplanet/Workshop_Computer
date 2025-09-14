@@ -59,6 +59,7 @@ void crow_slopes_toward(int channel, float destination, float ms,
 
 // Real-time processing
 void crow_slopes_process_sample(void);
+void crow_slopes_process_block(float* input_blocks[4], float* output_blocks[4], int block_size);
 float crow_slopes_get_output(int channel);
 
 // Shape functions (normalized 0.0-1.0 input/output)

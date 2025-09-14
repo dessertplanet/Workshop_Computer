@@ -30,7 +30,8 @@ CrowEmulator::CrowEmulator() :
     script_upload_size(0),
     script_upload_pos(0),
     status_led_counter(0),
-    error_led_counter(0)
+    error_led_counter(0),
+    block_position(0)
 {
     instance = this;
     memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
@@ -56,19 +57,72 @@ CrowEmulator::CrowEmulator() :
 
 void CrowEmulator::ProcessSample()
 {
-    // 48kHz audio processing callback
+    // Accumulate input samples into block buffers
+    input_block[0][block_position] = crow_get_input(0);  // Input 1
+    input_block[1][block_position] = crow_get_input(1);  // Input 2
+    input_block[2][block_position] = 0.0f;               // Input 3 (not connected)
+    input_block[3][block_position] = 0.0f;               // Input 4 (not connected)
+    
+    // Increment block position
+    block_position++;
+    
+    // When block is full, process it with vector operations
+    if (block_position >= CROW_BLOCK_SIZE) {
+        ProcessBlock();
+        block_position = 0;
+    }
+    
+    // Output the current sample from the output block
+    int output_index = (block_position == 0) ? CROW_BLOCK_SIZE - 1 : block_position - 1;
+    
+    // Apply outputs using hardware abstraction
+    crow_set_output(0, output_block[0][output_index]);  // Output 1 → AudioOut1
+    crow_set_output(1, output_block[1][output_index]);  // Output 2 → AudioOut2
+    crow_set_output(2, output_block[2][output_index]);  // Output 3 → CVOut1
+    crow_set_output(3, output_block[3][output_index]);  // Output 4 → CVOut2
+    
+    // For now, also pass through audio inputs to outputs for testing
+    AudioOut1(AudioIn1());
+    AudioOut2(AudioIn2());
+    
+    // Phase 5: Simple status LED management using ComputerCard methods
+    update_status_leds();
+}
+
+void CrowEmulator::ProcessBlock()
+{
+    // Vector processing for CROW_BLOCK_SIZE samples (32 samples)
+    // This method processes blocks like real crow's S_step_v() function
     
     // Phase 2.4: Process metro events (real-time event integration)
     metro_process_events();
     
-    // Phase 4.1: Process slopes system (envelopes and LFOs)
-    crow_slopes_process_sample();
+    // Phase 4.1: Process slopes system with vector operations
+    // Vector processing implementation using wrDsp functions
+    float* slopes_output_blocks[4];
+    for (int ch = 0; ch < 4; ch++) {
+        slopes_output_blocks[ch] = new float[CROW_BLOCK_SIZE];
+    }
     
-    // Phase 4.2: Process ASL system (Attack/Sustain/Release)
-    crow_asl_process_sample();
+    // Create input pointers array for wrDsp compatibility
+    float* input_blocks[4];
+    for (int ch = 0; ch < 4; ch++) {
+        input_blocks[ch] = input_block[ch];
+    }
     
-    // Phase 4.3.2: Process detection system (input detection)
-    crow_detect_process_sample();
+    crow_slopes_process_block(input_blocks, slopes_output_blocks, CROW_BLOCK_SIZE);
+    
+    // Copy slopes output to main output blocks (will be combined with lua outputs later)
+    for (int ch = 0; ch < 4; ch++) {
+        memcpy(output_block[ch], slopes_output_blocks[ch], CROW_BLOCK_SIZE * sizeof(float));
+        delete[] slopes_output_blocks[ch];
+    }
+    
+    // Phase 4.2: Process ASL system with vector operations
+    crow_asl_process_block(input_blocks, CROW_BLOCK_SIZE);
+    
+    // Phase 4.3.2: Process detection system with vector operations
+    crow_detect_process_block(input_blocks, CROW_BLOCK_SIZE);
     
     // Phase 2.1: Basic lua processing on Core 0
     crow_lua_process_events();
@@ -78,27 +132,34 @@ void CrowEmulator::ProcessSample()
     
     // Update input values for lua using hardware abstraction
     if (g_crow_lua) {
-        g_crow_lua->set_input_volts(1, crow_get_input(0));  // Convert to 0-based indexing
-        g_crow_lua->set_input_volts(2, crow_get_input(1));
+        // Use the last sample in the block for lua input values
+        g_crow_lua->set_input_volts(1, input_block[0][CROW_BLOCK_SIZE - 1]);
+        g_crow_lua->set_input_volts(2, input_block[1][CROW_BLOCK_SIZE - 1]);
     }
     
-    // Get lua output values and apply them using hardware abstraction
-    for (int i = 1; i <= 4; i++) {
+    // Get lua output values and apply them to output blocks
+    for (int ch = 0; ch < 4; ch++) {
         float volts;
         bool volts_new, trigger;
-        if (g_crow_lua && g_crow_lua->get_output_volts_and_trigger(i, &volts, &volts_new, &trigger)) {
+        if (g_crow_lua && g_crow_lua->get_output_volts_and_trigger(ch + 1, &volts, &volts_new, &trigger)) {
             if (volts_new) {
-                crow_set_output(i - 1, volts);  // Convert to 0-based indexing
+                // Fill entire block with the new voltage value
+                for (int i = 0; i < CROW_BLOCK_SIZE; i++) {
+                    output_block[ch][i] = volts;
+                }
+            }
+        } else {
+            // No new value, fill with zeros
+            for (int i = 0; i < CROW_BLOCK_SIZE; i++) {
+                output_block[ch][i] = 0.0f;
             }
         }
     }
     
-    // For now, also pass through audio inputs to outputs for testing
-    AudioOut1(AudioIn1());
-    AudioOut2(AudioIn2());
-    
-    // Phase 5: Simple status LED management using ComputerCard methods
-    update_status_leds();
+    // Future: Apply wrDsp vector processing functions here
+    // Example of wrDsp integration (currently commented out until slopes system is converted):
+    // b_add(output_block[0], input_block[0], slopes_output_block[0], CROW_BLOCK_SIZE);
+    // b_mul(output_block[1], input_block[1], envelope_block, CROW_BLOCK_SIZE);
 }
 
 void CrowEmulator::crow_init()
