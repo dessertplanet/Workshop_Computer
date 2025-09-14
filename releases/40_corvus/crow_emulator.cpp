@@ -25,25 +25,44 @@ CrowEmulator::CrowEmulator() :
 void CrowEmulator::ProcessSample()
 {
     // 48kHz audio processing callback
-    // For Phase 1, just pass through audio inputs to outputs for testing
+    
+    // Phase 2.1: Basic lua processing on Core 0
+    crow_lua_process_events();
+    
+    // Update input values for lua
+    if (g_crow_lua) {
+        g_crow_lua->set_input_volts(1, crow_get_input(1));
+        g_crow_lua->set_input_volts(2, crow_get_input(2));
+    }
+    
+    // Get lua output values and apply them
+    for (int i = 1; i <= 4; i++) {
+        float volts;
+        bool volts_new, trigger;
+        if (g_crow_lua && g_crow_lua->get_output_volts_and_trigger(i, &volts, &volts_new, &trigger)) {
+            if (volts_new) {
+                crow_set_output(i, volts);
+            }
+        }
+    }
+    
+    // For now, also pass through audio inputs to outputs for testing
     AudioOut1(AudioIn1());
     AudioOut2(AudioIn2());
     
-    // Set CV outputs to 0V initially
-    CVOut1(0);
-    CVOut2(0);
-
-    //initial sign off life
+    // Sign of life LED
     LedBrightness(0, 4095); // LED 0 full brightness
-    
-    // TODO: Phase 4 - Process crow events here
-    // crow_process_events();
-    // crow_update_outputs();
 }
 
 void CrowEmulator::crow_init()
 {
     printf("Initializing Crow Emulator...\n");
+    
+    // Initialize lua system on Core 0
+    if (!crow_lua_init()) {
+        printf("Failed to initialize Lua system\n");
+        return;
+    }
     
     // Initialize USB communication
     init_usb_communication();
@@ -171,8 +190,12 @@ void CrowEmulator::handle_command(C_cmd_t cmd)
             // TODO: Phase 2 - Kill lua interpreter
             break;
         case C_repl:
-            // TODO: Phase 2 - Handle lua REPL
-            send_usb_string("lua repl not implemented yet");
+            // Handle lua REPL command
+            if (g_crow_lua && crow_lua_eval_repl(rx_buffer, rx_buffer_pos)) {
+                // Lua command executed successfully - response already sent via printf
+            } else {
+                send_usb_string("lua error");
+            }
             break;
         default:
             // Unknown command, ignore

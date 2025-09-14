@@ -27,11 +27,13 @@ macro (add_card _name)
     add_executable(${ARGV})
     if (TARGET ${_name})
       target_include_directories(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR})
-      target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi tinyusb_device)
+      target_include_directories(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR}/submodules/miditocv/lua-5.4.6/src)
+      target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi tinyusb_device lua_core)
       pico_add_extra_outputs(${_name})
       target_sources(${_name} PUBLIC 
         ${CMAKE_CURRENT_LIST_DIR}/main.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_emulator.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/crow_lua.cpp
         ${CMAKE_CURRENT_LIST_DIR}/computer_card_impl.cpp
         ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c)
       target_compile_definitions(${_name} PRIVATE 
@@ -41,6 +43,45 @@ macro (add_card _name)
       pico_enable_stdio_usb(${_name} 0)
     endif()
   endmacro()
+
+# Add lua library sources
+add_library(lua_core STATIC
+    submodules/miditocv/lua-5.4.6/src/lapi.c
+    submodules/miditocv/lua-5.4.6/src/lcode.c
+    submodules/miditocv/lua-5.4.6/src/lctype.c
+    submodules/miditocv/lua-5.4.6/src/ldebug.c
+    submodules/miditocv/lua-5.4.6/src/ldo.c
+    submodules/miditocv/lua-5.4.6/src/ldump.c
+    submodules/miditocv/lua-5.4.6/src/lfunc.c
+    submodules/miditocv/lua-5.4.6/src/lgc.c
+    submodules/miditocv/lua-5.4.6/src/llex.c
+    submodules/miditocv/lua-5.4.6/src/lmem.c
+    submodules/miditocv/lua-5.4.6/src/lobject.c
+    submodules/miditocv/lua-5.4.6/src/lopcodes.c
+    submodules/miditocv/lua-5.4.6/src/lparser.c
+    submodules/miditocv/lua-5.4.6/src/lstate.c
+    submodules/miditocv/lua-5.4.6/src/lstring.c
+    submodules/miditocv/lua-5.4.6/src/ltable.c
+    submodules/miditocv/lua-5.4.6/src/ltm.c
+    submodules/miditocv/lua-5.4.6/src/lundump.c
+    submodules/miditocv/lua-5.4.6/src/lvm.c
+    submodules/miditocv/lua-5.4.6/src/lzio.c
+    submodules/miditocv/lua-5.4.6/src/lauxlib.c
+    submodules/miditocv/lua-5.4.6/src/lbaselib.c
+    submodules/miditocv/lua-5.4.6/src/lcorolib.c
+    submodules/miditocv/lua-5.4.6/src/ldblib.c
+    submodules/miditocv/lua-5.4.6/src/liolib.c
+    submodules/miditocv/lua-5.4.6/src/lmathlib.c
+    submodules/miditocv/lua-5.4.6/src/loadlib.c
+    submodules/miditocv/lua-5.4.6/src/loslib.c
+    submodules/miditocv/lua-5.4.6/src/lstrlib.c
+    submodules/miditocv/lua-5.4.6/src/ltablib.c
+    submodules/miditocv/lua-5.4.6/src/lutf8lib.c
+    submodules/miditocv/lua-5.4.6/src/linit.c
+)
+
+target_include_directories(lua_core PUBLIC submodules/miditocv/lua-5.4.6/src)
+target_compile_definitions(lua_core PRIVATE LUA_32BITS)
 
 # Create card
 add_card(${CARD_NAME})

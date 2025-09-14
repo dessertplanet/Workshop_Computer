@@ -10,6 +10,8 @@
 #include "ComputerCard.h"
 #undef COMPUTERCARD_NOIMPL
 
+#include "crow_lua.h"
+
 // Crow command types (from crow's caw.h)
 typedef enum {
     C_none = 0,
