@@ -46,6 +46,9 @@ void CrowEmulator::ProcessSample()
     // Phase 2.4: Process metro events (real-time event integration)
     metro_process_events();
     
+    // Phase 4.1: Process slopes system (envelopes and LFOs)
+    crow_slopes_process_sample();
+    
     // Phase 2.1: Basic lua processing on Core 0
     crow_lua_process_events();
     
@@ -89,6 +92,9 @@ void CrowEmulator::crow_init()
     
     // Initialize metro system
     metro_init();
+    
+    // Initialize slopes system (Phase 4.1)
+    crow_slopes_init();
     
     // Initialize USB communication
     init_usb_communication();

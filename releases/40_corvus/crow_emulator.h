@@ -11,6 +11,7 @@
 #undef COMPUTERCARD_NOIMPL
 
 #include "crow_lua.h"
+#include "crow_slopes.h"
 
 // Crow command types (from crow's caw.h)
 typedef enum {
