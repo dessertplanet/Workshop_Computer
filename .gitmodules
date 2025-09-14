@@ -13,3 +13,9 @@
 [submodule "releases/40_corvus/submodules/druid"]
 	path = releases/40_corvus/submodules/druid
 	url = https://github.com/monome/druid
+[submodule "releases/40_corvus/submodules/wrDsp"]
+	path = releases/40_corvus/submodules/wrDsp
+	url = https://github.com/whimsicalraps/wrDsp.git
+[submodule "releases/40_corvus/submodules/wrLib"]
+	path = releases/40_corvus/submodules/wrLib
+	url = https://github.com/whimsicalraps/wrLib.git
