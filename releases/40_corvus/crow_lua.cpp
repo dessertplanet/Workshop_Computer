@@ -2,6 +2,7 @@
 #include "crow_metro.h"
 #include "crow_slopes.h"
 #include "crow_detect.h"
+#include "crow_emulator.h"
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -62,6 +63,18 @@ static int crow_lua_metro_set_time(lua_State *L) {
     
     lua_pop(L, 2);
     return 0;
+}
+
+static int crow_lua_computer_card_unique_id(lua_State *L) {
+    // Get unique ID from ComputerCard instance
+    extern CrowEmulator* g_crow_emulator;
+    if (g_crow_emulator) {
+        uint64_t unique_id = g_crow_emulator->get_unique_card_id();
+        lua_pushinteger(L, (lua_Integer)unique_id);
+        return 1;
+    }
+    lua_pushinteger(L, 0);  // Fallback value
+    return 1;
 }
 
 // Crow lua globals - simplified single environment matching real crow
@@ -329,6 +342,7 @@ bool CrowLua::init() {
     lua_register(L, "crow_metro_start", crow_lua_metro_start);
     lua_register(L, "crow_metro_stop", crow_lua_metro_stop);
     lua_register(L, "crow_metro_set_time", crow_lua_metro_set_time);
+    lua_register(L, "computer_card_unique_id", crow_lua_computer_card_unique_id);
     
     // Register CASL functions
     lua_register(L, "casl_describe", l_casl_describe);

@@ -28,7 +28,7 @@ macro (add_card _name)
     if (TARGET ${_name})
       target_include_directories(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR})
       target_include_directories(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR}/submodules/miditocv/lua-5.4.6/src)
-      target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi tinyusb_device lua_core)
+      target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi hardware_flash hardware_sync tinyusb_device lua_core)
       pico_add_extra_outputs(${_name})
       target_sources(${_name} PUBLIC 
         ${CMAKE_CURRENT_LIST_DIR}/main.cpp
@@ -40,6 +40,7 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/crow_casl.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_detect.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_error.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/crow_flash.cpp
         ${CMAKE_CURRENT_LIST_DIR}/computer_card_impl.cpp
         ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c)
       target_compile_definitions(${_name} PRIVATE 

@@ -9,12 +9,16 @@
 #include "crow_metro.h"
 #include "crow_detect.h"
 #include "crow_error.h"
+#include "crow_flash.h"
 
 // Static instance pointer for multicore callback
 CrowEmulator* CrowEmulator::instance = nullptr;
 
 // Global ComputerCard pointer for hardware abstraction
 ComputerCard* g_computer_card = nullptr;
+
+// Global CrowEmulator pointer for lua access
+CrowEmulator* g_crow_emulator = nullptr;
 
 CrowEmulator::CrowEmulator() : 
     rx_buffer_pos(0),
@@ -39,6 +43,9 @@ CrowEmulator::CrowEmulator() :
     
     // Set global pointer for hardware abstraction
     g_computer_card = this;
+    
+    // Set global pointer for lua access
+    g_crow_emulator = this;
     
     // Initialize error handling system
     crow_error_init();
@@ -128,6 +135,9 @@ void CrowEmulator::crow_init()
     // Send hello message
     sleep_ms(100); // Give USB time to enumerate
     crow_send_hello();
+    
+    // Phase 7e: Load script from flash at boot time (after USB is ready)
+    load_flash_script_at_boot();
 }
 
 void CrowEmulator::init_usb_communication()
@@ -238,7 +248,7 @@ void CrowEmulator::handle_command(C_cmd_t cmd)
             // TODO: Implement restart
             break;
         case C_print:
-            send_usb_string("no script loaded");
+            handle_print_command();
             break;
         case C_killlua:
             send_usb_string("lua killed");
@@ -251,7 +261,13 @@ void CrowEmulator::handle_command(C_cmd_t cmd)
             end_script_upload();
             break;
         case C_flashupload:
-            send_usb_string("flash upload not implemented yet");
+            handle_flash_upload_command();
+            break;
+        case C_flashclear:
+            handle_flash_clear_command();
+            break;
+        case C_loadFirst:
+            handle_load_first_command();
             break;
         case C_repl:
             // Handle lua REPL command
@@ -600,6 +616,177 @@ void CrowEmulator::send_error_message(const char* error_msg)
     
     // Also trigger error LED
     error_led_counter = 0; // Reset counter to start flashing immediately
+}
+
+// Flash command implementations (Phase 7d: Flash Command Integration)
+void CrowEmulator::handle_print_command()
+{
+    USERSCRIPT_t flash_status = Flash_which_user_script();
+    
+    switch (flash_status) {
+        case USERSCRIPT_User:
+            {
+                char* script_addr = Flash_read_user_scriptaddr();
+                uint16_t script_len = Flash_read_user_scriptlen();
+                
+                if (script_addr && script_len > 0) {
+                    // Send script content directly (no extra newlines)
+                    if (tud_cdc_connected()) {
+                        tud_cdc_write(script_addr, script_len);
+                        tud_cdc_write_flush();
+                    }
+                } else {
+                    send_usb_string("!flash read error");
+                }
+            }
+            break;
+        case USERSCRIPT_Clear:
+            send_usb_string("-- script cleared --");
+            break;
+        case USERSCRIPT_Default:
+        default:
+            send_usb_string("-- no script --");
+            break;
+    }
+}
+
+void CrowEmulator::handle_flash_upload_command()
+{
+    if (!script_upload_buffer || script_upload_pos == 0) {
+        send_usb_string("!no script to upload to flash");
+        return;
+    }
+    
+    // Write current script buffer to flash
+    uint8_t result = Flash_write_user_script(script_upload_buffer, script_upload_pos);
+    
+    if (result == 0) {
+        send_usb_string("script saved to flash");
+        printf("Script saved to flash: %zu bytes\n", script_upload_pos);
+    } else {
+        send_usb_string("!flash write error");
+        printf("Flash write failed with error %d\n", result);
+    }
+}
+
+void CrowEmulator::handle_flash_clear_command()
+{
+    Flash_clear_user_script();
+    send_usb_string("flash cleared");
+    printf("Flash script cleared\n");
+}
+
+void CrowEmulator::handle_load_first_command()
+{
+    // Load default First.lua script (like real crow)
+    if (g_crow_lua) {
+        send_usb_string("loading first.lua...");
+        printf("Loading first.lua\n");
+        
+        // Try to load First.lua from flash first, if not available load default
+        if (Flash_first_exists()) {
+            // Load First.lua from flash
+            char script_buffer[USER_SCRIPT_SIZE + 1];
+            if (Flash_read_first_script(script_buffer) == 0) {
+                if (g_crow_lua->load_user_script(script_buffer)) {
+                    send_usb_string("first.lua loaded from flash");
+                    g_crow_lua->call_init();
+                    return;
+                }
+            }
+        }
+        
+        // Load default First.lua (embedded or from file system)
+        load_default_first_lua();
+    } else {
+        send_usb_string("!lua system not initialized");
+    }
+}
+
+// Load default First.lua and store it in flash
+void CrowEmulator::load_default_first_lua()
+{
+    // Try to read First.lua from file system first (for development)
+    FILE* first_file = fopen("First.lua", "r");
+    if (first_file) {
+        // Get file size
+        fseek(first_file, 0, SEEK_END);
+        long file_size = ftell(first_file);
+        fseek(first_file, 0, SEEK_SET);
+        
+        if (file_size > 0 && file_size < USER_SCRIPT_SIZE) {
+            char* script_buffer = new char[file_size + 1];
+            if (script_buffer && fread(script_buffer, 1, file_size, first_file) == file_size) {
+                script_buffer[file_size] = '\0';
+                
+                // Load script into lua
+                if (g_crow_lua->load_user_script(script_buffer)) {
+                    send_usb_string("first.lua loaded successfully");
+                    g_crow_lua->call_init();
+                    
+                    // Store First.lua in flash for future use
+                    Flash_write_first_script(script_buffer, file_size);
+                    printf("First.lua stored in flash (%ld bytes)\n", file_size);
+                } else {
+                    send_usb_string("!first.lua compilation error");
+                }
+                
+                delete[] script_buffer;
+            }
+        }
+        fclose(first_file);
+    } else {
+        send_usb_string("!first.lua not found");
+        printf("Could not open First.lua file\n");
+    }
+}
+
+// Boot-time flash script loading (Phase 7e: Boot-time Script Loading)
+void CrowEmulator::load_flash_script_at_boot()
+{
+    USERSCRIPT_t flash_status = Flash_which_user_script();
+    
+    if (flash_status == USERSCRIPT_User && g_crow_lua) {
+        char* script_addr = Flash_read_user_scriptaddr();
+        uint16_t script_len = Flash_read_user_scriptlen();
+        
+        if (script_addr && script_len > 0) {
+            printf("Loading script from flash (%d bytes)\n", script_len);
+            
+            // Create a temporary buffer and copy the script (null-terminate)
+            char* temp_script = new char[script_len + 1];
+            if (temp_script) {
+                memcpy(temp_script, script_addr, script_len);
+                temp_script[script_len] = '\0';
+                
+                // Load and execute the script
+                if (g_crow_lua->load_user_script(temp_script)) {
+                    printf("Flash script loaded successfully\n");
+                    
+                    // Call init() function after successful script load
+                    if (g_crow_lua->call_init()) {
+                        printf("Flash script init() called successfully\n");
+                    }
+                } else {
+                    printf("Flash script compilation failed\n");
+                }
+                
+                delete[] temp_script;
+            } else {
+                printf("Failed to allocate memory for flash script\n");
+            }
+        } else {
+            printf("Invalid flash script data\n");
+        }
+    } else {
+        printf("No valid script in flash\n");
+    }
+}
+
+// Get unique card ID for First.lua script generation
+uint64_t CrowEmulator::get_unique_card_id()
+{
+    return UniqueCardID();  // Access ComputerCard's unique ID method
 }
 
 // Implementation for crow_error.cpp bridge function

@@ -93,6 +93,12 @@ public:
     void end_script_upload();
     bool process_script_upload_data(const char* data, size_t length);
     
+    // Flash command implementations (Phase 7d: Flash Command Integration)
+    void handle_print_command();
+    void handle_flash_upload_command();
+    void handle_flash_clear_command();
+    void handle_load_first_command();
+    void load_flash_script_at_boot();
     
     // Hardware interface methods (access ComputerCard protected members)
     float computercard_to_crow_volts(int16_t cc_value);
@@ -107,4 +113,13 @@ public:
     
     // Main run method that handles ComputerCard initialization
     void RunCrowEmulator();
+    
+    // ComputerCard unique ID access for lua
+    uint64_t get_unique_card_id();
+    
+    // First.lua loading
+    void load_default_first_lua();
 };
+
+// Global extern declaration for lua access
+extern CrowEmulator* g_crow_emulator;
