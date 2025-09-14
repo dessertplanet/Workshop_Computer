@@ -1,6 +1,7 @@
 #include "crow_lua.h"
 #include "crow_metro.h"
 #include "crow_slopes.h"
+#include "crow_detect.h"
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -328,6 +329,25 @@ bool CrowLua::init() {
     lua_register(L, "crow_metro_start", crow_lua_metro_start);
     lua_register(L, "crow_metro_stop", crow_lua_metro_stop);
     lua_register(L, "crow_metro_set_time", crow_lua_metro_set_time);
+    
+    // Register CASL functions
+    lua_register(L, "casl_describe", l_casl_describe);
+    lua_register(L, "casl_action", l_casl_action);
+    lua_register(L, "casl_defdynamic", l_casl_defdynamic);
+    lua_register(L, "casl_cleardynamics", l_casl_cleardynamics);
+    lua_register(L, "casl_setdynamic", l_casl_setdynamic);
+    lua_register(L, "casl_getdynamic", l_casl_getdynamic);
+    
+    // Register detection system functions
+    lua_register(L, "set_input_none", set_input_none);
+    lua_register(L, "set_input_stream", set_input_stream);
+    lua_register(L, "set_input_change", set_input_change);
+    lua_register(L, "set_input_window", set_input_window);
+    lua_register(L, "set_input_scale", set_input_scale);
+    lua_register(L, "set_input_volume", set_input_volume);
+    lua_register(L, "set_input_peak", set_input_peak);
+    lua_register(L, "set_input_freq", set_input_freq);
+    lua_register(L, "io_get_input", io_get_input);
     
     // Load crow globals
     if (luaL_loadbuffer(L, crow_globals_lua, strlen(crow_globals_lua), "crow_globals") != LUA_OK) {

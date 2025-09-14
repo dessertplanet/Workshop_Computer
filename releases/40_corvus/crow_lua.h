@@ -81,4 +81,12 @@ extern "C" {
     
     // Slopes and ASL lua bindings
     void crow_lua_register_slopes_functions(lua_State* L);
+    
+    // CASL lua binding functions
+    int l_casl_describe(lua_State* L);
+    int l_casl_action(lua_State* L);
+    int l_casl_defdynamic(lua_State* L);
+    int l_casl_cleardynamics(lua_State* L);
+    int l_casl_setdynamic(lua_State* L);
+    int l_casl_getdynamic(lua_State* L);
 }

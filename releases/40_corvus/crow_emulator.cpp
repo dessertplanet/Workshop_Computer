@@ -6,6 +6,7 @@
 // Include our header (ComputerCard.h is included via computer_card_impl.cpp)
 #include "crow_emulator.h"
 #include "crow_metro.h"
+#include "crow_detect.h"
 
 // Static instance pointer for multicore callback
 CrowEmulator* CrowEmulator::instance = nullptr;
@@ -51,6 +52,9 @@ void CrowEmulator::ProcessSample()
     
     // Phase 4.2: Process ASL system (Attack/Sustain/Release)
     crow_asl_process_sample();
+    
+    // Phase 4.3.2: Process detection system (input detection)
+    crow_detect_process_sample();
     
     // Phase 2.1: Basic lua processing on Core 0
     crow_lua_process_events();
@@ -101,6 +105,12 @@ void CrowEmulator::crow_init()
     
     // Initialize ASL system (Phase 4.2)
     crow_asl_init();
+    
+    // Initialize CASL system (Phase 4.3.1)
+    crow_casl_init();
+    
+    // Initialize detection system (Phase 4.3.2)
+    crow_detect_init(CROW_DETECT_CHANNELS);
     
     // Initialize USB communication
     init_usb_communication();
