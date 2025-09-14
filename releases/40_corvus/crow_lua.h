@@ -45,6 +45,7 @@ public:
     // Event callbacks (crow-style)
     bool call_init();
     bool call_step();
+    bool call_metro_handler(int id, int stage);
     
     // REPL integration
     bool is_lua_command(const char* command);

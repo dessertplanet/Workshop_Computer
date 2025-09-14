@@ -1,4 +1,5 @@
 #include "crow_lua.h"
+#include "crow_metro.h"
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
@@ -6,6 +7,60 @@
 
 // Global instance
 CrowLua* g_crow_lua = nullptr;
+
+// C functions accessible to lua (metro system)
+static int crow_lua_metro_start(lua_State *L) {
+    int nargs = lua_gettop(L);
+    if (nargs < 1) {
+        return luaL_error(L, "metro_start requires at least 1 argument (id)");
+    }
+    
+    int id = (int)luaL_checkinteger(L, 1) - 1;  // Convert to 0-based
+    float time = (nargs > 1 && lua_isnumber(L, 2)) ? (float)lua_tonumber(L, 2) : -1.0f;
+    int count = (nargs > 2 && lua_isnumber(L, 3)) ? (int)lua_tointeger(L, 3) : -1;
+    int stage = (nargs > 3 && lua_isnumber(L, 4)) ? (int)lua_tointeger(L, 4) - 1 : 0;  // Convert to 0-based
+    
+    // Set parameters if provided
+    if (time >= 0.0f) {
+        metro_set_time(id, time);
+    }
+    if (count >= 0) {
+        metro_set_count(id, count);
+    }
+    metro_set_stage(id, stage);
+    
+    // Start the metro
+    metro_start(id);
+    
+    lua_pop(L, nargs);
+    return 0;
+}
+
+static int crow_lua_metro_stop(lua_State *L) {
+    if (lua_gettop(L) != 1) {
+        return luaL_error(L, "metro_stop requires 1 argument (id)");
+    }
+    
+    int id = (int)luaL_checkinteger(L, 1) - 1;  // Convert to 0-based
+    metro_stop(id);
+    
+    lua_pop(L, 1);
+    return 0;
+}
+
+static int crow_lua_metro_set_time(lua_State *L) {
+    if (lua_gettop(L) != 2) {
+        return luaL_error(L, "metro_set_time requires 2 arguments (id, time)");
+    }
+    
+    int id = (int)luaL_checkinteger(L, 1) - 1;      // Convert to 0-based
+    float time = (float)luaL_checknumber(L, 2);
+    
+    metro_set_time(id, time);
+    
+    lua_pop(L, 2);
+    return 0;
+}
 
 // Crow lua globals - simplified single environment matching real crow
 static const char* crow_globals_lua = R"(
@@ -198,6 +253,43 @@ function step()
     -- Default empty step function
 end
 
+-- Metro system (crow-style)
+metro = {}
+for i = 1, 8 do  -- 8 metros like crow
+    metro[i] = {
+        start = function(time, count, stage)
+            metro_start(i, time or -1, count or -1, stage or 0)
+        end,
+        stop = function()
+            metro_stop(i)
+        end,
+        time = function(time)
+            if time then
+                metro_set_time(i, time)
+            end
+        end
+    }
+end
+
+-- Global metro functions (crow-style)
+function metro_start(id, time, count, stage)
+    crow_metro_start(id, time or -1, count or -1, stage or 0)
+end
+
+function metro_stop(id)
+    crow_metro_stop(id)
+end
+
+function metro_set_time(id, time)
+    crow_metro_set_time(id, time)
+end
+
+-- Metro handler (called from C code)
+function metro_handler(id, stage)
+    -- Default empty metro handler - user can override
+    -- This matches crow's behavior
+end
+
 print("Crow Lua globals loaded")
 )";
 
@@ -230,6 +322,11 @@ bool CrowLua::init() {
     
     // Open standard libraries
     luaL_openlibs(L);
+    
+    // Register C functions for lua to call
+    lua_register(L, "crow_metro_start", crow_lua_metro_start);
+    lua_register(L, "crow_metro_stop", crow_lua_metro_stop);
+    lua_register(L, "crow_metro_set_time", crow_lua_metro_set_time);
     
     // Load crow globals
     if (luaL_loadbuffer(L, crow_globals_lua, strlen(crow_globals_lua), "crow_globals") != LUA_OK) {
@@ -387,6 +484,33 @@ bool CrowLua::call_step() {
     
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
         printf("Error running step: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
+        critical_section_exit(&lua_critical_section);
+        return false;
+    }
+    
+    critical_section_exit(&lua_critical_section);
+    return true;
+}
+
+bool CrowLua::call_metro_handler(int id, int stage) {
+    if (!lua_initialized || !L) {
+        return false;
+    }
+    
+    critical_section_enter_blocking(&lua_critical_section);
+    
+    lua_getglobal(L, "metro_handler");
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        critical_section_exit(&lua_critical_section);
+        return false; // No metro handler defined - this is OK
+    }
+    
+    lua_pushinteger(L, id);     // metro id (1-indexed)
+    lua_pushinteger(L, stage);  // stage (1-indexed)
+    if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+        printf("Error running metro_handler(%d, %d): %s\n", id, stage, lua_tostring(L, -1));
         lua_pop(L, 1);
         critical_section_exit(&lua_critical_section);
         return false;

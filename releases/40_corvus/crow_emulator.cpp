@@ -5,6 +5,7 @@
 
 // Include our header (ComputerCard.h is included via computer_card_impl.cpp)
 #include "crow_emulator.h"
+#include "crow_metro.h"
 
 // Static instance pointer for multicore callback
 CrowEmulator* CrowEmulator::instance = nullptr;
@@ -35,6 +36,9 @@ CrowEmulator::CrowEmulator() :
 void CrowEmulator::ProcessSample()
 {
     // 48kHz audio processing callback
+    
+    // Phase 2.4: Process metro events (real-time event integration)
+    metro_process_events();
     
     // Phase 2.1: Basic lua processing on Core 0
     crow_lua_process_events();
@@ -73,6 +77,9 @@ void CrowEmulator::crow_init()
         printf("Failed to initialize Lua system\n");
         return;
     }
+    
+    // Initialize metro system
+    metro_init();
     
     // Initialize USB communication
     init_usb_communication();
@@ -411,6 +418,10 @@ void CrowEmulator::end_script_upload()
         // Send script to lua system for compilation and execution
         if (g_crow_lua && g_crow_lua->load_user_script(script_upload_buffer)) {
             send_usb_string("script loaded successfully");
+            // Call init() function after successful script load (crow behavior)
+            if (g_crow_lua->call_init()) {
+                printf("init() called successfully\n");
+            }
         } else {
             send_usb_string("!script compilation error");
         }

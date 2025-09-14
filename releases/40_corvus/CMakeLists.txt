@@ -34,6 +34,7 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/main.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_emulator.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_lua.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/crow_metro.cpp
         ${CMAKE_CURRENT_LIST_DIR}/computer_card_impl.cpp
         ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c)
       target_compile_definitions(${_name} PRIVATE 
