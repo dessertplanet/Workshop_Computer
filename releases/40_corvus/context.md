@@ -408,7 +408,18 @@ void crow_lua_process_events() {
 }
 ```
 
-## Dependencies
+## Build System & Dependencies
+
+### Build System
+- **CMake**: Project configuration and dependency management
+- **Ninja**: Fast parallel build system (default generator)
+- **Build Commands**:
+  - `cmake --build build` - Incremental build using Ninja
+  - `ninja -C build clean && cmake --build build` - Clean rebuild
+- **Output**: `corvus.elf` (executable) → `corvus.uf2` (firmware file)
+- **Build Time**: ~30 seconds clean build, ~5 seconds incremental
+
+### Dependencies
 - Pico SDK (stdio, multicore, USB CDC)
 - **Lua 5.4** (from miditocv submodule: `submodules/miditocv/lua-5.4.6/`)
 - **miditocv lua integration** (adapted from `submodules/miditocv/lib/luavm.h`)
@@ -443,12 +454,22 @@ void crow_lua_process_events() {
 8. ✅ C-style interface for cross-core access from Core 1
 9. ✅ Successful compilation and UF2 generation (647KB firmware)
 
-### 🎯 NEXT STEPS (Phase 2.2 - Environment Management System)
-1. **Script Upload Integration**: Connect `^^s` command handling to lua environment updates
-2. **Cross-core Script Updates**: Safe script reloading from Core 1 to Core 0
-3. **Multi-line Script Processing**: Handle complete script uploads via USB
-4. **Environment Isolation**: Ensure each output environment is properly sandboxed
-5. **Real-time Script Swapping**: Update scripts without interrupting audio processing
+### ✅ COMPLETED (Phase 2.2 - Environment Management System - September 2024)
+1. ✅ **Script Upload Integration**: Connected `^^s`/`^^e` command handling to lua environment updates
+2. ✅ **Cross-core Script Updates**: Safe script reloading from Core 1 to Core 0 implemented
+3. ✅ **Multi-line Script Processing**: Complete script uploads via USB working
+4. ✅ **Environment Isolation**: Each of 4 output environments properly sandboxed
+5. ✅ **Real-time Script Swapping**: Scripts update without interrupting audio processing
+6. ✅ **Clean Compilation**: All std::mutex references removed, using critical_section_t only
+7. ✅ **Build System**: Uses Ninja build system (cmake --build build)
+8. ✅ **Firmware Generation**: Fresh corvus.uf2 (649KB) successfully generated
+
+### 🎯 NEXT STEPS (Phase 2.3 - Core Crow Lua Functions)
+1. **Output System**: Implement `output[n].volts = x` and `output[n]()` functions
+2. **Input System**: Add `input[n].volts` and input event callbacks
+3. **Hardware Integration**: Connect lua functions to ComputerCard I/O via crow_set_output()
+4. **Voltage/Trigger Processing**: Real-time hardware state management
+5. **Testing**: Deploy and validate core crow script compatibility
 
 ### 📋 UPCOMING (Phase 2.3 - Core Crow Functions)
 1. **Output System**: Implement `output[n].volts = x` and related functions

@@ -13,10 +13,20 @@ CrowEmulator::CrowEmulator() :
     rx_buffer_pos(0),
     multicore_ready(false),
     usb_connected(false),
-    multiline_mode(false)
+    multiline_mode(false),
+    script_upload_mode(false),
+    script_upload_buffer(nullptr),
+    script_upload_size(0),
+    script_upload_pos(0)
 {
     instance = this;
     memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
+    
+    // Allocate script upload buffer
+    script_upload_buffer = new char[MAX_SCRIPT_SIZE];
+    if (!script_upload_buffer) {
+        printf("Failed to allocate script upload buffer\n");
+    }
     
     // Initialize crow emulation
     crow_init();
@@ -189,6 +199,15 @@ void CrowEmulator::handle_command(C_cmd_t cmd)
             send_usb_string("lua killed");
             // TODO: Phase 2 - Kill lua interpreter
             break;
+        case C_startupload:
+            start_script_upload();
+            break;
+        case C_endupload:
+            end_script_upload();
+            break;
+        case C_flashupload:
+            send_usb_string("flash upload not implemented yet");
+            break;
         case C_repl:
             // Handle lua REPL command
             if (g_crow_lua && crow_lua_eval_repl(rx_buffer, rx_buffer_pos)) {
@@ -210,6 +229,27 @@ void CrowEmulator::process_usb_data()
     char temp_buffer[64];
     uint32_t count = tud_cdc_read(temp_buffer, sizeof(temp_buffer) - 1);
     
+    // If in script upload mode, handle differently
+    if (script_upload_mode) {
+        // Check for end upload command in the data first
+        for (uint32_t i = 0; i < count - 2; i++) {
+            if (temp_buffer[i] == '^' && temp_buffer[i + 1] == '^' && temp_buffer[i + 2] == 'e') {
+                // Found ^^e - end upload command
+                // Process any data before the command
+                if (i > 0) {
+                    process_script_upload_data(temp_buffer, i);
+                }
+                end_script_upload();
+                return;
+            }
+        }
+        
+        // No end command found, add all data to script buffer
+        process_script_upload_data(temp_buffer, count);
+        return;
+    }
+    
+    // Normal command processing mode
     for (uint32_t i = 0; i < count; i++) {
         char ch = temp_buffer[i];
         
@@ -335,6 +375,72 @@ float CrowEmulator::crow_get_input(int channel)
         default:
             return 0.0f;
     }
+}
+
+// Script upload management (Phase 2.2)
+void CrowEmulator::start_script_upload()
+{
+    if (!script_upload_buffer) {
+        send_usb_string("!script upload buffer not available");
+        return;
+    }
+    
+    script_upload_mode = true;
+    script_upload_pos = 0;
+    script_upload_size = 0;
+    
+    send_usb_string("script upload started");
+    printf("Script upload started\n");
+}
+
+void CrowEmulator::end_script_upload()
+{
+    if (!script_upload_mode) {
+        send_usb_string("!no upload in progress");
+        return;
+    }
+    
+    script_upload_mode = false;
+    
+    if (script_upload_pos > 0) {
+        // Null terminate the script
+        script_upload_buffer[script_upload_pos] = '\0';
+        
+        printf("Script upload complete, %zu bytes received\n", script_upload_pos);
+        
+        // Send script to lua system for compilation and execution
+        if (g_crow_lua && crow_lua_update_script(0, script_upload_buffer)) {
+            send_usb_string("script loaded successfully");
+        } else {
+            send_usb_string("!script compilation error");
+        }
+    } else {
+        send_usb_string("!empty script");
+    }
+    
+    // Reset upload state
+    script_upload_pos = 0;
+    script_upload_size = 0;
+}
+
+bool CrowEmulator::process_script_upload_data(const char* data, size_t length)
+{
+    if (!script_upload_mode || !script_upload_buffer) {
+        return false;
+    }
+    
+    // Check if we have space for this data
+    if (script_upload_pos + length >= MAX_SCRIPT_SIZE) {
+        send_usb_string("!script too large");
+        script_upload_mode = false;
+        return false;
+    }
+    
+    // Copy data to upload buffer
+    memcpy(script_upload_buffer + script_upload_pos, data, length);
+    script_upload_pos += length;
+    
+    return true;
 }
 
 void CrowEmulator::RunCrowEmulator()

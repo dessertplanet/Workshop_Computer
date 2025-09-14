@@ -44,6 +44,13 @@ private:
     // Crow state variables
     bool multiline_mode;
     
+    // Script upload state (Phase 2.2)
+    bool script_upload_mode;
+    char* script_upload_buffer;
+    size_t script_upload_size;
+    size_t script_upload_pos;
+    static const size_t MAX_SCRIPT_SIZE = 8192; // 8KB max script size
+    
     // Static pointer for multicore callback
     static CrowEmulator* instance;
 
@@ -74,6 +81,11 @@ public:
     void crow_send_hello();
     void crow_print_version();
     void crow_print_identity();
+    
+    // Script upload management (Phase 2.2)
+    void start_script_upload();
+    void end_script_upload();
+    bool process_script_upload_data(const char* data, size_t length);
     
     // Hardware abstraction (Phase 3)
     void crow_set_output(int channel, float volts);
