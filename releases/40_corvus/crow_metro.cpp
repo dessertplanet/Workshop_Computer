@@ -1,5 +1,6 @@
 #include "crow_metro.h"
 #include "crow_lua.h"
+#include "crow_events.h"
 #include "pico/time.h"
 #include <cstdio>
 #include <cstring>
@@ -116,11 +117,9 @@ static void metro_bang(int ix) {
     
     metro_t* m = &metros[ix];
     
-    // Call lua metro handler (equivalent to L_queue_metro in crow)
+    // Post metro tick event instead of calling handler directly
     // This matches crow's behavior: metro_handler(id, stage) where both are 1-indexed
-    if (g_crow_lua) {
-        g_crow_lua->call_metro_handler(ix + 1, m->stage + 1);  // convert to 1-based indexing for lua
-    }
+    crow_event_post_metro_tick(ix + 1, m->stage + 1);  // convert to 1-based indexing for lua
     
     // Update stage counter
     m->stage++;

@@ -10,6 +10,7 @@
 #include "crow_detect.h"
 #include "crow_error.h"
 #include "crow_flash.h"
+#include "crow_events.h"
 
 // Static instance pointer for multicore callback
 CrowEmulator* CrowEmulator::instance = nullptr;
@@ -94,8 +95,9 @@ void CrowEmulator::ProcessBlock()
     // Vector processing for CROW_BLOCK_SIZE samples (32 samples)
     // This method processes blocks like real crow's S_step_v() function
     
-    // Phase 2.4: Process metro events (real-time event integration)
-    metro_process_events();
+    // Priority Event Queue Processing (like real crow)
+    // Process all pending events in proper order
+    crow_events_process_all();
     
     // Phase 4.1: Process slopes system with vector operations
     // Vector processing implementation using wrDsp functions
@@ -186,6 +188,9 @@ void CrowEmulator::crow_init()
     
     // Initialize detection system (Phase 4.3.2)
     crow_detect_init(CROW_DETECT_CHANNELS);
+    
+    // Initialize event system (Priority Queue)
+    crow_events_init();
     
     // Initialize USB communication
     init_usb_communication();

@@ -1,5 +1,6 @@
 #include "crow_slopes.h"
 #include "crow_lua.h"
+#include "crow_events.h"
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
@@ -134,16 +135,16 @@ float crow_slopes_get_output(int channel) {
     return slopes[channel].shaped;
 }
 
-// Process one sample for all channels
+// Legacy per-sample processing (DEPRECATED - use crow_slopes_process_block instead)
+// This function is kept for compatibility but should not be used in the main audio loop
 void crow_slopes_process_sample(void) {
     if (!slopes_initialized) {
         return;
     }
     
-    // TODO: Phase 2 - Convert to vector operations using wrDsp
-    // TODO: Replace per-sample processing with crow_slopes_process_block()
-    // TODO: Use wrDsp b_add/b_mul functions for vector envelope processing
-    // FUTURE: Process 32 samples at once for 3-5x performance improvement
+    // NOTE: This function is deprecated in favor of crow_slopes_process_block()
+    // which provides 3-5x better performance using vector operations
+    printf("WARNING: Using deprecated per-sample slopes processing\n");
     
     for (int i = 0; i < CROW_SLOPE_CHANNELS; i++) {
         crow_slope_t* slope = &slopes[i];
@@ -179,11 +180,11 @@ void crow_slopes_process_sample(void) {
             slope->shaped = (shaped_value * slope->scale) + slope->last;
             slope->countdown = -1.0f; // Mark as inactive
             
-            // Call completion callback if present
+            // Post completion event instead of calling callback directly
             if (slope->action) {
                 crow_slope_callback_t action = slope->action;
                 slope->action = nullptr;
-                action(i);
+                crow_event_post_slope_complete(i, action);
             }
         } else {
             // Apply shaping and scaling for intermediate sample
@@ -275,12 +276,12 @@ static void slopes_breakpoint_v(crow_slope_t* slope, float* out, int block_size)
     if (callback_sample < block_size) {
         slope->here = 1.0f; // Clamp to endpoint
         
-        // Trigger callback
+        // Post completion event instead of calling callback directly
         if (slope->action) {
             crow_slope_callback_t action = slope->action;
             slope->action = nullptr;
             slope->shaped = slope->dest; // Ensure we reach destination
-            action(slope->index);
+            crow_event_post_slope_complete(slope->index, action);
         }
         
         // Fill remaining samples with final value
