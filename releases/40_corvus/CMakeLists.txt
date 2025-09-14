@@ -35,9 +35,12 @@ macro (add_card _name)
       target_sources(${_name} PUBLIC 
         ${CMAKE_CURRENT_LIST_DIR}/main.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_emulator.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/crow_multicore.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_lua.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_metro.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_slopes.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/crow_slopes_optimized.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/crow_slopes_integration.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_asl.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_casl.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_detect.cpp

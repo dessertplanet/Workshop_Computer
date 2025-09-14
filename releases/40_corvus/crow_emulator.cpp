@@ -11,6 +11,7 @@
 #include "crow_error.h"
 #include "crow_flash.h"
 #include "crow_events.h"
+#include "crow_multicore.h"
 
 // Static instance pointer for multicore callback
 CrowEmulator* CrowEmulator::instance = nullptr;
@@ -92,24 +93,26 @@ void CrowEmulator::ProcessSample()
 
 void CrowEmulator::ProcessBlock()
 {
-    // Vector processing for CROW_BLOCK_SIZE samples (32 samples)
-    // This method processes blocks like real crow's S_step_v() function
-    
-    // Priority Event Queue Processing (like real crow)
-    // Process all pending events in proper order
-    crow_events_process_all();
-    
-    // Phase 4.1: Process slopes system with vector operations
-    // Vector processing implementation using wrDsp functions
-    float* slopes_output_blocks[4];
-    for (int ch = 0; ch < 4; ch++) {
-        slopes_output_blocks[ch] = new float[CROW_BLOCK_SIZE];
-    }
+    // Multicore Block Processing - Core 0 handles real-time audio
     
     // Create input pointers array for wrDsp compatibility
     float* input_blocks[4];
     for (int ch = 0; ch < 4; ch++) {
         input_blocks[ch] = input_block[ch];
+    }
+    
+    // Notify Core 1 of block start and send input values
+    crow_multicore_core0_block_start(input_blocks);
+    
+    // Priority Event Queue Processing (like real crow)
+    // Process all pending events in proper order
+    crow_events_process_all();
+    
+    // Phase 4.1: Process slopes system with vector operations (stays on Core 0)
+    // Vector processing implementation using wrDsp functions
+    float* slopes_output_blocks[4];
+    for (int ch = 0; ch < 4; ch++) {
+        slopes_output_blocks[ch] = new float[CROW_BLOCK_SIZE];
     }
     
     crow_slopes_process_block(input_blocks, slopes_output_blocks, CROW_BLOCK_SIZE);
@@ -120,30 +123,17 @@ void CrowEmulator::ProcessBlock()
         delete[] slopes_output_blocks[ch];
     }
     
-    // Phase 4.2: Process ASL system with vector operations
-    crow_asl_process_block(input_blocks, CROW_BLOCK_SIZE);
-    
-    // Phase 4.3.2: Process detection system with vector operations
+    // Phase 4.3.2: Process detection system with vector operations (stays on Core 0)
     crow_detect_process_block(input_blocks, CROW_BLOCK_SIZE);
-    
-    // Phase 2.1: Basic lua processing on Core 0
-    crow_lua_process_events();
     
     // Phase 3: Update hardware abstraction layer
     crow_hardware_update();
     
-    // Update input values for lua using hardware abstraction
-    if (g_crow_lua) {
-        // Use the last sample in the block for lua input values
-        g_crow_lua->set_input_volts(1, input_block[0][CROW_BLOCK_SIZE - 1]);
-        g_crow_lua->set_input_volts(2, input_block[1][CROW_BLOCK_SIZE - 1]);
-    }
-    
-    // Get lua output values and apply them to output blocks
+    // Get Lua output values from Core 1 via multicore communication
     for (int ch = 0; ch < 4; ch++) {
         float volts;
         bool volts_new, trigger;
-        if (g_crow_lua && g_crow_lua->get_output_volts_and_trigger(ch + 1, &volts, &volts_new, &trigger)) {
+        if (crow_multicore_get_lua_output(ch, &volts, &volts_new, &trigger)) {
             if (volts_new) {
                 // Fill entire block with the new voltage value
                 for (int i = 0; i < CROW_BLOCK_SIZE; i++) {
@@ -151,17 +141,13 @@ void CrowEmulator::ProcessBlock()
                 }
             }
         } else {
-            // No new value, fill with zeros
-            for (int i = 0; i < CROW_BLOCK_SIZE; i++) {
-                output_block[ch][i] = 0.0f;
-            }
+            // No new value, keep slopes output
+            // output_block already contains slopes output from above
         }
     }
     
-    // Future: Apply wrDsp vector processing functions here
-    // Example of wrDsp integration (currently commented out until slopes system is converted):
-    // b_add(output_block[0], input_block[0], slopes_output_block[0], CROW_BLOCK_SIZE);
-    // b_mul(output_block[1], input_block[1], envelope_block, CROW_BLOCK_SIZE);
+    // Complete block processing
+    crow_multicore_core0_block_complete();
 }
 
 void CrowEmulator::crow_init()
@@ -192,10 +178,13 @@ void CrowEmulator::crow_init()
     // Initialize event system (Priority Queue)
     crow_events_init();
     
+    // Initialize multicore communication
+    crow_multicore_init();
+    
     // Initialize USB communication
     init_usb_communication();
     
-    // Start second core for USB processing
+    // Start second core for background processing (USB + ASL + CASL + Lua)
     multicore_launch_core1(core1_entry);
     
     // Send hello message
@@ -445,9 +434,38 @@ void CrowEmulator::core1_main()
 {
     multicore_ready = true;
     
-    printf("Core 1: USB processing started\n");
+    printf("Core 1: Background processing started (USB + ASL + CASL + Lua)\n");
     
     while (true) {
+        // Process multicore communication and run background tasks
+        crow_multicore_core1_process_block();
+        
+        // Process Lua events and periodic tasks (moved to Core 1)
+        if (g_crow_lua) {
+            uint32_t current_time = to_ms_since_boot(get_absolute_time());
+            g_crow_lua->process_periodic_tasks(current_time);
+            
+            // Call step function periodically
+            g_crow_lua->call_step();
+            
+            // Update Lua output values in shared memory
+            for (int ch = 0; ch < 4; ch++) {
+                float volts;
+                bool volts_new, trigger;
+                if (g_crow_lua->get_output_volts_and_trigger(ch + 1, &volts, &volts_new, &trigger)) {
+                    crow_multicore_set_lua_output(ch, volts, volts_new, trigger);
+                }
+            }
+            
+            // Update Lua input values from shared memory
+            for (int ch = 0; ch < 2; ch++) {
+                float input_value;
+                if (crow_multicore_get_input_value(ch, &input_value)) {
+                    g_crow_lua->set_input_volts(ch + 1, input_value);
+                }
+            }
+        }
+        
         // Process incoming USB data
         process_usb_data();
         
@@ -463,8 +481,8 @@ void CrowEmulator::core1_main()
             }
         }
         
-        // Small delay to prevent busy waiting
-        sleep_ms(1);
+        // Small delay to prevent busy waiting (reduced for better responsiveness)
+        sleep_us(100); // 100 microseconds instead of 1 millisecond
     }
 }
 
