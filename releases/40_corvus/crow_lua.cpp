@@ -16,7 +16,7 @@ print("Crow Lua environment initializing...")
 output = {}
 input = {}
 
--- Basic utility functions
+-- Enhanced crow utility functions (Phase 2.3)
 function linlin(x, xmin, xmax, ymin, ymax)
     if x <= xmin then return ymin end
     if x >= xmax then return ymax end
@@ -30,12 +30,75 @@ function linexp(x, xmin, xmax, ymin, ymax)
     return ymin * math.pow(ymax / ymin, ratio)
 end
 
+-- Additional crow utility functions
+function explin(x, xmin, xmax, ymin, ymax)
+    if x <= xmin then return ymin end
+    if x >= xmax then return ymax end
+    local normalized = math.log(x / xmin) / math.log(xmax / xmin)
+    return ymin + normalized * (ymax - ymin)
+end
+
+function expexp(x, xmin, xmax, ymin, ymax)
+    if x <= xmin then return ymin end
+    if x >= xmax then return ymax end
+    local norm_x = math.log(x / xmin) / math.log(xmax / xmin)
+    return ymin * math.pow(ymax / ymin, norm_x)
+end
+
+-- Time and clock functions
+function clock_time()
+    -- TODO: Connect to actual system clock
+    return 0
+end
+
+function clock_tempo(bpm)
+    -- TODO: Implement tempo setting
+end
+
+-- Math utilities
+function clamp(x, min, max)
+    if x < min then return min end
+    if x > max then return max end
+    return x
+end
+
+function wrap(x, min, max)
+    local range = max - min
+    if range <= 0 then return min end
+    while x >= max do x = x - range end
+    while x < min do x = x + range end
+    return x
+end
+
+function fold(x, min, max)
+    local range = max - min
+    if range <= 0 then return min end
+    x = x - min
+    local cycles = math.floor(x / range)
+    local folded = x - cycles * range
+    if cycles % 2 == 1 then
+        folded = range - folded
+    end
+    return folded + min
+end
+
+-- Voltage scaling helpers
+function v_to_hz(volts)
+    -- 1V/octave scaling, A4 = 440Hz at 0V (C4)
+    return 440 * math.pow(2, volts + (3/12))  -- C4 to A4 offset
+end
+
+function hz_to_v(hz)
+    -- Convert frequency to 1V/octave
+    return math.log(hz / 440) / math.log(2) - (3/12)
+end
+
 -- Environment management (adapted from miditocv)
 envs = {}
 
 function new_env(code)
     local env = {
-        -- Crow-specific environment setup
+        -- Crow-specific environment setup with enhanced output system
         output = {},
         input = {},
         volts = 0,
@@ -47,6 +110,82 @@ function new_env(code)
         math = math,
         print = print
     }
+    
+    -- Initialize output tables with volts property and metamethods
+    for i = 1, 4 do
+        env.output[i] = {
+            volts = 0,
+            _trigger = false,
+            _volts_changed = false,
+            -- Crow output functions
+            action = function(self, func) 
+                if func then self._action = func end
+            end,
+            slew = function(self, time, shape)
+                -- TODO: Implement slew rate limiting
+            end
+        }
+        
+        -- Set up metamethods for output[i].volts assignment
+        setmetatable(env.output[i], {
+            __newindex = function(t, k, v)
+                if k == "volts" then
+                    rawset(t, k, v)
+                    rawset(t, "_volts_changed", true)
+                    rawset(env, "volts", v)  -- Update env.volts for compatibility
+                    rawset(env, "volts_new", true)
+                elseif k == "action" and type(v) == "function" then
+                    rawset(t, "_action", v)
+                else
+                    rawset(t, k, v)
+                end
+            end,
+            __call = function(t, ...)
+                -- Allow output[n]() function calls
+                local args = {...}
+                if #args > 0 then
+                    t.volts = args[1]
+                end
+                return t.volts
+            end
+        })
+    end
+    
+    -- Initialize input tables
+    for i = 1, 2 do  -- Only inputs 1 and 2 for audio inputs
+        env.input[i] = {
+            volts = 0,
+            _last_volts = 0,
+            -- Input event handlers
+            change = function(self, func, threshold)
+                if func then 
+                    self._change_handler = func 
+                    self._change_threshold = threshold or 0.1
+                end
+            end,
+            stream = function(self, func)
+                if func then self._stream_handler = func end
+            end
+        }
+        
+        setmetatable(env.input[i], {
+            __call = function(t, ...)
+                -- Allow input[n]() to return current volts
+                return t.volts
+            end
+        })
+    end
+    
+    -- Global output table in environment
+    env.output.volts = function(ch, v)
+        if ch and ch >= 1 and ch <= 4 then
+            if v then
+                env.output[ch].volts = v
+            end
+            return env.output[ch].volts
+        end
+        return 0
+    end
     
     -- Load code into environment if provided
     if code and code ~= "" then
@@ -68,16 +207,47 @@ function update_env(index, code)
     envs[index] = new_env(code)
 end
 
--- Output state management
+-- Enhanced output state management for Phase 2.3
 function get_output_state(channel)
     if envs[channel] then
-        local volts = envs[channel].volts or 0
-        local trigger = envs[channel].trigger or false
-        -- Reset trigger after reading
-        envs[channel].trigger = false
-        return volts, envs[channel].volts_new or false, trigger
+        local env = envs[channel]
+        local volts = 0
+        local volts_new = false
+        local trigger = false
+        
+        -- Check if output[channel] exists and get its volts
+        if env.output and env.output[channel] then
+            volts = env.output[channel].volts or 0
+            volts_new = env.output[channel]._volts_changed or false
+            trigger = env.output[channel]._trigger or false
+            
+            -- Reset change flags after reading
+            env.output[channel]._volts_changed = false
+            env.output[channel]._trigger = false
+        else
+            -- Fallback to legacy env.volts for compatibility
+            volts = env.volts or 0
+            volts_new = env.volts_new or false  
+            trigger = env.trigger or false
+        end
+        
+        -- Reset legacy flags
+        env.volts_new = false
+        env.trigger = false
+        
+        return volts, volts_new, trigger
     end
     return 0, false, false
+end
+
+-- Helper function to set output volts from C code
+function set_output_volts(channel, volts)
+    for i, env in pairs(envs) do
+        if env.output and env.output[channel] then
+            env.output[channel].volts = volts
+            env.output[channel]._volts_changed = true
+        end
+    end
 end
 
 print("Crow Lua globals loaded")
