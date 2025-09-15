@@ -450,6 +450,59 @@ function metro_handler(id, stage)
     -- This matches crow's behavior
 end
 
+-- Norns compatibility: quote, tell, public parameter system
+if not tell then
+  local function _q(v)
+    local t = type(v)
+    if t == 'number' then return string.format('%.6g', v)
+    elseif t == 'string' then return string.format('%q', v)
+    elseif t ~= 'table' then return tostring(v)
+    else
+      local parts = {}
+      for k,val in pairs(v) do
+        local key
+        if type(k) == 'number' then key = string.format('[%g]', k) else key = string.format('[%q]', k) end
+        parts[#parts+1] = key .. '=' .. _q(val)
+      end
+      return '{' .. table.concat(parts, ',') .. '}'
+    end
+  end
+  function tell(ev, ...)
+    local n = select('#', ...)
+    local args = ''
+    if n > 0 then
+      local tmp = {}
+      for i = 1, n do
+        tmp[i] = _q(select(i, ...))
+      end
+      args = table.concat(tmp, ',')
+    end
+    print('^^' .. ev .. '(' .. args .. ')')
+  end
+  public = {
+    _defs = {},
+    _order = {}
+  }
+  function public.add(name, val, typ)
+    if not public._defs[name] then public._order[#public._order+1] = name end
+    public._defs[name] = {val = val, typ = typ or {}}
+    tell('pub', name, val, public._defs[name].typ)
+  end
+  function public.update(name, val, sub)
+    local d = public._defs[name]; if not d then return end
+    d.val = val
+    if sub then tell('pupdate', name, sub, val) else tell('pupdate', name, val) end
+  end
+  function public.view_input(ch, v) tell('pubview', 'input', ch, v) end
+  function public.view_output(ch, v) tell('pubview', 'output', ch, v) end
+  function public.discover()
+    for _,n in ipairs(public._order) do
+      local d = public._defs[n]
+      tell('pub', n, d.val, d.typ)
+    end
+    tell('pub', '_end')
+  end
+end
 print("Crow Lua globals loaded")
 )";
 
