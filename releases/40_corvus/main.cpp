@@ -3,6 +3,8 @@
 #include "tusb.h"
 #include "crow_emulator.h"
 
+extern "C" void usb_serial_init(void);
+
 /*
 Crow Emulator for Workshop Computer
 
@@ -23,6 +25,8 @@ USB Communication:
 int main()
 {
     stdio_init_all();
+
+    usb_serial_init(); // populate dynamic serial before TinyUSB enumeration
     
     // Initialize TinyUSB
     tusb_init();

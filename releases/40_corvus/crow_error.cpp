@@ -10,6 +10,11 @@
 static crow_error_info_t g_last_error;
 static bool g_error_initialized = false;
 
+// Error ring buffer
+static crow_error_info_t g_error_ring[CROW_ERROR_RING_SIZE];
+static size_t g_error_head = 0;   // next write position
+static size_t g_error_count = 0;  // number of valid entries (<= CROW_ERROR_RING_SIZE)
+
 // Forward declarations for USB communication
 extern "C" {
     // These will be linked from CrowEmulator
@@ -20,6 +25,9 @@ void crow_error_init(void)
 {
     memset(&g_last_error, 0, sizeof(g_last_error));
     g_last_error.type = CROW_ERROR_NONE;
+    memset(g_error_ring, 0, sizeof(g_error_ring));
+    g_error_head = 0;
+    g_error_count = 0;
     g_error_initialized = true;
 }
 
@@ -28,23 +36,33 @@ void crow_error_report(crow_error_t type, const char* message, const char* funct
     if (!g_error_initialized) {
         crow_error_init();
     }
-    
-    // Update error info
-    g_last_error.type = type;
-    g_last_error.timestamp_us = time_us_64();
-    g_last_error.function = function;
-    g_last_error.line = line;
-    
+
+    // Write into ring slot
+    crow_error_info_t* slot = &g_error_ring[g_error_head];
+    slot->type = type;
+    slot->timestamp_us = (uint32_t)time_us_64(); // truncate to 32-bit
+    slot->function = function;
+    slot->line = line;
+
     // Copy message safely
-    strncpy(g_last_error.message, message, sizeof(g_last_error.message) - 1);
-    g_last_error.message[sizeof(g_last_error.message) - 1] = '\0';
-    
+    strncpy(slot->message, message, sizeof(slot->message) - 1);
+    slot->message[sizeof(slot->message) - 1] = '\0';
+
+    // Advance head
+    g_error_head = (g_error_head + 1) % CROW_ERROR_RING_SIZE;
+    if (g_error_count < CROW_ERROR_RING_SIZE) {
+        g_error_count++;
+    }
+
+    // Maintain legacy last-error API
+    g_last_error = *slot;
+
     // Print to debug console
-    printf("CROW ERROR [%llu]: %s in %s:%d\n", 
-           g_last_error.timestamp_us, message, function, line);
-    
+    printf("CROW ERROR [%u]: %s in %s:%d\n",
+           slot->timestamp_us, slot->message, function, line);
+
     // Send to USB if available
-    crow_error_send_to_usb(&g_last_error);
+    crow_error_send_to_usb(slot);
 }
 
 void crow_error_clear(void)
@@ -75,6 +93,29 @@ void crow_error_print_last(void)
                g_last_error.line);
     } else {
         printf("No error recorded\n");
+    }
+}
+
+size_t crow_error_ring_count(void)
+{
+    return g_error_count;
+}
+
+const crow_error_info_t* crow_error_ring_get(size_t index)
+{
+    if (index >= g_error_count) return nullptr;
+    size_t oldest = (g_error_head + CROW_ERROR_RING_SIZE - g_error_count) % CROW_ERROR_RING_SIZE;
+    size_t pos = (oldest + index) % CROW_ERROR_RING_SIZE;
+    return &g_error_ring[pos];
+}
+
+void crow_error_dump_all(void)
+{
+    for (size_t i = 0; i < crow_error_ring_count(); ++i) {
+        const crow_error_info_t* e = crow_error_ring_get(i);
+        if (e && e->type != CROW_ERROR_NONE) {
+            crow_error_send_to_usb(e);
+        }
     }
 }
 

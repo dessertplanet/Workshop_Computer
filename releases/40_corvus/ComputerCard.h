@@ -30,6 +30,9 @@ See examples/ directory
 // USB host status pin
 #define USB_HOST_STATUS 20
 
+// Input normalisation probe pin
+#define NORMALISATION_PROBE 4
+
 class ComputerCard
 {
 	constexpr static int numLeds = 6;
@@ -347,6 +350,46 @@ private:
 	}
 	uint32_t next_norm_probe();
 
+// Refactored normalisation probe step to reduce ISR branch footprint
+inline void NormalisationProbeStep(uint8_t cpuPhase, int cvi, int norm_probe_count, int &np)
+{
+    // Set normalisation probe output value and update expected history
+    if (norm_probe_count == 0)
+    {
+        int32_t normprobe = next_norm_probe();
+        gpio_put(NORMALISATION_PROBE, normprobe);
+        np = (np<<1)+(normprobe&0x1);
+    }
+
+    // CV sampled at 24kHz comes in over two successive samples
+    if (norm_probe_count == 14 || norm_probe_count == 15)
+    {
+        plug_state[2+cvi] = (plug_state[2+cvi]<<1)+(ADC_Buffer[cpuPhase][3]<1800);
+    }
+
+    // Audio and pulse measured every sample at 48kHz
+    if (norm_probe_count == 15)
+    {
+        plug_state[Input::Audio1] = (plug_state[Input::Audio1]<<1)+(ADC_Buffer[cpuPhase][5]<1800);
+        plug_state[Input::Audio2] = (plug_state[Input::Audio2]<<1)+(ADC_Buffer[cpuPhase][4]<1800);
+        plug_state[Input::Pulse1] = (plug_state[Input::Pulse1]<<1)+(pulse[0]);
+        plug_state[Input::Pulse2] = (plug_state[Input::Pulse2]<<1)+(pulse[1]);
+
+        for (int i=0; i<6; i++)
+        {
+            connected[i] = (np != plug_state[i]);
+        }
+    }
+
+    // Force disconnected values to zero, rather than the normalisation probe garbage
+    if (Disconnected(Input::Audio1)) adcInL = 0;
+    if (Disconnected(Input::Audio2)) adcInR = 0;
+    if (Disconnected(Input::CV1)) cv[0] = 0;
+    if (Disconnected(Input::CV2)) cv[1] = 0;
+    if (Disconnected(Input::Pulse1)) pulse[0] = 0;
+    if (Disconnected(Input::Pulse2)) pulse[1] = 0;
+}
+
 	void BufferFull();
 
 	void AudioWorker();
@@ -384,9 +427,6 @@ private:
 #include "hardware/i2c.h"
 #include "hardware/irq.h"
 #include "hardware/spi.h"
-
-// Input normalisation probe pin
-#define NORMALISATION_PROBE 4
 
 // Mux pins
 #define MX_A 24
@@ -622,48 +662,12 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 		// Should initialise knob and CV smoothing filters here too
 	}
 	
-	////////////////////////////
-	// Normalisation probe
-
-	if (useNormProbe)
-	{
-		// Set normalisation probe output value
-		// and update np to the expected history string
-		if (norm_probe_count == 0)
-		{
-			int32_t normprobe = next_norm_probe();
-			gpio_put(NORMALISATION_PROBE, normprobe);
-			np = (np<<1)+(normprobe&0x1);
-		}
-
-		// CV sampled at 24kHz comes in over two successive samples
-		if (norm_probe_count == 14 || norm_probe_count == 15)
-		{
-			plug_state[2+cvi] = (plug_state[2+cvi]<<1)+(ADC_Buffer[cpuPhase][3]<1800);
-		}
-
-		// Audio and pulse measured every sample at 48kHz
-		if (norm_probe_count == 15)
-		{
-			plug_state[Input::Audio1] = (plug_state[Input::Audio1]<<1)+(ADC_Buffer[cpuPhase][5]<1800);
-			plug_state[Input::Audio2] = (plug_state[Input::Audio2]<<1)+(ADC_Buffer[cpuPhase][4]<1800);
-			plug_state[Input::Pulse1] = (plug_state[Input::Pulse1]<<1)+(pulse[0]);
-			plug_state[Input::Pulse2] = (plug_state[Input::Pulse2]<<1)+(pulse[1]);
-
-			for (int i=0; i<6; i++)
-			{
-				connected[i] = (np != plug_state[i]);
-			}
-		}
-		
-		// Force disconnected values to zero, rather than the normalisation probe garbage
-		if (Disconnected(Input::Audio1)) adcInL = 0;
-		if (Disconnected(Input::Audio2)) adcInR = 0;
-		if (Disconnected(Input::CV1)) cv[0] = 0;
-		if (Disconnected(Input::CV2)) cv[1] = 0;
-		if (Disconnected(Input::Pulse1)) pulse[0] = 0;
-		if (Disconnected(Input::Pulse2)) pulse[1] = 0;
-	}
+////////////////////////////
+// Normalisation probe (refactored)
+if (useNormProbe)
+{
+    NormalisationProbeStep(cpuPhase, cvi, norm_probe_count, np);
+}
 	
 	////////////////////////////////////////
 	// Run the DSP

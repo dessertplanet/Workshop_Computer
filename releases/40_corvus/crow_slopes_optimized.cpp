@@ -1,5 +1,6 @@
 #include "crow_slopes_optimized.h"
 #include "crow_slopes.h"
+#include "crow_events.h"
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -368,7 +369,7 @@ void slopes_process_block_optimized(float* input_blocks[4], float* output_blocks
             if (slope->action) {
                 crow_slope_callback_t action = slope->action;
                 slope->action = nullptr;
-                // Would post event here - crow_event_post_slope_complete(slope->index, action);
+                crow_event_post_slope_complete(slope->index, action);
             }
         }
     }

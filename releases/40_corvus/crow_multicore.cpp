@@ -7,8 +7,19 @@
 #include "pico/time.h"
 #include "hardware/sync.h"  // for memory barriers
 
+// Memory barrier helpers for clarity
+#ifndef CROW_MC_WRITE_BARRIER
+#define CROW_MC_WRITE_BARRIER() __dmb()
+#endif
+#ifndef CROW_MC_READ_BARRIER
+#define CROW_MC_READ_BARRIER() __dmb()
+#endif
+
+// Provide statically allocated shared structure to avoid malloc failure risks
+static crow_shared_data_t g_crow_shared_storage;
+
 // Global shared data
-crow_shared_data_t* g_crow_shared = nullptr;
+crow_shared_data_t* g_crow_shared = nullptr; // points to g_crow_shared_storage after init
 
 // Initialize the multicore communication system
 void crow_multicore_init(void) {
@@ -18,14 +29,8 @@ void crow_multicore_init(void) {
     
     printf("Initializing crow multicore communication...\n");
     
-    // Allocate shared data structure
-    g_crow_shared = (crow_shared_data_t*)malloc(sizeof(crow_shared_data_t));
-    if (!g_crow_shared) {
-        printf("Failed to allocate multicore shared data!\n");
-        return;
-    }
-    
-    // Initialize shared data
+    // Use static storage (avoids heap fragmentation / failure)
+    g_crow_shared = &g_crow_shared_storage;
     memset((void*)g_crow_shared, 0, sizeof(crow_shared_data_t));
     
     // Initialize message queues
@@ -60,7 +65,6 @@ void crow_multicore_deinit(void) {
     crow_msg_queue_deinit(&g_crow_shared->core0_to_core1);
     crow_msg_queue_deinit(&g_crow_shared->core1_to_core0);
     
-    free(g_crow_shared);
     g_crow_shared = nullptr;
 }
 
@@ -155,9 +159,12 @@ void crow_multicore_core0_block_start(float* input_blocks[4]) {
             g_crow_shared->input_values_updated[ch] = true;
         }
     }
+    // Ensure writes visible before signaling
+    CROW_MC_WRITE_BARRIER();
     
     // Increment block counter
     g_crow_shared->core0_block_counter++;
+    CROW_MC_WRITE_BARRIER();
     
     // Send block sync message to Core 1
     crow_msg_t sync_msg;
@@ -175,6 +182,7 @@ void crow_multicore_core0_block_complete(void) {
     for (int ch = 0; ch < 4; ch++) {
         g_crow_shared->input_values_updated[ch] = false;
     }
+    CROW_MC_WRITE_BARRIER();
 }
 
 bool crow_multicore_get_lua_output(int channel, float* volts, bool* volts_changed, bool* trigger) {
@@ -235,6 +243,7 @@ void crow_multicore_core1_process_block(void) {
     }
     
     g_crow_shared->core1_processing = true;
+    CROW_MC_WRITE_BARRIER();
     
     // Process all pending messages from Core 0
     crow_msg_t msg;
@@ -269,7 +278,9 @@ void crow_multicore_core1_process_block(void) {
         }
     }
     
+    CROW_MC_WRITE_BARRIER();
     g_crow_shared->core1_processing = false;
+    CROW_MC_WRITE_BARRIER();
 }
 
 void crow_multicore_set_lua_output(int channel, float volts, bool changed, bool trigger) {
@@ -280,7 +291,7 @@ void crow_multicore_set_lua_output(int channel, float volts, bool changed, bool 
     g_crow_shared->lua_outputs[channel] = volts;
     g_crow_shared->lua_outputs_changed[channel] = changed;
     g_crow_shared->lua_triggers[channel] = trigger;
-    __dmb(); // ensure writes visible to other core
+    CROW_MC_WRITE_BARRIER(); // ensure writes visible to other core
 }
 
 bool crow_multicore_get_input_value(int channel, float* value) {
@@ -300,6 +311,7 @@ void crow_multicore_wait_for_core1_sync(void) {
     
     // Wait for Core 1 to catch up with block processing
     uint32_t core0_counter = g_crow_shared->core0_block_counter;
+    CROW_MC_READ_BARRIER();
     uint32_t timeout = 1000; // Timeout in microseconds
     
     while (g_crow_shared->core1_block_counter < core0_counter && timeout > 0) {

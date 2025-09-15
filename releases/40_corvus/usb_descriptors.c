@@ -24,6 +24,8 @@
  */
 
 #include "tusb.h"
+#include "pico/unique_id.h"
+#include <stdio.h>
 
 /* A combination of interfaces must have a unique product id, since PC will save device driver after the first plug.
  * Same VID/PID with different interface e.g MSC (first), then CDC (later) will possibly cause system error on PC.
@@ -130,12 +132,24 @@ uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
 //--------------------------------------------------------------------+
 
 // array of pointer to string descriptors
+static char g_serial_str[32] = "workshop-crow-emu"; // will be replaced at runtime
+
+void usb_serial_init(void) {
+  pico_unique_board_id_t id;
+  pico_get_unique_board_id(&id);
+  // Use first 6 bytes (48 bits) -> 12 hex chars; short prefix for identification
+  // Result example: wcrow-1A2B3C4D5E6F
+  snprintf(g_serial_str, sizeof(g_serial_str),
+           "wcrow-%02X%02X%02X%02X%02X%02X",
+           id.id[0], id.id[1], id.id[2], id.id[3], id.id[4], id.id[5]);
+}
+
 char const* string_desc_arr [] =
 {
-  (const char[]) { 0x09, 0x04 }, // 0: is supported language is English (0x0409)
-  "monome",                      // 1: Manufacturer (same as crow)
-  "crow: telephone line",        // 2: Product (what druid expects)
-  "workshop-crow-emu",           // 3: Serial number
+  (const char[]) { 0x09, 0x04 }, // 0: English (0x0409)
+  "monome",                      // 1: Manufacturer
+  "crow: telephone line",        // 2: Product
+  g_serial_str,                  // 3: Serial number (dynamic)
   "crow CDC",                    // 4: CDC Interface
 };
 

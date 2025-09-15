@@ -3,9 +3,39 @@
 #include "hardware/flash.h"
 #include "hardware/sync.h"
 #include <string.h>
+#include <cstdio>
 
 // External symbol marking end of program flash
 extern char __flash_binary_end;
+
+// ===== Flash layout safety additions =====
+#ifndef PICO_FLASH_SIZE_BYTES
+// Fallback if board definition not present (common Pico default 2MB)
+#define PICO_FLASH_SIZE_BYTES (2 * 1024 * 1024)
+#endif
+
+static bool g_flash_layout_valid = true;
+
+// Forward declaration for offset helper used below
+static uint32_t get_flash_offset();
+
+static bool flash_layout_check() {
+    // We need two contiguous sectors: user script + First.lua
+    uint32_t user_sector_off = get_flash_offset();
+    uint32_t first_sector_off = user_sector_off + FLASH_SECTOR_SIZE;
+    uint32_t end_required = first_sector_off + FLASH_SECTOR_SIZE;
+    if (end_required > PICO_FLASH_SIZE_BYTES) {
+        printf("FLASH WARNING: insufficient space for script sectors (need end 0x%08x, flash size 0x%08x)\n",
+               end_required, (unsigned)PICO_FLASH_SIZE_BYTES);
+        return false;
+    }
+    return true;
+}
+
+// Public helper (could be added to header later if needed)
+bool Flash_layout_valid(void) {
+    return g_flash_layout_valid;
+}
 
 // Calculate flash offset dynamically 
 static uint32_t get_flash_offset() {
@@ -203,8 +233,11 @@ char* Flash_read_first_scriptaddr(void) {
 }
 
 void Flash_init(void) {
-    // Flash addresses are calculated dynamically - no initialization needed
-    // This function exists for crow API compatibility
+    // Validate layout once at startup
+    g_flash_layout_valid = flash_layout_check();
+    if (!g_flash_layout_valid) {
+        printf("FLASH ERROR: layout invalid; script writes disabled\n");
+    }
 }
 
 uint32_t flash_version12b(void) {

@@ -32,6 +32,13 @@ typedef struct {
     int line;
 } crow_error_info_t;
 
+#define CROW_ERROR_RING_SIZE 8
+
+// Ring buffer accessors
+size_t crow_error_ring_count(void);
+const crow_error_info_t* crow_error_ring_get(size_t index);
+void crow_error_dump_all(void);
+
 // Error reporting functions
 void crow_error_init(void);
 void crow_error_report(crow_error_t type, const char* message, const char* function, int line);
