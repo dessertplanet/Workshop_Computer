@@ -87,6 +87,19 @@ static int crow_lua_computer_card_unique_id(lua_State *L) {
     return 1;
 }
 
+static int crow_lua_reset(lua_State *L) {
+    // Reinitialize Lua environment and emit ready packet
+    if (g_crow_lua) {
+        g_crow_lua->deinit();
+        if (g_crow_lua->init()) {
+            if (CrowEmulator::instance) {
+                CrowEmulator::instance->send_usb_string("^^ready()");
+            }
+        }
+    }
+    return 0;
+}
+
 // Crow lua globals - simplified single environment matching real crow
 static int crow_lua_set_output_scale(lua_State *L) {
     int nargs = lua_gettop(L);
@@ -177,6 +190,12 @@ print("Crow Lua initializing...")
 -- Create global output and input tables (matches crow architecture)
 output = {}
 input = {}
+
+-- crow table with reset
+crow = {}
+function crow.reset()
+    crow_reset()
+end
 
 -- Initialize output tables with crow-style interface
 for i = 1, 4 do
@@ -470,6 +489,7 @@ bool CrowLua::init() {
     lua_register(L, "crow_metro_set_time", crow_lua_metro_set_time);
     lua_register(L, "computer_card_unique_id", crow_lua_computer_card_unique_id);
     lua_register(L, "set_output_scale", crow_lua_set_output_scale);
+    lua_register(L, "crow_reset", crow_lua_reset);
     lua_register(L, "set_output_clock", crow_lua_set_output_clock);
     lua_register(L, "clear_output_clock", crow_lua_clear_output_clock);
     

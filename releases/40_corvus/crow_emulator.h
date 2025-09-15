@@ -136,7 +136,8 @@ public:
     
     // Script upload management (Phase 2.2)
     void start_script_upload();
-    void end_script_upload();
+    void end_script_upload(); // legacy volatile finalize wrapper
+    void finalize_script_upload(bool persist); // new unified finalize for ^^e (persist=false) and ^^w (persist=true)
     bool process_script_upload_data(const char* data, size_t length);
     
     // Flash command implementations (Phase 7d: Flash Command Integration)

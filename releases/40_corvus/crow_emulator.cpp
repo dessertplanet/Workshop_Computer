@@ -13,6 +13,9 @@
 #include "crow_events.h"
 #include "crow_multicore.h"
 
+#define DRUID_STREAM_INTERVAL_MS 100
+#define DRUID_INPUT_DELTA_MIN 0.01f
+
 // Static instance pointer for multicore callback
 CrowEmulator* CrowEmulator::instance = nullptr;
 
@@ -268,20 +271,27 @@ void CrowEmulator::send_usb_printf(const char* format, ...)
 
 void CrowEmulator::crow_send_hello()
 {
-    send_usb_string("hi from crow!");
-    send_usb_string("");  // Send empty line like real crow
+    // Upstream-style greeting + immediate protocol packets
+    send_usb_string("hi");
+    send_usb_string(""); // blank line
+    crow_print_version();
+    crow_print_identity();
+    send_usb_string("^^ready()");
 }
 
 void CrowEmulator::crow_print_version()
 {
-    send_usb_string("crow workshop emulator v0.1.0");
-    send_usb_string("build: workshop-computer");
+    // Emit crow-formatted version packet
+    send_usb_printf("^^version('%s')", "0.1.0");
 }
 
 void CrowEmulator::crow_print_identity()
 {
-    send_usb_string("monome crow");
-    send_usb_string("workshop computer emulation");
+    // Emit crow-formatted identity packet using unique 64-bit ID
+    uint64_t uid = get_unique_card_id();
+    char buf[64];
+    snprintf(buf, sizeof(buf), "^^identity('0x%016llX')", (unsigned long long)uid);
+    send_usb_string(buf);
 }
 
 C_cmd_t CrowEmulator::parse_command(const char* buffer, int length)
@@ -387,20 +397,22 @@ void CrowEmulator::process_usb_data()
     
     // If in script upload mode, handle differently
     if (script_upload_mode) {
-        // Check for end upload command in the data first
-        for (uint32_t i = 0; i < count - 2; i++) {
-            if (temp_buffer[i] == '^' && temp_buffer[i + 1] == '^' && temp_buffer[i + 2] == 'e') {
-                // Found ^^e - end upload command
-                // Process any data before the command
-                if (i > 0) {
-                    process_script_upload_data(temp_buffer, i);
+        // Scan for upload terminators ^^e (execute) or ^^w (write & execute)
+        for (uint32_t i = 0; i < (count >= 2 ? count - 2 : 0); i++) {
+            if (temp_buffer[i] == '^' && temp_buffer[i + 1] == '^') {
+                char term = temp_buffer[i + 2];
+                if (term == 'e' || term == 'w') {
+                    // Data before sentinel belongs to script
+                    if (i > 0) {
+                        process_script_upload_data(temp_buffer, i);
+                    }
+                    bool persist = (term == 'w');
+                    finalize_script_upload(persist);
+                    return;
                 }
-                end_script_upload();
-                return;
             }
         }
-        
-        // No end command found, add all data to script buffer
+        // No sentinel in this chunk: append all
         process_script_upload_data(temp_buffer, count);
         return;
     }
@@ -496,6 +508,9 @@ void CrowEmulator::core1_main()
                 bool volts_new, trigger;
                 if (g_crow_lua->get_output_volts_and_trigger(ch + 1, &volts, &volts_new, &trigger)) {
                     crow_multicore_set_lua_output(ch, volts, volts_new, trigger);
+                    if (volts_new) {
+                        send_usb_printf("^^output(%d,%g)", ch + 1, volts);
+                    }
                 }
             }
             
@@ -504,6 +519,34 @@ void CrowEmulator::core1_main()
                 float input_value;
                 if (crow_multicore_get_input_value(ch, &input_value)) {
                     g_crow_lua->set_input_volts(ch + 1, input_value);
+                }
+            }
+
+            // Input streaming telemetry (rate & delta limited)
+            {
+                static uint32_t last_stream_time_ms = 0;
+                static float last_stream_val[2] = {0.0f, 0.0f};
+                uint32_t now = current_time;
+                if (now - last_stream_time_ms >= DRUID_STREAM_INTERVAL_MS) {
+                    // Send both channels
+                    for (int ch = 0; ch < 2; ch++) {
+                        float val;
+                        if (crow_multicore_get_input_value(ch, &val)) {
+                            send_usb_printf("^^stream(%d,%g)", ch + 1, val);
+                            last_stream_val[ch] = val;
+                        }
+                    }
+                    last_stream_time_ms = now;
+                } else {
+                    for (int ch = 0; ch < 2; ch++) {
+                        float val;
+                        if (crow_multicore_get_input_value(ch, &val)) {
+                            if (fabsf(val - last_stream_val[ch]) >= DRUID_INPUT_DELTA_MIN) {
+                                send_usb_printf("^^stream(%d,%g)", ch + 1, val);
+                                last_stream_val[ch] = val;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -542,36 +585,8 @@ void CrowEmulator::start_script_upload()
 
 void CrowEmulator::end_script_upload()
 {
-    if (!script_upload_mode) {
-        send_usb_string("!no upload in progress");
-        return;
-    }
-    
-    script_upload_mode = false;
-    
-    if (script_upload_pos > 0) {
-        // Null terminate the script
-        script_upload_buffer[script_upload_pos] = '\0';
-        
-        printf("Script upload complete, %zu bytes received\n", script_upload_pos);
-        
-        // Send script to lua system for compilation and execution
-        if (g_crow_lua && g_crow_lua->load_user_script(script_upload_buffer)) {
-            send_usb_string("script loaded successfully");
-            // Call init() function after successful script load (crow behavior)
-            if (g_crow_lua->call_init()) {
-                printf("init() called successfully\n");
-            }
-        } else {
-            send_usb_string("!script compilation error");
-        }
-    } else {
-        send_usb_string("!empty script");
-    }
-    
-    // Reset upload state
-    script_upload_pos = 0;
-    script_upload_size = 0;
+    // Legacy wrapper: treat as volatile finalize
+    finalize_script_upload(false);
 }
 
 bool CrowEmulator::process_script_upload_data(const char* data, size_t length)
@@ -580,18 +595,66 @@ bool CrowEmulator::process_script_upload_data(const char* data, size_t length)
         return false;
     }
     
-    // Check if we have space for this data
+    // Check if we have space for this data (enforce 8kB limit)
     if (script_upload_pos + length >= MAX_SCRIPT_SIZE) {
-        send_usb_string("!script too large");
+        send_usb_string("!script too long");
         script_upload_mode = false;
         return false;
     }
     
-    // Copy data to upload buffer
     memcpy(script_upload_buffer + script_upload_pos, data, length);
     script_upload_pos += length;
-    
     return true;
+}
+
+// Unified finalize for ^^e / ^^w
+void CrowEmulator::finalize_script_upload(bool persist)
+{
+    if (!script_upload_mode) {
+        send_usb_string("!no upload in progress");
+        return;
+    }
+    script_upload_mode = false;
+
+    if (script_upload_pos == 0) {
+        send_usb_string("!empty script");
+        script_upload_pos = 0;
+        script_upload_size = 0;
+        return;
+    }
+
+    // Null terminate
+    script_upload_buffer[script_upload_pos] = '\0';
+    printf("Script upload complete, %zu bytes received\n", script_upload_pos);
+
+    bool compiled = false;
+    if (g_crow_lua && g_crow_lua->load_user_script(script_upload_buffer)) {
+        compiled = true;
+        send_usb_string("script loaded successfully");
+        if (g_crow_lua->call_init()) {
+            printf("init() called successfully\n");
+        }
+    } else {
+        send_usb_string("!script compilation error");
+    }
+
+    if (compiled && persist) {
+        uint8_t result = Flash_write_user_script(script_upload_buffer, (uint32_t)script_upload_pos);
+        if (result == 0) {
+            send_usb_string("script saved to flash");
+            printf("Script saved to flash: %zu bytes\n", script_upload_pos);
+        } else {
+            send_usb_string("!flash write error");
+            printf("Flash write failed with error %d\n", result);
+        }
+    }
+
+    if (compiled) {
+        send_usb_string("^^ready()");
+    }
+
+    script_upload_pos = 0;
+    script_upload_size = 0;
 }
 
 void CrowEmulator::RunCrowEmulator()
@@ -926,6 +989,7 @@ void CrowEmulator::handle_load_first_command()
                 if (g_crow_lua->load_user_script(script_buffer)) {
                     send_usb_string("first.lua loaded from flash");
                     g_crow_lua->call_init();
+                    send_usb_string("^^ready()");
                     return;
                 }
             }
@@ -957,6 +1021,7 @@ void CrowEmulator::load_default_first_lua()
                 if (g_crow_lua->load_user_script(script_staging_buffer)) {
                     send_usb_string("first.lua loaded successfully");
                     g_crow_lua->call_init();
+                    send_usb_string("^^ready()");
                     
                     // Store First.lua in flash for future use
                     Flash_write_first_script(script_staging_buffer, file_size);
@@ -997,6 +1062,7 @@ void CrowEmulator::load_flash_script_at_boot()
                     // Call init() function after successful script load
                     if (g_crow_lua->call_init()) {
                         printf("Flash script init() called successfully\n");
+            send_usb_string("^^ready()");
                     }
                 } else {
                     printf("Flash script compilation failed\n");
