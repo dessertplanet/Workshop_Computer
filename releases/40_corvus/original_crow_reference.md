@@ -1,0 +1,785 @@
+input
+input is a table representing the 2 CV inputs
+
+input Queries
+_ = input[n].volts  -- returns the current value on input n
+input[n].query  -- send input n's value to the host -> ^^stream(channel, volts)
+input Modes
+Available modes are:
+
+'none'
+'stream'
+'change'
+'window'
+'scale'
+'volume'
+'peak'
+'freq' (input 1 only!)
+'clock'
+Usage examples:
+
+input[n].mode = 'stream' -- set input n to stream with default time (0.1s)
+
+input[n].mode( 'none' )         -- set input n to 'none' mode (ie. disable events)
+
+input[n].mode( 'stream', time ) -- set input n to 'stream' every time seconds
+
+input[n].mode( 'change', threshold, hysteresis, direction ) -- set input n to:
+    -- 'change':   create an event each time the threshold is crossed
+    -- threshold:  set the voltage around which to change state
+    -- hysteresis: avoid noise of this size (in volts)
+    -- direction:  'rising', 'falling', or 'both' transitions create events
+
+input[n].mode( 'window', windows, hysteresis ) -- set input n to:
+    -- 'window':  create an event when the input enters a new voltage window
+    -- windows:   a table of voltages defining window boundaries, eg: {-3,-1,1,3}
+    -- threshold: sets the hysteresis voltage at each boundary
+
+input[n].mode( 'scale', notes, temperament, scaling ) -- set input n to:
+    -- 'scale':     quantize the input, raising an event when a new note is entered
+    -- notes:       a table of notes representing the scale, eg: {0,2,4,5,7,9,11}
+    -- temperament: number of possible notes per octave. defaults to 12
+    -- scaling:     volts-per-octave. default to 1.0, but use 1.2 for buchla systems
+-- 'scale' also supports just intonation ratios in the 'notes' position
+    -- notes appears as {1/1, 3/2, 9/8} etc
+    -- temperament must be set to 'ji'
+
+input[n].mode( 'volume', time ) -- set input n to stream the volume at the input
+    -- 'volume': tracks the RMS amplitude of an audio signal (not a direct voltage)
+    -- time:     sets the rate in seconds at which to report the volume
+
+input[n].mode( 'peak', threshold, hysteresis ) -- set input n to:
+    -- 'stream':   creates an event when an audio transient is detected at the input
+    -- threshold:  sets the RMS level required to trigger an event
+    -- hysteresis: sets how far the RMS level needs to decrease before retriggering
+
+-- NOTE: 'freq' mode is only available on input 1.
+input[1].mode( 'freq', time ) -- set input 1 to:
+    -- 'freq':  calculate the frequency of a connected oscillator.
+    -- time:    rate at which frequency is reported.
+
+-- NOTE: 'clock' mode uses the same detection as 'change' mode.
+input[n].mode( 'clock', division) -- set input n to:
+    -- 'clock':  uses the input to drive the internal clock module's tempo
+    -- division: the rate at which the clock will arrive. eg 1/4 for 4 ticks per beat
+A table calling the input will set the mode with named parameters:
+
+-- set input n to stream every 0.2 seconds
+input[n]{ mode = 'stream'
+        , time = 0.2
+        }
+Default Values
+Unless specified at invocation, each mode argument has the following default values:
+
+time       = 0.1
+threshold  = 1.0
+hysteresis = 0.1
+direction  = 'both'
+temp       = 12
+scaling    = 1.0
+div        = 1/4
+Event Handlers + Callbacks
+The default behavior is that the modes call a specific event, sending to the host:
+
+'stream' -> ^^stream(channel, volts)
+'change' -> ^^change(channel, state)
+You can customize the event handlers:
+
+input[1].stream = function(volts) <your_inline_function> end
+input[1].change = change_handler_function
+Using table call syntax, you can set the event handler at the same time:
+
+-- set input n to stream every 0.2 seconds & print the value
+input[n]{ mode   = 'stream'
+        , time   = 0.2
+        , stream = function(v) print(v) end -- assign the handler inline
+        }
+output
+output is a table representing the 4 CV outputs
+
+Setting CV
+output[n].volts = 3.0 -- set output n to 3 volts instantly
+Slewing CV
+-- default slew is 0.0
+output[n].slew  = 0.1 -- sets output n's slew time to 0.1 seconds.
+output[n].volts = 2.0 -- tell output n to move toward 2.0 volts, over the slew time
+
+_ = output[n].volts   -- inspect the instantaneous voltage of output n
+Shaping CV
+-- default shape is 'linear'
+output[n].shape = 'expo' -- travel to the .volts destination with a non-linear path
+output[n].slew  = 0.1
+output[n].volts = 2.0
+Available options:
+
+'linear'
+'sine'
+'logarithmic'
+'exponential'
+'now': go instantly to the destination then wait
+'wait': wait at the current level, then go to the destination
+'over': move toward the destination and overshoot, before landing
+'under': move away from the destination, then smoothly ramp up
+'rebound': emulate a bouncing ball toward the destination
+Quantize to Scales
+Outputs can be quantized with a flexible scale system. These scales are applied after slew or actions, so they can be used to convert LFOs into arpeggios.
+
+output[n].scale( {scale}, temperament, scaling )
+  -- scale: a table of note values, eg: {0,2,3,5,7,9,10}
+  --        use the empty table {} for chromatic scale
+  -- temperament: how many divisions in an octave, default 12 (ie 12TET)
+  -- scaling: volts per octave, default to 1.0, but use eg. 1.2 for buchla systems
+
+-- deactivate any active scaling with the 'none' argument
+output[n].scale( 'none' )
+
+-- scale table can be modified without reactivating scale
+output[n].scale = {0,7,2,9} -- note: scale can be out of order to create arpeggios
+
+-- 'ji' as the second argument causes the scale to be interpreted as just ratios
+output[n].scale( {1/1, 9/8, 5/4, 4/3, 3/2 11/8}, 'ji' )
+clock Mode
+Outputs can be set to output pulses at divisions of the clock. See clock for details.
+
+-- division defaults to 1
+output[n]:clock(division) -- set output to clock mode with division
+  -- division is in the same units as for clock.sync(division)
+
+output[n]:clock('none') -- disable the output clock
+
+output[n].clock_div = 1/4 -- update the clock division without re-syncing the clock
+After the clock is assigned, the output action can be changed from the default pulse to any other shape (see below).
+
+action
+Outputs can have actions, not just voltages and slew times. An action is a sequence of voltage slopes, like an LFO or envelope.
+
+output[n].action = lfo() -- set output n's action to be a default LFO
+output[n]()              -- call the output table to start the action- starts the LFO
+
+output[n]( lfo() )       -- shortcut to set the action and start immediately
+A small set of actions are included (from asllib.lua):
+
+lfo( time, level, shape )           -- low frequency oscillator
+pulse( time, level, polarity )      -- trigger / gate generator
+ramp( time, skew, level )           -- triangle LFO with skew between sawtooth and ramp shapes
+ar( attack, release, level, shape ) -- attack-release envelope, retriggerable
+adsr( attack, decay, sustain, release, shape ) -- ADSR envelope
+oscillate( freq, level, shape)      -- audio rate oscillator
+Actions can take ‘directives’ to control them. The adsr action needs a false directive in order to enter the release phase:
+
+output[1].action = adsr()
+output[1]( true )  -- start attack phase and pause at sustain
+output[1]( true )  -- re-start attack phase from the current location
+output[1]( false ) -- enter release phase
+Default Values
+Unless specified at invocation, each action argument has the following default values:
+
+lfo
+  -- time: 1
+  -- level: 5
+  -- shape: 'sine'
+
+pulse
+  -- time: 0.01
+  -- level: 5
+  -- polarity: 1
+  
+ramp
+  -- time: 1
+  -- skew: 0.25
+  -- level: 5
+  
+ar
+  -- attack: 0.05
+  -- release: 0.5
+  -- level: 7
+  -- shape: 'log'
+  
+adsr
+  -- attack: 0.05
+  -- decay: 0.3
+  -- sustain: 2
+  -- release: 2
+  -- shape: 'linear'
+
+oscillate
+  -- freq: 1
+  -- level: 5
+  -- shape: 'sine'
+done Event
+Assign a function to be executed when an ASL action is completed:
+
+output[1].done = function() print 'done!' end
+ASL
+The actions above are implemented using the ASL mini-language. You can write your own action functions to further customize your scripts.
+
+-- a basic triangle lfo
+
+function lfo( time, level )
+    return loop{ to(  level, time/2 )
+               , to( -level, time/2 )
+               }
+end
+Everything is built on the primitive to( destination, time, shape ) which takes a destination and time pair (and optional shape), sending the output along a gradient. ASL is just some syntax to tie these short trips into a journey.
+
+-- an ASL is composed of a sequence of 'to' calls in a table
+myjourney = { to(1,1), to(2,2), to(3,3,'log') }
+
+-- often clearer as a vertical sequence
+myjourney = { to(1,1)
+            , to(2,2)
+            , to(3,3,'log')
+            }
+
+-- assign to an output and put it in motion
+output[1]( myjourney )
+shape types for to’s third parameter are listed above.
+
+ASL provides some constructs for doing musical things:
+
+loop{ <asl> } -- when the sequence is complete, start again
+held{ <asl> } -- freeze at end of sequence until a false or 'release' directive
+lock{ <asl> } -- ignore all directives until the sequence is complete
+times( count, { <asl> } ) -- repeat the sequence `count` times
+
+-- 2 lower-level constructs are also available:
+asl._if( pred, { <asl> } ) -- only execute the sequence if `pred` is true
+asl._while( pred, { <asl> } ) -- `loop` the sequence so long as `pred` is true
+Open asllib.lua to see these constructs in use.
+
+dynamic Variables
+ASLs are descriptions not programs, meaning variables are fixed when the ASL is created. An ASL can be unfixed by using dynamic variables. these named variables can be updated by a script or from the REPL, and will be used by the running ASL.
+
+-- a standard lfo
+output[1].action = loop{ to( 1, 1)
+                       , to(-1, 1)
+                       }
+
+-- adding dynamic control of lfo height
+output[1].action = loop{ to( dyn{height = 1}, 1)
+                       , to(-1, 1)
+                       }
+-- dyn.height will now control the rising destination
+output[1].dyn.height = 2 -- rise to 2V
+
+-- arithmetic operations are permitted over dynamics
+-- eg: lfo with dynamic speed control
+output[1].action = loop{ to( 1, dyn{time=1}/2)
+                       , to(-1, dyn{time=1}/2)
+                       }
+-- if multiple dyn's use the same name (eg. time) they will share state
+output[1].dyn.time = 2 -- set the overall LFO time to 2seconds
+In addition to modifying dynamics from a script, or the REPL, one can attach mutations to a dyn. Mutations are applied every time the dynamic is used in the script.
+
+-- ramp lfo, decelerating from 0.1 seconds to infinity
+output[1].action =
+  loop{ to(5, dyn{time=0.1}:step(0.1)) -- step performs addition / subtraction
+      , to(0, 0)
+      }
+-- the lfo will slow down by 0.1 seconds each time it repeats
+output[1].dyn.time = 0.1 -- reset the variable like a normal dyn
+
+-- mutation can be made exponential with 'mul' instead of 'step'
+-- ramp lfo, slowing down by 10% on each repeat
+output[1].action =
+  loop{ to(5, dyn{time=0.1}:mul(1.1)) -- mul performs multiplication
+      , to(0, 0)
+      }
+
+-- to create looping patterns, one can 'wrap' the values into a range
+-- when the ramp reaches 5seconds long, it will reset to 0.1 seconds
+output[1].action =
+  loop{ to(5, dyn{time=0.1}:step(0.1):wrap(0.1,5))
+      , to(0, 0)
+      }
+
+-- 'wrap' can be used without 'step' or 'mul' to ensure a dynamic stays in range
+output[1].action =
+  loop{ to(5, dyn{time=0.1}:wrap(0.1,2))
+      , to(0, 0)
+      }
+output[1].dyn.time = 0.5 -- sets dyn.time to 0.5
+output[1].dyn.time = 2.1 -- wraps dyn.time to 0.2
+-- reference usage
+dyn{k=v}
+  :step(inc) -- add 'inc' to the dynamic value on each access
+  :mul(factor) -- multiply the dynamic value by 'factor' on each access
+  :wrap(min, max) -- wrap the dynamic value into the range from min to max
+sequins
+Please see sequins details for a full tutorial.
+
+sequins are Lua tables with associated behavior. The sequins library is designed for building sequencers and arpeggiators with short scripts.
+
+seq = sequins{1,2,3} -- create a sequins of 3 values, and save it as seq
+_ = seq() --> returns the next value from the sequins
+    -- eg. the first 4 seq() calls result in: 1, 2, 3, 1
+
+-- it is idiomatic to alias 'sequins' with the letter 's' when in use
+s = sequins
+
+-- any datatype is allowed
+fnseq  = s{lfo, ar, pulse}
+strseq = s{'+', '-', '*', '/'}
+tabseq = s{ {1,2,3}, {4,5,6} } -- the whole table will be returned as the value
+
+-- the 'step' that occurs on each call can be changed from the default of +1
+seq = s{1,2,3,4,5}         -- seq() --> 1,2,3,4,5,1,...
+seq = s{1,2,3,4,5}:step(2) -- seq() --> 1,3,5,2,4,1,...
+    -- note how 'step' is "method chained" onto the sequins
+
+-- while it's typical to apply these method chains at initialization, they can be built up sequentially
+seq = s{1,2,3,4,5} -- defaults to step(1)
+seq:step(2)        -- modifies seq, changing to step(2)
+
+-- current active index can be set and queried
+seq:select(n) -- at the next seq(), index n will be selected & returned
+_ = seq.ix    -- value of the index can be queried directly
+
+-- sequins elements can be modified like normal tables
+seq[n] = _ -- update the value of table index n
+_ = seq[n] -- access the value of the nth element of the sequins
+
+-- to change the whole table (including changing the length of the sequins)
+seq:settable(new_table) -- preserves current index
+
+-- sequins can be nested in sequins (good for arranging melodies)
+seq = s{1, 2, s{3, 4}}
+    -- by default the behaviour will take only one value from the nested sequins at a time
+    -- eg: seq() --> 1, 2, 3, 1, 2, 4 ...
+modifiers
+To enable more complex arrangement, the standard interleaved flow of nested sequins can be modified. Modifications are applied as ‘method chains’ operating over a sequins object.
+
+When calling a sequins object it will always return a result. When a flow-modifier doesn’t return a value (eg. every(2) only returns a value every second time), the outer-sequins will simply request the next value immediately until a value is returned.
+
+-- flow-modifiers that might return a value, or might skip
+seq:every(n)   -- produce a value every nth call
+seq:times(n)   -- only produce a value the first n times it's called
+
+-- flow-modifiers that will capture focus
+-- these are 'greedy' modifiers, keeping the spotlight on them
+seq:count(n) -- produce n values in a row without letting other sequins give a value
+seq:all()    -- like count(#self), returns all values of seq before returning 
+
+-- with nested sequins, you can restart the arrangement
+seq:reset() -- resets all flow-modifiers as well as table indices
+sequins Strings
+If you want to sequence through a string of characters, sequins has a shortcut for that:
+
+seq = sequins{'a', 'b', 'c', 'd'} -- normal style
+seq = sequins"abcd" -- string-style
+sequins Transformers
+Transformers attach a function to your sequins. Whenever a value is taken from the sequins it will first be transformed by the attached map function:
+
+seq = sequins{0,4,7,10}:map(function(n) return n/12 end) -- outputs voltages instead of notes
+
+-- a single arithmetic operation like above can be done with the operator shortcut
+seq = sequins{0,4,7,10}/12
+
+-- you can chain a second sequence to the right of your operation
+seq = sequins{0,4,7,10} + sequins{0,12,24}
+
+-- cancel the active transformer with an empty :map() call
+seq:map()
+The map transformer can be any Lua function. The function will be passed the next sequins value as its argument, and must return a new value in its place.
+
+Copying and Baking
+You can make a complete copy of sequins with the :copy() method, or you can ‘resample’ the sequins values with bake:
+
+seq = sequins{1,1,2,3,5,8}
+
+-- make a direct copy which duplicates any flow modifiers & transformers
+copy = seq:copy()
+
+-- bake the next 16 values from seq into a new sequins called cookie.
+-- note that all flow-modifiers & transformers no longer apply to the baked sequins
+cookie = seq:bake(16) -- argument selects number of values to sample
+sequins Helpers
+seq = sequins{1,2,3}
+
+-- pretty-print
+print(seq) --> s[1]{1,2,3}. prints the current data & running state of the sequins
+
+-- length operator
+#seq --> 3. if using nested sequins, each nest counts for 1 element
+
+-- peek
+seq:peek() -- returns the current value, without advancing the sequins.
+
+metro
+crow has 8 metros, each able to run at its own timebase and trigger a defined event. metros are best used when you want a fixed action to occur at a regular interval.
+
+-- start a timer that prints a number every second, counting up each time
+
+metro[1].event = function(c) print(c) end
+metro[1].time  = 1.0
+metro[1]:start()
+-- create a metro with the name 'mycounter' which calls 'count_event'
+
+function count_event(count)
+    -- do something fun!
+end
+
+mycounter = metro.init{ event = count_event
+                      , time  = 2.0
+                      , count = -1 -- nb: -1 is 'forever'
+                      }
+
+mycounter:start() -- begin mycounter
+mycounter:stop()  -- stop mycounter
+-- update params while the timer is running like so:
+
+metro[1].event = a_different_function
+mycounter.time = 0.1
+clock
+The clock system facilitates various time-based functionality: repeating functions, synchronizing multiple functions, delaying functions. clock is preferable to metro when synchronizing to the global timebase, or for irregular time intervals.
+
+clocks work by running a function in a ‘coroutine’. These functions are special because they can call clock.sleep(seconds) and clock.sync(beats) to pause execution, but are otherwise just normal functions. To run a special clock function, you don’t call it like a normal function, but instead pass it to clock.run which manages the coroutine for you.
+
+coro_id = clock.run(func [, args]) -- run function "func", and optional [args] get passed
+                                   --   to the function "func"
+                                   -- (optionally) save coroutine id as "coro_id" so it can be cancelled
+clock.cancel(coro_id)              -- cancel a clock started by clock.run (requires coro_id)
+clock.sleep(seconds)               -- sleep specified time (in seconds)
+clock.sync(beats)                  -- sleep until next sync at intervals "beats" (ie, 1/4)
+clock.cleanup()                    -- kill all currently-running clocks
+Tempo and Timing
+clock.tempo = t           -- assign clock tempo to t beats-per-minute
+_ = clock.tempo           -- get tempo value (BPM)
+_ = clock.get_beats       -- get count of beats since the clock started
+_ = clock.get_beat_sec    -- get the length of a beat in seconds
+crow’s clock can also be driven by one of crow’s inputs using the ‘clock’ input mode. In this mode, setting clock.tempo has no effect, but the current input tempo can be queried with clock.tempo.
+
+The clock can be stopped & started, and events can occur when doing either. The clock starts running when crow awakens. Note start/stopping the clock does not affect clock.sleep calls.
+
+clock.start( [beat] )     -- start clock (optional: start counting from 'beat')
+clock.stop()              -- stop clock
+
+clock.transport.start = start_handler -- assign a function to be called when the clock starts
+clock.transport.stop = stop_handler   -- assign a function to be called when the clock stops
+Looping example script:
+
+-- looping example script
+
+function init()
+  x = 0
+  clock.run(forever) -- start a clock which will run the forever function
+end
+
+function forever()
+  while true do -- this will loop forever
+    x = x + 1
+    clock.sleep(0.1) -- waits for 100ms before the next loop
+  end
+end
+One-shot example script:
+
+-- one-shot example script
+
+function init()
+  output[2].action = adsr()
+  dur = 0.6 -- how many seconds should the sustain phase last?
+end
+
+function note_on()
+  clock.run(oneshot, dur) -- start a 'oneshot' clock and pass it duration as an argument
+end
+
+function oneshot(seconds)
+  output[2](true) -- start attack phase, pause at sustain
+  clock.sleep(seconds) -- hold for time interval specified by 'dur'
+  output[2](false) -- start release phase
+end
+delay
+delay takes a function and executes it in the future. By default it is only executed once, but can optionally be repeated. delay is the most basic of the timing systems, ideally used when simply delaying execution of an action. For more complex time management, use metro or clock.
+
+NOTE: if using delay and metro simultaneously, metros must be initialized with metro.init and not directly indexed.
+
+delay( action, time, [repeats] ) -- delays execution of action (a function)
+                                 -- by time (in seconds)
+                                 -- (optional) repeat the delay action repeats times
+timeline
+Please see timeline details for a full tutorial.
+
+Create rhythmic loops, long-form scores, or sequences of timed events. A timeline is written as a table of times and events. There are 3 modes each with their own uses & specifics.
+
+:loop
+Create a :loop by writing the duration of an event, and providing a function to do the action. You can have any number of duration-event pairs in the table:
+
+t1 = timeline.loop{duration, event, duration, event ...}
+
+-- looping can be conditional with :unless
+t2 = timeline.loop{1, kick, 2, snare}:unless(function() input[1].volts > 2 end)
+
+-- the loop can run a fixed number of repetitions with :times
+t3 = timeline.loop{0.55, hihat, 0.45, hihat}:times(16)
+:score
+A :score uses ‘timestamps’ written in beats. Tt will only run one time.
+
+t4 = timeline.score{0, intro, 32, verse}
+
+-- the score can be looped with the 'reset' message
+t5 = timeline.score{0, intro, 32, verse, 64, 'reset'}
+
+-- the 'reset' message can also be returned from a function
+t6 = timeline.score{ 0, intro
+                   , 32, verse
+                   , 64, function() if math.random() > 0.5 then return 'reset' end}
+:real
+Sequence in :realtime, where timestamps are written in absolute seconds:
+
+t7 = timeline.real{0, note_1, 0.33 note_2, 0.5 note_3}
+
+-- reals can also be 'reset'
+t8 = timeline.real{0, note_1, 0.33 note_2, 0.5 note_3, 1.2, 'reset'}
+timeline Control
+All timelines start immediately, unless you use the :queue() pre-method. You can then :play() the timeline to begin. :stop() will immediately halt a running timeline, and a subsequent :play() will restart a timeline whether it is currently playing or stopped.
+
+tt = timeline.queue:loop{2, kick, 2, snare} -- won't start!
+tt:play() -- begins the queued timeline
+
+tt:stop() -- halts the tt loop
+tt:play() -- restarts the tt loop
+Before beginning playback, all timelines will wait until the next launch-quantization tick. This defaults to 1 (akin to clock.sync(1)), but can be modified globally, or on a per-timeline basis:
+
+-- quantize this timeline to the next multiple of 8 beats
+tt = timeline.launch(8):loop{2, kick, 2, snare}
+
+-- disable launch quantization for *all* timelines
+timeline.launch_default = 0
+All running timelines can be forcibly stopped, though this also stops any running clock routines:
+
+timeline.cleanup()
+Function Tables & sequins
+The events in a timeline are typically functions, but you can also provide a table where the first element is a function, and later elements are arguments to that function. Every time the event is called, the function will be re-evaluated with the provided arguments:
+
+-- print 'boop!' every beat
+tt = timeline.loop{1, {print, "boop!"}}
+Both times and arguments in a function-table can be provided as sequins. Each time the line is executed any sequins will be called, advancing them to the next value:
+
+-- play a rhythmic arpeggio via just friends over ii
+tt = timeline.loop{sequins{3,3,2}, {ii.jf.play_note, sequins{0,4,7,11}/12, 2}}
+hotswap
+Please see hotswap details for a full tutorial.
+
+hotswap is a special table where you can place your sequins & timelines. If you re-assign an existing element of this table, hotswap will maintain the current playback position. ideal for live-coding:
+
+-- the sequins is overwritten, but the playhead is preserved
+hotswap.seq = sequins{1,2,3}
+hotswap.seq() --> 1
+hotswap.seq() --> 2
+hotswap.seq = sequins{4,5,6,7}
+hotswap.seq() --> 6
+
+-- this timeline continues running with the timing & notes being updated as it plays
+hotswap.tt = timeline.loop{sequins{3,3,2}, {ii.jf.play_note, sequins{0,4,7,11}/12, 2}}
+hotswap.tt = timeline.loop{sequins{3,2,2,1}, {ii.jf.play_note, sequins{0,4,7,10}/12, 2}}
+hotswap.tt = timeline.loop{sequins{3,2,3}, {ii.jf.play_note, sequins{0,3,7,10}/12, 2}}
+ii
+crow has functions for leading most available ii devices:
+
+ii.help()          -- prints a list of supported ii devices
+ii.<device>.help() -- prints available functions for <device>
+When leading the ii bus, you can send commands, or query values:
+
+-- mydevice is the name of the recipient, eg: 'jf' in ii.jf.play_note()
+
+-- commands
+ii.mydevice.command( [args] ) -- 'command' will be changed to eg: play_note
+
+-- queries
+ii.mydevice.get('param' [, args]) -- asks device to send back the value of 'param'
+-- the get function does not return a value, instead it will raise an event (see below).
+
+-- response to query. triggered by .get('param')
+ii.mydevice.event = function(e, value) ... end
+  -- e is a table of metadata matching your .get request:
+    -- 'name':   the 'param' name. same as the first argument to the .get 
+    -- 'arg':    the first argument sent to the .get
+    -- 'device': the number of the ii device (usually 1, see below)
+  -- value is the actual response to .get
+-- example usage
+ii.jf.event = function(e, value)
+  if e.name == 'ramp' then
+    print('ramp is '..value)
+  end
+end
+ii.jf.get 'ramp' -- will trigger the above .event function
+ii.jf.trigger(1, 1)   -- sets just friends' 1st trigger to the on state
+Generally ii arguments corresponding to pitch, are specified in volts (like input and output), times are specified in seconds (like .slew and ASL). other parameters use regular numbers.
+
+Duplicate ii Devices
+Multiple ii devices of the same type are supported (eg. txi, er301, jf):
+
+ii.txi[1].get('param',1) -- get the first param of the first device
+ii.txi[2].get('param',1) -- get the first param of the second device
+
+ii.txi.event( e, value ) -- 'e' is a table of: { name, device, arg }
+    if e.name == 'param' then
+        print('txi[' .. e.device .. '][' .. e.arg .. ']=' .. value)
+        -- prints: txi[1][1]=1.0
+        --         txi[2][1]=3.2
+    end
+end
+Raw ii Access
+If you are working with an unsupported ii device, or you are developing a new device that will support ii, you can use the ii.raw functions:
+
+-- both set & get commands are sent using ii.raw
+ii.raw(addr, bytes [, rx_len])
+  -- addr:   i2c address as an int, typically in hex (eg. 0x70)
+  -- bytes:  bytestring of the message (eg. '\x09\x00\x00\x20')
+  -- rx_len: (optional, default 0) number of response bytes to read
+
+-- capture responses with event_raw
+ii.event_raw = function(addr, cmd, data)
+  -- NOTE: *all* ii events pass through this function, so you must match on your desired address
+  if addr == 0x70 then
+    -- handle your custom event here
+    return true -- if you don't return true, this event will also be processed by the normal ii system (raising an error)
+  end
+end
+Setting the ii Address
+If you have more than one crow on your ii bus, you can set each device (up to 4) to have its own unique address:
+
+print(ii.address) --> prints 1 by default, but can be 1-4
+ii.address = 2    -- set this crow to address 2
+Now you can communicate to the devices explicitly with square-bracket syntax:
+
+ii.crow[1].volts(1,2.9) -- set output[1] on crow[1] to 2.9V
+ii.crow[2].volts(1,4.2) -- set output[1] on crow[2] to 4.2V
+ii Advanced Settings
+crow runs the ii bus at a modest speed to ensure maximum stability and reliability. If you are sending a huge amount of information on the ii bus and need more speed (about 4x) you can use:
+
+ii.fastmode( state ) -- turns on (true) or off (false, default) the maximum speed transmission.
+crow provides the necessary pullup current for the ii bus. These are on by default and should probably stay on. If you have some reason to turn them off you can do so with:
+
+ii.pullup( state ) -- turns on (true, default) or off (false)
+Just Friends
+For a long-form description of the i2c relationship between crow + Just Friends, please see the extended reference.
+
+public
+public variables are the automatic method for exposing crow variables to a connected USB host device. public variables are kept synchronized across both devices, and may be modified by either device.
+
+-- create a public variable 'name' and set it to 'init_value'
+public{name = init_value}
+    -- equivalent to: public.name = init_value
+
+-- on crow, the variable can be used like a normal variable in a table
+public.name = 'jin' -- set public.name to the value 'jin'
+_ = public.name     -- get the value of public.name --> 'jin'
+
+-- public variables can be most normal lua types:
+public{mynum = 33}
+public{mystring = 'hello'}
+public{mytable = {1,2,3}} -- 'flat' tables are supported
+
+-- *no functions, coroutines, or nested-tables (ie tables within tables)*
+
+-- sequins are supported, but only the first layer (no nested sequins)
+-- this is enough for making a traditional step-sequencer public
+public{myseq = s{1,2,3,4}}
+public.myseq() -- get the next value from the sequins
+    -- remote hosts (eg norns) can support changing the 'playhead'
+Metadata can be attached to public variables, informing a remote device how that value should be modified. it allows support for explicit datatypes, number ranges, options, and actions that are called when a value is remotely updated.
+
+-- declare a range so a remote host won't allow out-of-bounds values
+public{volts = 0}:range(-5, 10) -- limit voltage to crow's hardware range
+public.volts = 20 -- 20 will be clamped down to 10
+
+-- types can be 'hinted' by crow, but relies on USB host to implement
+-- see documentation for the USB host to see which types are supported
+-- below are examples from norns
+public{seconds = 1}:range{0.001, 10}:type('exp') -- use exponential scaling
+public{count = 0}:type('int') -- force steps to be in integer multiples
+
+-- special types can be used for other data
+public{readonly = 'hello'}:type('@') -- @ stops the host changing the value
+public{readint = 22}:type('@int') -- @ can be prepended to other types, for eg readonly-integer
+public{myslide = 0}:range{-5,10}:type('slider') -- draws myslide with a visual slider
+
+-- options are variables that can be one of a set of possibilities
+-- option types are also known as 'enumerated' types
+-- list of options must be a list of strings
+public{myopt = '+'}:options{'+', '-', '*', '/'}
+_ = public.myopt --> returns the string '+'
+public.myopt = '*' --> set the value with the string (not an index)
+public.myopt = '%' --> IGNORED: the value is not an option, so ignored
+
+-- an action can be triggered when a variable is remotely updated from the host
+-- this is very useful when you need to set hardware i/o or timers
+public{speed = 1.0}:action( update_speed ) -- call update_speed whenever changed
+function update_speed(value) -- value is passed in by the action
+  metro[1].time = value
+end
+.view
+public.view is a special set of public parameters that keep a remote device informed of the state of the input and output jacks. Transmission is heavily throttled to reduce USB overhead.
+
+-- (optional) argument is true/false for on/off. no arg activates view.
+public.view.all( [state] )       -- set state of all input & output views
+public.view.input[n]( [state] )  -- set state of nth input view
+public.view.output[n]( [state] ) -- set state of nth output view
+Discovery + Synchronization
+When implementing public support on a USB host, these functions enable automated discovery & synchronization of variables.
+
+-- remote fns to be called by remote host, not a crow userscript
+public.discover() -- print a list of all declared public vars to the console
+    -- terminated with the key '_end'
+public.update(name, value [, subkey])
+    -- equivalent to 'public.name = value' but also triggers any 'action'
+    -- (optional) 3rd argument allows table updates --> public.name[subkey] = value
+Note for norns scripting: remember to prepend norns. when using the above functions. example: norns.crow.public.discover()
+
+cal
+crow has hardware to enable self-calibration of the CV inputs & outputs. The calibration procedure is run at the workshop, so it’s unlikely you’ll need to use these features in a script.
+
+Below are the building blocks for building your own calibration system. The official calibration script is located here.
+
+cal.save()       -- save current calibration to flash
+cal.source(chan) -- configures output->input multiplexer
+
+_ = cal.input[n].offset   -- get input offset
+_ = cal.input[n].scale    -- get input scale
+cal.input[n].offset = _   -- set input offset
+cal.input[n].scale = _    -- set input scale
+_ = cal.output[n].offset  -- get output offset
+_ = cal.output[n].scale   -- get output scale
+cal.output[n].offset = _  -- set output offset
+cal.output[n].scale = _   -- set output scale
+Random Values
+Please see random details for a full explanation.
+
+Random values are available via the math.random function. These values are truly random and generated by analog hardware.
+
+math.random() -- a floating point value between 0.0 and 1.0
+math.random(max) -- an integer from 1 to max inclusive
+math.random(min,max) -- an integer from min to max inclusive
+Pseudo-random values are also available via math.srandom. The syntax is identical to math.random but can be “seeded” first (hence the name seeded-random):
+
+math.srandomseed(math.random() * 2^31) -- seed the generator with a truly random number
+math.srandom() -- a pseudo-random number between 0.0 and 1.0
+
+-- curating seeds lets you do fun & repeatable sequences
+math.srandomseed(42) -- creates a magic sequence
+math.srandomseed(unique_id()) -- creates a sequence specific to your crow's hardware
+Other Globals
+-- deactivate input modes, zero outputs and slews, and free all metros
+-- equivalent to restarting crow, but supresses any active userscript
+crow.reset()
+tell( event, <args> ) -> ^^event(arg1, ...) -- send a formatted message to host
+quote(...) -- returns a string-representation of it's arguments
+  -- the string is a reconstructed lua chunk, that can be loaded as lua
+  -- primarily useful for sending lua tables to a USB host with tell()
+_, _, _ = unique_id() -- returns 3 numbers unique to each crow
+  -- the first number is the most unique, and will likely be unique
+  -- use all 3 if you need to ensure uniqueness between crows
+time() -- returns a count of milliseconds since crow was turned on
+cputime() -- prints a count of main loops per dsp block. higher == lower cpu
+justvolts(fraction [, offset]) -- convert a just ratio to it's volt-per-octave representation
+  -- fraction can be a single ratio, or a table of ratios
+  -- in case of a table, a new table of voltages is returned
+  -- (optional) offset shifts the results by a just ratio (ie transposition)
+  
+just12(fraction [, offset]) -- same as justvolts, but output is in '12TET' semitone form
+
+hztovolts(freq [, reference]) -- convert a frequency to a voltage
+  -- default reference is middle-C == 0V
+  -- (optional) reference is the frequency that will be referenced as 0V

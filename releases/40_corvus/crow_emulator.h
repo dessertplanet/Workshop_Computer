@@ -75,9 +75,37 @@ private:
     float output_block[4][CROW_BLOCK_SIZE];   // 4 output channels
     int block_position;                        // Current position in block (0-31)
     
+    // Per-output scale / quantization configuration (only outputs 3 & 4 used)
+    struct CrowScale {
+        bool    enabled;
+        uint8_t mod;          // divisions per octave (e.g. 12)
+        float   scaling;      // volts per octave (default 1.0)
+        uint8_t count;        // number of degrees
+        float   degrees[16];  // degree indices (0..mod-1)
+        uint8_t last_midi;
+        bool    last_midi_valid;
+    };
+    CrowScale scale_cfg[4]; // indices 2 & 3 (logical outs 3 & 4) are quantized
+
+    // Output clock / gate generation state
+    struct OutputClock {
+        bool  enabled;
+        float period_s;
+        float width_s;
+        float phase_s;
+        bool  saved_quant_enabled; // prior quantization enabled state for channels 2/3
+    };
+    OutputClock output_clock[4];
+    
 public:
     // Static pointer for multicore callback (public for error handling bridge)
     static CrowEmulator* instance;
+
+    // Output full-scale voltage definitions (all outputs currently ±6V)
+    static constexpr float CROW_AUDIO_FULLSCALE_VOLTS = 6.0f;
+    static constexpr float CROW_CV_FULLSCALE_VOLTS    = 6.0f;
+    static constexpr float CROW_FULLSCALE_VOLTS       = 6.0f; // unified alias
+
     CrowEmulator();
     
     // Audio processing methods (overrides ComputerCard::ProcessSample)
@@ -123,7 +151,15 @@ public:
     int16_t crow_to_computercard_value(float crow_volts);
     float crow_get_input(int channel);
     void crow_set_output(int channel, float volts);
+    // Scale / quantization control
+    void disable_output_scale(int channel);
+    void set_output_scale(int channel, const float* degrees, int count, int mod, float scaling);
+    bool output_scale_enabled(int channel) const { return (channel>=0 && channel<4) ? scale_cfg[channel].enabled : false; }
     void crow_hardware_update();
+
+    // Clock mode control
+    void set_output_clock(int channel, float period_s, float width_s);
+    void clear_output_clock(int channel);
     
     // Phase 5: Status LED and error handling methods
     void update_status_leds();

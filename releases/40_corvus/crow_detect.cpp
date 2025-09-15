@@ -5,6 +5,122 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Detection event queue implementation */
+#define DETECT_EVENT_QUEUE_SIZE 64
+static detect_event_t detect_event_queue[DETECT_EVENT_QUEUE_SIZE];
+static volatile uint8_t detect_event_head = 0; // write position
+static volatile uint8_t detect_event_tail = 0; // read position
+
+static inline void detect_event_push(uint8_t ch, detect_event_type_t type,
+                                     float a, float b, float c, float d) {
+    uint8_t next = (uint8_t)((detect_event_head + 1) % DETECT_EVENT_QUEUE_SIZE);
+    if (next == detect_event_tail) {
+        // Overflow: drop oldest by advancing tail (overwrite policy)
+        detect_event_tail = (uint8_t)((detect_event_tail + 1) % DETECT_EVENT_QUEUE_SIZE);
+    }
+    detect_event_t *e = &detect_event_queue[detect_event_head];
+    e->channel = ch;
+    e->type = (uint8_t)type;
+    e->a = a; e->b = b; e->c = c; e->d = d;
+    detect_event_head = next;
+}
+
+/* Drain events on Core 1 (Lua side) */
+void crow_detect_drain_events(lua_State* L) {
+    if (!L) return;
+    while (detect_event_tail != detect_event_head) {
+        detect_event_t *e = &detect_event_queue[detect_event_tail];
+        detect_event_tail = (uint8_t)((detect_event_tail + 1) % DETECT_EVENT_QUEUE_SIZE);
+
+        // Lua stack usage: fetch input table and handler
+        lua_getglobal(L, "input");
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            continue;
+        }
+        lua_rawgeti(L, -1, e->channel); // input[channel]
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 2);
+            continue;
+        }
+
+        const char* handler_name = nullptr;
+        int nargs = 0;
+        switch ((detect_event_type_t)e->type) {
+            case DETECT_EVENT_STREAM:
+                handler_name = "stream";
+                break;
+            case DETECT_EVENT_CHANGE:
+                handler_name = "change";
+                break;
+            case DETECT_EVENT_WINDOW:
+                handler_name = "window";
+                break;
+            case DETECT_EVENT_SCALE:
+                handler_name = "scale";
+                break;
+            case DETECT_EVENT_VOLUME:
+                handler_name = "volume";
+                break;
+            case DETECT_EVENT_PEAK:
+                handler_name = "peak";
+                break;
+            case DETECT_EVENT_FREQ:
+                handler_name = "freq";
+                break;
+            case DETECT_EVENT_CLOCK:
+                handler_name = "clock";
+                break;
+            default:
+                break;
+        }
+
+        if (handler_name) {
+            lua_getfield(L, -1, handler_name);
+            if (lua_isfunction(L, -1)) {
+                // Push arguments per event type
+                switch ((detect_event_type_t)e->type) {
+                    case DETECT_EVENT_STREAM:
+                        lua_pushnumber(L, e->a); nargs = 1; break;
+                    case DETECT_EVENT_CHANGE:
+                        lua_pushinteger(L, (lua_Integer)e->a); nargs = 1; break;
+                    case DETECT_EVENT_WINDOW:
+                        lua_pushinteger(L, (lua_Integer)e->a); // window index
+                        lua_pushinteger(L, (lua_Integer)e->b); // direction
+                        nargs = 2; break;
+                    case DETECT_EVENT_SCALE:
+                        // index, octave, note, volts
+                        lua_pushinteger(L, (lua_Integer)e->a);
+                        lua_pushinteger(L, (lua_Integer)e->b);
+                        lua_pushnumber(L, e->c);
+                        lua_pushnumber(L, e->d);
+                        nargs = 4; break;
+                    case DETECT_EVENT_VOLUME:
+                        lua_pushnumber(L, e->a); nargs = 1; break;
+                    case DETECT_EVENT_PEAK:
+                        nargs = 0; break;
+                    case DETECT_EVENT_FREQ:
+                        lua_pushnumber(L, e->a); nargs = 1; break;
+                    case DETECT_EVENT_CLOCK:
+                        lua_pushnumber(L, e->a); // bpm
+                        lua_pushnumber(L, e->b); // period seconds
+                        nargs = 2; break;
+                    default:
+                        nargs = 0; break;
+                }
+                if (lua_pcall(L, nargs, 0, 0) != LUA_OK) {
+                    // On error, pop error message
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1); // non-function handler
+            }
+        }
+        // Pop input[channel] and input table
+        lua_pop(L, 2);
+    }
+}
+
 // Include wrEvent for enhanced detection
 extern "C" {
 #include "wrEvent.h"
@@ -13,8 +129,9 @@ extern "C" {
 // Global detection system state
 static uint8_t channel_count = 0;
 static crow_detect_t* detectors = nullptr;
+static uint64_t g_detect_sample_counter = 0;
 
-// Forward declarations for detection mode functions
+ // Forward declarations for detection mode functions
 static void d_none(crow_detect_t* self, float level);
 static void d_stream(crow_detect_t* self, float level);
 static void d_change(crow_detect_t* self, float level);
@@ -23,6 +140,7 @@ static void d_scale(crow_detect_t* self, float level);
 static void d_volume(crow_detect_t* self, float level);
 static void d_peak(crow_detect_t* self, float level);
 static void d_freq(crow_detect_t* self, float level);
+static void d_clock(crow_detect_t* self, float level);
 
 // Helper function for scale bounds calculation
 static void scale_bounds(crow_detect_t* self, int ix, int oct);
@@ -120,6 +238,9 @@ void crow_detect_process_block(float* input_blocks[4], int block_size) {
         if (det->modefn == d_change && det->wrEvent_extractor) {
             // Process entire block through wrEvent for optimal performance
             for (int sample = 0; sample < block_size; sample++) {
+                if (i == 0) {
+                    g_detect_sample_counter++;
+                }
                 float input_volts = input_block[sample];
                 det->modefn(det, input_volts);
                 det->last = input_volts;
@@ -127,6 +248,9 @@ void crow_detect_process_block(float* input_blocks[4], int block_size) {
         } else {
             // Standard per-sample processing within the block
             for (int sample = 0; sample < block_size; sample++) {
+                if (i == 0) {
+                    g_detect_sample_counter++;
+                }
                 float input_volts = input_block[sample];
                 det->modefn(det, input_volts);
                 det->last = input_volts;
@@ -266,6 +390,22 @@ void crow_detect_freq(crow_detect_t* self, Detect_callback_t cb, float interval)
         
         // TODO: Initialize frequency tracking if needed
     }
+}
+
+void crow_detect_clock(crow_detect_t* self, Detect_callback_t cb, float threshold,
+                       float hysteresis, float min_period_s) {
+    self->modefn = d_clock;
+    self->action = cb;
+    self->clock.threshold = threshold;
+    self->clock.hysteresis = hysteresis;
+    if (min_period_s <= 0.0f) min_period_s = 0.01f; // safeguard (max 6000 BPM)
+    self->clock.min_gap_samples = (uint32_t)(min_period_s * 48000.0f + 0.5f);
+    if (self->clock.min_gap_samples < 24) self->clock.min_gap_samples = 24;
+    self->clock.armed = 0;
+    self->clock.last_edge_sample = 0;
+    self->clock.last_period_s = 0.0f;
+    self->clock.last_bpm = 0.0f;
+    self->clock.smooth_bpm = 0.0f;
 }
 
 ///////////////////////////////////////////
@@ -441,13 +581,10 @@ static void d_peak(crow_detect_t* self, float level) {
 
 static void d_freq(crow_detect_t* self, float level) {
     // Basic frequency tracking using zero-crossing detection
-    // Note: Advanced frequency tracking could use wrEvent's FFT capabilities
-    
     static float last_level = 0.0f;
     static uint32_t zero_crossings = 0;
     static uint32_t sample_count = 0;
     
-    // Simple zero-crossing detection
     if ((last_level < 0.0f && level >= 0.0f) || (last_level >= 0.0f && level < 0.0f)) {
         zero_crossings++;
     }
@@ -456,22 +593,47 @@ static void d_freq(crow_detect_t* self, float level) {
     last_level = level;
     
     if (--self->stream.countdown <= 0) {
-        self->stream.countdown = self->stream.blocks; // Reset counter
-        
-        // Calculate frequency from zero crossings
+        self->stream.countdown = self->stream.blocks;
         float freq = 0.0f;
         if (zero_crossings > 1 && sample_count > 0) {
-            // Frequency = (crossings / 2) / (sample_count / sample_rate)
             freq = ((float)zero_crossings * 0.5f * 48000.0f) / (float)sample_count;
         }
-        
-        // Reset counters
         zero_crossings = 0;
         sample_count = 0;
-        
         if (self->action) {
             self->action(self->channel, freq);
         }
+    }
+}
+
+static void d_clock(crow_detect_t* self, float level) {
+    detect_clock_t* c = &self->clock;
+    // Arm when sufficiently below threshold
+    if (!c->armed) {
+        if (level < (c->threshold - c->hysteresis)) {
+            c->armed = 1;
+        }
+        return;
+    }
+    // Trigger on rising crossing
+    if (level > (c->threshold + c->hysteresis)) {
+        uint64_t now = g_detect_sample_counter;
+        if (c->last_edge_sample != 0) {
+            uint64_t diff = now - c->last_edge_sample;
+            if (diff >= c->min_gap_samples) {
+                float period_s = (float)diff / 48000.0f;
+                float bpm = (period_s > 0.0f) ? (60.0f / period_s) : 0.0f;
+                c->last_period_s = period_s;
+                c->last_bpm = bpm;
+                if (c->smooth_bpm == 0.0f) c->smooth_bpm = bpm;
+                else c->smooth_bpm = 0.2f * bpm + 0.8f * c->smooth_bpm;
+                if (self->action) {
+                    self->action(self->channel, 0.0f);
+                }
+            }
+        }
+        c->last_edge_sample = now;
+        c->armed = 0;
     }
 }
 
@@ -624,12 +786,37 @@ extern "C" int set_input_freq(lua_State* L) {
     return 0;
 }
 
+extern "C" int set_input_clock(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1) - 1; // 0-based
+    float threshold = luaL_checknumber(L, 2);
+    float hysteresis = luaL_optnumber(L, 3, 0.1f);
+    float min_period = luaL_optnumber(L, 4, 0.02f);
+    
+    crow_detect_t* det = crow_detect_get_channel(channel);
+    if (det) {
+        auto callback = [](int ch, float val) {
+            detect_clock_t* c = &crow_detect_get_channel(ch)->clock;
+            float bpm_out = (c->smooth_bpm > 0.0f) ? c->smooth_bpm : c->last_bpm;
+            clock_handler(ch + 1, bpm_out, c->last_period_s);
+        };
+        crow_detect_clock(det, callback, threshold, hysteresis, min_period);
+    }
+    return 0;
+}
+
 extern "C" int io_get_input(lua_State* L) {
     int channel = luaL_checkinteger(L, 1) - 1; // Convert to 0-based
-    
-    // TODO: Get actual input voltage from hardware
-    // For now, return 0
-    lua_pushnumber(L, 0.0f);
+    if (channel < 0 || channel >= CROW_DETECT_CHANNELS) {
+        lua_pushnumber(L, 0.0f);
+        return 1;
+    }
+    extern ComputerCard* g_computer_card;
+    float volts = 0.0f;
+    if (g_computer_card) {
+        CrowEmulator* crow_emu = static_cast<CrowEmulator*>(g_computer_card);
+        volts = crow_emu->crow_get_input(channel);
+    }
+    lua_pushnumber(L, volts);
     return 1;
 }
 
@@ -637,37 +824,33 @@ extern "C" int io_get_input(lua_State* L) {
 // Callback handlers (called from detection system, call into Lua)
 
 extern "C" void stream_handler(int channel, float value) {
-    // TODO: Call into Lua input[channel].stream handler
-    printf("Stream handler: channel %d, value %f\n", channel, value);
+    detect_event_push((uint8_t)channel, DETECT_EVENT_STREAM, value, 0, 0, 0);
 }
 
 extern "C" void change_handler(int channel, int state) {
-    // TODO: Call into Lua input[channel].change handler  
-    printf("Change handler: channel %d, state %d\n", channel, state);
+    detect_event_push((uint8_t)channel, DETECT_EVENT_CHANGE, (float)state, 0, 0, 0);
 }
 
 extern "C" void window_handler(int channel, int win, int direction) {
-    // TODO: Call into Lua input[channel].window handler
-    printf("Window handler: channel %d, window %d, direction %d\n", channel, win, direction);
+    detect_event_push((uint8_t)channel, DETECT_EVENT_WINDOW, (float)win, (float)direction, 0, 0);
 }
 
 extern "C" void scale_handler(int channel, int index, int octave, float note, float volts) {
-    // TODO: Call into Lua input[channel].scale handler
-    printf("Scale handler: channel %d, index %d, octave %d, note %f, volts %f\n", 
-           channel, index, octave, note, volts);
+    detect_event_push((uint8_t)channel, DETECT_EVENT_SCALE, (float)index, (float)octave, note, volts);
 }
 
 extern "C" void volume_handler(int channel, float level) {
-    // TODO: Call into Lua input[channel].volume handler
-    printf("Volume handler: channel %d, level %f\n", channel, level);
+    detect_event_push((uint8_t)channel, DETECT_EVENT_VOLUME, level, 0, 0, 0);
 }
 
 extern "C" void peak_handler(int channel) {
-    // TODO: Call into Lua input[channel].peak handler
-    printf("Peak handler: channel %d\n", channel);
+    detect_event_push((uint8_t)channel, DETECT_EVENT_PEAK, 0, 0, 0, 0);
 }
 
 extern "C" void freq_handler(int channel, float freq) {
-    // TODO: Call into Lua input[channel].freq handler
-    printf("Freq handler: channel %d, freq %f\n", channel, freq);
+    detect_event_push((uint8_t)channel, DETECT_EVENT_FREQ, freq, 0, 0, 0);
+}
+
+extern "C" void clock_handler(int channel, float bpm, float period) {
+    detect_event_push((uint8_t)channel, DETECT_EVENT_CLOCK, bpm, period, 0, 0);
 }

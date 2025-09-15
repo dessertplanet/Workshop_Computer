@@ -166,5 +166,17 @@ end
 -- Start monitoring
 monitor_inputs()
 
+-- Clock Detection Example (not part of automated pass/fail)
+print("\n--- Clock Detection Example ---")
+print("Configuring input 1 for clock detection. Provide a periodic gate or square wave > threshold.")
+
+input[1].clock = function(bpm, period)
+    print(string.format("Clock event on input 1: BPM=%.2f Period=%.4f s", bpm, period))
+end
+
+-- Arguments: channel, threshold (V), hysteresis (V), minimum period (s)
+-- threshold=1.0V, hysteresis=0.1V, ignore periods shorter than 20ms (>=50Hz)
+set_input_clock(1, 1.0, 0.1, 0.02)
+
 print("\nDetection system test completed. Monitor output for real-time detection events.")
 print("You can manually test by connecting CV sources to inputs 1 and 2.")

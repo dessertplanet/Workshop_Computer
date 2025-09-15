@@ -48,6 +48,26 @@ CrowEmulator::CrowEmulator() :
     // Initialize error handling system
     crow_error_init();
     
+    // Initialize scale / quantization structures
+    for (int i = 0; i < 4; i++) {
+        scale_cfg[i].enabled = false;
+        scale_cfg[i].mod = 12;
+        scale_cfg[i].scaling = 1.0f;
+        scale_cfg[i].count = 0;
+        for (int d = 0; d < 16; d++) scale_cfg[i].degrees[d] = 0.0f;
+        scale_cfg[i].last_midi = 60;
+        scale_cfg[i].last_midi_valid = false;
+    }
+
+    // Initialize clock mode structures
+    for (int i = 0; i < 4; i++) {
+        output_clock[i].enabled = false;
+        output_clock[i].period_s = 0.5f;
+        output_clock[i].width_s = 0.01f;
+        output_clock[i].phase_s = 0.0f;
+        output_clock[i].saved_quant_enabled = false;
+    }
+    
     // Initialize crow emulation
     crow_init();
 }
@@ -78,10 +98,12 @@ void CrowEmulator::ProcessSample()
     crow_set_output(2, output_block[2][output_index]);  // Output 3 → CVOut1
     crow_set_output(3, output_block[3][output_index]);  // Output 4 → CVOut2
     
-    // For now, also pass through audio inputs to outputs for testing
+#ifdef CROW_DEBUG_AUDIO_PASSTHRU
+    // Debug passthrough: mirror inputs to outputs 1 & 2
     AudioOut1(AudioIn1());
     AudioOut2(AudioIn2());
-    
+#endif
+
     // Phase 5: Simple status LED management using ComputerCard methods
     update_status_leds();
 }
@@ -125,19 +147,42 @@ void CrowEmulator::ProcessBlock()
     crow_hardware_update();
     
     // Get Lua output values from Core 1 via multicore communication
+    bool volts_changed[4] = {false,false,false,false};
     for (int ch = 0; ch < 4; ch++) {
         float volts;
         bool volts_new, trigger;
         if (crow_multicore_get_lua_output(ch, &volts, &volts_new, &trigger)) {
             if (volts_new) {
+                volts_changed[ch] = true;
                 // Fill entire block with the new voltage value
                 for (int i = 0; i < CROW_BLOCK_SIZE; i++) {
                     output_block[ch][i] = volts;
                 }
             }
-        } else {
-            // No new value, keep slopes output
-            // output_block already contains slopes output from above
+        }
+        // else keep slopes output
+    }
+
+    // Auto-cancel clock if user explicitly set volts this block
+    for (int ch = 0; ch < 4; ch++) {
+        if (volts_changed[ch] && output_clock[ch].enabled) {
+            clear_output_clock(ch);
+        }
+    }
+
+    // Apply clock gating (overrides everything else while active)
+    const float sample_time = 1.0f / 48000.0f;
+    for (int ch = 0; ch < 4; ch++) {
+        if (!output_clock[ch].enabled) continue;
+        auto &clk = output_clock[ch];
+        for (int i = 0; i < CROW_BLOCK_SIZE; i++) {
+            // Gate high if within width window
+            float gate = (clk.phase_s < clk.width_s) ? 5.0f : 0.0f;
+            output_block[ch][i] = gate;
+            clk.phase_s += sample_time;
+            if (clk.phase_s >= clk.period_s) {
+                clk.phase_s -= clk.period_s;
+            }
         }
     }
     
@@ -562,31 +607,24 @@ void CrowEmulator::RunCrowEmulator()
 
 float CrowEmulator::computercard_to_crow_volts(int16_t cc_value)
 {
-    // ComputerCard uses ±2048 range for ±6V
-    static constexpr float CC_RANGE_VOLTS = 6.0f;      // ±6V range
-    static constexpr float CC_RANGE_VALUES = 4096.0f;  // ±2048 = 4096 total range
-    static constexpr float VOLTS_PER_VALUE = CC_RANGE_VOLTS / CC_RANGE_VALUES;
-    
-    return cc_value * VOLTS_PER_VALUE;
+    // Map signed 12-bit style range (-2048..2047) to ±CROW_FULLSCALE_VOLTS
+    return (cc_value / 2048.0f) * CROW_FULLSCALE_VOLTS;
 }
 
 int16_t CrowEmulator::crow_to_computercard_value(float crow_volts)
 {
-    // ComputerCard uses ±2048 range for ±6V
-    static constexpr float CC_RANGE_VOLTS = 6.0f;      // ±6V range
-    static constexpr float CC_RANGE_VALUES = 4096.0f;  // ±2048 = 4096 total range
-    static constexpr float VALUES_PER_VOLT = CC_RANGE_VALUES / CC_RANGE_VOLTS;
-    
-    // Clamp to valid range
-    if (crow_volts > 6.0f) crow_volts = 6.0f;
-    if (crow_volts < -6.0f) crow_volts = -6.0f;
-    
-    int16_t result = (int16_t)(crow_volts * VALUES_PER_VOLT);
-    
-    // Clamp to ±2047 (12-bit signed range)
+    // Clamp to full-scale range
+    if (crow_volts > CROW_FULLSCALE_VOLTS) crow_volts = CROW_FULLSCALE_VOLTS;
+    if (crow_volts < -CROW_FULLSCALE_VOLTS) crow_volts = -CROW_FULLSCALE_VOLTS;
+
+    // Normalize and scale to signed 12-bit style range (-2048..2047)
+    float normalized = crow_volts / CROW_FULLSCALE_VOLTS; // -1..1
+    int16_t result = (int16_t)(normalized * 2048.0f);
+
+    // Clamp to valid bounds
     if (result > 2047) result = 2047;
     if (result < -2048) result = -2048;
-    
+
     return result;
 }
 
@@ -606,18 +644,96 @@ float CrowEmulator::crow_get_input(int channel)
 
 void CrowEmulator::crow_set_output(int channel, float volts)
 {
-    // Map crow output channels to ComputerCard outputs
-    // channel 0 → AudioOut1, channel 1 → AudioOut2
-    // channel 2 → CVOut1, channel 3 → CVOut2
-    int16_t cc_value = crow_to_computercard_value(volts);
-    
-    switch (channel) {
-        case 0: AudioOut1(cc_value); break;
-        case 1: AudioOut2(cc_value); break;
-        case 2: CVOut1(cc_value); break;
-        case 3: CVOut2(cc_value); break;
-        default: break; // Invalid channel
+    // Channels 0 & 1: always continuous audio outputs
+    if (channel == 0 || channel == 1) {
+        int16_t cc_value = crow_to_computercard_value(volts);
+        if (channel == 0) AudioOut1(cc_value);
+        else AudioOut2(cc_value);
+        return;
     }
+    
+    // Channels 2 & 3: optional quantization via scale_cfg
+    if (channel == 2 || channel == 3) {
+        CrowScale &cfg = scale_cfg[channel];
+        if (cfg.enabled && cfg.count > 0 && cfg.mod > 0) {
+            // Convert volts to MIDI float (0V -> 60)
+            float midi_f = 60.0f + (volts * 12.0f / cfg.scaling);
+            if (midi_f < 0.0f) midi_f = 0.0f;
+            if (midi_f > 127.0f) midi_f = 127.0f;
+            
+            // Derive octave + degree within mod
+            int octave = (int)std::floor(midi_f / cfg.mod);
+            float degree_f = midi_f - (float)(octave * cfg.mod);
+            
+            // Find nearest degree in cfg.degrees
+            float best_deg = cfg.degrees[0];
+            float best_err = fabsf(degree_f - best_deg);
+            for (uint8_t i = 1; i < cfg.count; i++) {
+                float err = fabsf(degree_f - cfg.degrees[i]);
+                if (err < best_err) {
+                    best_err = err;
+                    best_deg = cfg.degrees[i];
+                }
+            }
+            float quant_midi_f = (float)(octave * cfg.mod) + best_deg;
+            if (quant_midi_f < 0.0f) quant_midi_f = 0.0f;
+            if (quant_midi_f > 127.0f) quant_midi_f = 127.0f;
+            uint8_t quant_midi = (uint8_t)(quant_midi_f + 0.5f);
+            
+            // Avoid redundant hardware writes
+            if (!cfg.last_midi_valid || quant_midi != cfg.last_midi) {
+                if (channel == 2) {
+                    CVOut1MIDINote(quant_midi);
+                } else {
+                    CVOut2MIDINote(quant_midi);
+                }
+                cfg.last_midi = quant_midi;
+                cfg.last_midi_valid = true;
+            }
+            return;
+        } else {
+            // Pass-through continuous calibrated CV (uncalibrated path uses raw scaling)
+            int16_t cc_value = crow_to_computercard_value(volts);
+            if (channel == 2) CVOut1(cc_value);
+            else CVOut2(cc_value);
+            return;
+        }
+    }
+}
+
+void CrowEmulator::disable_output_scale(int channel)
+{
+    if (channel < 0 || channel >= 4) return;
+    scale_cfg[channel].enabled = false;
+    scale_cfg[channel].count = 0;
+    scale_cfg[channel].last_midi_valid = false;
+}
+
+void CrowEmulator::set_output_scale(int channel, const float* degrees, int count, int mod, float scaling)
+{
+    if (channel < 0 || channel >= 4) return;
+    if (channel < 2) {
+        // Only allow scaling on calibrated CV outputs (logical 3 & 4)
+        return;
+    }
+    CrowScale &cfg = scale_cfg[channel];
+    if (count <= 0 || mod <= 0) {
+        disable_output_scale(channel);
+        return;
+    }
+    if (count > 16) count = 16;
+    cfg.enabled = true;
+    cfg.mod = (mod > 0 && mod < 64) ? (uint8_t)mod : 12;
+    cfg.scaling = (scaling <= 0.0f) ? 1.0f : scaling;
+    cfg.count = (uint8_t)count;
+    for (int i = 0; i < count; i++) {
+        // Clamp degree into [0, mod)
+        float d = degrees[i];
+        if (d < 0.0f) d = 0.0f;
+        if (d >= cfg.mod) d = (float)(cfg.mod - 1);
+        cfg.degrees[i] = d;
+    }
+    cfg.last_midi_valid = false; // force re-write
 }
 
 void CrowEmulator::crow_hardware_update()
@@ -628,6 +744,49 @@ void CrowEmulator::crow_hardware_update()
     // - Input change detection
     // - Output ramping/smoothing
     // - Hardware calibration
+}
+
+// Clock mode control --------------------------------------------------------
+
+void CrowEmulator::set_output_clock(int channel, float period_s, float width_s)
+{
+    if (channel < 0 || channel >= 4) return;
+    if (period_s <= 0.0f) period_s = 0.5f;
+    if (period_s < 0.001f) period_s = 0.001f; // clamp minimum period (1 kHz)
+    if (width_s <= 0.0f) width_s = 0.01f;
+    if (width_s >= period_s) width_s = period_s * 0.1f;
+    if (width_s > period_s * 0.5f) width_s = period_s * 0.5f;
+
+    OutputClock &clk = output_clock[channel];
+
+    // Save & bypass quantization for calibrated outputs (channels 2 & 3)
+    if (!clk.enabled && (channel == 2 || channel == 3)) {
+        clk.saved_quant_enabled = scale_cfg[channel].enabled;
+        if (scale_cfg[channel].enabled) {
+            scale_cfg[channel].enabled = false;      // bypass quant during clock
+            scale_cfg[channel].last_midi_valid = false;
+        }
+    }
+
+    clk.enabled = true;
+    clk.period_s = period_s;
+    clk.width_s = width_s;
+    clk.phase_s = 0.0f;
+}
+
+void CrowEmulator::clear_output_clock(int channel)
+{
+    if (channel < 0 || channel >= 4) return;
+    OutputClock &clk = output_clock[channel];
+    if (!clk.enabled) return;
+
+    // Restore quantization state for calibrated outputs if previously enabled
+    if ((channel == 2 || channel == 3) && clk.saved_quant_enabled) {
+        scale_cfg[channel].enabled = true;
+        scale_cfg[channel].last_midi_valid = false; // force re-write
+    }
+
+    clk.enabled = false;
 }
 
 // Phase 5: Simple status LED management using ComputerCard methods

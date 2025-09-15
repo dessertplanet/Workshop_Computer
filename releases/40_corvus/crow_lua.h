@@ -65,10 +65,16 @@ public:
     
     // State queries
     bool is_initialized() const { return lua_initialized; }
+
+    // Expose raw lua_State for subsystems (detection event drain)
+    lua_State* raw_state() { return L; }
 };
 
 // Global instance (singleton pattern for cross-core access)
 extern CrowLua* g_crow_lua;
+
+// Accessor for subsystems needing lua_State*
+lua_State* crow_lua_get_state();
 
 // C-style interface for core 1 access
 extern "C" {

@@ -8,8 +8,18 @@
 #include <cstdio>
 #include "pico/time.h"
 
+/* Added detection event drain integration */
+#include "crow_detect.h"
+
 // Global instance
 CrowLua* g_crow_lua = nullptr;
+
+lua_State* crow_lua_get_state() {
+    if (g_crow_lua && g_crow_lua->is_initialized()) {
+        return g_crow_lua->raw_state();
+    }
+    return nullptr;
+}
 
 // C functions accessible to lua (metro system)
 static int crow_lua_metro_start(lua_State *L) {
@@ -78,6 +88,88 @@ static int crow_lua_computer_card_unique_id(lua_State *L) {
 }
 
 // Crow lua globals - simplified single environment matching real crow
+static int crow_lua_set_output_scale(lua_State *L) {
+    int nargs = lua_gettop(L);
+    if (nargs < 2) {
+        return luaL_error(L, "set_output_scale(channel, table|'none' [, mod [, scaling]])");
+    }
+    int channel = (int)luaL_checkinteger(L, 1); // 1-based from Lua
+    if (channel < 1 || channel > 4) {
+        return luaL_error(L, "channel out of range");
+    }
+    // Handle 'none'
+    if (lua_isstring(L, 2)) {
+        const char *s = lua_tostring(L, 2);
+        if (strcmp(s, "none") == 0) {
+            if (g_crow_emulator) g_crow_emulator->disable_output_scale(channel - 1);
+            lua_settop(L, 0);
+            return 0;
+        }
+        return luaL_error(L, "unknown string argument (expected 'none')");
+    }
+    if (!lua_istable(L, 2)) {
+        return luaL_error(L, "second argument must be table or 'none'");
+    }
+    int tlen = (int)lua_rawlen(L, 2);
+    if (tlen <= 0) {
+        if (g_crow_emulator) g_crow_emulator->disable_output_scale(channel - 1);
+        lua_settop(L, 0);
+        return 0;
+    }
+    if (tlen > 16) tlen = 16;
+    float degrees[16];
+    for (int i = 0; i < tlen; i++) {
+        lua_rawgeti(L, 2, i + 1);
+        degrees[i] = (float)luaL_checknumber(L, -1);
+        lua_pop(L, 1);
+    }
+    int mod = 12;
+    float scaling = 1.0f;
+    if (nargs >= 3 && lua_isnumber(L, 3)) mod = (int)lua_tointeger(L, 3);
+    if (nargs >= 4 && lua_isnumber(L, 4)) scaling = (float)lua_tonumber(L, 4);
+    if (g_crow_emulator) g_crow_emulator->set_output_scale(channel - 1, degrees, tlen, mod, scaling);
+    lua_settop(L, 0);
+    return 0;
+}
+
+// Clock mode C bindings
+static int crow_lua_set_output_clock(lua_State* L) {
+    int nargs = lua_gettop(L);
+    if (nargs < 2) {
+        return luaL_error(L, "set_output_clock(channel, period [, width])");
+    }
+    int channel = (int)luaL_checkinteger(L, 1);
+    if (channel < 1 || channel > 4) {
+        return luaL_error(L, "channel out of range");
+    }
+    float period = (float)luaL_checknumber(L, 2);
+    float width = 0.01f;
+    if (nargs >= 3 && lua_isnumber(L, 3)) {
+        width = (float)lua_tonumber(L, 3);
+    }
+    if (g_crow_emulator) {
+        g_crow_emulator->set_output_clock(channel - 1, period, width);
+    }
+    lua_settop(L, 0);
+    return 0;
+}
+
+static int crow_lua_clear_output_clock(lua_State* L) {
+    int nargs = lua_gettop(L);
+    if (nargs < 1) {
+        return luaL_error(L, "clear_output_clock(channel)");
+    }
+    int channel = (int)luaL_checkinteger(L, 1);
+    if (channel < 1 || channel > 4) {
+        return luaL_error(L, "channel out of range");
+    }
+    if (g_crow_emulator) {
+        g_crow_emulator->clear_output_clock(channel - 1);
+    }
+    lua_settop(L, 0);
+    return 0;
+}
+
 static const char* crow_globals_lua = R"(
 -- Crow globals initialization (single environment like real crow)
 print("Crow Lua initializing...")
@@ -92,33 +184,43 @@ for i = 1, 4 do
         volts = 0,
         _volts_changed = false,
         _trigger = false,
-        
-        -- Crow output functions
-        action = function(self, func) 
+        action = function(self, func)
             if func then self._action = func end
         end,
-        slew = function(self, time, shape)
-            -- TODO: Implement slew rate limiting
-        end,
-        dyn = function(self, ...)
-            -- TODO: Implement dynamics
-        end
+        slew = function(self, time, shape) end,
+        dyn = function(self, ...) end
     }
-    
-    -- Set up metamethods for output[i].volts assignment
+
+    local ch = i
+
     setmetatable(output[i], {
         __newindex = function(t, k, v)
             if k == "volts" then
                 rawset(t, k, v)
                 rawset(t, "_volts_changed", true)
+                return
             elseif k == "action" and type(v) == "function" then
                 rawset(t, "_action", v)
-            else
-                rawset(t, k, v)
+                return
+            elseif k == "scale" then
+                if v == nil or (type(v) == 'string' and v == 'none') or
+                   (type(v) == 'table' and v.degrees == nil and #v == 0) then
+                    set_output_scale(ch, 'none')
+                    rawset(t, k, 'none')
+                    return
+                elseif type(v) == 'table' then
+                    local degrees_tbl = v.degrees or v
+                    local mod = v.mod or v.divs or 12
+                    local scaling = v.scaling or v.vpo or 1.0
+                    set_output_scale(ch, degrees_tbl, mod, scaling)
+                    rawset(t, k, v)
+                    return
+                end
+                return
             end
+            rawset(t, k, v)
         end,
         __call = function(t, ...)
-            -- Allow output[n]() function calls
             local args = {...}
             if #args > 0 then
                 t.volts = args[1]
@@ -126,6 +228,29 @@ for i = 1, 4 do
             return t.volts
         end
     })
+
+    -- Backwards-compatible function form for scale
+    output[i].scale = function(arg, mod, scaling)
+        if type(arg) == 'string' and arg == 'none' then
+            set_output_scale(ch, 'none')
+            return
+        elseif type(arg) == 'table' then
+            set_output_scale(ch, arg, mod or 12, scaling or 1.0)
+            return
+        end
+    end
+
+    -- Clock helpers
+    output[i].clock = function(self, period, width)
+        if type(period) == 'string' and period == 'stop' then
+            clear_output_clock(ch)
+            return
+        end
+        set_output_clock(ch, period, width or 0.01)
+    end
+    output[i].unclock = function(self)
+        clear_output_clock(ch)
+    end
 end
 
 -- Initialize input tables
@@ -135,6 +260,7 @@ for i = 1, 2 do  -- Only inputs 1 and 2 for audio inputs
         _last_volts = 0,
         
         -- Input event handlers
+        -- Assign: input[i].clock = function(bpm, period) ... end  (set_input_clock configures detection)
         change = function(self, func, threshold)
             if func then 
                 self._change_handler = func 
@@ -343,6 +469,9 @@ bool CrowLua::init() {
     lua_register(L, "crow_metro_stop", crow_lua_metro_stop);
     lua_register(L, "crow_metro_set_time", crow_lua_metro_set_time);
     lua_register(L, "computer_card_unique_id", crow_lua_computer_card_unique_id);
+    lua_register(L, "set_output_scale", crow_lua_set_output_scale);
+    lua_register(L, "set_output_clock", crow_lua_set_output_clock);
+    lua_register(L, "clear_output_clock", crow_lua_clear_output_clock);
     
     // Register CASL functions
     lua_register(L, "casl_describe", l_casl_describe);
@@ -361,6 +490,7 @@ bool CrowLua::init() {
     lua_register(L, "set_input_volume", set_input_volume);
     lua_register(L, "set_input_peak", set_input_peak);
     lua_register(L, "set_input_freq", set_input_freq);
+    lua_register(L, "set_input_clock", set_input_clock);
     lua_register(L, "io_get_input", io_get_input);
     
     // Load crow globals
@@ -645,15 +775,21 @@ extern "C" {
         return g_crow_lua->load_user_script(script);
     }
     
-    void crow_lua_process_events() {
-        if (!g_crow_lua) return;
-        
-        uint32_t current_time = to_ms_since_boot(get_absolute_time());
-        g_crow_lua->process_periodic_tasks(current_time);
-        
-        // Call step function (simplified - no per-environment processing)
-        g_crow_lua->call_step();
+void crow_lua_process_events() {
+    if (!g_crow_lua) return;
+
+    uint32_t current_time = to_ms_since_boot(get_absolute_time());
+    g_crow_lua->process_periodic_tasks(current_time);
+
+    // Call step function (simplified - no per-environment processing)
+    g_crow_lua->call_step();
+
+    // Drain any pending detection events (queued on Core 0)
+    lua_State* L = g_crow_lua->raw_state();
+    if (L) {
+        crow_detect_drain_events(L);
     }
+}
     
     void crow_lua_garbage_collect() {
         if (g_crow_lua) {
