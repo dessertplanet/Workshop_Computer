@@ -19,3 +19,6 @@
 [submodule "releases/40_corvus/submodules/wrLib"]
 	path = releases/40_corvus/submodules/wrLib
 	url = https://github.com/whimsicalraps/wrLib.git
+[submodule "releases/40_corvus/submodules/norns"]
+	path = releases/40_corvus/submodules/norns
+	url = https://github.com/monome/norns.git
