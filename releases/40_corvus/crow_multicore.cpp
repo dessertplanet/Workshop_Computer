@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdio>
 #include "pico/time.h"
+#include "hardware/sync.h"  // for memory barriers
 
 // Global shared data
 crow_shared_data_t* g_crow_shared = nullptr;
@@ -181,6 +182,7 @@ bool crow_multicore_get_lua_output(int channel, float* volts, bool* volts_change
         return false;
     }
     
+    __dmb(); // acquire barrier before reading shared data
     if (volts) {
         *volts = g_crow_shared->lua_outputs[channel];
     }
@@ -241,13 +243,17 @@ void crow_multicore_core1_process_block(void) {
             case CROW_MSG_ASL_ACTION:
                 // Forward to ASL system on Core 1
                 crow_asl_action(msg.channel, msg.data.asl.action);
+#ifdef CROW_DEBUG
                 printf("Core 1: ASL action ch=%d action=%d\n", msg.channel, msg.data.asl.action);
+#endif
                 break;
                 
             case CROW_MSG_CASL_ACTION:
                 // Forward to CASL system on Core 1
                 crow_casl_action(msg.channel, msg.data.casl.action);
+#ifdef CROW_DEBUG
                 printf("Core 1: CASL action ch=%d action=%d\n", msg.channel, msg.data.casl.action);
+#endif
                 break;
                 
             case CROW_MSG_BLOCK_SYNC:
@@ -256,7 +262,9 @@ void crow_multicore_core1_process_block(void) {
                 break;
                 
             default:
+#ifdef CROW_DEBUG
                 printf("Core 1: Unknown message type %d\n", msg.type);
+#endif
                 break;
         }
     }
@@ -272,6 +280,7 @@ void crow_multicore_set_lua_output(int channel, float volts, bool changed, bool 
     g_crow_shared->lua_outputs[channel] = volts;
     g_crow_shared->lua_outputs_changed[channel] = changed;
     g_crow_shared->lua_triggers[channel] = trigger;
+    __dmb(); // ensure writes visible to other core
 }
 
 bool crow_multicore_get_input_value(int channel, float* value) {

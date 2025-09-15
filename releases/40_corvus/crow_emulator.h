@@ -57,15 +57,18 @@ private:
     bool multiline_mode;
     
     // Script upload state (Phase 2.2)
+    static constexpr size_t MAX_SCRIPT_SIZE = 8192; // 8KB max script size
     bool script_upload_mode;
-    char* script_upload_buffer;
+    // Fixed-size script upload buffer (eliminate dynamic allocation)
+    char script_upload_buffer[MAX_SCRIPT_SIZE];
+    // Staging buffer for loading scripts from filesystem or flash (replaces dynamic allocations)
+    char script_staging_buffer[MAX_SCRIPT_SIZE];
     size_t script_upload_size;
     size_t script_upload_pos;
     
     // Phase 5: Status LED management using ComputerCard methods
     uint32_t status_led_counter;    // Counter for status LED patterns
     uint32_t error_led_counter;     // Counter for error LED flashing
-    static const size_t MAX_SCRIPT_SIZE = 8192; // 8KB max script size
     
     // Block processing buffers for vector operations
     float input_block[4][CROW_BLOCK_SIZE];    // 4 input channels

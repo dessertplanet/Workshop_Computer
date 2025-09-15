@@ -19,6 +19,12 @@ static void slopes_shaper_v(crow_slope_t* slope, float* out, int block_size);
 static crow_slope_t slopes[CROW_SLOPE_CHANNELS];
 static bool slopes_initialized = false;
 
+// LUT optimization for shaping to reduce per-sample transcendental cost
+#define CROW_SLOPE_LUT_SIZE 256
+static float slope_lut_sine[CROW_SLOPE_LUT_SIZE];
+static float slope_lut_exp[CROW_SLOPE_LUT_SIZE];
+static float slope_lut_log[CROW_SLOPE_LUT_SIZE];
+
 // Math constants
 #define M_PI   3.141592653589793f
 #define M_PI_2 (M_PI/2.0f)
@@ -29,7 +35,9 @@ void crow_slopes_init(void) {
         return;
     }
     
+#ifdef CROW_DEBUG
     printf("Initializing crow slopes system (%d channels)...\n", CROW_SLOPE_CHANNELS);
+#endif
     
     for (int i = 0; i < CROW_SLOPE_CHANNELS; i++) {
         slopes[i].index = i;
@@ -45,8 +53,18 @@ void crow_slopes_init(void) {
         slopes[i].shaped = 0.0f;
     }
     
+    // Build LUTs once
+    for (int i = 0; i < CROW_SLOPE_LUT_SIZE; i++) {
+        float x = (float)i / (float)(CROW_SLOPE_LUT_SIZE - 1);
+        slope_lut_sine[i] = -0.5f * (cosf(M_PI * x) - 1.0f);
+        slope_lut_exp[i]  = powf(2.0f, 10.0f * (x - 1.0f));
+        slope_lut_log[i]  = 1.0f - powf(2.0f, -10.0f * x);
+    }
+
     slopes_initialized = true;
+#ifdef CROW_DEBUG
     printf("Crow slopes system initialized\n");
+#endif
 }
 
 void crow_slopes_deinit(void) {
@@ -87,7 +105,9 @@ float crow_slopes_get_state(int channel) {
 void crow_slopes_toward(int channel, float destination, float ms, 
                        crow_shape_t shape, crow_slope_callback_t callback) {
     if (!slopes_initialized || channel < 0 || channel >= CROW_SLOPE_CHANNELS) {
-        printf("crow_slopes_toward: invalid channel %d\n", channel);
+    #ifdef CROW_DEBUG
+    printf("crow_slopes_toward: invalid channel %d\n", channel);
+#endif
         return;
     }
     
@@ -122,9 +142,11 @@ void crow_slopes_toward(int channel, float destination, float ms,
     slope->delta = 1.0f / slope->countdown;
     slope->here = 0.0f;
     
+#ifdef CROW_DEBUG
     printf("Slope %d: %.3fV -> %.3fV over %.1fms (%s)\n", 
            channel, slope->last, slope->dest, ms, 
            (shape == CROW_SHAPE_Linear) ? "linear" : "shaped");
+#endif
 }
 
 // Get current output voltage for a channel
@@ -144,7 +166,9 @@ void crow_slopes_process_sample(void) {
     
     // NOTE: This function is deprecated in favor of crow_slopes_process_block()
     // which provides 3-5x better performance using vector operations
+#ifdef CROW_DEBUG
     printf("WARNING: Using deprecated per-sample slopes processing\n");
+#endif
     
     for (int i = 0; i < CROW_SLOPE_CHANNELS; i++) {
         crow_slope_t* slope = &slopes[i];
@@ -302,18 +326,48 @@ static void slopes_shaper_v(crow_slope_t* slope, float* out, int block_size) {
     // Apply shape curve using vector operations where possible
     switch (slope->shape) {
         case CROW_SHAPE_Sine:
-            // Apply sine shaping using b_map with function pointer
-            b_map(crow_shape_sine, out, block_size);
+            // LUT-based sine shaping
+            for (int i = 0; i < block_size; i++) {
+                float x = out[i];
+                if (x <= 0.0f) { out[i] = slope_lut_sine[0]; continue; }
+                if (x >= 1.0f) { out[i] = slope_lut_sine[CROW_SLOPE_LUT_SIZE - 1]; continue; }
+                float pos = x * (CROW_SLOPE_LUT_SIZE - 1);
+                int idx = (int)pos;
+                float frac = pos - idx;
+                float a = slope_lut_sine[idx];
+                float b = slope_lut_sine[idx + (idx + 1 < CROW_SLOPE_LUT_SIZE ? 1 : 0)];
+                out[i] = a + (b - a) * frac;
+            }
             break;
             
         case CROW_SHAPE_Log:
-            // Apply log shaping
-            b_map(crow_shape_log, out, block_size);
+            // LUT-based log shaping
+            for (int i = 0; i < block_size; i++) {
+                float x = out[i];
+                if (x <= 0.0f) { out[i] = slope_lut_log[0]; continue; }
+                if (x >= 1.0f) { out[i] = slope_lut_log[CROW_SLOPE_LUT_SIZE - 1]; continue; }
+                float pos = x * (CROW_SLOPE_LUT_SIZE - 1);
+                int idx = (int)pos;
+                float frac = pos - idx;
+                float a = slope_lut_log[idx];
+                float b = slope_lut_log[idx + (idx + 1 < CROW_SLOPE_LUT_SIZE ? 1 : 0)];
+                out[i] = a + (b - a) * frac;
+            }
             break;
             
         case CROW_SHAPE_Expo:
-            // Apply exponential shaping  
-            b_map(crow_shape_exp, out, block_size);
+            // LUT-based exponential shaping
+            for (int i = 0; i < block_size; i++) {
+                float x = out[i];
+                if (x <= 0.0f) { out[i] = slope_lut_exp[0]; continue; }
+                if (x >= 1.0f) { out[i] = slope_lut_exp[CROW_SLOPE_LUT_SIZE - 1]; continue; }
+                float pos = x * (CROW_SLOPE_LUT_SIZE - 1);
+                int idx = (int)pos;
+                float frac = pos - idx;
+                float a = slope_lut_exp[idx];
+                float b = slope_lut_exp[idx + (idx + 1 < CROW_SLOPE_LUT_SIZE ? 1 : 0)];
+                out[i] = a + (b - a) * frac;
+            }
             break;
             
         case CROW_SHAPE_Linear:

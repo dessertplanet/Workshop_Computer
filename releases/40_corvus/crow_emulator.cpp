@@ -28,7 +28,6 @@ CrowEmulator::CrowEmulator() :
     usb_connected(false),
     multiline_mode(false),
     script_upload_mode(false),
-    script_upload_buffer(nullptr),
     script_upload_size(0),
     script_upload_pos(0),
     status_led_counter(0),
@@ -38,11 +37,7 @@ CrowEmulator::CrowEmulator() :
     instance = this;
     memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
     
-    // Allocate script upload buffer
-    script_upload_buffer = new char[MAX_SCRIPT_SIZE];
-    if (!script_upload_buffer) {
-        printf("Failed to allocate script upload buffer\n");
-    }
+    // Script upload buffer now static (no dynamic allocation needed)
     
     // Set global pointer for hardware abstraction
     g_computer_card = this;
@@ -109,18 +104,18 @@ void CrowEmulator::ProcessBlock()
     crow_events_process_all();
     
     // Phase 4.1: Process slopes system with vector operations (stays on Core 0)
-    // Vector processing implementation using wrDsp functions
-    float* slopes_output_blocks[4];
+    // Use stack/static buffers to avoid per-block allocation
+    float slopes_output_blocks[4][CROW_BLOCK_SIZE];
+    float* slopes_output_blocks_ptrs[4];
     for (int ch = 0; ch < 4; ch++) {
-        slopes_output_blocks[ch] = new float[CROW_BLOCK_SIZE];
+        slopes_output_blocks_ptrs[ch] = slopes_output_blocks[ch];
     }
     
-    crow_slopes_process_block(input_blocks, slopes_output_blocks, CROW_BLOCK_SIZE);
+    crow_slopes_process_block(input_blocks, slopes_output_blocks_ptrs, CROW_BLOCK_SIZE);
     
     // Copy slopes output to main output blocks (will be combined with lua outputs later)
     for (int ch = 0; ch < 4; ch++) {
         memcpy(output_block[ch], slopes_output_blocks[ch], CROW_BLOCK_SIZE * sizeof(float));
-        delete[] slopes_output_blocks[ch];
     }
     
     // Phase 4.3.2: Process detection system with vector operations (stays on Core 0)
@@ -437,6 +432,8 @@ void CrowEmulator::core1_main()
     printf("Core 1: Background processing started (USB + ASL + CASL + Lua)\n");
     
     while (true) {
+        // Service TinyUSB (required since CFG_TUSB_OS = NONE)
+        tud_task();
         // Process multicore communication and run background tasks
         crow_multicore_core1_process_block();
         
@@ -490,11 +487,6 @@ void CrowEmulator::core1_main()
 // Script upload management (Phase 2.2)
 void CrowEmulator::start_script_upload()
 {
-    if (!script_upload_buffer) {
-        send_usb_string("!script upload buffer not available");
-        return;
-    }
-    
     script_upload_mode = true;
     script_upload_pos = 0;
     script_upload_size = 0;
@@ -539,7 +531,7 @@ void CrowEmulator::end_script_upload()
 
 bool CrowEmulator::process_script_upload_data(const char* data, size_t length)
 {
-    if (!script_upload_mode || !script_upload_buffer) {
+    if (!script_upload_mode) {
         return false;
     }
     
@@ -736,7 +728,7 @@ void CrowEmulator::handle_print_command()
 
 void CrowEmulator::handle_flash_upload_command()
 {
-    if (!script_upload_buffer || script_upload_pos == 0) {
+    if (script_upload_pos == 0) {
         send_usb_string("!no script to upload to flash");
         return;
     }
@@ -798,24 +790,21 @@ void CrowEmulator::load_default_first_lua()
         long file_size = ftell(first_file);
         fseek(first_file, 0, SEEK_SET);
         
-        if (file_size > 0 && file_size < USER_SCRIPT_SIZE) {
-            char* script_buffer = new char[file_size + 1];
-            if (script_buffer && fread(script_buffer, 1, file_size, first_file) == file_size) {
-                script_buffer[file_size] = '\0';
+        if (file_size > 0 && file_size < USER_SCRIPT_SIZE && file_size < MAX_SCRIPT_SIZE) {
+            if (fread(script_staging_buffer, 1, file_size, first_file) == file_size) {
+                script_staging_buffer[file_size] = '\0';
                 
                 // Load script into lua
-                if (g_crow_lua->load_user_script(script_buffer)) {
+                if (g_crow_lua->load_user_script(script_staging_buffer)) {
                     send_usb_string("first.lua loaded successfully");
                     g_crow_lua->call_init();
                     
                     // Store First.lua in flash for future use
-                    Flash_write_first_script(script_buffer, file_size);
+                    Flash_write_first_script(script_staging_buffer, file_size);
                     printf("First.lua stored in flash (%ld bytes)\n", file_size);
                 } else {
                     send_usb_string("!first.lua compilation error");
                 }
-                
-                delete[] script_buffer;
             }
         }
         fclose(first_file);
@@ -837,14 +826,13 @@ void CrowEmulator::load_flash_script_at_boot()
         if (script_addr && script_len > 0) {
             printf("Loading script from flash (%d bytes)\n", script_len);
             
-            // Create a temporary buffer and copy the script (null-terminate)
-            char* temp_script = new char[script_len + 1];
-            if (temp_script) {
-                memcpy(temp_script, script_addr, script_len);
-                temp_script[script_len] = '\0';
+            // Copy the script into staging buffer (null-terminate)
+            if (script_len < MAX_SCRIPT_SIZE) {
+                memcpy(script_staging_buffer, script_addr, script_len);
+                script_staging_buffer[script_len] = '\0';
                 
                 // Load and execute the script
-                if (g_crow_lua->load_user_script(temp_script)) {
+                if (g_crow_lua->load_user_script(script_staging_buffer)) {
                     printf("Flash script loaded successfully\n");
                     
                     // Call init() function after successful script load
@@ -854,10 +842,8 @@ void CrowEmulator::load_flash_script_at_boot()
                 } else {
                     printf("Flash script compilation failed\n");
                 }
-                
-                delete[] temp_script;
             } else {
-                printf("Failed to allocate memory for flash script\n");
+                printf("Flash script too large (%d bytes)\n", script_len);
             }
         } else {
             printf("Invalid flash script data\n");
