@@ -183,7 +183,7 @@ static int crow_lua_clear_output_clock(lua_State* L) {
     return 0;
 }
 
-static const char* crow_globals_lua = R"(
+static const char* crow_globals_lua = R"lua(
 -- Crow globals initialization (single environment like real crow)
 print("Crow Lua initializing...")
 
@@ -197,16 +197,15 @@ function crow.reset()
     crow_reset()
 end
 
--- Initialize output tables with crow-style interface
+-- Initialize output tables with crow-style interface (matching real crow)
 for i = 1, 4 do
     output[i] = {
-        volts = 0,
-        _volts_changed = false,
-        _trigger = false,
+        channel = i,
+        slew = 0,
+        shape = 'linear',
         action = function(self, func)
             if func then self._action = func end
         end,
-        slew = function(self, time, shape) end,
         dyn = function(self, ...) end
     }
 
@@ -215,8 +214,19 @@ for i = 1, 4 do
     setmetatable(output[i], {
         __newindex = function(t, k, v)
             if k == "volts" then
-                rawset(t, k, v)
-                rawset(t, "_volts_changed", true)
+                -- Real crow behavior: use slew if set, otherwise immediate
+                local slew_time = rawget(t, "slew") or 0
+                local shape = rawget(t, "shape") or "linear"
+                
+                if slew_time > 0 then
+                    -- Use slopes system for slewed transition
+                    slopes_toward(ch, v or 0, slew_time, shape)
+                    print("[DEBUG] Set output[" .. ch .. "].volts = " .. tostring(v) .. " with slew " .. tostring(slew_time) .. "s")
+                else
+                    -- Immediate execution like before
+                    crow_set_output_volts(ch, v or 0)
+                    print("[DEBUG] Set output[" .. ch .. "].volts = " .. tostring(v) .. " (immediate)")
+                end
                 return
             elseif k == "action" and type(v) == "function" then
                 rawset(t, "_action", v)
@@ -238,6 +248,13 @@ for i = 1, 4 do
                 return
             end
             rawset(t, k, v)
+        end,
+        __index = function(t, k)
+            if k == "volts" then
+                -- Get current voltage from hardware like real crow
+                return crow_get_output_volts(ch)
+            end
+            return rawget(t, k)
         end,
         __call = function(t, ...)
             local args = {...}
@@ -504,7 +521,7 @@ if not tell then
   end
 end
 print("Crow Lua globals loaded")
-)";
+)lua";
 
 CrowLua::CrowLua() : 
     L(nullptr),
@@ -536,6 +553,54 @@ bool CrowLua::init() {
     // Open standard libraries
     luaL_openlibs(L);
     
+    // Override print function to send output to USB instead of UART
+    lua_register(L, "usb_print", [](lua_State* L) -> int {
+        int nargs = lua_gettop(L);
+        if (nargs == 0) {
+            if (CrowEmulator::instance) {
+                CrowEmulator::instance->send_usb_string("");
+            }
+            return 0;
+        }
+        
+        // Convert all arguments to strings and concatenate with tabs
+        luaL_Buffer buf;
+        luaL_buffinit(L, &buf);
+        
+        for (int i = 1; i <= nargs; i++) {
+            if (i > 1) {
+                luaL_addstring(&buf, "\t");  // Tab separator like standard print
+            }
+            
+            // Convert to string
+            const char* str;
+            if (lua_isstring(L, i)) {
+                str = lua_tostring(L, i);
+            } else {
+                lua_getglobal(L, "tostring");
+                lua_pushvalue(L, i);
+                lua_call(L, 1, 1);
+                str = lua_tostring(L, -1);
+                lua_pop(L, 1);
+            }
+            
+            if (str) {
+                luaL_addstring(&buf, str);
+            }
+        }
+        
+        luaL_pushresult(&buf);
+        const char* result = lua_tostring(L, -1);
+        
+        // Send to USB
+        if (CrowEmulator::instance && result) {
+            CrowEmulator::instance->send_usb_string(result);
+        }
+        
+        lua_pop(L, 1);  // Remove result string
+        return 0;
+    });
+    
     // Register C functions for lua to call
     lua_register(L, "crow_metro_start", crow_lua_metro_start);
     lua_register(L, "crow_metro_stop", crow_lua_metro_stop);
@@ -554,6 +619,114 @@ bool CrowLua::init() {
     lua_register(L, "casl_setdynamic", l_casl_setdynamic);
     lua_register(L, "casl_getdynamic", l_casl_getdynamic);
     
+    // Debug function to test output state directly
+    lua_register(L, "debug_output", [](lua_State* L) -> int {
+        int nargs = lua_gettop(L);
+        if (nargs < 1) {
+            if (CrowEmulator::instance) {
+                CrowEmulator::instance->send_usb_string("[DEBUG] Usage: debug_output(channel) or debug_output(channel, volts)");
+            }
+            return 0;
+        }
+        
+        int channel = (int)luaL_checkinteger(L, 1);
+        if (channel < 1 || channel > 4) {
+            if (CrowEmulator::instance) {
+                CrowEmulator::instance->send_usb_string("[DEBUG] Channel must be 1-4");
+            }
+            return 0;
+        }
+        
+        if (nargs >= 2) {
+            // Set voltage and force change flag
+            float volts = (float)luaL_checknumber(L, 2);
+            lua_getglobal(L, "output");
+            lua_rawgeti(L, -1, channel);
+            
+            // Set volts and _volts_changed flag manually
+            lua_pushnumber(L, volts);
+            lua_setfield(L, -2, "volts");
+            lua_pushboolean(L, true);
+            lua_setfield(L, -2, "_volts_changed");
+            
+            lua_pop(L, 2); // Clean up stack
+            
+            if (CrowEmulator::instance) {
+                CrowEmulator::instance->send_usb_printf("[DEBUG] Set output[%d].volts = %g, forced _volts_changed = true", channel, volts);
+            }
+        } else {
+            // Check current state
+            lua_getglobal(L, "output");
+            lua_rawgeti(L, -1, channel);
+            
+            lua_getfield(L, -1, "volts");
+            float volts = (float)lua_tonumber(L, -1);
+            lua_pop(L, 1);
+            
+            lua_getfield(L, -1, "_volts_changed");
+            bool changed = lua_toboolean(L, -1);
+            lua_pop(L, 1);
+            
+            lua_pop(L, 2); // Clean up stack
+            
+            if (CrowEmulator::instance) {
+                CrowEmulator::instance->send_usb_printf("[DEBUG] output[%d].volts = %g, _volts_changed = %s", channel, volts, changed ? "true" : "false");
+            }
+        }
+        
+        return 0;
+    });
+    
+    // Add immediate output voltage functions (like real crow)
+    lua_register(L, "crow_set_output_volts", [](lua_State* L) -> int {
+        int channel = (int)luaL_checkinteger(L, 1);
+        float volts = (float)luaL_checknumber(L, 2);
+        
+        if (channel < 1 || channel > 4) {
+            return luaL_error(L, "Channel must be 1-4");
+        }
+        
+        // Set output voltage immediately via CrowEmulator
+        if (g_crow_emulator) {
+            g_crow_emulator->crow_set_output(channel - 1, volts);
+            
+            // Send telemetry immediately like real crow
+            if (CrowEmulator::instance) {
+                CrowEmulator::instance->send_usb_printf("^^output(%d,%g)", channel, volts);
+            }
+        }
+        
+        return 0;
+    });
+    
+    lua_register(L, "crow_get_output_volts", [](lua_State* L) -> int {
+        int channel = (int)luaL_checkinteger(L, 1);
+        
+        if (channel < 1 || channel > 4) {
+            return luaL_error(L, "Channel must be 1-4");
+        }
+        
+        // For now, return 0 - in real crow this would read from LL_get_state
+        // We could implement this by storing the last set voltage
+        lua_pushnumber(L, 0.0f);
+        return 1;
+    });
+    
+    // Register slopes_toward function for slew functionality
+    lua_register(L, "slopes_toward", [](lua_State* L) -> int {
+        int channel = luaL_checkinteger(L, 1) - 1;  // Convert to 0-based
+        float destination = luaL_checknumber(L, 2);
+        float time_s = luaL_checknumber(L, 3);
+        const char* shape_str = luaL_optstring(L, 4, "linear");
+        
+        float time_ms = time_s * 1000.0f;
+        crow_shape_t shape = crow_str_to_shape(shape_str);
+        
+        // No need to clear direct output - using single processing chain like real crow
+        crow_slopes_toward(channel, destination, time_ms, shape, nullptr);
+        return 0;
+    });
+    
     // Register detection system functions
     lua_register(L, "set_input_none", set_input_none);
     lua_register(L, "set_input_stream", set_input_stream);
@@ -565,6 +738,10 @@ bool CrowLua::init() {
     lua_register(L, "set_input_freq", set_input_freq);
     lua_register(L, "set_input_clock", set_input_clock);
     lua_register(L, "io_get_input", io_get_input);
+    
+    // Override global print function to redirect to USB
+    lua_getglobal(L, "usb_print");
+    lua_setglobal(L, "print");
     
     // Load crow globals
     if (luaL_loadbuffer(L, crow_globals_lua, strlen(crow_globals_lua), "crow_globals") != LUA_OK) {

@@ -48,7 +48,8 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/crow_error.cpp
         ${CMAKE_CURRENT_LIST_DIR}/crow_flash.cpp
         ${CMAKE_CURRENT_LIST_DIR}/computer_card_impl.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c)
+        ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
+        ${CMAKE_CURRENT_LIST_DIR}/tusb_callbacks.c)
       target_compile_definitions(${_name} PRIVATE 
         PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
       # Use only UART for stdio to avoid USB descriptor conflicts

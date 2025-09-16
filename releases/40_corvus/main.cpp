@@ -26,15 +26,30 @@ int main()
 {
     stdio_init_all();
 
-    usb_serial_init(); // populate dynamic serial before TinyUSB enumeration
-    
-    // Initialize TinyUSB
-    tusb_init();
-    
     printf("Workshop Computer Crow Emulator\n");
     printf("Initializing...\n");
     
+    // Initialize the emulator first (this launches Core 1)
     CrowEmulator crow_emu;
+    
+    // Allow Core 1 to start up before initializing USB
+    sleep_ms(10);
+    
+    // Initialize USB after Core 1 is ready
+    usb_serial_init(); // populate dynamic serial before TinyUSB enumeration
+    tusb_init();
+    
+    // Give USB time to enumerate before starting audio processing
+    printf("Waiting for USB enumeration...\n");
+    
+    // Service USB task during enumeration period to ensure device is detected
+    for (int i = 0; i < 1000; i++) {
+        tud_task();
+        sleep_ms(1);
+        if (i % 100 == 0) {
+            printf("USB enumeration... %d%%\n", i / 10);
+        }
+    }
     
     printf("Starting crow emulation...\n");
     crow_emu.RunCrowEmulator(); // This calls ProcessSample at 48kHz and never returns

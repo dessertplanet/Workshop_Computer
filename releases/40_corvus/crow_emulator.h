@@ -97,6 +97,10 @@ private:
     };
     OutputClock output_clock[4];
     
+    // Direct output voltage storage for immediate hardware control
+    float direct_output_volts[4];
+    bool direct_output_active[4];
+    
 public:
     // Static pointer for multicore callback (public for error handling bridge)
     static CrowEmulator* instance;
@@ -152,6 +156,8 @@ public:
     int16_t crow_to_computercard_value(float crow_volts);
     float crow_get_input(int channel);
     void crow_set_output(int channel, float volts);
+    void set_hardware_output(int channel, float volts);  // Internal hardware setting method
+    void clear_direct_output(int channel);  // Clear direct output control for slopes
     // Scale / quantization control
     void disable_output_scale(int channel);
     void set_output_scale(int channel, const float* degrees, int count, int mod, float scaling);

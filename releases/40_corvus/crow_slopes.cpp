@@ -1,6 +1,7 @@
 #include "crow_slopes.h"
 #include "crow_lua.h"
 #include "crow_events.h"
+#include "crow_emulator.h"
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
@@ -125,6 +126,14 @@ void crow_slopes_toward(int channel, float destination, float ms,
         slope->scale = 0.0f;
         slope->here = 1.0f;
         slope->countdown = -1.0f; // Inactive
+        
+        // For immediate changes, trigger hardware update directly
+        extern CrowEmulator* g_crow_emulator;
+        printf("[DEBUG] Slopes immediate update ch %d: %.3fV (g_crow_emulator=%s)\n", 
+               channel, slope->shaped, g_crow_emulator ? "valid" : "NULL");
+        if (g_crow_emulator) {
+            g_crow_emulator->set_hardware_output(channel, slope->shaped);
+        }
         
         // Call callback immediately if present
         if (slope->action) {

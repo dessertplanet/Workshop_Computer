@@ -191,16 +191,30 @@ bool crow_multicore_get_lua_output(int channel, float* volts, bool* volts_change
     }
     
     __dmb(); // acquire barrier before reading shared data
+    
+    bool has_change = g_crow_shared->lua_outputs_changed[channel];
+    
     if (volts) {
         *volts = g_crow_shared->lua_outputs[channel];
     }
     if (volts_changed) {
-        *volts_changed = g_crow_shared->lua_outputs_changed[channel];
+        *volts_changed = has_change;
         g_crow_shared->lua_outputs_changed[channel] = false; // Clear flag after reading
     }
     if (trigger) {
         *trigger = g_crow_shared->lua_triggers[channel];
         g_crow_shared->lua_triggers[channel] = false; // Clear trigger after reading
+    }
+    
+    // Debug output to trace multicore communication (throttled to avoid audio glitches)
+    if (has_change && (channel == 2 || channel == 3)) {  // Only debug CV outputs, not audio outputs
+        static uint32_t last_debug_time_get[4] = {0, 0, 0, 0};
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        if (now - last_debug_time_get[channel] > 100) {  // Max 10 messages per second
+            printf("[DEBUG] Multicore Core0<-Core1: ch %d read %.3fV (changed=true)\n", 
+                   channel, g_crow_shared->lua_outputs[channel]);
+            last_debug_time_get[channel] = now;
+        }
     }
     
     return true;
@@ -292,6 +306,16 @@ void crow_multicore_set_lua_output(int channel, float volts, bool changed, bool 
     g_crow_shared->lua_outputs_changed[channel] = changed;
     g_crow_shared->lua_triggers[channel] = trigger;
     CROW_MC_WRITE_BARRIER(); // ensure writes visible to other core
+    
+    // Debug output to trace multicore communication (throttled to avoid audio glitches)
+    if (changed && (channel == 2 || channel == 3)) {  // Only debug CV outputs, not audio outputs
+        static uint32_t last_debug_time[4] = {0, 0, 0, 0};
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        if (now - last_debug_time[channel] > 100) {  // Max 10 messages per second
+            printf("[DEBUG] Multicore Core1->Core0: ch %d set to %.3fV\n", channel, volts);
+            last_debug_time[channel] = now;
+        }
+    }
 }
 
 bool crow_multicore_get_input_value(int channel, float* value) {

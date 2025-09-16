@@ -13,6 +13,10 @@
 #include "crow_events.h"
 #include "crow_multicore.h"
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define DRUID_STREAM_INTERVAL_MS 100
 #define DRUID_INPUT_DELTA_MIN 0.01f
 
@@ -71,6 +75,12 @@ CrowEmulator::CrowEmulator() :
         output_clock[i].saved_quant_enabled = false;
     }
     
+    // Initialize direct output voltage arrays
+    for (int i = 0; i < 4; i++) {
+        direct_output_volts[i] = 0.0f;
+        direct_output_active[i] = false;
+    }
+    
     // Initialize crow emulation
     crow_init();
 }
@@ -95,11 +105,14 @@ void CrowEmulator::ProcessSample()
     // Output the current sample from the output block
     int output_index = (block_position == 0) ? CROW_BLOCK_SIZE - 1 : block_position - 1;
     
-    // Apply outputs using hardware abstraction
-    crow_set_output(0, output_block[0][output_index]);  // Output 1 → AudioOut1
-    crow_set_output(1, output_block[1][output_index]);  // Output 2 → AudioOut2
-    crow_set_output(2, output_block[2][output_index]);  // Output 3 → CVOut1
-    crow_set_output(3, output_block[3][output_index]);  // Output 4 → CVOut2
+    // Apply outputs using hardware abstraction - single processing chain like real crow
+    for (int ch = 0; ch < 4; ch++) {
+        // Use processed block output (no override system - matches real crow architecture)
+        float output_voltage = output_block[ch][output_index];
+        
+        // Set hardware output directly
+        set_hardware_output(ch, output_voltage);
+    }
     
 #ifdef CROW_DEBUG_AUDIO_PASSTHRU
     // Debug passthrough: mirror inputs to outputs 1 & 2
@@ -157,7 +170,7 @@ void CrowEmulator::ProcessBlock()
         if (crow_multicore_get_lua_output(ch, &volts, &volts_new, &trigger)) {
             if (volts_new) {
                 volts_changed[ch] = true;
-                // Fill entire block with the new voltage value
+                // REVERT TO ORIGINAL: Fill entire block with the new voltage value (like before)
                 for (int i = 0; i < CROW_BLOCK_SIZE; i++) {
                     output_block[ch][i] = volts;
                 }
@@ -375,6 +388,18 @@ void CrowEmulator::handle_command(C_cmd_t cmd)
             handle_load_first_command();
             break;
         case C_repl:
+            // Check for debug test command
+            if (strncmp(rx_buffer, "debug_test", 10) == 0) {
+                // Test all print functions
+                printf("DEBUG TEST: printf to console\n");
+                send_usb_string("DEBUG TEST: send_usb_string");
+                send_usb_printf("DEBUG TEST: send_usb_printf with value %d", 42);
+                send_usb_printf("[DEBUG] ProcessBlock test message");
+                send_usb_printf("[DEBUG] Slopes test message");
+                send_usb_printf("[DEBUG] Hardware output test message");
+                return;
+            }
+            
             // Handle lua REPL command
             if (g_crow_lua && g_crow_lua->eval_script(rx_buffer, rx_buffer_pos, "repl")) {
                 // Lua command executed successfully - response already sent via printf
@@ -509,6 +534,8 @@ void CrowEmulator::core1_main()
                 if (g_crow_lua->get_output_volts_and_trigger(ch + 1, &volts, &volts_new, &trigger)) {
                     crow_multicore_set_lua_output(ch, volts, volts_new, trigger);
                     if (volts_new) {
+                        // Send debug message to druid via USB
+                        send_usb_printf("[DEBUG] Output %d changed to %g volts", ch + 1, volts);
                         send_usb_printf("^^output(%d,%g)", ch + 1, volts);
                     }
                 }
@@ -566,8 +593,8 @@ void CrowEmulator::core1_main()
             }
         }
         
-        // Small delay to prevent busy waiting (reduced for better responsiveness)
-        sleep_us(100); // 100 microseconds instead of 1 millisecond
+        // Small delay to prevent busy waiting 
+        sleep_us(1000); // 1 millisecond - slower polling to allow voltage changes to be processed
     }
 }
 
@@ -707,6 +734,23 @@ float CrowEmulator::crow_get_input(int channel)
 
 void CrowEmulator::crow_set_output(int channel, float volts)
 {
+    // Real crow architecture: use slopes system with 0ms time for immediate voltage changes
+    if (channel >= 0 && channel < 4) {
+        // Use slopes system like real crow - 0ms time = immediate
+        crow_slopes_toward(channel, volts, 0.0f, CROW_SHAPE_Linear, nullptr);
+    }
+}
+
+void CrowEmulator::clear_direct_output(int channel)
+{
+    // Clear direct output control to let slopes system take over
+    if (channel >= 0 && channel < 4) {
+        direct_output_active[channel] = false;
+    }
+}
+
+void CrowEmulator::set_hardware_output(int channel, float volts)
+{
     // Channels 0 & 1: always continuous audio outputs
     if (channel == 0 || channel == 1) {
         int16_t cc_value = crow_to_computercard_value(volts);
@@ -715,9 +759,12 @@ void CrowEmulator::crow_set_output(int channel, float volts)
         return;
     }
     
-    // Channels 2 & 3: optional quantization via scale_cfg
+    // Channels 2 & 3: CV outputs with optional quantization
     if (channel == 2 || channel == 3) {
         CrowScale &cfg = scale_cfg[channel];
+        
+        // Debug output removed - was causing audio glitches in real-time thread
+        
         if (cfg.enabled && cfg.count > 0 && cfg.mod > 0) {
             // Convert volts to MIDI float (0V -> 60)
             float midi_f = 60.0f + (volts * 12.0f / cfg.scaling);
@@ -743,6 +790,8 @@ void CrowEmulator::crow_set_output(int channel, float volts)
             if (quant_midi_f > 127.0f) quant_midi_f = 127.0f;
             uint8_t quant_midi = (uint8_t)(quant_midi_f + 0.5f);
             
+            // Debug output removed - was causing audio glitches in real-time thread
+            
             // Avoid redundant hardware writes
             if (!cfg.last_midi_valid || quant_midi != cfg.last_midi) {
                 if (channel == 2) {
@@ -755,10 +804,15 @@ void CrowEmulator::crow_set_output(int channel, float volts)
             }
             return;
         } else {
-            // Pass-through continuous calibrated CV (uncalibrated path uses raw scaling)
+            // Pass-through continuous calibrated CV
             int16_t cc_value = crow_to_computercard_value(volts);
-            if (channel == 2) CVOut1(cc_value);
-            else CVOut2(cc_value);
+            // Debug output removed - was causing audio glitches in real-time thread
+            
+            if (channel == 2) {
+                CVOut1(cc_value);
+            } else {
+                CVOut2(cc_value);
+            }
             return;
         }
     }
@@ -775,10 +829,7 @@ void CrowEmulator::disable_output_scale(int channel)
 void CrowEmulator::set_output_scale(int channel, const float* degrees, int count, int mod, float scaling)
 {
     if (channel < 0 || channel >= 4) return;
-    if (channel < 2) {
-        // Only allow scaling on calibrated CV outputs (logical 3 & 4)
-        return;
-    }
+    // Allow scaling on all outputs, but channels 0,1 will ignore it in set_hardware_output
     CrowScale &cfg = scale_cfg[channel];
     if (count <= 0 || mod <= 0) {
         disable_output_scale(channel);

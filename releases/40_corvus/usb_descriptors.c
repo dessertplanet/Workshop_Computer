@@ -147,7 +147,7 @@ void usb_serial_init(void) {
 char const* string_desc_arr [] =
 {
   (const char[]) { 0x09, 0x04 }, // 0: English (0x0409)
-  "monome",                      // 1: Manufacturer
+  "monome & whimsical raps",     // 1: Manufacturer (matches real crow)
   "crow: telephone line",        // 2: Product
   g_serial_str,                  // 3: Serial number (dynamic)
   "crow CDC",                    // 4: CDC Interface
