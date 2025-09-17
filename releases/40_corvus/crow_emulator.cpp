@@ -422,22 +422,47 @@ void CrowEmulator::process_usb_data()
     
     // If in script upload mode, handle differently
     if (script_upload_mode) {
-        // Scan for upload terminators ^^e (execute) or ^^w (write & execute)
-        for (uint32_t i = 0; i < (count >= 2 ? count - 2 : 0); i++) {
-            if (temp_buffer[i] == '^' && temp_buffer[i + 1] == '^') {
-                char term = temp_buffer[i + 2];
-                if (term == 'e' || term == 'w') {
-                    // Data before sentinel belongs to script
-                    if (i > 0) {
-                        process_script_upload_data(temp_buffer, i);
+        printf("[DEBUG] Upload mode: received %lu bytes\n", count);
+        if (count > 0) {
+            // Print received data for debugging
+            temp_buffer[count] = '\0';
+            printf("[DEBUG] Upload data: '%s'\n", temp_buffer);
+        }
+        
+        // Look for upload terminators ^^e (execute) or ^^w (write & execute)
+        // Need to handle case where terminator might span packet boundaries
+        for (uint32_t i = 0; i < count; i++) {
+            if (temp_buffer[i] == '^') {
+                // Check if we have a complete ^^ sequence
+                if (i + 1 < count && temp_buffer[i + 1] == '^') {
+                    if (i + 2 < count) {
+                        char term = temp_buffer[i + 2];
+                        if (term == 'e' || term == 'w') {
+                            printf("[DEBUG] Found terminator: ^^%c at position %lu\n", term, i);
+                            // Data before sentinel belongs to script
+                            if (i > 0) {
+                                process_script_upload_data(temp_buffer, i);
+                            }
+                            bool persist = (term == 'w');
+                            finalize_script_upload(persist);
+                            return;
+                        }
                     }
-                    bool persist = (term == 'w');
-                    finalize_script_upload(persist);
-                    return;
                 }
             }
         }
-        // No sentinel in this chunk: append all
+        
+        // No complete terminator found - check for partial terminator at end
+        bool has_partial_terminator = false;
+        if (count > 0 && temp_buffer[count - 1] == '^') {
+            has_partial_terminator = true;
+            printf("[DEBUG] Partial terminator detected at end\n");
+        } else if (count > 1 && temp_buffer[count - 2] == '^' && temp_buffer[count - 1] == '^') {
+            has_partial_terminator = true;
+            printf("[DEBUG] Double ^ at end, waiting for command\n");
+        }
+        
+        // Process all data as script content (terminator will be caught next time)
         process_script_upload_data(temp_buffer, count);
         return;
     }
@@ -619,31 +644,43 @@ void CrowEmulator::end_script_upload()
 bool CrowEmulator::process_script_upload_data(const char* data, size_t length)
 {
     if (!script_upload_mode) {
+        printf("[DEBUG] process_script_upload_data called but not in upload mode\n");
         return false;
     }
     
+    printf("[DEBUG] Adding %zu bytes to script buffer (current pos: %zu)\n", length, script_upload_pos);
+    
     // Check if we have space for this data (enforce 8kB limit)
     if (script_upload_pos + length >= MAX_SCRIPT_SIZE) {
+        printf("[DEBUG] Script too long: %zu + %zu >= %d\n", script_upload_pos, length, MAX_SCRIPT_SIZE);
         send_usb_string("!script too long");
         script_upload_mode = false;
         return false;
     }
     
+    // Copy data to buffer
     memcpy(script_upload_buffer + script_upload_pos, data, length);
     script_upload_pos += length;
+    
+    printf("[DEBUG] Script buffer now contains %zu bytes total\n", script_upload_pos);
+    
     return true;
 }
 
 // Unified finalize for ^^e / ^^w
 void CrowEmulator::finalize_script_upload(bool persist)
 {
+    printf("[DEBUG] finalize_script_upload called with persist=%s\n", persist ? "true" : "false");
+    
     if (!script_upload_mode) {
+        printf("[DEBUG] Not in upload mode!\n");
         send_usb_string("!no upload in progress");
         return;
     }
     script_upload_mode = false;
 
     if (script_upload_pos == 0) {
+        printf("[DEBUG] Empty script buffer\n");
         send_usb_string("!empty script");
         script_upload_pos = 0;
         script_upload_size = 0;
@@ -652,32 +689,42 @@ void CrowEmulator::finalize_script_upload(bool persist)
 
     // Null terminate
     script_upload_buffer[script_upload_pos] = '\0';
-    printf("Script upload complete, %zu bytes received\n", script_upload_pos);
+    printf("[DEBUG] Script upload complete, %zu bytes received\n", script_upload_pos);
+    printf("[DEBUG] Script content:\n%s\n[END SCRIPT]\n", script_upload_buffer);
 
     bool compiled = false;
     if (g_crow_lua && g_crow_lua->load_user_script(script_upload_buffer)) {
         compiled = true;
         send_usb_string("script loaded successfully");
+        printf("[DEBUG] Script compiled successfully\n");
         if (g_crow_lua->call_init()) {
-            printf("init() called successfully\n");
+            printf("[DEBUG] init() called successfully\n");
+        } else {
+            printf("[DEBUG] init() call failed or no init() function\n");
         }
     } else {
+        printf("[DEBUG] Script compilation failed\n");
         send_usb_string("!script compilation error");
     }
 
     if (compiled && persist) {
+        printf("[DEBUG] Persisting script to flash\n");
         uint8_t result = Flash_write_user_script(script_upload_buffer, (uint32_t)script_upload_pos);
         if (result == 0) {
             send_usb_string("script saved to flash");
-            printf("Script saved to flash: %zu bytes\n", script_upload_pos);
+            printf("[DEBUG] Script saved to flash: %zu bytes\n", script_upload_pos);
         } else {
             send_usb_string("!flash write error");
-            printf("Flash write failed with error %d\n", result);
+            printf("[DEBUG] Flash write failed with error %d\n", result);
         }
+    } else if (compiled) {
+        printf("[DEBUG] Script compiled but not persisting to flash\n");
     }
 
     if (compiled) {
         send_usb_string("^^ready()");
+    } else {
+        printf("[DEBUG] Script not compiled, not sending ready signal\n");
     }
 
     script_upload_pos = 0;
