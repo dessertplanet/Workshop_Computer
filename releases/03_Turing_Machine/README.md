@@ -10,7 +10,7 @@ Read these notes alongside the [previous version instructions](https://www.music
   - A clock into Pulse 2 overwrites the diviply clock, so you have two independently clocked Turing Machines. In this case Pulse Out 2 simply mirrors Pulse In 2. 
 - **New Editor**: 
   - The web editor has been redesigned to emphasise the two presets accessed with the toggle switch. It now connects to the Workshop Computer using MIDI sysex, which seems more reliable and easier, once MIDI communication has been permitted. Once again, Chrome is the only browser that has been tested, although others may work (Mac Safari does not work).
-  - The [new web editor is here]([https://www.musicthing.co.uk/web_config/turing2.html](https://tomwhitwell.github.io/Turing_Machine_Workshop_Computer/)) or if you access [the old editor](https://www.musicthing.co.uk/web_config/turing.html) it should redirect automatically.  
+  - The [new web editor is here](https://tomwhitwell.github.io/Turing_Machine_Workshop_Computer/) or if you access [the old editor](https://www.musicthing.co.uk/web_config/turing.html) it should redirect automatically.  
   - What can you change in the editor? 
     - Scale: A choice of 7 scales / modes / not sure what they're techincally called
     - Octave range: 1 - 4 Octaves
