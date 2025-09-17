@@ -22,13 +22,13 @@ end
 
 function play(out,ix)
   -- play rhythm
-  if rhythm[ix][ step[ix] ] & 8 == 8 then
+  if rhythm[ix][ step[ix] ] % 16 >= 8 then
     if ix == 1 then set_d(t[ix]) else set_a(t[ix]) end
     t[ix] = 0
     output[out+1]()
   end
   -- set note
-  if rhythm[ix+2][ step[ix+2] ] & 8 == 8 then
+  if rhythm[ix+2][ step[ix+2] ] % 16 >= 8 then
     n1 = notes[ix][ step[ix+2] ]
     n2 = notes[ix][ step[ix] ]
     abs = math.abs(input[2].volts)/5
@@ -51,7 +51,7 @@ end
 sd = 0
 function lcg(seed)
   local s = seed or sd
-  sd = (1103515245*s + 12345) % (1<<31)
+  sd = (1103515245*s + 12345) % 2147483648
   return sd
 end
 

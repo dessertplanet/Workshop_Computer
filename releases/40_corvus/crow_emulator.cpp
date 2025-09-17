@@ -210,6 +210,9 @@ void CrowEmulator::crow_init()
 {
     printf("Initializing Crow Emulator...\n");
     
+    // Initialize flash system first (must be before any flash operations)
+    Flash_init();
+    
     // Initialize lua system on Core 0
     if (!crow_lua_init()) {
         printf("Failed to initialize Lua system\n");
@@ -373,6 +376,7 @@ void CrowEmulator::handle_command(C_cmd_t cmd)
             // TODO: Phase 2 - Kill lua interpreter
             break;
         case C_startupload:
+            printf("[DEBUG] C_startupload command detected\n");
             start_script_upload();
             break;
         case C_endupload:
@@ -419,6 +423,18 @@ void CrowEmulator::process_usb_data()
     
     char temp_buffer[64];
     uint32_t count = tud_cdc_read(temp_buffer, sizeof(temp_buffer) - 1);
+    
+    if (count > 0) {
+        printf("[DEBUG] USB received %lu bytes: ", count);
+        for (uint32_t i = 0; i < count; i++) {
+            if (temp_buffer[i] >= 32 && temp_buffer[i] <= 126) {
+                printf("%c", temp_buffer[i]);
+            } else {
+                printf("[%02X]", (unsigned char)temp_buffer[i]);
+            }
+        }
+        printf("\n");
+    }
     
     // If in script upload mode, handle differently
     if (script_upload_mode) {
@@ -532,6 +548,12 @@ void CrowEmulator::core1_entry()
     }
 }
 
+// C-compatible wrapper for flash operations to restart core 1
+extern "C" void CrowEmulator_core1_entry()
+{
+    CrowEmulator::core1_entry();
+}
+
 void CrowEmulator::core1_main()
 {
     multicore_ready = true;
@@ -627,12 +649,13 @@ void CrowEmulator::core1_main()
 // Script upload management (Phase 2.2)
 void CrowEmulator::start_script_upload()
 {
+    printf("[DEBUG] start_script_upload() called\n");
     script_upload_mode = true;
     script_upload_pos = 0;
     script_upload_size = 0;
     
     send_usb_string("script upload started");
-    printf("Script upload started\n");
+    printf("[DEBUG] Script upload started, mode set to true\n");
 }
 
 void CrowEmulator::end_script_upload()
@@ -692,6 +715,9 @@ void CrowEmulator::finalize_script_upload(bool persist)
     printf("[DEBUG] Script upload complete, %zu bytes received\n", script_upload_pos);
     printf("[DEBUG] Script content:\n%s\n[END SCRIPT]\n", script_upload_buffer);
 
+    // Note: We don't reset the Lua state here because that would interfere with
+    // core1's processing. The Lua system should handle script replacement cleanly.
+
     bool compiled = false;
     if (g_crow_lua && g_crow_lua->load_user_script(script_upload_buffer)) {
         compiled = true;
@@ -709,13 +735,36 @@ void CrowEmulator::finalize_script_upload(bool persist)
 
     if (compiled && persist) {
         printf("[DEBUG] Persisting script to flash\n");
+        printf("[DEBUG] Flash layout valid: %s\n", Flash_layout_valid() ? "true" : "false");
         uint8_t result = Flash_write_user_script(script_upload_buffer, (uint32_t)script_upload_pos);
         if (result == 0) {
             send_usb_string("script saved to flash");
             printf("[DEBUG] Script saved to flash: %zu bytes\n", script_upload_pos);
+            
+            // Immediately verify the flash write
+            printf("[DEBUG] Verifying flash write...\n");
+            USERSCRIPT_t flash_status = Flash_which_user_script();
+            printf("[DEBUG] Flash status after write: %d (0=Default, 1=User, 2=Clear)\n", (int)flash_status);
+            if (flash_status == USERSCRIPT_User) {
+                uint16_t stored_len = Flash_read_user_scriptlen();
+                printf("[DEBUG] Flash stored script length: %d bytes\n", stored_len);
+            }
+            
+            // After flash write (which restarts core1), reload the script to keep it running
+            printf("[DEBUG] Reloading script from flash after multicore restart\n");
+            if (g_crow_lua && g_crow_lua->load_user_script(script_upload_buffer)) {
+                printf("[DEBUG] Script reloaded successfully after flash write\n");
+                if (g_crow_lua->call_init()) {
+                    printf("[DEBUG] init() called successfully after reload\n");
+                }
+            } else {
+                printf("[DEBUG] Failed to reload script after flash write\n");
+                send_usb_string("!script reload error after flash write");
+            }
         } else {
             send_usb_string("!flash write error");
             printf("[DEBUG] Flash write failed with error %d\n", result);
+            compiled = false; // Mark as failed since flash write didn't work
         }
     } else if (compiled) {
         printf("[DEBUG] Script compiled but not persisting to flash\n");
@@ -1017,33 +1066,47 @@ void CrowEmulator::send_error_message(const char* error_msg)
 // Flash command implementations (Phase 7d: Flash Command Integration)
 void CrowEmulator::handle_print_command()
 {
+    printf("[DEBUG] handle_print_command called\n");
     USERSCRIPT_t flash_status = Flash_which_user_script();
+    printf("[DEBUG] Flash status: %d (0=Default, 1=User, 2=Clear)\n", (int)flash_status);
     
     switch (flash_status) {
         case USERSCRIPT_User:
             {
-                char* script_addr = Flash_read_user_scriptaddr();
-                uint16_t script_len = Flash_read_user_scriptlen();
+                // Use a safe buffer instead of direct flash memory access
+                static char print_buffer[USER_SCRIPT_SIZE + 1];
+                printf("[DEBUG] Reading user script from flash...\n");
                 
-                if (script_addr && script_len > 0) {
-                    // Send script content directly (no extra newlines)
+                uint8_t read_result = Flash_read_user_script(print_buffer);
+                printf("[DEBUG] Flash read result: %d (0=success, 1=error)\n", read_result);
+                
+                if (read_result == 0) {
+                    printf("[DEBUG] Successfully read script from flash, sending to USB\n");
+                    // Send script content safely using the same method as send_usb_string
                     if (tud_cdc_connected()) {
-                        tud_cdc_write(script_addr, script_len);
+                        // Use the safe method that other functions use
+                        size_t len = strlen(print_buffer);
+                        tud_cdc_write(print_buffer, len);
                         tud_cdc_write_flush();
+                        printf("[DEBUG] Script content sent to USB (%zu bytes)\n", len);
                     }
                 } else {
+                    printf("[DEBUG] Failed to read script from flash\n");
                     send_usb_string("!flash read error");
                 }
             }
             break;
         case USERSCRIPT_Clear:
+            printf("[DEBUG] Script was cleared, sending cleared message\n");
             send_usb_string("-- script cleared --");
             break;
         case USERSCRIPT_Default:
         default:
+            printf("[DEBUG] No user script found, sending no script message\n");
             send_usb_string("-- no script --");
             break;
     }
+    printf("[DEBUG] handle_print_command completed\n");
 }
 
 void CrowEmulator::handle_flash_upload_command()

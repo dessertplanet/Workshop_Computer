@@ -260,6 +260,28 @@ for i = 1, 4 do
             local args = {...}
             if #args > 0 then
                 t.volts = args[1]
+            else
+                -- No arguments - trigger action if available
+                if t._action and type(t._action) == 'function' then
+                    t._action()
+                elseif t._ar_config then
+                    -- Trigger AR envelope directly
+                    local attack_val = t._ar_config.level
+                    local attack_time = t._ar_config.attack
+                    local release_time = t._ar_config.release
+                    
+                    -- Handle dynamic parameters
+                    if type(attack_time) == 'table' and attack_time.type == 'dyn' then
+                        attack_time = attack_time.value
+                    end
+                    if type(release_time) == 'table' and release_time.type == 'dyn' then 
+                        release_time = release_time.value
+                    end
+                    
+                    -- Trigger AR envelope
+                    slopes_toward(i, attack_val, attack_time, t._ar_config.shape)
+                    print("[DEBUG] AR envelope triggered on output[" .. i .. "] via output[" .. i .. "]()")
+                end
             end
             return t.volts
         end
@@ -294,26 +316,66 @@ for i = 1, 2 do  -- Only inputs 1 and 2 for audio inputs
     input[i] = {
         volts = 0,
         _last_volts = 0,
-        
-        -- Input event handlers
-        -- Assign: input[i].clock = function(bpm, period) ... end  (set_input_clock configures detection)
-        change = function(self, func, threshold)
-            if func then 
-                self._change_handler = func 
-                self._change_threshold = threshold or 0.1
-            end
-        end,
-        stream = function(self, func)
-            if func then self._stream_handler = func end
-        end
+        _change_handler = nil,
+        _change_threshold = 0.1
     }
     
     setmetatable(input[i], {
-        __call = function(t, ...)
-            -- Allow input[n]() to return current volts
-            return t.volts
+        __newindex = function(t, k, v)
+            if k == "change" and type(v) == "function" then
+                -- Direct assignment: input[1].change = function(s) ... end
+                t._change_handler = v
+                -- Also set it as a direct property for the event system to find
+                rawset(t, "change", v)
+                -- Set up change detection with default threshold
+                set_input_change(i, t._change_threshold or 0.1, 0.1, 'rising')
+                print("[DEBUG] Set input[" .. i .. "] change handler via direct assignment")
+                return
+            end
+            rawset(t, k, v)
+        end,
+        __index = function(t, k)
+            if k == "change" then
+                -- Return a function that can be called like input[1].change(func, threshold)
+                return function(self, func, threshold)
+                    if func then 
+                        self._change_handler = func 
+                        self._change_threshold = threshold or 0.1
+                        -- Configure input change detection (simplified - real crow uses detection engine)
+                        set_input_change(i, self._change_threshold, 0.1, 'rising')
+                    end
+                end
+            elseif k == "stream" then
+                return function(self, func)
+                    if func then self._stream_handler = func end
+                end
+            end
+            return rawget(t, k)
+        end,
+        __call = function(t, args)
+            -- Handle input[n]{mode='change', direction='rising'} syntax
+            if type(args) == 'table' then
+                if args.mode == 'change' then
+                    local direction = args.direction or 'both'
+                    local threshold = args.threshold or 0.1
+                    -- Set up change detection
+                    set_input_change(i, threshold, 0.1, direction)
+                    print("[DEBUG] Set input[" .. i .. "] change detection: direction=" .. direction .. ", threshold=" .. threshold)
+                end
+                return t
+            else
+                -- Allow input[n]() to return current volts
+                return t.volts
+            end
         end
     })
+end
+
+-- Input change handler (called from C code when input changes)
+function input_change_handler(channel, volts)
+    if input[channel] and input[channel]._change_handler then
+        input[channel]._change_handler(volts)
+    end
 end
 
 -- Enhanced crow utility functions (Phase 2.3)
@@ -467,6 +529,170 @@ function metro_handler(id, stage)
     -- This matches crow's behavior
 end
 
+-- Metro.init() function (crow-style)
+metro.init = function(arg, arg_time, arg_count)
+    local event = nil
+    local time = arg_time or 1
+    local count = arg_count or -1
+    
+    if type(arg) == 'table' then
+        event = arg.event
+        time = arg.time or 1
+        count = arg.count or -1
+    else
+        event = arg
+    end
+    
+    -- Find available metro slot
+    for i = 1, 8 do
+        if not metro[i]._in_use then
+            metro[i]._in_use = true
+            metro[i].event = event
+            metro[i].time = time
+            metro[i].count = count
+            metro[i].id = i
+            
+            -- Add metro methods
+            metro[i].start = function(self)
+                if self.event then
+                    -- Override metro_handler for this metro
+                    local old_handler = metro_handler
+                    metro_handler = function(id, stage)
+                        if id == self.id and self.event then
+                            self.event(stage)
+                        elseif old_handler then
+                            old_handler(id, stage)
+                        end
+                    end
+                end
+                metro_start(self.id, self.time, self.count, 0)
+            end
+            
+            metro[i].stop = function(self)
+                metro_stop(self.id)
+            end
+            
+            return metro[i]
+        end
+    end
+    
+    print('metro.init: nothing available')
+    return nil
+end
+
+-- Initialize metros as available
+for i = 1, 8 do
+    metro[i]._in_use = false
+end
+
+-- ASL/AR system functions
+function to(volts, time, shape)
+    return {type = 'to', volts = volts or 0, time = time or 1, shape = shape or 'linear'}
+end
+
+function loop(actions)
+    return {type = 'loop', actions = actions}
+end
+
+function ar(attack, release, level, shape)
+    attack = attack or 0.05
+    release = release or 0.5
+    level = level or 7
+    shape = shape or 'log'
+    
+    return {
+        type = 'ar',
+        attack = attack,
+        release = release, 
+        level = level,
+        shape = shape
+    }
+end
+
+function dyn(def)
+    -- Dynamic parameter system - simplified implementation
+    -- In real crow this creates dynamic parameters that can be changed at runtime
+    local k, v = next(def)
+    return {type = 'dyn', name = k, value = v, default = v}
+end
+
+-- Enhanced output action handling for AR envelopes
+for i = 1, 4 do
+    -- Create dyn table for dynamic parameter access
+    output[i].dyn = {}
+    setmetatable(output[i].dyn, {
+        __index = function(t, k)
+            -- Get dynamic parameter value from AR config
+            if output[i]._ar_config then
+                if k == 'a' and output[i]._ar_config.attack and output[i]._ar_config.attack.type == 'dyn' then
+                    return output[i]._ar_config.attack.value
+                elseif k == 'd' and output[i]._ar_config.release and output[i]._ar_config.release.type == 'dyn' then
+                    return output[i]._ar_config.release.value
+                end
+            end
+            return rawget(t, k)
+        end,
+        __newindex = function(t, k, v)
+            -- Set dynamic parameter value in AR config
+            if output[i]._ar_config then
+                if k == 'a' and output[i]._ar_config.attack and output[i]._ar_config.attack.type == 'dyn' then
+                    output[i]._ar_config.attack.value = v
+                    print("[DEBUG] Set output[" .. i .. "].dyn.a = " .. v)
+                elseif k == 'd' and output[i]._ar_config.release and output[i]._ar_config.release.type == 'dyn' then
+                    output[i]._ar_config.release.value = v
+                    print("[DEBUG] Set output[" .. i .. "].dyn.d = " .. v)
+                end
+            end
+            rawset(t, k, v)
+        end
+    })
+    
+    local original_action = output[i].action
+    output[i].action = function(self, action_def)
+        if type(action_def) == 'table' and action_def.type == 'ar' then
+            -- Handle AR envelope
+            self._ar_config = action_def
+            self._ar_active = false
+            
+            -- Create trigger function
+            return function()
+                if not self._ar_active then
+                    self._ar_active = true
+                    local attack_val = action_def.level
+                    local attack_time = action_def.attack
+                    local release_time = action_def.release
+                    
+                    -- Handle dynamic parameters
+                    if type(attack_time) == 'table' and attack_time.type == 'dyn' then
+                        attack_time = attack_time.value
+                    end
+                    if type(release_time) == 'table' and release_time.type == 'dyn' then 
+                        release_time = release_time.value
+                    end
+                    
+                    -- Attack phase
+                    slopes_toward(i, attack_val, attack_time, action_def.shape)
+                    
+                    -- Schedule release phase (simplified - in real crow this uses the ASL engine)
+                    -- For now just do immediate release after attack
+                    -- TODO: Implement proper ASL scheduling
+                    
+                    print("[DEBUG] AR envelope triggered on output " .. i .. ": attack=" .. attack_time .. "s, release=" .. release_time .. "s, level=" .. attack_val)
+                    
+                    -- Reset active flag after some time (simplified)
+                    self._ar_active = false
+                end
+            end
+        elseif type(action_def) == 'function' then
+            self._action = action_def
+            return action_def
+        else
+            -- Handle other action types
+            self._action = action_def
+        end
+    end
+end
+
 -- Norns compatibility: quote, tell, public parameter system
 if not tell then
   local function _q(v)
@@ -606,6 +832,7 @@ bool CrowLua::init() {
     lua_register(L, "crow_metro_stop", crow_lua_metro_stop);
     lua_register(L, "crow_metro_set_time", crow_lua_metro_set_time);
     lua_register(L, "computer_card_unique_id", crow_lua_computer_card_unique_id);
+    lua_register(L, "unique_id", crow_lua_computer_card_unique_id);  // Alias for crow compatibility
     lua_register(L, "set_output_scale", crow_lua_set_output_scale);
     lua_register(L, "crow_reset", crow_lua_reset);
     lua_register(L, "set_output_clock", crow_lua_set_output_clock);
@@ -780,14 +1007,28 @@ bool CrowLua::eval_script(const char* script, size_t script_len, const char* chu
     critical_section_enter_blocking(&lua_critical_section);
     
     if (luaL_loadbuffer(L, script, script_len, chunkname) != LUA_OK) {
-        printf("Error loading script: %s\n", lua_tostring(L, -1));
+        const char* error_msg = lua_tostring(L, -1);
+        printf("Error loading script: %s\n", error_msg);
+        
+        // Also send error to USB for druid to see
+        if (CrowEmulator::instance && error_msg) {
+            CrowEmulator::instance->send_usb_printf("!script compilation error: %s", error_msg);
+        }
+        
         lua_pop(L, 1);
         critical_section_exit(&lua_critical_section);
         return false;
     }
     
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-        printf("Error executing script: %s\n", lua_tostring(L, -1));
+        const char* error_msg = lua_tostring(L, -1);
+        printf("Error executing script: %s\n", error_msg);
+        
+        // Also send error to USB for druid to see
+        if (CrowEmulator::instance && error_msg) {
+            CrowEmulator::instance->send_usb_printf("!script execution error: %s", error_msg);
+        }
+        
         lua_pop(L, 1);
         critical_section_exit(&lua_critical_section);
         return false;

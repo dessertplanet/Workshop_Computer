@@ -98,6 +98,9 @@ char* Flash_read_first_scriptaddr(void);
 // Initialize flash addresses (call once at startup)
 void Flash_init(void);
 
+// Check if flash layout is valid
+bool Flash_layout_valid(void);
+
 // === INTERNAL HELPERS ===
 
 // Get version as 12-bit value (for compatibility)

@@ -1,7 +1,9 @@
 #include "crow_flash.h"
+#include "crow_emulator.h"
 #include "pico/stdlib.h"
 #include "hardware/flash.h"
 #include "hardware/sync.h"
+#include "pico/multicore.h"
 #include <string.h>
 #include <cstdio>
 
@@ -68,8 +70,11 @@ USERSCRIPT_t Flash_which_user_script(void) {
 void Flash_clear_user_script(void) {
     uint32_t flash_offset = get_flash_offset();
     
-    // Critical section - disable interrupts during flash operation
+    // Critical section - disable interrupts AND stop core 1 during flash operation
     uint32_t ints = save_and_disable_interrupts();
+    
+    // Stop core 1 to prevent flash access conflicts
+    multicore_reset_core1();
     
     // Erase the sector
     flash_range_erase(flash_offset, FLASH_SECTOR_SIZE);
@@ -77,6 +82,9 @@ void Flash_clear_user_script(void) {
     // Write clear magic number
     uint32_t clear_magic = USER_CLEAR;
     flash_range_program(flash_offset, (uint8_t*)&clear_magic, sizeof(uint32_t));
+    
+    // Restart core 1 using CrowEmulator's entry point
+    multicore_launch_core1(CrowEmulator_core1_entry);
     
     restore_interrupts(ints);
 }
@@ -99,12 +107,18 @@ uint8_t Flash_write_user_script(char* script, uint32_t length) {
     // Copy script data
     memcpy(sector_data + 8, script, length);
     
-    // Critical section - disable interrupts during flash operation
+    // Critical section - disable interrupts AND stop core 1 during flash operation
     uint32_t ints = save_and_disable_interrupts();
+    
+    // Stop core 1 to prevent flash access conflicts
+    multicore_reset_core1();
     
     // Erase and program sector
     flash_range_erase(flash_offset, FLASH_SECTOR_SIZE);
     flash_range_program(flash_offset, sector_data, FLASH_SECTOR_SIZE);
+    
+    // Restart core 1 using CrowEmulator's entry point
+    multicore_launch_core1(CrowEmulator_core1_entry);
     
     restore_interrupts(ints);
     
@@ -190,12 +204,18 @@ uint8_t Flash_write_first_script(const char* script, uint32_t length) {
     // Copy script data
     memcpy(sector_data + 8, script, length);
     
-    // Critical section - disable interrupts during flash operation
+    // Critical section - disable interrupts AND stop core 1 during flash operation
     uint32_t ints = save_and_disable_interrupts();
+    
+    // Stop core 1 to prevent flash access conflicts
+    multicore_reset_core1();
     
     // Erase and program sector
     flash_range_erase(flash_offset, FLASH_SECTOR_SIZE);
     flash_range_program(flash_offset, sector_data, FLASH_SECTOR_SIZE);
+    
+    // Restart core 1 using CrowEmulator's entry point
+    multicore_launch_core1(CrowEmulator_core1_entry);
     
     restore_interrupts(ints);
     

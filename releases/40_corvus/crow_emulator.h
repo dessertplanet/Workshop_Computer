@@ -184,3 +184,6 @@ public:
 
 // Global extern declaration for lua access
 extern CrowEmulator* g_crow_emulator;
+
+// C-compatible entry point for core1 (used by flash operations)
+extern "C" void CrowEmulator_core1_entry();
