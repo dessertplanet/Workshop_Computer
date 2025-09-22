@@ -4,6 +4,13 @@
 #include <cstdio>
 #include <cstring>
 
+// Lua includes
+extern "C" {
+#include "lua/src/lua.h"
+#include "lua/src/lualib.h"
+#include "lua/src/lauxlib.h"
+}
+
 /*
 
 Blackbird Crow Emulator - Basic Communication Protocol
@@ -36,6 +43,167 @@ typedef enum {
     C_loadFirst
 } C_cmd_t;
 
+// Simple Lua Manager for crow emulation
+class LuaManager {
+private:
+    lua_State* L;
+    static LuaManager* instance;
+    
+    // Lua print function - sends output to serial
+    static int lua_print(lua_State* L) {
+        int n = lua_gettop(L);  // number of arguments
+        lua_getglobal(L, "tostring");
+        for (int i = 1; i <= n; i++) {
+            lua_pushvalue(L, -1);  // function to be called
+            lua_pushvalue(L, i);   // value to print
+            lua_call(L, 1, 1);
+            const char* s = lua_tostring(L, -1);  // get result
+            if (s != NULL) {
+                if (i > 1) printf("\t");
+                printf("%s", s);
+            }
+            lua_pop(L, 1);  // pop result
+        }
+        printf("\n\r");
+        fflush(stdout);
+        return 0;
+    }
+    
+    // Lua time function - returns milliseconds since boot
+    static int lua_time(lua_State* L) {
+        uint32_t time_ms = to_ms_since_boot(get_absolute_time());
+        lua_pushnumber(L, time_ms / 1000.0); // crow returns seconds
+        return 1;
+    }
+    
+    // Lua tab.print function - pretty print tables
+    static int lua_tab_print(lua_State* L) {
+        if (lua_gettop(L) != 1) {
+            lua_pushstring(L, "tab.print expects exactly one argument");
+            lua_error(L);
+        }
+        
+        print_table_recursive(L, 1, 0);
+        printf("\n\r");
+        fflush(stdout);
+        return 0;
+    }
+    
+    // Helper function to recursively print table contents
+    static void print_table_recursive(lua_State* L, int index, int depth) {
+        if (!lua_istable(L, index)) {
+            // Not a table, just print the value
+            lua_getglobal(L, "tostring");
+            lua_pushvalue(L, index);
+            lua_call(L, 1, 1);
+            const char* s = lua_tostring(L, -1);
+            if (s) printf("%s", s);
+            lua_pop(L, 1);
+            return;
+        }
+        
+        printf("{\n");
+        
+        // Iterate through table
+        lua_pushnil(L);  // first key
+        while (lua_next(L, index) != 0) {
+            // Print indentation
+            for (int i = 0; i < depth + 1; i++) printf("  ");
+            
+            // Print key
+            if (lua_type(L, -2) == LUA_TSTRING) {
+                printf("%s = ", lua_tostring(L, -2));
+            } else if (lua_type(L, -2) == LUA_TNUMBER) {
+                printf("[%.0f] = ", lua_tonumber(L, -2));
+            } else {
+                printf("[?] = ");
+            }
+            
+            // Print value
+            if (lua_istable(L, -1) && depth < 3) {  // Limit recursion depth
+                print_table_recursive(L, lua_gettop(L), depth + 1);
+            } else {
+                lua_getglobal(L, "tostring");
+                lua_pushvalue(L, -2);  // the value
+                lua_call(L, 1, 1);
+                const char* s = lua_tostring(L, -1);
+                if (s) printf("%s", s);
+                lua_pop(L, 1);
+            }
+            
+            printf(",\n");
+            lua_pop(L, 1);  // remove value, keep key for next iteration
+        }
+        
+        // Print closing brace with proper indentation
+        for (int i = 0; i < depth; i++) printf("  ");
+        printf("}");
+    }
+
+public:
+    LuaManager() : L(nullptr) {
+        instance = this;
+        init();
+    }
+    
+    ~LuaManager() {
+        if (L) {
+            lua_close(L);
+        }
+        instance = nullptr;
+    }
+    
+    void init() {
+        if (L) {
+            lua_close(L);
+        }
+        
+        L = luaL_newstate();
+        if (!L) {
+            printf("Error: Could not create Lua state\n\r");
+            return;
+        }
+        
+        // Load basic Lua libraries
+        luaL_openlibs(L);
+        
+        // Override print function
+        lua_register(L, "print", lua_print);
+        
+        // Add time function
+        lua_register(L, "time", lua_time);
+        
+        // Create tab table and add print function
+        lua_newtable(L);
+        lua_pushcfunction(L, lua_tab_print);
+        lua_setfield(L, -2, "print");
+        lua_setglobal(L, "tab");
+    }
+    
+    // Evaluate Lua code and return result
+    bool evaluate(const char* code) {
+        if (!L) return false;
+        
+        int result = luaL_dostring(L, code);
+        if (result != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("lua error: %s\n\r", error ? error : "unknown error");
+            fflush(stdout);
+            lua_pop(L, 1);  // remove error from stack
+            return false;
+        }
+        
+        return true;
+    }
+    
+    static LuaManager* getInstance() {
+        return instance;
+    }
+};
+
+// Static instance pointer
+LuaManager* LuaManager::instance = nullptr;
+
 class BlackbirdCrow : public ComputerCard
 {
     // Variables for communication between cores
@@ -46,14 +214,26 @@ class BlackbirdCrow : public ComputerCard
     char rx_buffer[USB_RX_BUFFER_SIZE];
     int rx_buffer_pos;
     
+    // Lua manager for REPL
+    LuaManager* lua_manager;
+    
 public:
     BlackbirdCrow()
     {
         rx_buffer_pos = 0;
         memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
         
+        // Initialize Lua manager
+        lua_manager = new LuaManager();
+        
         // Start the second core for USB processing
         multicore_launch_core1(core1);
+    }
+    
+    ~BlackbirdCrow() {
+        if (lua_manager) {
+            delete lua_manager;
+        }
     }
 
     // Boilerplate to call member function as second core
@@ -182,10 +362,33 @@ public:
                     
                     // Check if we have a complete packet
                     if (is_packet_complete(rx_buffer, rx_buffer_pos)) {
+                        // Strip trailing whitespace
+                        int clean_length = rx_buffer_pos;
+                        while (clean_length > 0 && 
+                               (rx_buffer[clean_length-1] == '\n' || 
+                                rx_buffer[clean_length-1] == '\r' || 
+                                rx_buffer[clean_length-1] == ' ' || 
+                                rx_buffer[clean_length-1] == '\t')) {
+                            clean_length--;
+                        }
+                        rx_buffer[clean_length] = '\0';
+                        
+                        // Skip empty commands
+                        if (clean_length == 0) {
+                            rx_buffer_pos = 0;
+                            memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
+                            continue;
+                        }
+                        
                         // Parse and handle command
-                        C_cmd_t cmd = parse_command(rx_buffer, rx_buffer_pos);
+                        C_cmd_t cmd = parse_command(rx_buffer, clean_length);
                         if (cmd != C_none) {
                             handle_command(cmd);
+                        } else {
+                            // Not a ^^ command, treat as Lua code
+                            if (lua_manager) {
+                                lua_manager->evaluate(rx_buffer);
+                            }
                         }
                         
                         // Clear buffer

@@ -7,7 +7,8 @@ This is the first iteration of the Blackbird Crow emulator, implementing basic c
 ### Implemented Features
 
 - ✅ Basic crow command parsing (`^^v`, `^^i`, `^^p`, etc.)
-- ✅ Multi-core architecture (Core 0: audio processing, Core 1: USB communication)
+- ✅ **Lua REPL functionality** with `print()`, `tab.print()`, `time()` functions
+- ✅ Multi-core architecture (Core 0: audio processing, Core 1: USB communication)  
 - ✅ Proper crow-style line endings (`\n\r`)
 - ✅ Audio passthrough (Workshop inputs → Workshop outputs)
 - ✅ CV monitoring and periodic debug output
@@ -52,20 +53,70 @@ This is the first iteration of the Blackbird Crow emulator, implementing basic c
    ^^p    # Should respond: -- no script loaded --
    ```
 
-3. **Verify Line Endings**
+3. **Test Lua REPL**
+   ```lua
+   print("hello crow!")           # Basic output test
+   x = 5 + 3; print(x)           # Variables and math
+   print("time:", time())        # System time function
+   t = {1, 2, voltage=3.3}       # Create table
+   tab.print(t)                  # Pretty print table
+   print(math.sin(1.57))         # Math library test
+   ```
+
+4. **Verify Line Endings**
    - Responses should have crow-style `\n\r` (LF+CR) line endings
    - This is critical for compatibility with druid and other crow tools
 
 ### Expected Behavior
 
 - **On startup**: "Blackbird Crow Emulator v0.1" message
-- **Every 5 seconds**: CV debugging output showing current CV1/CV2 values
+- **System commands**: `^^v`, `^^i`, etc. work as before
+- **Lua REPL**: Non-`^^` commands are evaluated as Lua code
+- **Lua output**: `print()` sends output directly to serial terminal
+- **Lua errors**: Properly formatted error messages for invalid code
+- **Table printing**: `tab.print()` shows structured table contents
 - **Audio**: Direct passthrough from inputs to outputs
 - **Commands**: Immediate responses with proper formatting
 
+### Lua REPL Examples
+
+**Basic Usage:**
+```
+> print("hello world")
+hello world
+
+> x = 42; print("answer:", x)
+answer:    42
+
+> print("uptime:", time(), "seconds")
+uptime:    15.234    seconds
+```
+
+**Table Operations:**
+```
+> data = {freq = 440, amp = 0.5, wave = "sine"}
+> tab.print(data)
+{
+  freq = 440,
+  amp = 0.5,
+  wave = "sine",
+}
+
+> print("frequency is", data.freq)
+frequency is    440
+```
+
+**Error Handling:**
+```
+> print(undefined_variable)
+lua error: attempt to call a nil value (global 'undefined_variable')
+
+> x = 1 + 
+lua error: [string "x = 1 + "]:1: unexpected symbol near <eof>
+```
+
 ### Debugging
 
-- CV values are displayed every 5 seconds for monitoring
 - Audio processing runs at 48kHz (Workshop standard)
 - USB communication is handled on separate core to avoid audio dropouts
 
