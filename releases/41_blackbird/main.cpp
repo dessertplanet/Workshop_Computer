@@ -11,6 +11,19 @@ extern "C" {
 #include "lua/src/lauxlib.h"
 }
 
+// Crow ASL includes
+extern "C" {
+#include "lib/ashapes.h"
+#include "lib/slopes.h"
+}
+
+// Output state storage - use int32 for RP2040 efficiency
+static volatile int32_t output_states_mV[4] = {0, 0, 0, 0}; // Store in millivolts
+
+// Forward declaration
+class BlackbirdCrow;
+static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
+
 /*
 
 Blackbird Crow Emulator - Basic Communication Protocol
@@ -178,7 +191,36 @@ public:
         lua_pushcfunction(L, lua_tab_print);
         lua_setfield(L, -2, "print");
         lua_setglobal(L, "tab");
+        
+        // Initialize crow output functionality
+        init_crow_bindings();
     }
+    
+    // Initialize crow-compatible Lua bindings
+    void init_crow_bindings() {
+        if (!L) return;
+        
+        // Create output table
+        lua_newtable(L);
+        
+        // Create output[1] through output[4] sub-tables
+        for (int i = 1; i <= 4; i++) {
+            lua_newtable(L);
+            
+            // Add volts function to each output
+            lua_pushinteger(L, i);
+            lua_pushcclosure(L, lua_output_volts, 1);
+            lua_setfield(L, -2, "volts");
+            
+            // Set output[i] = this table
+            lua_seti(L, -2, i);
+        }
+        
+        lua_setglobal(L, "output");
+    }
+    
+    // Forward declaration - implementation will be after BlackbirdCrow class
+    static int lua_output_volts(lua_State* L);
     
     // Evaluate Lua code and return result
     bool evaluate(const char* code) {
@@ -218,10 +260,51 @@ class BlackbirdCrow : public ComputerCard
     LuaManager* lua_manager;
     
 public:
+    // Hardware abstraction functions for output
+    void hardware_set_output(int channel, float volts) {
+        if (channel < 1 || channel > 4) return;
+        
+        // Clamp voltage to ±6V range
+        if (volts > 6.0f) volts = 6.0f;
+        if (volts < -6.0f) volts = -6.0f;
+        
+        // Convert to DAC range: -6V to +6V maps to -2048 to +2047
+        // Use integer math for RP2040 efficiency
+        int32_t volts_mV = (int32_t)(volts * 1000.0f);
+        int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
+        
+        // Store state for lua queries (in millivolts)
+        output_states_mV[channel - 1] = volts_mV;
+        
+        // Route to correct hardware output
+        switch (channel) {
+            case 1: // Output 1 → AudioOut1
+                AudioOut1(dac_value);
+                break;
+            case 2: // Output 2 → AudioOut2  
+                AudioOut2(dac_value);
+                break;
+            case 3: // Output 3 → CVOut1
+                CVOut1(dac_value);
+                break;
+            case 4: // Output 4 → CVOut2
+                CVOut2(dac_value);
+                break;
+        }
+    }
+    
+    float hardware_get_output(int channel) {
+        if (channel < 1 || channel > 4) return 0.0f;
+        return (float)output_states_mV[channel - 1] / 1000.0f;
+    }
+    
     BlackbirdCrow()
     {
         rx_buffer_pos = 0;
         memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
+        
+        // Set global instance for Lua bindings
+        g_blackbird_instance = this;
         
         // Initialize Lua manager
         lua_manager = new LuaManager();
@@ -419,17 +502,41 @@ public:
     virtual void ProcessSample()
     {
         // Copy CV inputs for Core 1 to access
-        v1 = CVIn1();
-        v2 = CVIn2();
+        // v1 = CVIn1();
+        // v2 = CVIn2();
         
         // Basic audio passthrough for now
-        AudioOut1(AudioIn1());
-        AudioOut2(AudioIn2());
+        // AudioOut1(AudioIn1());
+        // AudioOut2(AudioIn2());
         
         // Could add basic crow-like functionality here later
         // For now just pass audio through
     }
 };
+
+// Implementation of Lua binding function (now that BlackbirdCrow is fully defined)
+int LuaManager::lua_output_volts(lua_State* L) {
+    // Get channel from upvalue
+    int channel = (int)lua_tointeger(L, lua_upvalueindex(1));
+    
+    if (lua_gettop(L) == 0) {
+        // Get current voltage
+        if (g_blackbird_instance) {
+            float volts = ((BlackbirdCrow*)g_blackbird_instance)->hardware_get_output(channel);
+            lua_pushnumber(L, volts);
+            return 1;
+        }
+        lua_pushnumber(L, 0.0);
+        return 1;
+    } else {
+        // Set voltage
+        float volts = (float)luaL_checknumber(L, 1);
+        if (g_blackbird_instance) {
+            ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, volts);
+        }
+        return 0;
+    }
+}
 
 int main()
 {
