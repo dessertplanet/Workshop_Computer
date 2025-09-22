@@ -56,6 +56,11 @@ typedef enum {
     C_loadFirst
 } C_cmd_t;
 
+// Output userdata structure for metamethods
+typedef struct {
+    int channel;
+} OutputUserData;
+
 // Simple Lua Manager for crow emulation
 class LuaManager {
 private:
@@ -196,28 +201,49 @@ public:
         init_crow_bindings();
     }
     
-    // Initialize crow-compatible Lua bindings
+    // Initialize crow-compatible Lua bindings with userdata metamethods
     void init_crow_bindings() {
         if (!L) return;
+        
+        // Create the output metatable
+        luaL_newmetatable(L, "Output");
+        
+        // Set __index metamethod
+        lua_pushstring(L, "__index");
+        lua_pushcfunction(L, output_index);
+        lua_settable(L, -3);
+        
+        // Set __newindex metamethod
+        lua_pushstring(L, "__newindex");
+        lua_pushcfunction(L, output_newindex);
+        lua_settable(L, -3);
+        
+        // Pop the metatable
+        lua_pop(L, 1);
         
         // Create output table
         lua_newtable(L);
         
-        // Create output[1] through output[4] sub-tables
+        // Create output[1] through output[4] userdata objects
         for (int i = 1; i <= 4; i++) {
-            lua_newtable(L);
+            // Create userdata for this output
+            OutputUserData* output_data = (OutputUserData*)lua_newuserdata(L, sizeof(OutputUserData));
+            output_data->channel = i;
             
-            // Add volts function to each output
-            lua_pushinteger(L, i);
-            lua_pushcclosure(L, lua_output_volts, 1);
-            lua_setfield(L, -2, "volts");
+            // Set the metatable
+            luaL_getmetatable(L, "Output");
+            lua_setmetatable(L, -2);
             
-            // Set output[i] = this table
+            // Set output[i] = this userdata
             lua_seti(L, -2, i);
         }
         
         lua_setglobal(L, "output");
     }
+    
+    // Metamethod functions for output objects
+    static int output_index(lua_State* L);
+    static int output_newindex(lua_State* L);
     
     // Forward declaration - implementation will be after BlackbirdCrow class
     static int lua_output_volts(lua_State* L);
@@ -514,7 +540,51 @@ public:
     }
 };
 
-// Implementation of Lua binding function (now that BlackbirdCrow is fully defined)
+// Implementation of metamethod functions (now that BlackbirdCrow is fully defined)
+
+// __index metamethod: handles property reading (output[1].volts)
+int LuaManager::output_index(lua_State* L) {
+    // Get the userdata (output object)
+    OutputUserData* output_data = (OutputUserData*)luaL_checkudata(L, 1, "Output");
+    const char* key = luaL_checkstring(L, 2);
+    
+    if (strcmp(key, "volts") == 0) {
+        // Return current voltage
+        if (g_blackbird_instance) {
+            float volts = ((BlackbirdCrow*)g_blackbird_instance)->hardware_get_output(output_data->channel);
+            lua_pushnumber(L, volts);
+            return 1;
+        }
+        lua_pushnumber(L, 0.0);
+        return 1;
+    }
+    
+    // Property not found, return nil
+    lua_pushnil(L);
+    return 1;
+}
+
+// __newindex metamethod: handles property assignment (output[1].volts = 3.5)
+int LuaManager::output_newindex(lua_State* L) {
+    // Get the userdata (output object)
+    OutputUserData* output_data = (OutputUserData*)luaL_checkudata(L, 1, "Output");
+    const char* key = luaL_checkstring(L, 2);
+    
+    if (strcmp(key, "volts") == 0) {
+        // Set voltage
+        float volts = (float)luaL_checknumber(L, 3);
+        if (g_blackbird_instance) {
+            ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(output_data->channel, volts);
+        }
+        return 0;
+    }
+    
+    // Unknown property - could either silently ignore or error
+    // For crow compatibility, we'll silently ignore unknown properties
+    return 0;
+}
+
+// Legacy function-based API (kept for backward compatibility during transition)
 int LuaManager::lua_output_volts(lua_State* L) {
     // Get channel from upvalue
     int channel = (int)lua_tointeger(L, lua_upvalueindex(1));

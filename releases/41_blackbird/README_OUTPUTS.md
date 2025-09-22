@@ -15,22 +15,30 @@ Each output accepts voltages in the ±6V range and uses 12-bit DACs for output.
 
 ## Basic Usage
 
-### Setting Voltages
+### Setting Voltages (Crow-Compatible Assignment Syntax)
 
 ```lua
--- Set individual outputs to specific voltages
-output[1].volts(0.0)    -- 0V
-output[2].volts(2.5)    -- 2.5V
-output[3].volts(-1.2)   -- -1.2V
-output[4].volts(5.0)    -- 5V
+-- Set individual outputs to specific voltages using crow-style assignment
+output[1].volts = 0.0    -- 0V
+output[2].volts = 2.5    -- 2.5V
+output[3].volts = -1.2   -- -1.2V
+output[4].volts = 5.0    -- 5V
 ```
 
-### Reading Current Voltage
+### Reading Current Voltage (Crow-Compatible Property Access)
 
 ```lua
--- Read current output voltage
-local voltage = output[1].volts()
+-- Read current output voltage using crow-style property access
+local voltage = output[1].volts
 print("Output 1 is at " .. voltage .. "V")
+```
+
+### Legacy Function-Based Syntax (Still Supported)
+
+```lua
+-- The old function-based syntax still works for backward compatibility
+output[1].volts(3.5)    -- Set voltage using function call
+local v = output[1].volts()  -- Get voltage using function call
 ```
 
 ### Voltage Range
@@ -103,19 +111,19 @@ The architecture supports future additions:
 
 ### Simple CV Generator
 ```lua
--- Generate ascending CV sequence
+-- Generate ascending CV sequence using crow-style assignment
 for i = 1, 8 do
-    output[3].volts(i * 0.5)  -- 0.5V steps
+    output[3].volts = i * 0.5  -- 0.5V steps
     -- Add timing/clock sync as needed
 end
 ```
 
 ### Dual Output Control
 ```lua
--- Control two outputs inversely
+-- Control two outputs inversely using crow-style assignment
 local level = 2.0
-output[1].volts(level)
-output[2].volts(-level)
+output[1].volts = level
+output[2].volts = -level
 ```
 
 ### Range Mapping
@@ -123,7 +131,7 @@ output[2].volts(-level)
 -- Map 0-1 range to full ±6V output range
 function map_output(channel, value)
     local voltage = (value * 12.0) - 6.0  -- 0-1 → ±6V
-    output[channel].volts(voltage)
+    output[channel].volts = voltage
 end
 
 map_output(1, 0.75)  -- 0.75 → 3V
