@@ -1,15 +1,13 @@
 /*
 ComputerCard  - by Chris Johnson
 
-THIS VERSION HAS SUBTLE CHANGES FROM DUNE AND CLAUDE TO HALVE THE SPEED TO 24KHZ
-
 ComputerCard is a header-only C++ library, providing a class that
 manages the hardware aspects of the Music Thing Modular Workshop
 System Computer.
 
 It aims to present a very simple C++ interface for card programmers 
 to use the jacks, knobs, switch and LEDs, for programs running at
-a fixed 24kHz audio sample rate.
+a fixed 48kHz audio sample rate.
 
 See examples/ directory
 */
@@ -64,7 +62,7 @@ public:
 	void EnableNormalisationProbe() {useNormProbe = true;}
 
 protected:
-	/// Callback, called once per sample at 24kHz
+	/// Callback, called once per sample at 48kHz
 	virtual void ProcessSample() = 0;
 
 
@@ -416,7 +414,7 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 
 	// ADC clock runs at 48MHz
 	// 48MHz ÷ (249+1) = 192kHz ADC sample rate
-	//                 = 8×24kHz audio sample rate
+	//                 = 8×48kHz audio sample rate
 	adc_set_clkdiv(124);
 
 	// claim and setup DMAs for reading to ADC, and writing to SPI DAC
