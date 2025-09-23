@@ -32,6 +32,21 @@ macro (add_card _name)
       target_sources(${_name} PUBLIC 
         ${CMAKE_CURRENT_LIST_DIR}/main.cpp
         ${CMAKE_CURRENT_LIST_DIR}/lib/casl.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/slopes.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/ashapes.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/lualink.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/detect.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/caw.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/ii.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/metro.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/clock.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/events.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/l_bootstrap.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/l_crowlib.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/l_ii_mod.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/ll_timers.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/random.c
+        ${CMAKE_CURRENT_LIST_DIR}/submodules/wrDsp/wrBlocks.c
       )
       target_compile_definitions(${_name} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
       pico_enable_stdio_usb(${_name} 1)
@@ -62,12 +77,42 @@ endfunction()
 add_lua_header(test_asl.lua TEST_ASL_HEADER)
 add_lua_header(lib/asl.lua ASL_HEADER)
 add_lua_header(lib/asllib.lua ASLLIB_HEADER)
+add_lua_header(lib/crowlib.lua CROWLIB_HEADER)
+add_lua_header(lib/clock.lua CLOCK_HEADER)
+add_lua_header(lib/metro.lua METRO_HEADER)
+add_lua_header(lib/public.lua PUBLIC_HEADER)
+add_lua_header(lib/input.lua INPUT_HEADER)
+add_lua_header(lib/output.lua OUTPUT_HEADER)
+add_lua_header(lib/ii.lua II_HEADER)
+add_lua_header(lib/calibrate.lua CALIBRATE_HEADER)
+add_lua_header(lib/sequins.lua SEQUINS_HEADER)
+add_lua_header(lib/quote.lua QUOTE_HEADER)
+add_lua_header(lib/timeline.lua TIMELINE_HEADER)
+add_lua_header(lib/hotswap.lua HOTSWAP_HEADER)
+add_lua_header(lib/First.lua FIRST_HEADER)
 
 # Create card
 add_card(${CARD_NAME})
 
 # Add generated headers as dependencies
-target_sources(${CARD_NAME} PRIVATE ${TEST_ASL_HEADER} ${ASL_HEADER} ${ASLLIB_HEADER})
+target_sources(${CARD_NAME} PRIVATE 
+  ${TEST_ASL_HEADER} 
+  ${ASL_HEADER} 
+  ${ASLLIB_HEADER}
+  ${CROWLIB_HEADER}
+  ${CLOCK_HEADER}
+  ${METRO_HEADER}
+  ${PUBLIC_HEADER}
+  ${INPUT_HEADER}
+  ${OUTPUT_HEADER}
+  ${II_HEADER}
+  ${CALIBRATE_HEADER}
+  ${SEQUINS_HEADER}
+  ${QUOTE_HEADER}
+  ${TIMELINE_HEADER}
+  ${HOTSWAP_HEADER}
+  ${FIRST_HEADER}
+)
 target_include_directories(${CARD_NAME} PRIVATE ${CMAKE_BINARY_DIR})
 
 # Copy UF2 files to UF2 directory with descriptive names

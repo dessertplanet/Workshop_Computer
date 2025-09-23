@@ -20,13 +20,7 @@
 #include "lib/metro.h"      // metro_start() metro_stop() metro_set_time()
 #include "lib/clock.h"      // clock_*()
 #include "lib/io.h"         // IO_GetADC()
-#include "../ll/adda.h"     // CAL_*()
-#include "../ll/cal_ll.h"   // CAL_LL_ActiveChannel()
-#include "../ll/system.h"   // getUID_Word()
-#include "../ll/i2c.h"      // I2C_SetTimings(u8)
 #include "lib/events.h"     // event_t event_post()
-#include "stm32f7xx_hal.h"  // HAL_GetTick()
-#include "stm32f7xx_it.h"   // CPU_GetCount()
 
 // Lua lib C implementations
 // as much low-level functionality is in here as possible
@@ -38,6 +32,31 @@
 #define WATCHDOG_FREQ      0x100000 // ~1s how often we run the watchdog
 #define WATCHDOG_COUNT     2        // how many watchdogs before 'frozen'
 
+
+// Stub functions for ii/i2c (not needed for RP2040 hardware)
+#ifdef PICO_BUILD
+void ii_process_dequeue_decode(void) { /* no-op for RP2040 */ }
+void I2C_SetTimings(uint32_t state) { /* no-op for RP2040 */ }
+
+// Stub functions for bootloader (not needed for RP2040)
+void bootloader_enter(void) { /* no-op for RP2040 */ }
+uint32_t getUID_Word(int offset) { return 0x12345678 + offset; /* dummy UID */ }
+
+// Stub functions for io (not needed for RP2040)
+float IO_GetADC(uint8_t channel) { return 0.0f; /* dummy ADC */ }
+void IO_public_set_view(int chan, bool state) { /* no-op for RP2040 */ }
+
+// Stub functions for calibration (not needed for RP2040) 
+typedef enum { CAL_Offset, CAL_Scale } cal_type_t;
+void CAL_LL_ActiveChannel(int chan) { /* no-op for RP2040 */ }
+float CAL_Get(int chan, cal_type_t type) { return (type == CAL_Offset) ? 0.0f : 1.0f; }
+void CAL_Set(int chan, cal_type_t type, float val) { /* no-op for RP2040 */ }
+void CAL_WriteFlash(void) { /* no-op for RP2040 */ }
+
+// Stub functions for HAL (not needed for RP2040)
+uint32_t HAL_GetTick(void) { return 0; /* dummy tick */ }
+uint32_t CPU_GetCount(void) { return 0; /* dummy count */ }
+#endif
 
 // Basic crow script
 #include "build/First.h"
@@ -122,8 +141,8 @@ lua_State* Lua_Reset( void )
 
 void Lua_load_default_script( void )
 {
-    Lua_eval(L, (const char*)build_First_lc
-              , build_First_lc_len
+    Lua_eval(L, (const char*)First
+              , First_len
               , "=First.lua"
               );
 }

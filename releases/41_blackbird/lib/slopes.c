@@ -4,10 +4,86 @@
 #include <math.h>
 #include <stdio.h>
 
-#include "stm32f7xx.h"
+// TODO: Port STM32 dependencies to RP2040
+// #include "stm32f7xx.h" // STM32-specific, removed
 
-#include "shapes.h"
-#include "submodules/wrDsp/wrBlocks.h"
+#include "ashapes.h" // Use our local ashapes instead of shapes
+// TODO: Port wrDsp dependency to RP2040  
+// #include "submodules/wrDsp/wrBlocks.h" // wrDsp dependency, need to stub
+
+// TODO: Implement RP2040-specific audio sample rate constants
+#ifndef SAMPLES_PER_MS
+#define SAMPLES_PER_MS 48.0f // TODO: Define proper sample rate for RP2040
+#endif
+
+#ifndef SLOPE_CHANNELS  
+#define SLOPE_CHANNELS 4 // TODO: Define proper channel count for Workshop Computer
+#endif
+
+
+// TODO: Add missing shape function stubs
+static float shapes_step_now(float in) { return (in >= 1.0f) ? 1.0f : 0.0f; }
+static float shapes_step_wait(float in) { return (in <= 0.0f) ? 0.0f : 1.0f; }
+static float shapes_ease_out_back(float in) { return in; } // TODO: Implement proper back easing
+static float shapes_ease_in_back(float in) { return in; } // TODO: Implement proper back easing  
+static float shapes_ease_out_rebound(float in) { return in; } // TODO: Implement proper rebound
+
+// Missing shape functions using wrDsp wrBlocks - similar to crow implementation
+#include <math.h>
+#include "../submodules/wrDsp/wrBlocks.h"
+
+#ifndef M_PI
+#define M_PI (3.141592653589793)
+#endif
+
+// Single sample shape functions
+static float shapes_sin(float in) {
+    return -0.5 * (cosf(M_PI * in) - 1.0);
+}
+
+static float shapes_exp(float in) {
+    return powf(2.0, 10.0 * (in - 1.0));
+}
+
+static float shapes_log(float in) {
+    return 1.0 - powf(2.0, -10.0 * in);
+}
+
+// Helper function for pow2
+static float pow2(float in) { 
+    return powf(2.0, in); 
+}
+
+// Vector shape functions using wrBlocks - matching crow implementation
+static float* shapes_v_sin(float* in, int size) {
+    return b_mul(
+            b_add(
+                b_map(cosf,
+                    b_mul(in, M_PI, size)
+                     , size)
+                 , -1.0
+                 , size)
+                , -0.5
+                , size);
+}
+
+static float* shapes_v_exp(float* in, int size) {
+    return b_map(pow2,
+            b_mul(
+                b_add(in, -1.0, size)
+                 , 10.0
+                 , size)
+                , size);
+}
+
+static float* shapes_v_log(float* in, int size) {
+    return b_sub(
+            b_map(pow2,
+                b_mul(in, -10.0, size)
+                 , size)
+                , 1.0
+                , size);
+}
 
 
 ////////////////////////////////

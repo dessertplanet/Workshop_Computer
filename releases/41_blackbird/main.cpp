@@ -195,39 +195,76 @@ public:
         // Override print function
         lua_register(L, "print", lua_print);
         
-        // Add time function
-        lua_register(L, "time", lua_time);
-        
-        // Create tab table and add print function
-        lua_newtable(L);
-        lua_pushcfunction(L, lua_tab_print);
-        lua_setfield(L, -2, "print");
-        lua_setglobal(L, "tab");
-        
-        // Initialize crow output functionality
-        init_crow_bindings();
+    // Add time function
+    lua_register(L, "time", lua_time);
+    
+    // Create tab table and add print function
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_tab_print);
+    lua_setfield(L, -2, "print");
+    lua_setglobal(L, "tab");
+    
+    // Register CASL functions
+    lua_register(L, "casl_describe", lua_casl_describe);
+    lua_register(L, "casl_action", lua_casl_action);
+    lua_register(L, "casl_defdynamic", lua_casl_defdynamic);
+    lua_register(L, "casl_cleardynamics", lua_casl_cleardynamics);
+    lua_register(L, "casl_setdynamic", lua_casl_setdynamic);
+    lua_register(L, "casl_getdynamic", lua_casl_getdynamic);
+    
+    // Initialize CASL instances for all 4 outputs
+    for (int i = 0; i < 4; i++) {
+        casl_init(i);
+    }
+    
+    // Initialize crow output functionality
+    init_crow_bindings();
         
         // Load and execute embedded ASL libraries
         load_embedded_asl();
     }
     
-    // Lfoad embedded ASL libraries using luaL_dobuffer
+    // Load embedded ASL libraries using luaL_dobuffer
     void load_embedded_asl() {
         if (!L) return;
         
         // Load ASL library first
         printf("Loading embedded ASL library...\n\r");
-        if (luaL_loadbuffer(L, (const char*)asl, asl_len, "asl.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+        if (luaL_loadbuffer(L, (const char*)asl, asl_len, "asl.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("Error loading ASL library: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
+            return;
         }
+        
+        // ASL library returns the Asl table - capture it
+        lua_setglobal(L, "Asl");
+        
+        // Also set up lowercase 'asl' for compatibility
+        lua_getglobal(L, "Asl");
+        lua_setglobal(L, "asl");
         
         // Load ASLLIB library
         printf("Loading embedded ASLLIB library...\n\r");
         if (luaL_loadbuffer(L, (const char*)asllib, asllib_len, "asllib.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("Error loading ASLLIB library: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+            return;
+        }
+        
+        // The ASLLIB functions are now available globally
+        // Make sure basic ASL functions are available globally
+        const char* setup_globals = R"(
+            -- Make ASL library functions globally available
+            for name, func in pairs(Asllib or {}) do
+                _G[name] = func
+            end
+        )";
+        
+        if (luaL_dostring(L, setup_globals) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error setting up ASL globals: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         }
         
@@ -291,6 +328,14 @@ public:
     // Metamethod functions for output objects
     static int output_index(lua_State* L);
     static int output_newindex(lua_State* L);
+    
+    // CASL bridge functions
+    static int lua_casl_describe(lua_State* L);
+    static int lua_casl_action(lua_State* L);
+    static int lua_casl_defdynamic(lua_State* L);
+    static int lua_casl_cleardynamics(lua_State* L);
+    static int lua_casl_setdynamic(lua_State* L);
+    static int lua_casl_getdynamic(lua_State* L);
     
     // Forward declaration - implementation will be after BlackbirdCrow class
     static int lua_output_volts(lua_State* L);
@@ -545,6 +590,11 @@ public:
                             if (lua_manager) {
                                 lua_manager->run_embedded_test();
                             }
+                        } else if (strcmp(rx_buffer, "test_casl") == 0) {
+                            // Special command to run CASL integration test
+                            if (lua_manager) {
+                                lua_manager->evaluate("dofile('test_casl_integration.lua')");
+                            }
                         } else {
                             // Not a ^^ command, treat as Lua code
                             if (lua_manager) {
@@ -634,6 +684,48 @@ int LuaManager::output_newindex(lua_State* L) {
     // Unknown property - could either silently ignore or error
     // For crow compatibility, we'll silently ignore unknown properties
     return 0;
+}
+
+// CASL bridge functions
+int LuaManager::lua_casl_describe(lua_State* L) {
+    casl_describe(luaL_checkinteger(L, 1) - 1, L); // C is zero-based
+    lua_pop(L, 2);
+    return 0;
+}
+
+int LuaManager::lua_casl_action(lua_State* L) {
+    casl_action(luaL_checkinteger(L, 1) - 1, luaL_checkinteger(L, 2)); // C is zero-based
+    lua_pop(L, 2);
+    return 0;
+}
+
+int LuaManager::lua_casl_defdynamic(lua_State* L) {
+    int c_ix = luaL_checkinteger(L, 1) - 1; // lua is 1-based
+    lua_pop(L, 1);
+    lua_pushinteger(L, casl_defdynamic(c_ix));
+    return 1;
+}
+
+int LuaManager::lua_casl_cleardynamics(lua_State* L) {
+    casl_cleardynamics(luaL_checkinteger(L, 1) - 1); // lua is 1-based
+    lua_pop(L, 1);
+    return 0;
+}
+
+int LuaManager::lua_casl_setdynamic(lua_State* L) {
+    casl_setdynamic(luaL_checkinteger(L, 1) - 1, // lua is 1-based
+                    luaL_checkinteger(L, 2),
+                    luaL_checknumber(L, 3));
+    lua_pop(L, 3);
+    return 0;
+}
+
+int LuaManager::lua_casl_getdynamic(lua_State* L) {
+    float d = casl_getdynamic(luaL_checkinteger(L, 1) - 1, // lua is 1-based
+                             luaL_checkinteger(L, 2));
+    lua_pop(L, 2);
+    lua_pushnumber(L, d);
+    return 1;
 }
 
 // Legacy function-based API (kept for backward compatibility during transition)
