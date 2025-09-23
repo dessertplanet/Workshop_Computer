@@ -55,7 +55,6 @@ function Asl:action(direc)
     end
 end
 
-
 function Asl.dyn_compiler(self, d)
     -- register a dynamic pair {name=default}, and return a reference to it
     local elem, typ = d, 'DYN'
@@ -69,7 +68,6 @@ function Asl.dyn_compiler(self, d)
     return {typ, ref}
 end
 
-
 -- metatables
 Asl.__index = function(self, ix)
     if     ix == 'describe' then return Asl.describe
@@ -77,7 +75,6 @@ Asl.__index = function(self, ix)
     end
 end
 setmetatable(Asl, Asl)
-
 
 -- basic constructs
 function to(volts, time, shape)
@@ -106,7 +103,6 @@ function lock(t)
     table.insert(t,{'OPEN'})
     return t
 end
-
 
 --- behavioural types
 -- available for dynamics so exposed variables can be musician-centric
@@ -160,12 +156,10 @@ function mutable(n)
     else return Asl.math{'MUT', n} end
 end
 
-
 -- composite constructs
 
 function Asl._while(pred, t) return loop( Asl._if(pred, t)) end
 
 function times(n, t) return Asl._while( mutable(n+1)-1, t) end -- n+1 adds before mutation for exactly n repeats
-
 
 return Asl

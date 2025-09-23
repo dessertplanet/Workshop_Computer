@@ -26,10 +26,10 @@ function pulse(time, level, polarity)
     level = level or 5
     polarity = polarity or 1
 
-    return{ asl._if(polarity, { to(level, time, 'now')
+    return{ Asl._if(polarity, { to(level, time, 'now')
                               , to(0, 0)
                               })
-          , asl._if(1-polarity, { to(0, time, 'now')
+          , Asl._if(1-polarity, { to(0, time, 'now')
                                 , to(level, 0)
                                 })
           }

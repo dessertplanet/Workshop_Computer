@@ -15,7 +15,14 @@ extern "C" {
 extern "C" {
 #include "lib/ashapes.h"
 #include "lib/slopes.h"
+#include "lib/lualink.h"
+#include "lib/casl.h"
 }
+
+// Generated Lua bytecode headers
+#include "test_asl.h"
+#include "asl.h"
+#include "asllib.h"
 
 // Output state storage - use int32 for RP2040 efficiency
 static volatile int32_t output_states_mV[4] = {0, 0, 0, 0}; // Store in millivolts
@@ -199,6 +206,46 @@ public:
         
         // Initialize crow output functionality
         init_crow_bindings();
+        
+        // Load and execute embedded ASL libraries
+        load_embedded_asl();
+    }
+    
+    // Lfoad embedded ASL libraries using luaL_dobuffer
+    void load_embedded_asl() {
+        if (!L) return;
+        
+        // Load ASL library first
+        printf("Loading embedded ASL library...\n\r");
+        if (luaL_loadbuffer(L, (const char*)asl, asl_len, "asl.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error loading ASL library: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        }
+        
+        // Load ASLLIB library
+        printf("Loading embedded ASLLIB library...\n\r");
+        if (luaL_loadbuffer(L, (const char*)asllib, asllib_len, "asllib.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error loading ASLLIB library: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        }
+        
+        printf("ASL libraries loaded successfully!\n\r");
+    }
+    
+    // Execute the embedded test suite
+    void run_embedded_test() {
+        if (!L) return;
+        
+        printf("Running embedded ASL test suite...\n\r");
+        if (luaL_loadbuffer(L, (const char*)test_asl, test_asl_len, "test_asl.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running ASL test: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("ASL test suite completed!\n\r");
+        }
     }
     
     // Initialize crow-compatible Lua bindings with userdata metamethods
@@ -493,6 +540,11 @@ public:
                         C_cmd_t cmd = parse_command(rx_buffer, clean_length);
                         if (cmd != C_none) {
                             handle_command(cmd);
+                        } else if (strcmp(rx_buffer, "test_asl") == 0) {
+                            // Special command to run embedded ASL test
+                            if (lua_manager) {
+                                lua_manager->run_embedded_test();
+                            }
                         } else {
                             // Not a ^^ command, treat as Lua code
                             if (lua_manager) {

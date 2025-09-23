@@ -3,8 +3,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Lua itself
-#include "../submodules/lua/src/lua.h" // lua_State*
+// Lua itself  
+#include "../lua/src/lua.h" // lua_State*
 
 typedef void (*ErrorHandler_t)(char* error_message);
 

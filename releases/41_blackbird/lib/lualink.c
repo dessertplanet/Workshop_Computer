@@ -5,9 +5,9 @@
 #include <stdlib.h>
 
 // Lua itself
-//#include "../submodules/lua/src/lua.h" // in header
-#include "../submodules/lua/src/lauxlib.h"
-#include "../submodules/lua/src/lualib.h"
+//#include "../lua/src/lua.h" // in header
+#include "../lua/src/lauxlib.h"
+#include "../lua/src/lualib.h"
 
 // Hardware IO
 #include "lib/slopes.h"     // S_toward

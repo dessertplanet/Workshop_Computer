@@ -22,3 +22,9 @@
 [submodule "releases/40_corvus/submodules/norns"]
 	path = releases/40_corvus/submodules/norns
 	url = https://github.com/monome/norns.git
+[submodule "releases/41_blackbird/submodules/lua"]
+	path = releases/41_blackbird/submodules/lua
+	url = https://github.com/lua/lua.git
+[submodule "releases/41_blackbird/lua"]
+	path = releases/41_blackbird/lua
+	url = https://github.com/lua/lua.git
