@@ -3,6 +3,7 @@
 #include "pico/stdlib.h"
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 
 // Lua includes
 extern "C" {
@@ -18,22 +19,60 @@ extern "C" {
 #include "lib/lualink.h"
 #include "lib/casl.h"
 #include "lib/detect.h"
+#include "lib/events.h"
 }
 
 // Generated Lua bytecode headers
-#include "test_asl.h"
-#include "test_detection.h"
+#include "test_enhanced_multicore_safety.h"
+#include "test_lockfree_performance.h"
 #include "asl.h"
 #include "asllib.h"
 #include "output.h"
 #include "input.h"
 
-// Output state storage - use int32 for RP2040 efficiency
-static volatile int32_t output_states_mV[4] = {0, 0, 0, 0}; // Store in millivolts
+// Lock-free output state storage for maximum performance
+extern "C" {
+#include "lib/lockfree.h"
+}
+
+static lockfree_output_state_t g_output_state;
+
+// Initialize lock-free output state system
+static void init_output_state_protection() {
+    lockfree_output_init(&g_output_state);
+    printf("Lock-free output state system initialized\n");
+}
+
+// Set output state using lock-free algorithm
+static void set_output_state_atomic(int channel, int32_t value) {
+    lockfree_output_set(&g_output_state, channel, value);
+}
+
+// Get single channel output state using lock-free algorithm
+static int32_t get_output_state_atomic(int channel) {
+    return lockfree_output_get(&g_output_state, channel);
+}
+
+// Get all output states atomically (consistent snapshot)
+static bool get_all_output_states_atomic(int32_t values[4]) {
+    return lockfree_output_get_all(&g_output_state, values);
+}
 
 // Forward declaration
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
+
+// Global slopes mutex for thread safety
+#ifdef PICO_BUILD
+static mutex_t slopes_mutex;
+static bool slopes_mutex_initialized = false;
+#endif
+
+// Forward declaration of C interface function (implemented after BlackbirdCrow class)
+extern "C" void hardware_output_set_voltage(int channel, float voltage);
+
+// Forward declaration of safe event handler
+extern "C" void L_handle_change_safe(event_t* e);
 
 /*
 
@@ -74,9 +113,15 @@ typedef struct {
 
 // Simple Lua Manager for crow emulation
 class LuaManager {
+public:
+    lua_State* L;  // Made public for direct access in main.cpp
 private:
-    lua_State* L;
     static LuaManager* instance;
+    
+#ifdef PICO_BUILD
+    mutex_t lua_mutex;
+    bool lua_mutex_initialized;
+#endif
     
     // Lua print function - sends output to serial
     static int lua_print(lua_State* L) {
@@ -103,6 +148,32 @@ private:
         uint32_t time_ms = to_ms_since_boot(get_absolute_time());
         lua_pushnumber(L, time_ms / 1000.0); // crow returns seconds
         return 1;
+    }
+    
+    // Lua function to run enhanced multicore safety test
+    static int lua_test_enhanced_multicore_safety(lua_State* L) {
+        printf("Running enhanced multicore safety test...\n\r");
+        if (luaL_loadbuffer(L, (const char*)test_enhanced_multicore_safety, test_enhanced_multicore_safety_len, "test_enhanced_multicore_safety.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running enhanced multicore safety test: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Enhanced multicore safety test completed successfully!\n\r");
+        }
+        return 0;
+    }
+    
+    // Lua function to run lock-free performance test
+    static int lua_test_lockfree_performance(lua_State* L) {
+        printf("Running lock-free performance test...\n\r");
+        if (luaL_loadbuffer(L, (const char*)test_lockfree_performance, test_lockfree_performance_len, "test_lockfree_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running lock-free performance test: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Lock-free performance test completed successfully!\n\r");
+        }
+        return 0;
     }
     
     // Lua tab.print function - pretty print tables
@@ -172,6 +243,13 @@ private:
 public:
     LuaManager() : L(nullptr) {
         instance = this;
+        
+#ifdef PICO_BUILD
+        mutex_init(&lua_mutex);
+        lua_mutex_initialized = true;
+        printf("Lua mutex initialized\n");
+#endif
+        
         init();
     }
     
@@ -180,6 +258,13 @@ public:
             lua_close(L);
         }
         instance = nullptr;
+        
+#ifdef PICO_BUILD
+        if (lua_mutex_initialized) {
+            // Note: RP2040 SDK doesn't have mutex_destroy, mutex is automatically cleaned up
+            lua_mutex_initialized = false;
+        }
+#endif
     }
     
     void init() {
@@ -201,6 +286,10 @@ public:
         
     // Add time function
     lua_register(L, "time", lua_time);
+    
+    // Register test functions
+    lua_register(L, "test_enhanced_multicore_safety", lua_test_enhanced_multicore_safety);
+    lua_register(L, "test_lockfree_performance", lua_test_lockfree_performance);
     
     // Create tab table and add print function
     lua_newtable(L);
@@ -346,36 +435,36 @@ public:
             }
         }
         
+        // Set up crow-style global handlers for event dispatching
+        if (luaL_dostring(L, R"(
+            -- Global change_handler function like real crow
+            function change_handler(channel, state)
+                if input and input[channel] and input[channel].change then
+                    input[channel].change(state)
+                else
+                    print("change: ch" .. channel .. "=" .. tostring(state))
+                end
+            end
+            
+            -- Global stream_handler function like real crow  
+            function stream_handler(channel, value)
+                if input and input[channel] and input[channel].stream then
+                    input[channel].stream(value)
+                else
+                    print("stream: ch" .. channel .. "=" .. tostring(value))
+                end
+            end
+            
+            print("Global event handlers set up successfully!")
+        )") != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error setting up global handlers: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        }
+        
         printf("ASL libraries loaded successfully!\n\r");
     }
     
-    // Execute the embedded test suite
-    void run_embedded_test() {
-        if (!L) return;
-        
-        printf("Running embedded ASL test suite...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_asl, test_asl_len, "test_asl.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running ASL test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("ASL test suite completed!\n\r");
-        }
-    }
-    
-    // Execute the embedded detection test
-    void run_detection_test() {
-        if (!L) return;
-        
-        printf("Running embedded detection test suite...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_detection, test_detection_len, "test_detection.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running detection test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Detection test suite completed!\n\r");
-        }
-    }
     
     // Initialize crow-compatible Lua bindings with userdata metamethods
     void init_crow_bindings() {
@@ -465,6 +554,86 @@ public:
         return true;
     }
     
+    // Safe evaluation with error handling - prevents crashes from user code
+    bool evaluate_safe(const char* code) {
+        if (!L) return false;
+        
+        // Use protected call to prevent crashes
+        int result = luaL_loadstring(L, code);
+        if (result != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("lua load error: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+            return false;
+        }
+        
+        // Call with error handler
+        result = lua_pcall(L, 0, 0, 0);
+        if (result != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("lua runtime error: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+            return false;
+        }
+        
+        return true;
+    }
+    
+    // Thread-safe wrapper for evaluate() - protects Lua state with mutex
+    bool evaluate_thread_safe(const char* code) {
+        if (!L) return false;
+        
+#ifdef PICO_BUILD
+        if (lua_mutex_initialized) {
+            mutex_enter_blocking(&lua_mutex);
+            bool result = evaluate(code);
+            mutex_exit(&lua_mutex);
+            return result;
+        }
+#endif
+        // Fall back to non-thread-safe version if mutex not available
+        return evaluate(code);
+    }
+    
+    // Thread-safe wrapper for evaluate_safe() - protects Lua state with mutex
+    bool evaluate_safe_thread_safe(const char* code) {
+        if (!L) return false;
+        
+#ifdef PICO_BUILD
+        if (lua_mutex_initialized) {
+            mutex_enter_blocking(&lua_mutex);
+            bool result = evaluate_safe(code);
+            mutex_exit(&lua_mutex);
+            return result;
+        }
+#endif
+        // Fall back to non-thread-safe version if mutex not available
+        return evaluate_safe(code);
+    }
+    
+    // Non-blocking wrapper for evaluate_safe() - for use in event handlers
+    // Returns false if mutex is busy (don't wait)
+    bool evaluate_safe_non_blocking(const char* code) {
+        if (!L) return false;
+        
+#ifdef PICO_BUILD
+        if (lua_mutex_initialized) {
+            // Try to enter mutex without blocking
+            if (!mutex_try_enter(&lua_mutex, nullptr)) {
+                // Mutex is busy - skip this call to prevent deadlock
+                printf("Lua mutex busy - skipping event handler call\n\r");
+                return false;
+            }
+            
+            bool result = evaluate_safe(code);
+            mutex_exit(&lua_mutex);
+            return result;
+        }
+#endif
+        // Fall back to non-thread-safe version if mutex not available
+        return evaluate_safe(code);
+    }
+    
     static LuaManager* getInstance() {
         return instance;
     }
@@ -500,8 +669,8 @@ public:
         int32_t volts_mV = (int32_t)(volts * 1000.0f);
         int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
         
-        // Store state for lua queries (in millivolts)
-        output_states_mV[channel - 1] = volts_mV;
+        // Store state for lua queries (in millivolts) - thread-safe
+        set_output_state_atomic(channel - 1, volts_mV);
         
         // Route to correct hardware output
         switch (channel) {
@@ -522,7 +691,7 @@ public:
     
     float hardware_get_output(int channel) {
         if (channel < 1 || channel > 4) return 0.0f;
-        return (float)output_states_mV[channel - 1] / 1000.0f;
+        return (float)get_output_state_atomic(channel - 1) / 1000.0f;
     }
     
     // Hardware abstraction functions for input
@@ -540,6 +709,19 @@ public:
         return (float)raw_value * 6.0f / 2048.0f;
     }
     
+    // Public LED control functions for debugging
+    void debug_led_on(int index) {
+        if (index >= 0 && index <= 5) {
+            LedOn(index, true);
+        }
+    }
+    
+    void debug_led_off(int index) {
+        if (index >= 0 && index <= 5) {
+            LedOn(index, false);
+        }
+    }
+    
     BlackbirdCrow()
     {
         rx_buffer_pos = 0;
@@ -551,8 +733,21 @@ public:
         // Initialize slopes system for crow-style output processing
         S_init(4); // Initialize 4 output channels
         
+        // Initialize slopes mutex for thread safety
+#ifdef PICO_BUILD
+        mutex_init(&slopes_mutex);
+        slopes_mutex_initialized = true;
+        printf("Slopes mutex initialized\n");
+#endif
+        
         // Initialize detection system for 2 input channels
         Detect_init(2);
+        
+        // Initialize thread-safe output state protection
+        init_output_state_protection();
+        
+        // Initialize event system - CRITICAL for processing input events
+        events_init();
         
         // Initialize Lua manager
         lua_manager = new LuaManager();
@@ -715,20 +910,15 @@ public:
                         C_cmd_t cmd = parse_command(rx_buffer, clean_length);
                         if (cmd != C_none) {
                             handle_command(cmd);
-                        } else if (strcmp(rx_buffer, "test_asl") == 0) {
-                            // Special command to run embedded ASL test
+                        } else if (strcmp(rx_buffer, "test_enhanced_multicore_safety") == 0) {
+                            // Comprehensive multicore safety test
                             if (lua_manager) {
-                                lua_manager->run_embedded_test();
+                                lua_manager->evaluate("test_enhanced_multicore_safety()");
                             }
-                        } else if (strcmp(rx_buffer, "test_casl") == 0) {
-                            // Special command to run CASL integration test
+                        } else if (strcmp(rx_buffer, "test_lockfree_performance") == 0) {
+                            // Lock-free performance benchmark test
                             if (lua_manager) {
-                                lua_manager->evaluate("dofile('test_casl_integration.lua')");
-                            }
-                        } else if (strcmp(rx_buffer, "test_detection") == 0) {
-                            // Special command to run embedded detection test
-                            if (lua_manager) {
-                                lua_manager->run_detection_test();
+                                lua_manager->evaluate("test_lockfree_performance()");
                             }
                         } else {
                             // Not a ^^ command, treat as Lua code
@@ -764,6 +954,49 @@ public:
     // 48kHz audio processing function
     virtual void ProcessSample()
     {
+        // Hardware verification LEDs - test basic functionality
+        static uint32_t heartbeat_counter = 0;
+        static uint32_t input_test_counter = 0;
+        
+        // LED 5: Heartbeat - blinks every second to prove ProcessSample is running
+        if (++heartbeat_counter >= 48000) { // 1 second at 48kHz
+            heartbeat_counter = 0;
+            static bool heartbeat_state = false;
+            heartbeat_state = !heartbeat_state;
+            debug_led_on(5); // LED 5 for heartbeat
+            if (!heartbeat_state) {
+                debug_led_off(5);
+            }
+        }
+        
+        // LED 4: Input activity - lights when any input signal detected
+        if (++input_test_counter >= 1000) { // Check every ~20ms
+            input_test_counter = 0;
+            
+            // Get raw input values directly from hardware
+            int16_t raw1 = AudioIn1();
+            int16_t raw2 = AudioIn2();
+            
+            // Convert to voltages for display
+            float input1 = hardware_get_input(1);
+            float input2 = hardware_get_input(2);
+            
+            // LED 4: Any significant input detected (above 0.5V threshold)
+            if (fabs(input1) > 0.5f || fabs(input2) > 0.5f) {
+                debug_led_on(4);
+            } else {
+                debug_led_off(4);
+            }
+            
+            // Debug print every 500ms (24000 samples)
+            static uint32_t print_counter = 0;
+            if (++print_counter >= 500) {
+                print_counter = 0;
+                printf("HW: raw1=%d raw2=%d, volt1=%.3f volt2=%.3f\n\r", 
+                       raw1, raw2, input1, input2);
+            }
+        }
+        
         // Detection processing with simple decimation (every 32 samples = ~1.5kHz)
         static int detect_counter = 0;
         if (++detect_counter >= 32) {
@@ -773,9 +1006,27 @@ public:
             float input1 = hardware_get_input(1);
             float input2 = hardware_get_input(2);
             
+            // Debug: LED 3 flashes when detection processing runs
+            static bool detect_led_state = false;
+            detect_led_state = !detect_led_state;
+            if (detect_led_state) {
+                debug_led_on(3);
+            } else {
+                debug_led_off(3);
+            }
+            
             // Process detection for both channels
+            // printf("DETECT: Processing ch1=%.3f ch2=%.3f\n\r", input1, input2); // Silenced for testing
             Detect_process_sample(0, input1); // Channel 0 (input[1])
             Detect_process_sample(1, input2); // Channel 1 (input[2])
+        }
+        
+        // CRITICAL: Process event queue to prevent overflow
+        // This was missing in the Workshop Computer implementation!
+        // Process one event per detection cycle (at 1.5kHz rate, not 48kHz)
+        if (detect_counter == 0) {
+            // printf("EVENTS: Processing event queue\n\r"); // Silenced for testing
+            event_next(); // Process one event per detection cycle
         }
         
         // Process slopes system for all output channels (crow-style)
@@ -788,10 +1039,23 @@ public:
             last_slopes_update = now;
             static float sample_buffer[1]; // Single sample buffer
             
+            // Thread-safe slopes system access
+#ifdef PICO_BUILD
+            if (slopes_mutex_initialized) {
+                mutex_enter_blocking(&slopes_mutex);
+            }
+#endif
+            
             for(int i = 0; i < 4; i++) {
                 S_step_v(i, sample_buffer, 1);  // Generate one sample from slopes
                 hardware_set_output(i+1, sample_buffer[0]);  // Send to hardware
             }
+            
+#ifdef PICO_BUILD
+            if (slopes_mutex_initialized) {
+                mutex_exit(&slopes_mutex);
+            }
+#endif
         }
         
         // Basic audio passthrough for now
@@ -833,6 +1097,18 @@ int LuaManager::output_newindex(lua_State* L) {
         // Set voltage - use slopes system for smooth transitions
         float volts = (float)luaL_checknumber(L, 3);
         
+        // Thread-safe slopes system access - NON-BLOCKING for Lua calls
+#ifdef PICO_BUILD
+        if (slopes_mutex_initialized) {
+            // Try to enter mutex without blocking
+            if (!mutex_try_enter(&slopes_mutex, nullptr)) {
+                // Mutex is busy - skip this call to prevent deadlock
+                printf("Slopes mutex busy - skipping output voltage set to %.3fV\n\r", volts);
+                return 0;  // Graceful degradation instead of deadlock
+            }
+        }
+#endif
+        
         // Use slopes system to handle the voltage change
         // This enables slew and other crow features
         S_toward(output_data->channel - 1, // Convert to 0-based indexing
@@ -840,6 +1116,12 @@ int LuaManager::output_newindex(lua_State* L) {
                 0.0,                     // Immediate (no slew for now)
                 SHAPE_Linear,            // Linear transition
                 nullptr);                // No callback
+        
+#ifdef PICO_BUILD
+        if (slopes_mutex_initialized) {
+            mutex_exit(&slopes_mutex);
+        }
+#endif
         
         return 0;
     }
@@ -912,16 +1194,33 @@ int LuaManager::lua_set_output_scale(lua_State* L) {
 
 // _c.tell('output', channel, value) - Send output to hardware
 int LuaManager::lua_c_tell(lua_State* L) {
+    // Add safety check for argument count
+    int argc = lua_gettop(L);
+    if (argc < 3) {
+        printf("_c.tell: insufficient arguments (%d)\n\r", argc);
+        return 0;
+    }
+    
     const char* module = luaL_checkstring(L, 1);
     int channel = luaL_checkinteger(L, 2);
-    float value = (float)luaL_checknumber(L, 3);
     
     if (strcmp(module, "output") == 0) {
+        float value = (float)luaL_checknumber(L, 3);
         if (g_blackbird_instance) {
             ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, value);
         }
+    } else if (strcmp(module, "change") == 0) {
+        // Handle default change callback from Input.lua - just ignore for now
+        // This prevents crashes when detection triggers before user defines custom callback
+        int state = luaL_checkinteger(L, 3);
+        printf("Default change callback: ch%d=%d (ignored)\n\r", channel, state);
+    } else if (strcmp(module, "stream") == 0) {
+        // Handle stream callback - ignore for now
+        float value = (float)luaL_checknumber(L, 3);
+        printf("Stream callback: ch%d=%.3f (ignored)\n\r", channel, value);
     } else {
-        printf("_c.tell called with unknown module: %s\n\r", module);
+        // Handle unknown modules gracefully
+        printf("_c.tell: unsupported module '%s' (ch=%d)\n\r", module, channel);
     }
     
     return 0;
@@ -942,10 +1241,89 @@ int LuaManager::lua_io_get_input(lua_State* L) {
     return 1;
 }
 
-// Detection callback function - called when detection events occur
+// Event-based detection callback - queues events like real crow
 static void detection_callback(int channel, float value) {
-    printf("Input detection: channel %d, value %.3f\n\r", channel + 1, value);
-    // TODO: Forward to Lua input event handlers
+    // Reduce debug output to prevent buffer overflow
+    static uint32_t callback_count = 0;
+    callback_count++;
+    
+    // For change detection, 'value' is actually the state (0.0 or 1.0), not voltage
+    bool state = (value > 0.5f);
+    printf("CALLBACK #%lu: ch%d state=%s\n\r", callback_count, channel + 1, state ? "HIGH" : "LOW");
+    
+    // Queue a change event like real crow does (using event system for safety)
+    // This prevents direct Lua calls that can corrupt the stack
+    event_t e = { 
+        .handler = L_handle_change_safe,
+        .index = { .i = channel },
+        .data = { .f = value } // Pass the state value directly
+    };
+    
+    if (!event_post(&e)) {
+        printf("Failed to post change event for channel %d\n\r", channel + 1);
+    }
+}
+
+// Core-safe change event handler - NO BLOCKING CALLS, NO SLEEP!
+extern "C" void L_handle_change_safe(event_t* e) {
+    // CRITICAL: This function can be called from either core
+    // Must be thread-safe and never block!
+    
+    static volatile uint32_t callback_counter = 0;
+    callback_counter++;
+    
+    // LED 0: Event handler called (proves event system works)
+    // Use non-blocking LED control only
+    if (g_blackbird_instance) {
+        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(0);
+    }
+    
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (!lua_mgr) {
+        if (g_blackbird_instance) {
+            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
+        }
+        return;
+    }
+    
+    int channel = e->index.i + 1; // Convert to 1-based
+    bool state = (e->data.f > 0.5f);
+    
+    // Debug output with callback counter to track progress
+    printf("SAFE CALLBACK #%lu: ch%d state=%s\n\r", 
+           callback_counter, channel, state ? "HIGH" : "LOW");
+    
+    // Use crow-style global change_handler dispatching for error isolation
+    char lua_call[128];
+    snprintf(lua_call, sizeof(lua_call), 
+        "if change_handler then change_handler(%d, %s) end", 
+        channel, state ? "true" : "false");
+    
+    // LED 1: About to call Lua (proves we reach Lua execution attempt)
+    if (g_blackbird_instance) {
+        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(1);
+    }
+    
+    // Call with non-blocking error protection - if mutex is busy, skip to prevent deadlock
+    if (!lua_mgr->evaluate_safe_non_blocking(lua_call)) {
+        printf("Skipped change_handler for channel %d (mutex busy or error)\n\r", channel);
+        // Turn off LEDs on error/skip (non-blocking)
+        if (g_blackbird_instance) {
+            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
+            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(1);
+        }
+        return;
+    }
+    
+    // LED 2: Lua callback completed successfully (proves no crash/hang)
+    if (g_blackbird_instance) {
+        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(2);
+        // Turn off other LEDs now that we're done (non-blocking)
+        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
+        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(1);
+    }
+    
+    printf("SAFE CALLBACK #%lu: Completed successfully\n\r", callback_counter);
 }
 
 // Input mode functions - connect to detection system
@@ -1127,10 +1505,19 @@ int LuaManager::lua_output_volts(lua_State* L) {
     }
 }
 
+// Implementation of C interface function (after BlackbirdCrow class is fully defined)
+extern "C" void hardware_output_set_voltage(int channel, float voltage) {
+    if (g_blackbird_instance) {
+        ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, voltage);
+    }
+}
+
 int main()
 {
+    set_sys_clock_khz(200000, true);
     stdio_init_all();
 
     BlackbirdCrow crow;
+    crow.EnableNormalisationProbe();
     crow.Run();
 }

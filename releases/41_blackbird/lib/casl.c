@@ -385,7 +385,10 @@ static void next_action( int index )
         } else {
 stepup:
             if( !seq_up(self) ){ // To invalid. Jump up. return if nothing left to do
-                L_queue_asl_done(index); // trigger a lua event when sequence is complete
+                // DEADLOCK FIX: Don't post events from CASL completion
+                // In multicore environment, this creates circular Lua->Event->Lua deadlock
+                // Real crow doesn't need this because it's single-threaded
+                // The "done" callback functionality is handled directly by slopes system
                 return;
             }
         }

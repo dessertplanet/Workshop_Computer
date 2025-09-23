@@ -34,15 +34,25 @@ struct lua_lib_locator{
 static int _open_lib( lua_State *L, const struct lua_lib_locator* lib, const char* name );
 static void lua_full_gc(lua_State* L);
 
-// _c.tell function for detection callbacks
+// _c.tell function for detection callbacks and output commands
 int l_bootstrap_c_tell(lua_State* L) {
-    // _c.tell(event_type, channel, value, ...)
-    // For now, just print the detection events
     int nargs = lua_gettop(L);
     if (nargs >= 2) {
         const char* event_type = luaL_checkstring(L, 1);
         int channel = luaL_checkinteger(L, 2);
         
+        // Handle output commands - this is the critical missing piece!
+        if (strcmp(event_type, "output") == 0 && nargs >= 3) {
+            float voltage = (float)luaL_checknumber(L, 3);
+            
+            // Forward to hardware through C interface function
+            // This will be implemented in main.cpp and linked
+            extern void hardware_output_set_voltage(int channel, float voltage);
+            hardware_output_set_voltage(channel, voltage);
+            return 0;
+        }
+        
+        // Handle input detection events (your existing code)
         if (nargs >= 3) {
             if (lua_isnumber(L, 3)) {
                 double value = lua_tonumber(L, 3);

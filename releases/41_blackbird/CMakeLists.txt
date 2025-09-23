@@ -41,6 +41,7 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/metro.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/clock.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/events.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/lockfree.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/l_bootstrap.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/l_crowlib.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/l_ii_mod.c
@@ -74,8 +75,8 @@ function(add_lua_header LUA_FILE HEADER_VAR)
 endfunction()
 
 # Generate headers for Lua files
-add_lua_header(test_asl.lua TEST_ASL_HEADER)
-add_lua_header(test_detection.lua TEST_DETECTION_HEADER)
+add_lua_header(test_enhanced_multicore_safety.lua TEST_ENHANCED_MULTICORE_SAFETY_HEADER)
+add_lua_header(test_lockfree_performance.lua TEST_LOCKFREE_PERFORMANCE_HEADER)
 add_lua_header(lib/asl.lua ASL_HEADER)
 add_lua_header(lib/asllib.lua ASLLIB_HEADER)
 add_lua_header(lib/crowlib.lua CROWLIB_HEADER)
@@ -97,9 +98,9 @@ add_card(${CARD_NAME})
 
 # Add generated headers as dependencies
 target_sources(${CARD_NAME} PRIVATE 
-  ${TEST_ASL_HEADER} 
-  ${TEST_DETECTION_HEADER}
-  ${ASL_HEADER} 
+  ${TEST_ENHANCED_MULTICORE_SAFETY_HEADER}
+  ${TEST_LOCKFREE_PERFORMANCE_HEADER}
+  ${ASL_HEADER}
   ${ASLLIB_HEADER}
   ${CROWLIB_HEADER}
   ${CLOCK_HEADER}
