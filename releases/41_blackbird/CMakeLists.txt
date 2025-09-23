@@ -75,6 +75,7 @@ endfunction()
 
 # Generate headers for Lua files
 add_lua_header(test_asl.lua TEST_ASL_HEADER)
+add_lua_header(test_detection.lua TEST_DETECTION_HEADER)
 add_lua_header(lib/asl.lua ASL_HEADER)
 add_lua_header(lib/asllib.lua ASLLIB_HEADER)
 add_lua_header(lib/crowlib.lua CROWLIB_HEADER)
@@ -97,6 +98,7 @@ add_card(${CARD_NAME})
 # Add generated headers as dependencies
 target_sources(${CARD_NAME} PRIVATE 
   ${TEST_ASL_HEADER} 
+  ${TEST_DETECTION_HEADER}
   ${ASL_HEADER} 
   ${ASLLIB_HEADER}
   ${CROWLIB_HEADER}

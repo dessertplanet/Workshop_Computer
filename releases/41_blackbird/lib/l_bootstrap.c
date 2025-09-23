@@ -34,6 +34,32 @@ struct lua_lib_locator{
 static int _open_lib( lua_State *L, const struct lua_lib_locator* lib, const char* name );
 static void lua_full_gc(lua_State* L);
 
+// _c.tell function for detection callbacks
+int l_bootstrap_c_tell(lua_State* L) {
+    // _c.tell(event_type, channel, value, ...)
+    // For now, just print the detection events
+    int nargs = lua_gettop(L);
+    if (nargs >= 2) {
+        const char* event_type = luaL_checkstring(L, 1);
+        int channel = luaL_checkinteger(L, 2);
+        
+        if (nargs >= 3) {
+            if (lua_isnumber(L, 3)) {
+                double value = lua_tonumber(L, 3);
+                printf("Detection: %s on input %d = %.3f\n", event_type, channel, value);
+            } else {
+                const char* str_value = luaL_checkstring(L, 3);
+                printf("Detection: %s on input %d = %s\n", event_type, channel, str_value);
+            }
+        } else {
+            printf("Detection: %s on input %d\n", event_type, channel);
+        }
+    }
+    
+    lua_settop(L, 0);
+    return 0;
+}
+
 // mark the 3rd arg 'false' if you need to debug that library
 const struct lua_lib_locator Lua_libs[] =
     { { "lua_crowlib"   , crowlib   , true, crowlib_len}
@@ -77,6 +103,12 @@ void l_bootstrap_init(lua_State* L){
     // crow = _c
     lua_getglobal(L, "_c");
     lua_setglobal(L, "crow");
+
+    // Add _c.tell function for detection callbacks
+    lua_getglobal(L, "_c");
+    lua_pushcfunction(L, l_bootstrap_c_tell);
+    lua_setfield(L, -2, "tell");
+    lua_pop(L, 1);
 
     // crowlib C extensions
     l_crowlib_init(L);

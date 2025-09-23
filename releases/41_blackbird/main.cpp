@@ -17,10 +17,12 @@ extern "C" {
 #include "lib/slopes.h"
 #include "lib/lualink.h"
 #include "lib/casl.h"
+#include "lib/detect.h"
 }
 
 // Generated Lua bytecode headers
 #include "test_asl.h"
+#include "test_detection.h"
 #include "asl.h"
 #include "asllib.h"
 #include "output.h"
@@ -361,6 +363,20 @@ public:
         }
     }
     
+    // Execute the embedded detection test
+    void run_detection_test() {
+        if (!L) return;
+        
+        printf("Running embedded detection test suite...\n\r");
+        if (luaL_loadbuffer(L, (const char*)test_detection, test_detection_len, "test_detection.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running detection test: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Detection test suite completed!\n\r");
+        }
+    }
+    
     // Initialize crow-compatible Lua bindings with userdata metamethods
     void init_crow_bindings() {
         if (!L) return;
@@ -535,6 +551,9 @@ public:
         // Initialize slopes system for crow-style output processing
         S_init(4); // Initialize 4 output channels
         
+        // Initialize detection system for 2 input channels
+        Detect_init(2);
+        
         // Initialize Lua manager
         lua_manager = new LuaManager();
         
@@ -706,6 +725,11 @@ public:
                             if (lua_manager) {
                                 lua_manager->evaluate("dofile('test_casl_integration.lua')");
                             }
+                        } else if (strcmp(rx_buffer, "test_detection") == 0) {
+                            // Special command to run embedded detection test
+                            if (lua_manager) {
+                                lua_manager->run_detection_test();
+                            }
                         } else {
                             // Not a ^^ command, treat as Lua code
                             if (lua_manager) {
@@ -740,9 +764,19 @@ public:
     // 48kHz audio processing function
     virtual void ProcessSample()
     {
-        // Copy CV inputs for Core 1 to access
-        // v1 = CVIn1();
-        // v2 = CVIn2();
+        // Detection processing with simple decimation (every 32 samples = ~1.5kHz)
+        static int detect_counter = 0;
+        if (++detect_counter >= 32) {
+            detect_counter = 0;
+            
+            // Get input voltages for both channels
+            float input1 = hardware_get_input(1);
+            float input2 = hardware_get_input(2);
+            
+            // Process detection for both channels
+            Detect_process_sample(0, input1); // Channel 0 (input[1])
+            Detect_process_sample(1, input2); // Channel 1 (input[2])
+        }
         
         // Process slopes system for all output channels (crow-style)
         // Using safe timer-based approach to avoid USB enumeration issues
@@ -908,11 +942,22 @@ int LuaManager::lua_io_get_input(lua_State* L) {
     return 1;
 }
 
-// Input mode functions (basic stubs for now - can be enhanced later)
+// Detection callback function - called when detection events occur
+static void detection_callback(int channel, float value) {
+    printf("Input detection: channel %d, value %.3f\n\r", channel + 1, value);
+    // TODO: Forward to Lua input event handlers
+}
+
+// Input mode functions - connect to detection system
 int LuaManager::lua_set_input_stream(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
     float time = (float)luaL_checknumber(L, 2);
-    printf("set_input_stream: channel %d, time %.3f (basic stub)\n\r", channel, time);
+    
+    Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
+    if (detector) {
+        Detect_stream(detector, detection_callback, time);
+        printf("Input %d: stream mode, interval %.3fs\n\r", channel, time);
+    }
     return 0;
 }
 
@@ -921,29 +966,86 @@ int LuaManager::lua_set_input_change(lua_State* L) {
     float threshold = (float)luaL_checknumber(L, 2);
     float hysteresis = (float)luaL_checknumber(L, 3);
     const char* direction = luaL_checkstring(L, 4);
-    printf("set_input_change: channel %d, thresh %.3f, hyst %.3f, dir %s (basic stub)\n\r", 
-           channel, threshold, hysteresis, direction);
+    
+    Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
+    if (detector) {
+        int8_t dir = Detect_str_to_dir(direction);
+        Detect_change(detector, detection_callback, threshold, hysteresis, dir);
+        printf("Input %d: change mode, thresh %.3f, hyst %.3f, dir %s\n\r", 
+               channel, threshold, hysteresis, direction);
+    }
     return 0;
 }
 
 int LuaManager::lua_set_input_window(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
-    // windows table and hysteresis
-    printf("set_input_window: channel %d (basic stub)\n\r", channel);
+    
+    // Extract windows array from Lua table
+    if (!lua_istable(L, 2)) {
+        printf("set_input_window: windows must be a table\n\r");
+        return 0;
+    }
+    
+    float hysteresis = (float)luaL_checknumber(L, 3);
+    
+    // Get table length
+    int wLen = lua_rawlen(L, 2);
+    if (wLen > WINDOW_MAX_COUNT) wLen = WINDOW_MAX_COUNT;
+    
+    float windows[WINDOW_MAX_COUNT];
+    for (int i = 1; i <= wLen; i++) {
+        lua_rawgeti(L, 2, i);
+        windows[i-1] = (float)lua_tonumber(L, -1);
+        lua_pop(L, 1);
+    }
+    
+    Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
+    if (detector) {
+        Detect_window(detector, detection_callback, windows, wLen, hysteresis);
+        printf("Input %d: window mode, %d windows, hyst %.3f\n\r", channel, wLen, hysteresis);
+    }
     return 0;
 }
 
 int LuaManager::lua_set_input_scale(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
-    // notes table, temp, scaling
-    printf("set_input_scale: channel %d (basic stub)\n\r", channel);
+    
+    // Extract scale array from Lua table
+    float scale[SCALE_MAX_COUNT];
+    int sLen = 0;
+    
+    if (lua_istable(L, 2)) {
+        sLen = lua_rawlen(L, 2);
+        if (sLen > SCALE_MAX_COUNT) sLen = SCALE_MAX_COUNT;
+        
+        for (int i = 1; i <= sLen; i++) {
+            lua_rawgeti(L, 2, i);
+            scale[i-1] = (float)lua_tonumber(L, -1);
+            lua_pop(L, 1);
+        }
+    }
+    
+    float temp = (float)luaL_checknumber(L, 3);    // Temperament (divisions)
+    float scaling = (float)luaL_checknumber(L, 4); // Voltage scaling
+    
+    Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
+    if (detector) {
+        Detect_scale(detector, detection_callback, scale, sLen, temp, scaling);
+        printf("Input %d: scale mode, %d notes, temp %.1f, scaling %.3f\n\r", 
+               channel, sLen, temp, scaling);
+    }
     return 0;
 }
 
 int LuaManager::lua_set_input_volume(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
     float time = (float)luaL_checknumber(L, 2);
-    printf("set_input_volume: channel %d, time %.3f (basic stub)\n\r", channel, time);
+    
+    Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
+    if (detector) {
+        Detect_volume(detector, detection_callback, time);
+        printf("Input %d: volume mode, interval %.3fs\n\r", channel, time);
+    }
     return 0;
 }
 
@@ -951,15 +1053,25 @@ int LuaManager::lua_set_input_peak(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
     float threshold = (float)luaL_checknumber(L, 2);
     float hysteresis = (float)luaL_checknumber(L, 3);
-    printf("set_input_peak: channel %d, thresh %.3f, hyst %.3f (basic stub)\n\r", 
-           channel, threshold, hysteresis);
+    
+    Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
+    if (detector) {
+        Detect_peak(detector, detection_callback, threshold, hysteresis);
+        printf("Input %d: peak mode, thresh %.3f, hyst %.3f\n\r", 
+               channel, threshold, hysteresis);
+    }
     return 0;
 }
 
 int LuaManager::lua_set_input_freq(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
     float time = (float)luaL_checknumber(L, 2);
-    printf("set_input_freq: channel %d, time %.3f (basic stub)\n\r", channel, time);
+    
+    Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
+    if (detector) {
+        Detect_freq(detector, detection_callback, time);
+        printf("Input %d: freq mode, interval %.3fs (not fully implemented)\n\r", channel, time);
+    }
     return 0;
 }
 
@@ -968,14 +1080,26 @@ int LuaManager::lua_set_input_clock(lua_State* L) {
     float div = (float)luaL_checknumber(L, 2);
     float threshold = (float)luaL_checknumber(L, 3);
     float hysteresis = (float)luaL_checknumber(L, 4);
-    printf("set_input_clock: channel %d, div %.3f, thresh %.3f, hyst %.3f (basic stub)\n\r", 
-           channel, div, threshold, hysteresis);
+    
+    // Clock mode is a specialized change detection
+    Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
+    if (detector) {
+        // Use change detection as base for clock
+        Detect_change(detector, detection_callback, threshold, hysteresis, 1); // Rising edge
+        printf("Input %d: clock mode, div %.3f, thresh %.3f, hyst %.3f\n\r", 
+               channel, div, threshold, hysteresis);
+    }
     return 0;
 }
 
 int LuaManager::lua_set_input_none(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
-    printf("set_input_none: channel %d (basic stub)\n\r", channel);
+    
+    Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
+    if (detector) {
+        Detect_none(detector);
+        printf("Input %d: none mode (detection disabled)\n\r", channel);
+    }
     return 0;
 }
 

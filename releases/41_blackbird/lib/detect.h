@@ -3,10 +3,19 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Stub includes for missing dependencies
+// VU Meter for volume and peak detection
 typedef struct {
     float level;
+    float time_constant;
+    float attack_coeff;
+    float release_coeff;
 } VU_meter_t;
+
+// VU Meter functions
+VU_meter_t* VU_init(void);
+void VU_deinit(VU_meter_t* vu);
+void VU_time(VU_meter_t* vu, float time_seconds);
+float VU_step(VU_meter_t* vu, float input);
 
 #define SCALE_MAX_COUNT 16
 #define WINDOW_MAX_COUNT 16
@@ -137,3 +146,8 @@ void Detect_freq( Detect_t*         self
                 , Detect_callback_t cb
                 , float             interval
                 );
+
+////////////////////////////////////
+// processing functions
+
+void Detect_process_sample(int channel, float level);
