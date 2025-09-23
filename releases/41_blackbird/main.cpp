@@ -24,6 +24,7 @@ extern "C" {
 #include "asl.h"
 #include "asllib.h"
 #include "output.h"
+#include "input.h"
 
 // Output state storage - use int32 for RP2040 efficiency
 static volatile int32_t output_states_mV[4] = {0, 0, 0, 0}; // Store in millivolts
@@ -217,6 +218,18 @@ public:
     lua_register(L, "LL_get_state", lua_LL_get_state);
     lua_register(L, "set_output_scale", lua_set_output_scale);
     
+    // Register crow backend functions for Input.lua compatibility
+    lua_register(L, "io_get_input", lua_io_get_input);
+    lua_register(L, "set_input_stream", lua_set_input_stream);
+    lua_register(L, "set_input_change", lua_set_input_change);
+    lua_register(L, "set_input_window", lua_set_input_window);
+    lua_register(L, "set_input_scale", lua_set_input_scale);
+    lua_register(L, "set_input_volume", lua_set_input_volume);
+    lua_register(L, "set_input_peak", lua_set_input_peak);
+    lua_register(L, "set_input_freq", lua_set_input_freq);
+    lua_register(L, "set_input_clock", lua_set_input_clock);
+    lua_register(L, "set_input_none", lua_set_input_none);
+    
     // Create _c table for _c.tell function
     lua_newtable(L);
     lua_pushcfunction(L, lua_c_tell);
@@ -305,6 +318,32 @@ public:
             }
         }
         
+        // Load Input.lua class from embedded bytecode
+        printf("Loading embedded Input.lua class...\n\r");
+        if (luaL_loadbuffer(L, (const char*)input, input_len, "input.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error loading Input.lua: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            // Input.lua returns the Input table - capture it
+            lua_setglobal(L, "Input");
+            
+            // Create input[1] and input[2] instances using Input.new()
+            if (luaL_dostring(L, R"(
+                input = {}
+                for i = 1, 2 do
+                    input[i] = Input.new(i)
+                end
+                print("Input objects created successfully!")
+            )") != LUA_OK) {
+                const char* error = lua_tostring(L, -1);
+                printf("Error creating input objects: %s\n\r", error ? error : "unknown error");
+                lua_pop(L, 1);
+            } else {
+                printf("Input.lua loaded successfully!\n\r");
+            }
+        }
+        
         printf("ASL libraries loaded successfully!\n\r");
     }
     
@@ -378,6 +417,18 @@ public:
     static int lua_LL_get_state(lua_State* L);
     static int lua_set_output_scale(lua_State* L);
     static int lua_c_tell(lua_State* L);
+    
+    // Crow backend functions for Input.lua compatibility
+    static int lua_io_get_input(lua_State* L);
+    static int lua_set_input_stream(lua_State* L);
+    static int lua_set_input_change(lua_State* L);
+    static int lua_set_input_window(lua_State* L);
+    static int lua_set_input_scale(lua_State* L);
+    static int lua_set_input_volume(lua_State* L);
+    static int lua_set_input_peak(lua_State* L);
+    static int lua_set_input_freq(lua_State* L);
+    static int lua_set_input_clock(lua_State* L);
+    static int lua_set_input_none(lua_State* L);
     
     // Forward declaration - implementation will be after BlackbirdCrow class
     static int lua_output_volts(lua_State* L);
@@ -456,6 +507,21 @@ public:
     float hardware_get_output(int channel) {
         if (channel < 1 || channel > 4) return 0.0f;
         return (float)output_states_mV[channel - 1] / 1000.0f;
+    }
+    
+    // Hardware abstraction functions for input
+    float hardware_get_input(int channel) {
+        if (channel < 1 || channel > 2) return 0.0f;
+        
+        int16_t raw_value = 0;
+        if (channel == 1) {
+            raw_value = AudioIn1();
+        } else if (channel == 2) {
+            raw_value = AudioIn2();
+        }
+        
+        // Convert from ComputerCard range (-2048 to 2047) to crow voltage range (±6V)
+        return (float)raw_value * 6.0f / 2048.0f;
     }
     
     BlackbirdCrow()
@@ -824,6 +890,92 @@ int LuaManager::lua_c_tell(lua_State* L) {
         printf("_c.tell called with unknown module: %s\n\r", module);
     }
     
+    return 0;
+}
+
+// Crow backend functions for Input.lua compatibility
+
+// io_get_input(channel) - Read input voltage using AudioIn1/AudioIn2
+int LuaManager::lua_io_get_input(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);  // 1-based channel from Lua
+    float volts = 0.0f;
+    
+    if (g_blackbird_instance) {
+        volts = ((BlackbirdCrow*)g_blackbird_instance)->hardware_get_input(channel);
+    }
+    
+    lua_pushnumber(L, volts);
+    return 1;
+}
+
+// Input mode functions (basic stubs for now - can be enhanced later)
+int LuaManager::lua_set_input_stream(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    float time = (float)luaL_checknumber(L, 2);
+    printf("set_input_stream: channel %d, time %.3f (basic stub)\n\r", channel, time);
+    return 0;
+}
+
+int LuaManager::lua_set_input_change(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    float threshold = (float)luaL_checknumber(L, 2);
+    float hysteresis = (float)luaL_checknumber(L, 3);
+    const char* direction = luaL_checkstring(L, 4);
+    printf("set_input_change: channel %d, thresh %.3f, hyst %.3f, dir %s (basic stub)\n\r", 
+           channel, threshold, hysteresis, direction);
+    return 0;
+}
+
+int LuaManager::lua_set_input_window(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    // windows table and hysteresis
+    printf("set_input_window: channel %d (basic stub)\n\r", channel);
+    return 0;
+}
+
+int LuaManager::lua_set_input_scale(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    // notes table, temp, scaling
+    printf("set_input_scale: channel %d (basic stub)\n\r", channel);
+    return 0;
+}
+
+int LuaManager::lua_set_input_volume(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    float time = (float)luaL_checknumber(L, 2);
+    printf("set_input_volume: channel %d, time %.3f (basic stub)\n\r", channel, time);
+    return 0;
+}
+
+int LuaManager::lua_set_input_peak(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    float threshold = (float)luaL_checknumber(L, 2);
+    float hysteresis = (float)luaL_checknumber(L, 3);
+    printf("set_input_peak: channel %d, thresh %.3f, hyst %.3f (basic stub)\n\r", 
+           channel, threshold, hysteresis);
+    return 0;
+}
+
+int LuaManager::lua_set_input_freq(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    float time = (float)luaL_checknumber(L, 2);
+    printf("set_input_freq: channel %d, time %.3f (basic stub)\n\r", channel, time);
+    return 0;
+}
+
+int LuaManager::lua_set_input_clock(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    float div = (float)luaL_checknumber(L, 2);
+    float threshold = (float)luaL_checknumber(L, 3);
+    float hysteresis = (float)luaL_checknumber(L, 4);
+    printf("set_input_clock: channel %d, div %.3f, thresh %.3f, hyst %.3f (basic stub)\n\r", 
+           channel, div, threshold, hysteresis);
+    return 0;
+}
+
+int LuaManager::lua_set_input_none(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    printf("set_input_none: channel %d (basic stub)\n\r", channel);
     return 0;
 }
 
