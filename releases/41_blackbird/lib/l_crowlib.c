@@ -9,6 +9,7 @@
 #include "lib/ashapes.h"    // AShaper_get_state
 #include "lib/caw.h"        // Caw_printf()
 #include "lib/io.h"         // IO_GetADC()
+#include "lib/events.h"     // event_t, event_post()
 
 #define L_CL_MIDDLEC 		(261.63f)
 #define L_CL_MIDDLEC_INV 	(1.0f/L_CL_MIDDLEC)
@@ -21,6 +22,12 @@ static int _tell_get_out( lua_State* L );
 static int _tell_get_cv( lua_State* L );
 static int _lua_void_function( lua_State* L );
 static int _delay( lua_State* L );
+
+// Forward declarations for L_handle_* functions
+void L_handle_metro( event_t* e );
+void L_handle_clock_resume( event_t* e );
+void L_handle_clock_start( event_t* e );
+void L_handle_clock_stop( event_t* e );
 
 // function() end
 // useful as a do-nothing callback
@@ -202,10 +209,10 @@ int l_crowlib_crow_reset( lua_State* L ){
 	printf("crow.reset()\n\r");
 
     lua_getglobal(L, "input"); // @1
-	for(int i=1; i<=2; i++){
+for(int i=1; i<=2; i++){
         lua_settop(L, 1); // _G.input is TOS @1
-		lua_pushinteger(L, i); // @2
-		lua_gettable(L, 1); // replace @2 with: input[n]
+lua_pushinteger(L, i); // @2
+lua_gettable(L, 1); // replace @2 with: input[n]
 
         // input[n].mode = 'none'
         lua_pushstring(L, "none"); // @3
@@ -215,7 +222,7 @@ int l_crowlib_crow_reset( lua_State* L ){
         lua_getfield(L, 2, "reset_events"); // @3
         lua_pushvalue(L, 2); // @4 copy of input[n]
         lua_call(L, 1, 0);
-	}
+}
     lua_settop(L, 0);
 
     lua_getglobal(L, "output"); // @1
@@ -545,8 +552,59 @@ static int _tell_get_out( lua_State* L ){
 
 // C.tell( 'stream', channel, io_get_input( channel ))
 static int _tell_get_cv( lua_State* L ){
-	int chan = luaL_checknumber(L, -1);
+int chan = luaL_checknumber(L, -1);
     Caw_printf( "^^stream(%i,%f)", chan, (double)IO_GetADC(chan-1));
     lua_settop(L, 0);
     return 0;
+}
+
+// Missing L_queue_* functions extracted from crow's lualink.c
+void L_queue_metro( int id, int state )
+{
+    event_t e = { .handler = L_handle_metro
+                , .index.i = id
+                , .data.i  = state
+                };
+    event_post(&e);
+}
+
+void L_queue_clock_resume( int coro_id )
+{
+    event_t e = { .handler = L_handle_clock_resume
+                , .index.i = coro_id
+                };
+    event_post(&e);
+}
+
+void L_queue_clock_start( void )
+{
+    event_t e = { .handler = L_handle_clock_start };
+    event_post(&e);
+}
+
+void L_queue_clock_stop( void )
+{
+    event_t e = { .handler = L_handle_clock_stop };
+    event_post(&e);
+}
+
+// Handler functions - these need to exist but we'll make them stubs for now
+void L_handle_metro( event_t* e )
+{
+    printf("L_handle_metro: id=%d, state=%d (stub)\n", e->index.i, e->data.i);
+}
+
+void L_handle_clock_resume( event_t* e )
+{
+    printf("L_handle_clock_resume: coro_id=%d (stub)\n", e->index.i);
+}
+
+void L_handle_clock_start( event_t* e )
+{
+    printf("L_handle_clock_start (stub)\n");
+}
+
+void L_handle_clock_stop( event_t* e )
+{
+    printf("L_handle_clock_stop (stub)\n");
 }

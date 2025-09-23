@@ -3,7 +3,6 @@
 
 #include <stdio.h>
 #include "events.h"
-#include "lualink.h"
 #include "caw.h" // Caw_send_luachunk
 
 // RP2040 multicore protection - CRITICAL for thread safety!

@@ -4,8 +4,6 @@
 #include <stdio.h>
 #include <math.h> // floorf
 
-#include "lualink.h" // L_queue_asl_done for raising a sequence-complete event
-
 // TODO
 // add sequins data type
 // add random math operator

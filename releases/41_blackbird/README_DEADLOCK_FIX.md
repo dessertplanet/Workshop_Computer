@@ -64,27 +64,6 @@ The monome crow emulator was experiencing deadlocks during multicore testing, sp
 - **Graceful Degradation**: If Lua is busy, events are safely skipped rather than causing deadlock
 - **Thread Safety**: Slopes system now protected from race conditions between cores
 - **Maintains Functionality**: Normal operation (when Lua isn't busy) works exactly as before
-- **Architecture Fix**: Addresses both event system and slopes system multicore issues
-
-## Verification
-
-The fix was verified by:
-1. **Successful Build**: Firmware compiles without errors
-2. **Non-Blocking Operation**: Event handler uses `mutex_try_enter()` instead of `mutex_enter_blocking()`
-3. **Safe Fallback**: Clear logging when events are skipped due to busy mutex
-
-## Testing Recommendations
-
-When testing the updated firmware:
-1. Run `test_enhanced_multicore_safety` - should no longer hang
-2. Monitor serial output for "Lua mutex busy" messages during heavy testing
-3. Verify that normal Lua operations work when not under test load
-4. Check that input detection still functions correctly in normal use
-
-## Technical Details
-
-**File Modified**: `main.cpp`
-**Functions Added**: `evaluate_safe_non_blocking()`
 **Functions Modified**: `L_handle_change_safe()`
 **Core Principle**: Never block in real-time event handlers
 

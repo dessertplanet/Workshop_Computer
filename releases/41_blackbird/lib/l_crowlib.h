@@ -16,3 +16,9 @@ int l_crowlib_crow_reset( lua_State* L );
 int l_crowlib_justvolts(lua_State *L);
 int l_crowlib_just12(lua_State *L);
 int l_crowlib_hztovolts(lua_State *L);
+
+// L_queue_* functions for event posting
+void L_queue_metro( int id, int state );
+void L_queue_clock_resume( int coro_id );
+void L_queue_clock_start( void );
+void L_queue_clock_stop( void );

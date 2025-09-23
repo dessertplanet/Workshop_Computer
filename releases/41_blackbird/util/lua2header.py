@@ -19,12 +19,7 @@ def compile_lua_to_bytecode(lua_file):
     
     luac_candidates = [
         str(host_luac),  # Our compatible host luac (first priority)
-        str(build_luac),
-        'luac',
-        'luac5.4',  # Common on some systems
-        '/usr/bin/luac',
-        '/usr/local/bin/luac',
-        '/opt/homebrew/cellar/lua@5.3/5.3.6/bin/luac'
+        str(build_luac)
     ]
     
     for luac_cmd in luac_candidates:

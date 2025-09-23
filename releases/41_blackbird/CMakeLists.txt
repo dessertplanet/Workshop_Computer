@@ -34,7 +34,6 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/casl.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/slopes.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/ashapes.c
-        ${CMAKE_CURRENT_LIST_DIR}/lib/lualink.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/detect.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/caw.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/ii.c
@@ -77,6 +76,7 @@ endfunction()
 # Generate headers for Lua files
 add_lua_header(test_enhanced_multicore_safety.lua TEST_ENHANCED_MULTICORE_SAFETY_HEADER)
 add_lua_header(test_lockfree_performance.lua TEST_LOCKFREE_PERFORMANCE_HEADER)
+add_lua_header(test_random_voltage.lua TEST_RANDOM_VOLTAGE_HEADER)
 add_lua_header(lib/asl.lua ASL_HEADER)
 add_lua_header(lib/asllib.lua ASLLIB_HEADER)
 add_lua_header(lib/crowlib.lua CROWLIB_HEADER)
@@ -100,6 +100,7 @@ add_card(${CARD_NAME})
 target_sources(${CARD_NAME} PRIVATE 
   ${TEST_ENHANCED_MULTICORE_SAFETY_HEADER}
   ${TEST_LOCKFREE_PERFORMANCE_HEADER}
+  ${TEST_RANDOM_VOLTAGE_HEADER}
   ${ASL_HEADER}
   ${ASLLIB_HEADER}
   ${CROWLIB_HEADER}

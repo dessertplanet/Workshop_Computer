@@ -16,15 +16,16 @@ extern "C" {
 extern "C" {
 #include "lib/ashapes.h"
 #include "lib/slopes.h"
-#include "lib/lualink.h"
 #include "lib/casl.h"
 #include "lib/detect.h"
 #include "lib/events.h"
+#include "lib/l_crowlib.h"
 }
 
 // Generated Lua bytecode headers
 #include "test_enhanced_multicore_safety.h"
 #include "test_lockfree_performance.h"
+#include "test_random_voltage.h"
 #include "asl.h"
 #include "asllib.h"
 #include "output.h"
@@ -176,6 +177,19 @@ private:
         return 0;
     }
     
+    // Lua function to run random voltage test
+    static int lua_test_random_voltage(lua_State* L) {
+        printf("Running random voltage test...\n\r");
+        if (luaL_loadbuffer(L, (const char*)test_random_voltage, test_random_voltage_len, "test_random_voltage.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running random voltage test: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Random voltage test loaded successfully!\n\r");
+        }
+        return 0;
+    }
+    
     // Lua tab.print function - pretty print tables
     static int lua_tab_print(lua_State* L) {
         if (lua_gettop(L) != 1) {
@@ -290,6 +304,13 @@ public:
     // Register test functions
     lua_register(L, "test_enhanced_multicore_safety", lua_test_enhanced_multicore_safety);
     lua_register(L, "test_lockfree_performance", lua_test_lockfree_performance);
+    lua_register(L, "test_random_voltage", lua_test_random_voltage);
+    
+    // Essential crow library functions will be added after we implement them
+    // lua_register(L, "nop_fn", lua_nop_fn);
+    // lua_register(L, "get_out", lua_get_out);
+    // lua_register(L, "get_cv", lua_get_cv);
+    // lua_register(L, "math_random_enhanced", lua_math_random_enhanced);
     
     // Create tab table and add print function
     lua_newtable(L);
@@ -339,7 +360,7 @@ public:
         load_embedded_asl();
     }
     
-    // Load embedded ASL libraries using luaL_dobuffer
+    // Load embedded ASL libraries using luaL_dobuffer - made public for manual debug triggers
     void load_embedded_asl() {
         if (!L) return;
         
@@ -418,20 +439,46 @@ public:
         } else {
             // Input.lua returns the Input table - capture it
             lua_setglobal(L, "Input");
+            printf("Input class loaded, checking if it exists...\n\r");
+            
+            // Debug: Check if Input class was loaded properly
+            if (luaL_dostring(L, R"(
+                print("Input class check:", Input)
+                if Input then 
+                    print("Input.new function:", Input.new)
+                else
+                    print("ERROR: Input class is nil!")
+                end
+            )") != LUA_OK) {
+                const char* error = lua_tostring(L, -1);
+                printf("Error checking Input class: %s\n\r", error ? error : "unknown error");
+                lua_pop(L, 1);
+            }
             
             // Create input[1] and input[2] instances using Input.new()
+            printf("Creating input[1] and input[2] objects...\n\r");
             if (luaL_dostring(L, R"(
+                print("About to create input array...")
                 input = {}
+                print("Input array created, now creating objects...")
                 for i = 1, 2 do
-                    input[i] = Input.new(i)
+                    print("Creating input[" .. i .. "]...")
+                    if Input and Input.new then
+                        input[i] = Input.new(i)
+                        print("input[" .. i .. "] = ", input[i])
+                    else
+                        print("ERROR: Input.new not available!")
+                    end
                 end
-                print("Input objects created successfully!")
+                print("Final input array:", input)
+                print("input[1] =", input[1])
+                print("input[2] =", input[2])
             )") != LUA_OK) {
                 const char* error = lua_tostring(L, -1);
                 printf("Error creating input objects: %s\n\r", error ? error : "unknown error");
                 lua_pop(L, 1);
             } else {
-                printf("Input.lua loaded successfully!\n\r");
+                printf("Input.lua loaded and objects created successfully!\n\r");
             }
         }
         
@@ -534,6 +581,12 @@ public:
     static int lua_set_input_freq(lua_State* L);
     static int lua_set_input_clock(lua_State* L);
     static int lua_set_input_none(lua_State* L);
+    
+    // Essential crow library functions that scripts expect
+    static int lua_nop_fn(lua_State* L);          // function() end
+    static int lua_get_out(lua_State* L);         // get_out(channel) -> voltage
+    static int lua_get_cv(lua_State* L);          // get_cv(channel) -> voltage  
+    static int lua_math_random_enhanced(lua_State* L); // Enhanced random with true randomness
     
     // Forward declaration - implementation will be after BlackbirdCrow class
     static int lua_output_volts(lua_State* L);
@@ -920,6 +973,25 @@ public:
                             if (lua_manager) {
                                 lua_manager->evaluate("test_lockfree_performance()");
                             }
+                        } else if (strcmp(rx_buffer, "test_random_voltage") == 0) {
+                            // Random voltage on rising edge test
+                            if (lua_manager) {
+                                lua_manager->evaluate("test_random_voltage()");
+                            }
+                        } else if (strcmp(rx_buffer, "debug_input_loading") == 0) {
+                            // Manual debug of Input.lua loading - can be triggered after connection
+                            if (lua_manager) {
+                                printf("=== MANUAL INPUT DEBUG TRIGGERED ===\n\r");
+                                lua_manager->load_embedded_asl();  // This will re-run the Input.lua loading with debug output
+                                printf("=== INPUT DEBUG COMPLETED ===\n\r");
+                            }
+                        } else if (strcmp(rx_buffer, "check_input_state") == 0) {
+                            // Check current state of input objects
+                            if (lua_manager) {
+                                printf("=== CHECKING INPUT STATE ===\n\r");
+                                lua_manager->evaluate("print('Input class:', Input); print('input array:', input); if input then for i=1,2 do print('input[' .. i .. ']:', input[i]) end else print('input is nil!') end");
+                                printf("=== INPUT STATE CHECK DONE ===\n\r");
+                            }
                         } else {
                             // Not a ^^ command, treat as Lua code
                             if (lua_manager) {
@@ -988,13 +1060,13 @@ public:
                 debug_led_off(4);
             }
             
-            // Debug print every 500ms (24000 samples)
-            static uint32_t print_counter = 0;
-            if (++print_counter >= 500) {
-                print_counter = 0;
-                printf("HW: raw1=%d raw2=%d, volt1=%.3f volt2=%.3f\n\r", 
-                       raw1, raw2, input1, input2);
-            }
+            // // Debug print every 500ms (24000 samples)
+            // static uint32_t print_counter = 0;
+            // if (++print_counter >= 500) {
+            //     print_counter = 0;
+            //     printf("HW: raw1=%d raw2=%d, volt1=%.3f volt2=%.3f\n\r", 
+            //            raw1, raw2, input1, input2);
+            // }
         }
         
         // Detection processing with simple decimation (every 32 samples = ~1.5kHz)
@@ -1340,17 +1412,24 @@ int LuaManager::lua_set_input_stream(lua_State* L) {
 }
 
 int LuaManager::lua_set_input_change(lua_State* L) {
+    printf("DEBUG: lua_set_input_change called!\n\r");
     int channel = luaL_checkinteger(L, 1);
     float threshold = (float)luaL_checknumber(L, 2);
     float hysteresis = (float)luaL_checknumber(L, 3);
     const char* direction = luaL_checkstring(L, 4);
     
+    printf("DEBUG: args: ch=%d, thresh=%.3f, hyst=%.3f, dir='%s'\n\r", 
+           channel, threshold, hysteresis, direction);
+    
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         int8_t dir = Detect_str_to_dir(direction);
+        printf("DEBUG: Direction '%s' converted to %d\n\r", direction, dir);
         Detect_change(detector, detection_callback, threshold, hysteresis, dir);
         printf("Input %d: change mode, thresh %.3f, hyst %.3f, dir %s\n\r", 
                channel, threshold, hysteresis, direction);
+    } else {
+        printf("Input %d: Error - detector not found\n\r", channel);
     }
     return 0;
 }
@@ -1510,6 +1589,16 @@ extern "C" void hardware_output_set_voltage(int channel, float voltage) {
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, voltage);
     }
+}
+
+// Stub implementation of IO_GetADC for crow compatibility
+// This is hardware-specific to real crow, so we provide Workshop Computer version
+extern "C" float IO_GetADC(uint8_t channel) {
+    if (g_blackbird_instance) {
+        // Convert from crow's 0-based indexing to Workshop Computer's 1-based indexing
+        return ((BlackbirdCrow*)g_blackbird_instance)->hardware_get_input(channel + 1);
+    }
+    return 0.0f;
 }
 
 int main()

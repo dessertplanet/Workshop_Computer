@@ -7,8 +7,8 @@
 // TODO: Port timing functions to RP2040
 #include "pico/time.h" // For get_absolute_time(), etc.
 
-#include "lualink.h"
 #include "clock_ll.h" // linked list for clocks
+#include "l_crowlib.h" // L_queue_clock_* functions
 
 // TODO: Implement RP2040 timing stub
 static uint32_t HAL_GetTick(void) {
