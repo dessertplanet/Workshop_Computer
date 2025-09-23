@@ -23,6 +23,7 @@ extern "C" {
 #include "test_asl.h"
 #include "asl.h"
 #include "asllib.h"
+#include "output.h"
 
 // Output state storage - use int32 for RP2040 efficiency
 static volatile int32_t output_states_mV[4] = {0, 0, 0, 0}; // Store in millivolts
@@ -212,13 +213,23 @@ public:
     lua_register(L, "casl_setdynamic", lua_casl_setdynamic);
     lua_register(L, "casl_getdynamic", lua_casl_getdynamic);
     
+    // Register crow backend functions for Output.lua compatibility
+    lua_register(L, "LL_get_state", lua_LL_get_state);
+    lua_register(L, "set_output_scale", lua_set_output_scale);
+    
+    // Create _c table for _c.tell function
+    lua_newtable(L);
+    lua_pushcfunction(L, lua_c_tell);
+    lua_setfield(L, -2, "tell");
+    lua_setglobal(L, "_c");
+    
     // Initialize CASL instances for all 4 outputs
     for (int i = 0; i < 4; i++) {
         casl_init(i);
     }
     
-    // Initialize crow output functionality
-    init_crow_bindings();
+    // Initialize crow output functionality (will be replaced with Output.lua)
+    // init_crow_bindings();
         
         // Load and execute embedded ASL libraries
         load_embedded_asl();
@@ -266,6 +277,32 @@ public:
             const char* error = lua_tostring(L, -1);
             printf("Error setting up ASL globals: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
+        }
+        
+        // Load Output.lua class from embedded bytecode
+        printf("Loading embedded Output.lua class...\n\r");
+        if (luaL_loadbuffer(L, (const char*)output, output_len, "output.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error loading Output.lua: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            // Output.lua returns the Output table - capture it
+            lua_setglobal(L, "Output");
+            
+            // Create output[1] through output[4] instances using Output.new()
+            if (luaL_dostring(L, R"(
+                output = {}
+                for i = 1, 4 do
+                    output[i] = Output.new(i)
+                end
+                print("Output objects created successfully!")
+            )") != LUA_OK) {
+                const char* error = lua_tostring(L, -1);
+                printf("Error creating output objects: %s\n\r", error ? error : "unknown error");
+                lua_pop(L, 1);
+            } else {
+                printf("Output.lua loaded successfully!\n\r");
+            }
         }
         
         printf("ASL libraries loaded successfully!\n\r");
@@ -336,6 +373,11 @@ public:
     static int lua_casl_cleardynamics(lua_State* L);
     static int lua_casl_setdynamic(lua_State* L);
     static int lua_casl_getdynamic(lua_State* L);
+    
+    // Crow backend functions for Output.lua compatibility
+    static int lua_LL_get_state(lua_State* L);
+    static int lua_set_output_scale(lua_State* L);
+    static int lua_c_tell(lua_State* L);
     
     // Forward declaration - implementation will be after BlackbirdCrow class
     static int lua_output_volts(lua_State* L);
@@ -423,6 +465,9 @@ public:
         
         // Set global instance for Lua bindings
         g_blackbird_instance = this;
+        
+        // Initialize slopes system for crow-style output processing
+        S_init(4); // Initialize 4 output channels
         
         // Initialize Lua manager
         lua_manager = new LuaManager();
@@ -633,6 +678,22 @@ public:
         // v1 = CVIn1();
         // v2 = CVIn2();
         
+        // Process slopes system for all output channels (crow-style)
+        // Using safe timer-based approach to avoid USB enumeration issues
+        static uint32_t last_slopes_update = 0;
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        
+        // Run slopes at 1kHz instead of 48kHz for safety
+        if (now != last_slopes_update) {
+            last_slopes_update = now;
+            static float sample_buffer[1]; // Single sample buffer
+            
+            for(int i = 0; i < 4; i++) {
+                S_step_v(i, sample_buffer, 1);  // Generate one sample from slopes
+                hardware_set_output(i+1, sample_buffer[0]);  // Send to hardware
+            }
+        }
+        
         // Basic audio passthrough for now
         // AudioOut1(AudioIn1());
         // AudioOut2(AudioIn2());
@@ -651,13 +712,9 @@ int LuaManager::output_index(lua_State* L) {
     const char* key = luaL_checkstring(L, 2);
     
     if (strcmp(key, "volts") == 0) {
-        // Return current voltage
-        if (g_blackbird_instance) {
-            float volts = ((BlackbirdCrow*)g_blackbird_instance)->hardware_get_output(output_data->channel);
-            lua_pushnumber(L, volts);
-            return 1;
-        }
-        lua_pushnumber(L, 0.0);
+        // Return current voltage from slopes system
+        float volts = S_get_state(output_data->channel - 1); // Convert to 0-based indexing
+        lua_pushnumber(L, volts);
         return 1;
     }
     
@@ -673,11 +730,17 @@ int LuaManager::output_newindex(lua_State* L) {
     const char* key = luaL_checkstring(L, 2);
     
     if (strcmp(key, "volts") == 0) {
-        // Set voltage
+        // Set voltage - use slopes system for smooth transitions
         float volts = (float)luaL_checknumber(L, 3);
-        if (g_blackbird_instance) {
-            ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(output_data->channel, volts);
-        }
+        
+        // Use slopes system to handle the voltage change
+        // This enables slew and other crow features
+        S_toward(output_data->channel - 1, // Convert to 0-based indexing
+                volts,                    // Destination voltage
+                0.0,                     // Immediate (no slew for now)
+                SHAPE_Linear,            // Linear transition
+                nullptr);                // No callback
+        
         return 0;
     }
     
@@ -726,6 +789,42 @@ int LuaManager::lua_casl_getdynamic(lua_State* L) {
     lua_pop(L, 2);
     lua_pushnumber(L, d);
     return 1;
+}
+
+// Crow backend functions for Output.lua compatibility
+
+// LL_get_state(channel) - Get current voltage state from slopes system
+int LuaManager::lua_LL_get_state(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);  // 1-based channel from Lua
+    float volts = S_get_state(channel - 1);  // Convert to 0-based for C
+    lua_pushnumber(L, volts);
+    return 1;
+}
+
+// set_output_scale(channel, ...) - Set voltage scaling (stub for now)
+int LuaManager::lua_set_output_scale(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);  // 1-based channel from Lua
+    // For now, just consume the arguments - real crow has complex scaling
+    // TODO: Implement proper voltage scaling if needed
+    printf("set_output_scale called for channel %d (not implemented)\n\r", channel);
+    return 0;
+}
+
+// _c.tell('output', channel, value) - Send output to hardware
+int LuaManager::lua_c_tell(lua_State* L) {
+    const char* module = luaL_checkstring(L, 1);
+    int channel = luaL_checkinteger(L, 2);
+    float value = (float)luaL_checknumber(L, 3);
+    
+    if (strcmp(module, "output") == 0) {
+        if (g_blackbird_instance) {
+            ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, value);
+        }
+    } else {
+        printf("_c.tell called with unknown module: %s\n\r", module);
+    }
+    
+    return 0;
 }
 
 // Legacy function-based API (kept for backward compatibility during transition)

@@ -28,9 +28,9 @@ static float shapes_ease_out_back(float in) { return in; } // TODO: Implement pr
 static float shapes_ease_in_back(float in) { return in; } // TODO: Implement proper back easing  
 static float shapes_ease_out_rebound(float in) { return in; } // TODO: Implement proper rebound
 
-// Missing shape functions using wrDsp wrBlocks - similar to crow implementation
+// Missing shape functions using local wrBlocks - similar to crow implementation
 #include <math.h>
-#include "../submodules/wrDsp/wrBlocks.h"
+#include "wrblocks.h"
 
 #ifndef M_PI
 #define M_PI (3.141592653589793)

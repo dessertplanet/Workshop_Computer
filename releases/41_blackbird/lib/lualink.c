@@ -674,24 +674,24 @@ static int _calibrate_source( lua_State* L )
     lua_pop(L, 1);
     return 0;
 }
-static int _calibrate_get( lua_State* L )
-{
-    int chan = luaL_checkinteger(L, 1);
-    const char* msg = luaL_checkstring(L, 2);
-    float r = CAL_Get(chan, (msg[0]=='o') ? CAL_Offset : CAL_Scale);
-    lua_pop(L, 2);
-    lua_pushnumber(L, r);
-    return 1;
-}
-static int _calibrate_set( lua_State* L )
-{
-    int chan = luaL_checkinteger(L, 1);
-    const char* msg = luaL_checkstring(L, 2);
-    float val = luaL_checknumber(L, 3);
-    CAL_Set(chan, (msg[0]=='o') ? CAL_Offset : CAL_Scale, val);
-    lua_pop(L, 3);
-    return 0;
-}
+// static int _calibrate_get( lua_State* L )
+// {
+//     int chan = luaL_checkinteger(L, 1);
+//     const char* msg = luaL_checkstring(L, 2);
+//     float r = CAL_Get(chan, (msg[0]=='o') ? CAL_Offset : CAL_Scale);
+//     lua_pop(L, 2);
+//     lua_pushnumber(L, r);
+//     return 1;
+// }
+// static int _calibrate_set( lua_State* L )
+// {
+//     int chan = luaL_checkinteger(L, 1);
+//     const char* msg = luaL_checkstring(L, 2);
+//     float val = luaL_checknumber(L, 3);
+//     CAL_Set(chan, (msg[0]=='o') ? CAL_Offset : CAL_Scale, val);
+//     lua_pop(L, 3);
+//     return 0;
+// }
 static int _calibrate_save( lua_State* L )
 {
     CAL_WriteFlash();
@@ -873,8 +873,8 @@ static const struct luaL_Reg libCrow[]=
     , { "metro_set_time"   , _metro_set_time   }
         // calibration
     , { "calibrate_source" , _calibrate_source }
-    , { "calibrate_get"    , _calibrate_get    }
-    , { "calibrate_set"    , _calibrate_set    }
+    // , { "calibrate_get"    , _calibrate_get    }
+    // , { "calibrate_set"    , _calibrate_set    }
     , { "calibrate_save"   , _calibrate_save   }
         // clock
     , { "clock_cancel"             , _clock_cancel             }
