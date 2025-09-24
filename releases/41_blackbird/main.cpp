@@ -20,6 +20,8 @@ extern "C" {
 #include "lib/detect.h"
 #include "lib/events.h"
 #include "lib/l_crowlib.h"
+#include "lib/ll_timers.h"
+#include "lib/metro.h"
 }
 
 // Generated Lua bytecode headers
@@ -30,6 +32,8 @@ extern "C" {
 #include "asllib.h"
 #include "output.h"
 #include "input.h"
+#include "metro.h"
+#include "First.h"
 
 // Lock-free output state storage for maximum performance
 extern "C" {
@@ -150,6 +154,9 @@ private:
         lua_pushnumber(L, time_ms / 1000.0); // crow returns seconds
         return 1;
     }
+    
+    // Forward declaration - implementation after BlackbirdCrow class
+    static int lua_unique_card_id(lua_State* L);
     
     // Lua function to run enhanced multicore safety test
     static int lua_test_enhanced_multicore_safety(lua_State* L) {
@@ -301,6 +308,9 @@ public:
     // Add time function
     lua_register(L, "time", lua_time);
     
+    // Add unique_card_id function for Workshop Computer compatibility
+    lua_register(L, "unique_card_id", lua_unique_card_id);
+    
     // Register test functions
     lua_register(L, "test_enhanced_multicore_safety", lua_test_enhanced_multicore_safety);
     lua_register(L, "test_lockfree_performance", lua_test_lockfree_performance);
@@ -341,6 +351,12 @@ public:
     lua_register(L, "set_input_freq", lua_set_input_freq);
     lua_register(L, "set_input_clock", lua_set_input_clock);
     lua_register(L, "set_input_none", lua_set_input_none);
+    
+    // Register metro system functions for full crow compatibility
+    lua_register(L, "metro_start", lua_metro_start);
+    lua_register(L, "metro_stop", lua_metro_stop);
+    lua_register(L, "metro_set_time", lua_metro_set_time);
+    lua_register(L, "metro_set_count", lua_metro_set_count);
     
     // Create _c table for _c.tell function
     lua_newtable(L);
@@ -439,40 +455,13 @@ public:
         } else {
             // Input.lua returns the Input table - capture it
             lua_setglobal(L, "Input");
-            printf("Input class loaded, checking if it exists...\n\r");
             
-            // Debug: Check if Input class was loaded properly
+            // Create input[1] and input[2] instances using Input.new() (crow-style)
             if (luaL_dostring(L, R"(
-                print("Input class check:", Input)
-                if Input then 
-                    print("Input.new function:", Input.new)
-                else
-                    print("ERROR: Input class is nil!")
-                end
-            )") != LUA_OK) {
-                const char* error = lua_tostring(L, -1);
-                printf("Error checking Input class: %s\n\r", error ? error : "unknown error");
-                lua_pop(L, 1);
-            }
-            
-            // Create input[1] and input[2] instances using Input.new()
-            printf("Creating input[1] and input[2] objects...\n\r");
-            if (luaL_dostring(L, R"(
-                print("About to create input array...")
                 input = {}
-                print("Input array created, now creating objects...")
                 for i = 1, 2 do
-                    print("Creating input[" .. i .. "]...")
-                    if Input and Input.new then
-                        input[i] = Input.new(i)
-                        print("input[" .. i .. "] = ", input[i])
-                    else
-                        print("ERROR: Input.new not available!")
-                    end
+                    input[i] = Input.new(i)
                 end
-                print("Final input array:", input)
-                print("input[1] =", input[1])
-                print("input[2] =", input[2])
             )") != LUA_OK) {
                 const char* error = lua_tostring(L, -1);
                 printf("Error creating input objects: %s\n\r", error ? error : "unknown error");
@@ -480,6 +469,18 @@ public:
             } else {
                 printf("Input.lua loaded and objects created successfully!\n\r");
             }
+        }
+        
+        // Load Metro.lua class from embedded bytecode (CRITICAL for First.lua)
+        printf("Loading embedded Metro.lua class...\n\r");
+        if (luaL_loadbuffer(L, (const char*)metro, metro_len, "metro.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error loading Metro.lua: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            // Metro.lua returns the metro table - capture it as global "metro"
+            lua_setglobal(L, "metro");
+            printf("Metro.lua loaded as global 'metro' object!\n\r");
         }
         
         // Set up crow-style global handlers for event dispatching
@@ -587,6 +588,12 @@ public:
     static int lua_get_out(lua_State* L);         // get_out(channel) -> voltage
     static int lua_get_cv(lua_State* L);          // get_cv(channel) -> voltage  
     static int lua_math_random_enhanced(lua_State* L); // Enhanced random with true randomness
+    
+    // Metro system Lua bindings
+    static int lua_metro_start(lua_State* L);
+    static int lua_metro_stop(lua_State* L);
+    static int lua_metro_set_time(lua_State* L);
+    static int lua_metro_set_count(lua_State* L);
     
     // Forward declaration - implementation will be after BlackbirdCrow class
     static int lua_output_volts(lua_State* L);
@@ -709,6 +716,8 @@ class BlackbirdCrow : public ComputerCard
     LuaManager* lua_manager;
     
 public:
+    // Cached unique ID for Lua access (since UniqueCardID() is protected)
+    uint64_t cached_unique_id;
     // Hardware abstraction functions for output
     void hardware_set_output(int channel, float volts) {
         if (channel < 1 || channel > 4) return;
@@ -780,6 +789,9 @@ public:
         rx_buffer_pos = 0;
         memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
         
+        // Cache the unique ID for Lua access
+        cached_unique_id = UniqueCardID();
+        
         // Set global instance for Lua bindings
         g_blackbird_instance = this;
         
@@ -801,6 +813,12 @@ public:
         
         // Initialize event system - CRITICAL for processing input events
         events_init();
+        
+        // Initialize timer system for metro support (8 timers for full crow compatibility)
+        Timer_Init(8);
+        
+        // Initialize metro system (depends on timer system)
+        Metro_Init(8);
         
         // Initialize Lua manager
         lua_manager = new LuaManager();
@@ -906,6 +924,21 @@ public:
                 
             case C_loadFirst:
                 send_crow_response("loading first.lua");
+                // Actually load First.lua using the compiled bytecode
+                if (lua_manager) {
+                    printf("Loading First.lua from embedded bytecode...\n\r");
+                    if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
+                        const char* error = lua_tostring(lua_manager->L, -1);
+                        printf("Error loading First.lua: %s\n\r", error ? error : "unknown error");
+                        lua_pop(lua_manager->L, 1);
+                        send_crow_response("error loading first.lua");
+                    } else {
+                        printf("First.lua loaded and executed successfully!\n\r");
+                        send_crow_response("first.lua loaded");
+                    }
+                } else {
+                    send_crow_response("error: lua manager not available");
+                }
                 break;
                 
             default:
@@ -1026,6 +1059,9 @@ public:
     // 48kHz audio processing function
     virtual void ProcessSample()
     {
+        // CRITICAL: Process timers first - this drives the metro system at exact 48kHz
+        Timer_Process();
+        
         // Hardware verification LEDs - test basic functionality
         static uint32_t heartbeat_counter = 0;
         static uint32_t input_test_counter = 0;
@@ -1560,6 +1596,52 @@ int LuaManager::lua_set_input_none(lua_State* L) {
     return 0;
 }
 
+// Metro system Lua bindings implementation
+
+// metro_start(id, time) - Start a metro with specified interval
+int LuaManager::lua_metro_start(lua_State* L) {
+    int id = luaL_checkinteger(L, 1);
+    float time = (float)luaL_checknumber(L, 2);
+    
+    // Set time first, then start (crow-style)
+    Metro_set_time(id, time);
+    Metro_start(id);
+    printf("Metro %d started with interval %.3fs\n\r", id, time);
+    return 0;
+}
+
+// metro_stop(id) - Stop a metro
+int LuaManager::lua_metro_stop(lua_State* L) {
+    int id = luaL_checkinteger(L, 1);
+    
+    // Call C metro backend
+    Metro_stop(id);
+    printf("Metro %d stopped\n\r", id);
+    return 0;
+}
+
+// metro_set_time(id, time) - Change metro interval
+int LuaManager::lua_metro_set_time(lua_State* L) {
+    int id = luaL_checkinteger(L, 1);
+    float time = (float)luaL_checknumber(L, 2);
+    
+    // Call C metro backend
+    Metro_set_time(id, time);
+    printf("Metro %d time set to %.3fs\n\r", id, time);
+    return 0;
+}
+
+// metro_set_count(id, count) - Set metro repeat count
+int LuaManager::lua_metro_set_count(lua_State* L) {
+    int id = luaL_checkinteger(L, 1);
+    int count = luaL_checkinteger(L, 2);
+    
+    // Call C metro backend
+    Metro_set_count(id, count);
+    printf("Metro %d count set to %d\n\r", id, count);
+    return 0;
+}
+
 // Legacy function-based API (kept for backward compatibility during transition)
 int LuaManager::lua_output_volts(lua_State* L) {
     // Get channel from upvalue
@@ -1584,11 +1666,29 @@ int LuaManager::lua_output_volts(lua_State* L) {
     }
 }
 
+// Implementation of lua_unique_card_id function (after BlackbirdCrow class is fully defined)
+int LuaManager::lua_unique_card_id(lua_State* L) {
+    // Get the cached ID from the global instance
+    if (g_blackbird_instance) {
+        lua_pushinteger(L, (lua_Integer)((BlackbirdCrow*)g_blackbird_instance)->cached_unique_id);
+        return 1;
+    }
+    
+    lua_pushinteger(L, 0);
+    return 1;
+}
+
 // Implementation of C interface function (after BlackbirdCrow class is fully defined)
 extern "C" void hardware_output_set_voltage(int channel, float voltage) {
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, voltage);
     }
+}
+
+// Provide Lua state access for l_crowlib metro handler
+extern "C" lua_State* get_lua_state(void) {
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    return lua_mgr ? lua_mgr->L : nullptr;
 }
 
 // Stub implementation of IO_GetADC for crow compatibility

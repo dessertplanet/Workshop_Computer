@@ -61,7 +61,7 @@ end
 
 function init()
   -- generate unique tables
-  lcg(unique_id())
+  lcg(unique_card_id())
   lcg()
   lcg()
   lcg()

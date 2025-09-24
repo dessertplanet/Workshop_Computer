@@ -588,10 +588,39 @@ void L_queue_clock_stop( void )
     event_post(&e);
 }
 
-// Handler functions - these need to exist but we'll make them stubs for now
+// Handler functions - L_handle_metro calls Lua metro_handler function
 void L_handle_metro( event_t* e )
 {
-    printf("L_handle_metro: id=%d, state=%d (stub)\n", e->index.i, e->data.i);
+    // This function is called from the event system when a timer fires
+    // It needs to call the Lua metro_handler function safely
+    
+    extern lua_State* get_lua_state(void); // Forward declaration
+    lua_State* L = get_lua_state();
+    
+    if (!L) {
+        printf("L_handle_metro: no Lua state available\n");
+        return;
+    }
+    
+    int metro_id = e->index.i;
+    int stage = e->data.i;
+    
+    // Call the global metro_handler function in Lua like real crow
+    lua_getglobal(L, "metro_handler");
+    if (lua_isfunction(L, -1)) {
+        lua_pushinteger(L, metro_id);  // First argument: metro ID
+        lua_pushinteger(L, stage);     // Second argument: stage/count
+        
+        // Protected call to prevent crashes
+        if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("metro_handler error: %s\n", error ? error : "unknown");
+            lua_pop(L, 1);
+        }
+    } else {
+        // metro_handler not defined - this is normal if no metros are active
+        lua_pop(L, 1);
+    }
 }
 
 void L_handle_clock_resume( event_t* e )
