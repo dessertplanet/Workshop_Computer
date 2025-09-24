@@ -6,6 +6,7 @@
 #include "caw.h" // Caw_send_luachunk
 
 // RP2040 multicore protection - CRITICAL for thread safety!
+#define EVENT_DEBUG 0
 #ifdef PICO_BUILD
 #include "pico/sync.h"
 #include "pico/mutex.h"
@@ -59,13 +60,17 @@ static uint32_t event_counter = 0;
 
 // initialize event handler
 void events_init() {
-    printf("\ninitializing event handler with multicore safety\n");
+    if (EVENT_DEBUG) {
+        printf("\ninitializing event handler with multicore safety\n");
+    }
 
 #ifdef PICO_BUILD
     // Initialize mutex for multicore protection
     mutex_init(&event_queue_mutex);
     mutex_initialized = true;
-    printf("Event queue mutex initialized\n");
+    if (EVENT_DEBUG) {
+        printf("Event queue mutex initialized\n");
+    }
 #endif
 
     events_clear();
@@ -101,8 +106,10 @@ void event_next( void ){
     );
 
     if( e != NULL ){ 
-        printf("EVENT NEXT: processing idx=%d, getIdx now=%d, putIdx=%d\n", 
-               processedIdx, getIdx, putIdx);
+     if (EVENT_DEBUG) {
+         printf("EVENT NEXT: processing idx=%d, getIdx now=%d, putIdx=%d\n",
+             processedIdx, getIdx, putIdx);
+     }
         (*e->handler)(e); // call the event handler after enabling IRQs
     }
 }
@@ -128,14 +135,18 @@ uint8_t event_post( event_t *e ) {
             status = 1;
             
             // Debug output to track queue operations
-            printf("EVENT POST: stored at idx=%d, putIdx now=%d, getIdx=%d\n", 
-                   (nextIdx == 0) ? MAX_EVENTS - 1 : nextIdx - 1, putIdx, getIdx);
+         if (EVENT_DEBUG) {
+             printf("EVENT POST: stored at idx=%d, putIdx now=%d, getIdx=%d\n",
+                 (nextIdx == 0) ? MAX_EVENTS - 1 : nextIdx - 1, putIdx, getIdx);
+         }
         }
         // If queue is full, nextIdx == getIdx, so putIdx stays unchanged
     );
 
     if( !status ){
-        printf("event queue full! putIdx=%d, getIdx=%d\n", putIdx, getIdx);
+        if (EVENT_DEBUG) {
+            printf("event queue full! putIdx=%d, getIdx=%d\n", putIdx, getIdx);
+        }
         Caw_send_luachunk("event queue full!");
         event_statistics.events_dropped++;
         event_statistics.queue_overflows++;

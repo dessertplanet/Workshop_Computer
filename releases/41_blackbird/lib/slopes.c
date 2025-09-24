@@ -111,7 +111,7 @@ static float shaper( Slope_t* self, float out );
 void S_init( int channels )
 {
     slope_count = channels;
-    slopes = malloc( sizeof( Slope_t ) * channels );
+    slopes = malloc( sizeof ( Slope_t ) * channels );
     if( !slopes ){ printf("slopes malloc failed\n"); return; }
     for( int j=0; j<SLOPE_CHANNELS; j++ ){
         slopes[j].index  = j;
@@ -124,6 +124,25 @@ void S_init( int channels )
         slopes[j].delta  = 0.0;
         slopes[j].countdown = -1.0;
         slopes[j].scale = 0.0;
+        slopes[j].shaped = 0.0;
+    }
+}
+
+void S_reset(void)
+{
+    if( !slopes ){
+        return;
+    }
+    for( int j = 0; j < slope_count; j++ ){
+        slopes[j].dest = 0.0f;
+        slopes[j].last = 0.0f;
+        slopes[j].shape = SHAPE_Linear;
+        slopes[j].action = NULL;
+        slopes[j].here = 0.0f;
+        slopes[j].delta = 0.0f;
+        slopes[j].countdown = -1.0f;
+        slopes[j].scale = 0.0f;
+        slopes[j].shaped = 0.0f;
     }
 }
 

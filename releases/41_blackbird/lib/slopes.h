@@ -60,3 +60,5 @@ float* S_step_v( int     index
                , float*  out
                , int     size
                );
+
+void S_reset(void);

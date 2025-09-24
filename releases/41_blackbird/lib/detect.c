@@ -2,15 +2,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
+
+#define DETECT_DEBUG 0
 
 // Detection system state
 static Detect_t* detectors = NULL;
 static int detector_count = 0;
-static uint32_t last_process_time = 0;
 
-// Detection processing rate: every 32 samples at 48kHz = ~1.5kHz
-#define DETECT_DECIMATION 32
-static int detect_counter = 0;
+// Detection processing sample rate (matches audio engine)
+#define DETECT_SAMPLE_RATE 48000.0f
 
 // VU Meter implementation
 VU_meter_t* VU_init(void) {
@@ -34,8 +35,8 @@ void VU_time(VU_meter_t* vu, float time_seconds) {
     if (!vu) return;
     vu->time_constant = time_seconds;
     // Calculate coefficients based on time constant
-    // Assuming ~1.5kHz processing rate
-    float rate = 1500.0f;
+    // Processing runs at the full audio sample rate
+    float rate = DETECT_SAMPLE_RATE;
     vu->attack_coeff = expf(-1.0f / (time_seconds * rate * 0.1f)); // Fast attack
     vu->release_coeff = expf(-1.0f / (time_seconds * rate));       // Slower release
 }
@@ -122,7 +123,7 @@ void Detect_stream(Detect_t* self, Detect_callback_t cb, float interval) {
     self->modefn = d_stream;
     self->action = cb;
     // Convert interval to blocks at ~1.5kHz processing rate
-    self->stream.blocks = (int)(interval * 1500.0f);
+    self->stream.blocks = (int)(interval * DETECT_SAMPLE_RATE);
     if (self->stream.blocks <= 0) self->stream.blocks = 1;
     self->stream.countdown = self->stream.blocks;
 }
@@ -196,7 +197,7 @@ void Detect_volume(Detect_t* self, Detect_callback_t cb, float interval) {
     }
     
     // Convert interval to blocks at ~1.5kHz processing rate
-    self->volume.blocks = (int)(interval * 1500.0f);
+    self->volume.blocks = (int)(interval * DETECT_SAMPLE_RATE);
     if (self->volume.blocks <= 0) self->volume.blocks = 1;
     self->volume.countdown = self->volume.blocks;
 }
@@ -244,6 +245,10 @@ static void d_stream(Detect_t* self, float level) {
 static void d_change(Detect_t* self, float level) {
     if (self->state) { // high to low
         if (level < (self->change.threshold - self->change.hysteresis)) {
+            if (DETECT_DEBUG) {
+                printf("[detect] ch%d FALL level=%.3f thresh=%.3f hyst=%.3f dir=%d\n\r",
+                       self->channel, level, self->change.threshold, self->change.hysteresis, self->change.direction);
+            }
             self->state = 0;
             if (self->change.direction != 1) { // not 'rising' only
                 if (self->action) {
@@ -253,6 +258,10 @@ static void d_change(Detect_t* self, float level) {
         }
     } else { // low to high
         if (level > (self->change.threshold + self->change.hysteresis)) {
+            if (DETECT_DEBUG) {
+                printf("[detect] ch%d RISE level=%.3f thresh=%.3f hyst=%.3f dir=%d\n\r",
+                       self->channel, level, self->change.threshold, self->change.hysteresis, self->change.direction);
+            }
             self->state = 1;
             if (self->change.direction != -1) { // not 'falling' only
                 if (self->action) {

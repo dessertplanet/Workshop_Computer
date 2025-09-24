@@ -944,6 +944,10 @@ public:
                             printf("Warning: init() invocation failed after First.lua load\n\r");
                         }
 
+                        float input1_volts = hardware_get_input(1);
+                        float input2_volts = hardware_get_input(2);
+                        printf("[diag] input volts after load: in1=%.3fV in2=%.3fV\n\r", input1_volts, input2_volts);
+
                         send_crow_response("first.lua loaded");
                     }
                 } else {
@@ -1009,17 +1013,17 @@ public:
                         } else if (strcmp(rx_buffer, "test_enhanced_multicore_safety") == 0) {
                             // Comprehensive multicore safety test
                             if (lua_manager) {
-                                lua_manager->evaluate("test_enhanced_multicore_safety()");
+                                lua_manager->evaluate_thread_safe("test_enhanced_multicore_safety()");
                             }
                         } else if (strcmp(rx_buffer, "test_lockfree_performance") == 0) {
                             // Lock-free performance benchmark test
                             if (lua_manager) {
-                                lua_manager->evaluate("test_lockfree_performance()");
+                                lua_manager->evaluate_thread_safe("test_lockfree_performance()");
                             }
                         } else if (strcmp(rx_buffer, "test_random_voltage") == 0) {
                             // Random voltage on rising edge test
                             if (lua_manager) {
-                                lua_manager->evaluate("test_random_voltage()");
+                                lua_manager->evaluate_thread_safe("test_random_voltage()");
                             }
                         } else if (strcmp(rx_buffer, "debug_input_loading") == 0) {
                             // Manual debug of Input.lua loading - can be triggered after connection
@@ -1032,13 +1036,13 @@ public:
                             // Check current state of input objects
                             if (lua_manager) {
                                 printf("=== CHECKING INPUT STATE ===\n\r");
-                                lua_manager->evaluate("print('Input class:', Input); print('input array:', input); if input then for i=1,2 do print('input[' .. i .. ']:', input[i]) end else print('input is nil!') end");
+                                lua_manager->evaluate_thread_safe("print('Input class:', Input); print('input array:', input); if input then for i=1,2 do print('input[' .. i .. ']:', input[i]) end else print('input is nil!') end");
                                 printf("=== INPUT STATE CHECK DONE ===\n\r");
                             }
                         } else {
                             // Not a ^^ command, treat as Lua code
                             if (lua_manager) {
-                                lua_manager->evaluate(rx_buffer);
+                                lua_manager->evaluate_thread_safe(rx_buffer);
                             }
                         }
                         
@@ -1115,36 +1119,49 @@ public:
             // }
         }
         
-        // Detection processing with simple decimation (every 32 samples = ~1.5kHz)
-        static int detect_counter = 0;
-        if (++detect_counter >= 32) {
-            detect_counter = 0;
-            
-            // Get input voltages for both channels
-            float input1 = hardware_get_input(1);
-            float input2 = hardware_get_input(2);
-            
-            // Debug: LED 3 flashes when detection processing runs
-            static bool detect_led_state = false;
-            detect_led_state = !detect_led_state;
-            if (detect_led_state) {
+        // Run detection on every sample to capture fast DC-coupled edges reliably
+        const bool input1_connected = Connected(ComputerCard::Input::Audio1);
+        const bool input2_connected = Connected(ComputerCard::Input::Audio2);
+
+    static float filtered_inputs[2] = {0.0f, 0.0f};
+    constexpr float kDetectAlpha = 0.02f; // ~10ms time constant at 48kHz
+
+        float raw_input1 = hardware_get_input(1);
+        float raw_input2 = hardware_get_input(2);
+
+        if (!input1_connected) {
+            filtered_inputs[0] = 0.0f;
+        } else {
+            filtered_inputs[0] += kDetectAlpha * (raw_input1 - filtered_inputs[0]);
+        }
+
+        if (!input2_connected) {
+            filtered_inputs[1] = 0.0f;
+        } else {
+            filtered_inputs[1] += kDetectAlpha * (raw_input2 - filtered_inputs[1]);
+        }
+
+        float input1 = input1_connected ? filtered_inputs[0] : 0.0f;
+        float input2 = input2_connected ? filtered_inputs[1] : 0.0f;
+
+        Detect_process_sample(0, input1); // Channel 0 (input[1])
+        Detect_process_sample(1, input2); // Channel 1 (input[2])
+
+        // Process queued change/stream events at a reduced rate to limit contention
+        static int event_counter = 0;
+        if (++event_counter >= 32) {
+            event_counter = 0;
+
+            // Optional: pulse LED 3 to show event service activity
+            static bool event_led_state = false;
+            event_led_state = !event_led_state;
+            if (event_led_state) {
                 debug_led_on(3);
             } else {
                 debug_led_off(3);
             }
-            
-            // Process detection for both channels
-            // printf("DETECT: Processing ch1=%.3f ch2=%.3f\n\r", input1, input2); // Silenced for testing
-            Detect_process_sample(0, input1); // Channel 0 (input[1])
-            Detect_process_sample(1, input2); // Channel 1 (input[2])
-        }
-        
-        // CRITICAL: Process event queue to prevent overflow
-        // This was missing in the Workshop Computer implementation!
-        // Process one event per detection cycle (at 1.5kHz rate, not 48kHz)
-        if (detect_counter == 0) {
-            // printf("EVENTS: Processing event queue\n\r"); // Silenced for testing
-            event_next(); // Process one event per detection cycle
+
+            event_next();
         }
         
         // Process slopes system for all output channels (crow-style)
@@ -1320,11 +1337,16 @@ int LuaManager::lua_c_tell(lua_State* L) {
     const char* module = luaL_checkstring(L, 1);
     int channel = luaL_checkinteger(L, 2);
     
-    if (strcmp(module, "output") == 0) {
-        float value = (float)luaL_checknumber(L, 3);
-        if (g_blackbird_instance) {
-            ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, value);
-        }
+        if (strcmp(module, "output") == 0) {
+            static int output_tell_debug_count = 0;
+            float value = (float)luaL_checknumber(L, 3);
+            if (output_tell_debug_count < 32) {
+                printf("[tell] output ch%d value=%.3f\n\r", channel, value);
+                output_tell_debug_count++;
+            }
+            if (g_blackbird_instance) {
+                ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, value);
+            }
     } else if (strcmp(module, "change") == 0) {
         // Handle default change callback from Input.lua - just ignore for now
         // This prevents crashes when detection triggers before user defines custom callback
@@ -1358,6 +1380,8 @@ int LuaManager::lua_io_get_input(lua_State* L) {
 }
 
 // Event-based detection callback - queues events like real crow
+static constexpr bool kDetectionDebug = false;
+
 static void detection_callback(int channel, float value) {
     // Reduce debug output to prevent buffer overflow
     static uint32_t callback_count = 0;
@@ -1365,7 +1389,9 @@ static void detection_callback(int channel, float value) {
     
     // For change detection, 'value' is actually the state (0.0 or 1.0), not voltage
     bool state = (value > 0.5f);
-    printf("CALLBACK #%lu: ch%d state=%s\n\r", callback_count, channel + 1, state ? "HIGH" : "LOW");
+    if (kDetectionDebug) {
+        printf("CALLBACK #%lu: ch%d state=%s\n\r", callback_count, channel + 1, state ? "HIGH" : "LOW");
+    }
     
     // Queue a change event like real crow does (using event system for safety)
     // This prevents direct Lua calls that can corrupt the stack
@@ -1376,7 +1402,9 @@ static void detection_callback(int channel, float value) {
     };
     
     if (!event_post(&e)) {
-        printf("Failed to post change event for channel %d\n\r", channel + 1);
+        if (kDetectionDebug) {
+            printf("Failed to post change event for channel %d\n\r", channel + 1);
+        }
     }
 }
 
@@ -1406,8 +1434,10 @@ extern "C" void L_handle_change_safe(event_t* e) {
     bool state = (e->data.f > 0.5f);
     
     // Debug output with callback counter to track progress
-    printf("SAFE CALLBACK #%lu: ch%d state=%s\n\r", 
-           callback_counter, channel, state ? "HIGH" : "LOW");
+    if (kDetectionDebug) {
+        printf("SAFE CALLBACK #%lu: ch%d state=%s\n\r",
+               callback_counter, channel, state ? "HIGH" : "LOW");
+    }
     
     // Use crow-style global change_handler dispatching for error isolation
     char lua_call[128];
@@ -1422,7 +1452,9 @@ extern "C" void L_handle_change_safe(event_t* e) {
     
     // Call with non-blocking error protection - if mutex is busy, skip to prevent deadlock
     if (!lua_mgr->evaluate_safe_non_blocking(lua_call)) {
-        printf("Skipped change_handler for channel %d (mutex busy or error)\n\r", channel);
+        if (kDetectionDebug) {
+            printf("Skipped change_handler for channel %d (mutex busy or error)\n\r", channel);
+        }
         // Turn off LEDs on error/skip (non-blocking)
         if (g_blackbird_instance) {
             ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
@@ -1439,7 +1471,9 @@ extern "C" void L_handle_change_safe(event_t* e) {
         ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(1);
     }
     
-    printf("SAFE CALLBACK #%lu: Completed successfully\n\r", callback_counter);
+    if (kDetectionDebug) {
+        printf("SAFE CALLBACK #%lu: Completed successfully\n\r", callback_counter);
+    }
 }
 
 // Input mode functions - connect to detection system
@@ -1711,7 +1745,11 @@ extern "C" float IO_GetADC(uint8_t channel) {
 
 int main()
 {
-    set_sys_clock_khz(200000, true);
+    if (!set_sys_clock_khz(200000, false)) {
+        if (!set_sys_clock_khz(150000, false)) {
+            set_sys_clock_khz(133000, true);
+        }
+    }
     stdio_init_all();
 
     BlackbirdCrow crow;

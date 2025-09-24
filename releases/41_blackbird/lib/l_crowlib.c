@@ -10,6 +10,7 @@
 #include "lib/caw.h"        // Caw_printf()
 #include "lib/io.h"         // IO_GetADC()
 #include "lib/events.h"     // event_t, event_post()
+#include "lib/slopes.h"     // S_reset()
 
 #define L_CL_MIDDLEC 		(261.63f)
 #define L_CL_MIDDLEC_INV 	(1.0f/L_CL_MIDDLEC)
@@ -75,6 +76,18 @@ void l_crowlib_init(lua_State* L){
     lua_getglobal(L, "crow"); // @1
     lua_pushcfunction(L, l_crowlib_crow_reset);
     lua_setfield(L, 1, "reset");
+    lua_settop(L, 0);
+
+    lua_getglobal(L, "crow");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_setglobal(L, "crow");
+        lua_getglobal(L, "crow");
+    }
+
+    lua_pushcfunction(L, l_crowlib_crow_reset);
+    lua_setfield(L, -2, "init");
     lua_settop(L, 0);
 
 
@@ -206,7 +219,8 @@ void l_crowlib_emptyinit(lua_State* L){
 
 
 int l_crowlib_crow_reset( lua_State* L ){
-	printf("crow.reset()\n\r");
+printf("crow.reset()\n\r");
+    S_reset();
 
     lua_getglobal(L, "input"); // @1
 for(int i=1; i<=2; i++){
