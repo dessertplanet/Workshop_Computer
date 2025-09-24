@@ -924,6 +924,7 @@ public:
                 
             case C_loadFirst:
                 send_crow_response("loading first.lua");
+                printf("[first] handler invoked, attempting bytecode load\n\r");
                 // Actually load First.lua using the compiled bytecode
                 if (lua_manager) {
                     printf("Loading First.lua from embedded bytecode...\n\r");
@@ -934,6 +935,15 @@ public:
                         send_crow_response("error loading first.lua");
                     } else {
                         printf("First.lua loaded and executed successfully!\n\r");
+
+                        // Model real crow: reset runtime so newly loaded script boots
+                        if (!lua_manager->evaluate_safe_thread_safe("if crow and crow.reset then crow.reset() end")) {
+                            printf("Warning: crow.reset() failed after First.lua load\n\r");
+                        }
+                        if (!lua_manager->evaluate_safe_thread_safe("local ok, err = pcall(function() if init then init() end end); if not ok then print('init() error', err) end")) {
+                            printf("Warning: init() invocation failed after First.lua load\n\r");
+                        }
+
                         send_crow_response("first.lua loaded");
                     }
                 } else {
@@ -1139,26 +1149,24 @@ public:
         
         // Process slopes system for all output channels (crow-style)
         // Using safe timer-based approach to avoid USB enumeration issues
-        static uint32_t last_slopes_update = 0;
-        uint32_t now = to_ms_since_boot(get_absolute_time());
-        
-        // Run slopes at 1kHz instead of 48kHz for safety
-        if (now != last_slopes_update) {
-            last_slopes_update = now;
-            static float sample_buffer[1]; // Single sample buffer
-            
-            // Thread-safe slopes system access
+        static int slope_sample_accum = 0;
+        static float slope_buffer[48];
+
+        // Advance envelopes in 48-sample blocks (≈1 kHz) to stay aligned with SAMPLES_PER_MS
+        if (++slope_sample_accum >= 48) {
+            slope_sample_accum = 0;
+
 #ifdef PICO_BUILD
             if (slopes_mutex_initialized) {
                 mutex_enter_blocking(&slopes_mutex);
             }
 #endif
-            
-            for(int i = 0; i < 4; i++) {
-                S_step_v(i, sample_buffer, 1);  // Generate one sample from slopes
-                hardware_set_output(i+1, sample_buffer[0]);  // Send to hardware
+
+            for (int i = 0; i < 4; i++) {
+                S_step_v(i, slope_buffer, 48);  // advance envelope over one millisecond
+                hardware_set_output(i + 1, slope_buffer[47]);
             }
-            
+
 #ifdef PICO_BUILD
             if (slopes_mutex_initialized) {
                 mutex_exit(&slopes_mutex);
