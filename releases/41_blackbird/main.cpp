@@ -1123,26 +1123,11 @@ public:
         const bool input1_connected = Connected(ComputerCard::Input::Audio1);
         const bool input2_connected = Connected(ComputerCard::Input::Audio2);
 
-    static float filtered_inputs[2] = {0.0f, 0.0f};
-    constexpr float kDetectAlpha = 0.02f; // ~10ms time constant at 48kHz
-
         float raw_input1 = hardware_get_input(1);
         float raw_input2 = hardware_get_input(2);
 
-        if (!input1_connected) {
-            filtered_inputs[0] = 0.0f;
-        } else {
-            filtered_inputs[0] += kDetectAlpha * (raw_input1 - filtered_inputs[0]);
-        }
-
-        if (!input2_connected) {
-            filtered_inputs[1] = 0.0f;
-        } else {
-            filtered_inputs[1] += kDetectAlpha * (raw_input2 - filtered_inputs[1]);
-        }
-
-        float input1 = input1_connected ? filtered_inputs[0] : 0.0f;
-        float input2 = input2_connected ? filtered_inputs[1] : 0.0f;
+        float input1 = input1_connected ? raw_input1 : 0.0f;
+        float input2 = input2_connected ? raw_input2 : 0.0f;
 
         Detect_process_sample(0, input1); // Channel 0 (input[1])
         Detect_process_sample(1, input2); // Channel 1 (input[2])
@@ -1161,7 +1146,10 @@ public:
                 debug_led_off(3);
             }
 
-            event_next();
+            // Drain multiple events per service slice to reduce backlog
+            for (int i = 0; i < 8; ++i) {
+                event_next();
+            }
         }
         
         // Process slopes system for all output channels (crow-style)
@@ -1398,7 +1386,9 @@ static void detection_callback(int channel, float value) {
     event_t e = { 
         .handler = L_handle_change_safe,
         .index = { .i = channel },
-        .data = { .f = value } // Pass the state value directly
+        .data = { .f = value }, // Pass the state value directly
+        .type = EVENT_TYPE_CHANGE,
+        .timestamp = to_ms_since_boot(get_absolute_time())
     };
     
     if (!event_post(&e)) {
@@ -1429,6 +1419,28 @@ extern "C" void L_handle_change_safe(event_t* e) {
         }
         return;
     }
+
+    // Deferred pending change queue (single-producer single-consumer within core0)
+    struct PendingChange { uint8_t channel; uint8_t state; };
+    static PendingChange pending_changes[16];
+    static volatile uint8_t pending_head = 0; // next pop
+    static volatile uint8_t pending_tail = 0; // next push
+    auto pending_count = [&](){ return (uint8_t)(pending_tail - pending_head); };
+    auto pending_full  = [&](){ return pending_count() >= 16; };
+    auto enqueue_pending = [&](uint8_t ch, uint8_t st){
+        if (pending_full()) {
+            // drop oldest (overwrite head) to keep most recent edge
+            pending_head++;
+        }
+        pending_changes[pending_tail & 0x0F] = { ch, st };
+        pending_tail++;
+    };
+    auto dequeue_pending = [&](PendingChange &out)->bool {
+        if (pending_head == pending_tail) return false;
+        out = pending_changes[pending_head & 0x0F];
+        pending_head++;
+        return true;
+    };
     
     int channel = e->index.i + 1; // Convert to 1-based
     bool state = (e->data.f > 0.5f);
@@ -1453,14 +1465,31 @@ extern "C" void L_handle_change_safe(event_t* e) {
     // Call with non-blocking error protection - if mutex is busy, skip to prevent deadlock
     if (!lua_mgr->evaluate_safe_non_blocking(lua_call)) {
         if (kDetectionDebug) {
-            printf("Skipped change_handler for channel %d (mutex busy or error)\n\r", channel);
+            printf("Deferred change_handler ch%d (mutex busy) queue=%u\n\r", channel, pending_count());
         }
-        // Turn off LEDs on error/skip (non-blocking)
         if (g_blackbird_instance) {
             ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
             ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(1);
         }
         return;
+    }
+
+    // After a successful immediate call, opportunistically drain a few deferred items
+    if (pending_head != pending_tail) {
+        int drained = 0;
+        PendingChange pc;
+        while (drained < 3 && dequeue_pending(pc)) {
+            char deferred_call[96];
+            snprintf(deferred_call, sizeof(deferred_call),
+                "if change_handler then change_handler(%u, %s) end",
+                (unsigned)pc.channel, pc.state ? "true" : "false");
+            if (!lua_mgr->evaluate_safe(deferred_call)) {
+                // Could not run now; re-enqueue at tail (will attempt later)
+                enqueue_pending(pc.channel, pc.state);
+                break; // stop draining this round
+            }
+            drained++;
+        }
     }
     
     // LED 2: Lua callback completed successfully (proves no crash/hang)
