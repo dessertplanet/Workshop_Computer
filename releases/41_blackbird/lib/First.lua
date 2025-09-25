@@ -62,9 +62,6 @@ function env(count)
 end
 
 function init()
-  print("[first] init")
-  -- generate unique tables
-  lcg(unique_card_id())
   lcg()
   lcg()
   lcg()

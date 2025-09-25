@@ -219,7 +219,7 @@ void l_crowlib_emptyinit(lua_State* L){
 
 
 int l_crowlib_crow_reset( lua_State* L ){
-printf("crow.reset()\n\r");
+printf("crow.reset()\r\n");
     S_reset();
 
     lua_getglobal(L, "input"); // @1

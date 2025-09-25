@@ -80,6 +80,11 @@ typedef struct detect{
 // state memory
     float      last;
     uint8_t    state; // for change/peak hysteresis
+    // debug / diagnostics
+    float      last_sample;   // last raw level processed
+    uint32_t   canary;        // memory corruption sentinel
+    uint32_t   change_rise_count; // number of rising edges detected
+    uint32_t   change_fall_count; // number of falling edges detected
 
 // mode specifics
     D_stream_t stream;

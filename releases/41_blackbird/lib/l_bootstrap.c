@@ -142,7 +142,7 @@ int l_bootstrap_dofile(lua_State* L)
 {
     const char* l_name = luaL_checkstring(L, 1);
     int l_len = strlen(l_name);
-    if(l_len > 32) printf("FIXME bootstrap: filepath >32bytes!\n\r");
+    if(l_len > 32) printf("FIXME bootstrap: filepath >32bytes!\r\n");
 
     // simple C version of "luapath_to_cpath"
     // l_name is a lua native path: "lua/asl.lua"

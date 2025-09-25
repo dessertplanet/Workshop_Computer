@@ -1,6 +1,7 @@
 #include "ComputerCard.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
+#include "pico/stdio_usb.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -79,6 +80,25 @@ extern "C" void hardware_output_set_voltage(int channel, float voltage);
 // Forward declaration of safe event handler
 extern "C" void L_handle_change_safe(event_t* e);
 
+// ---- Cross-core debug snapshot (avoid interleaved stdio from both cores) ----
+typedef struct {
+    float ch_last[2];
+    float ch_span[2];
+    uint32_t ch_state[2];
+    uint32_t ch_rise[2];
+    uint32_t ch_fall[2];
+    float ch_thr[2];
+    float ch_hy[2];
+    char  ch_conn[2];      // debounced Y/N
+    char  ch_inst[2];      // instant probe Y/N
+    char  ch_valid[2];     // span valid Y/N
+    float ch_conn_pct[2];  // 0..100
+    uint32_t seq;          // increment each publish
+} DebugSnapshot;
+
+static volatile DebugSnapshot g_debug_snapshot = {0};
+static volatile bool g_debug_ready = false; // set by audio core, consumed by USB core
+
 /*
 
 Blackbird Crow Emulator - Basic Communication Protocol
@@ -143,7 +163,7 @@ private:
             }
             lua_pop(L, 1);  // pop result
         }
-        printf("\n\r");
+    printf("\r\n");
         fflush(stdout);
         return 0;
     }
@@ -160,39 +180,39 @@ private:
     
     // Lua function to run enhanced multicore safety test
     static int lua_test_enhanced_multicore_safety(lua_State* L) {
-        printf("Running enhanced multicore safety test...\n\r");
+    printf("Running enhanced multicore safety test...\r\n");
         if (luaL_loadbuffer(L, (const char*)test_enhanced_multicore_safety, test_enhanced_multicore_safety_len, "test_enhanced_multicore_safety.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running enhanced multicore safety test: %s\n\r", error ? error : "unknown error");
+            printf("Error running enhanced multicore safety test: %s\r\n", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Enhanced multicore safety test completed successfully!\n\r");
+            printf("Enhanced multicore safety test completed successfully!\r\n");
         }
         return 0;
     }
     
     // Lua function to run lock-free performance test
     static int lua_test_lockfree_performance(lua_State* L) {
-        printf("Running lock-free performance test...\n\r");
+    printf("Running lock-free performance test...\r\n");
         if (luaL_loadbuffer(L, (const char*)test_lockfree_performance, test_lockfree_performance_len, "test_lockfree_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running lock-free performance test: %s\n\r", error ? error : "unknown error");
+            printf("Error running lock-free performance test: %s\r\n", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Lock-free performance test completed successfully!\n\r");
+            printf("Lock-free performance test completed successfully!\r\n");
         }
         return 0;
     }
     
     // Lua function to run random voltage test
     static int lua_test_random_voltage(lua_State* L) {
-        printf("Running random voltage test...\n\r");
+    printf("Running random voltage test...\r\n");
         if (luaL_loadbuffer(L, (const char*)test_random_voltage, test_random_voltage_len, "test_random_voltage.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running random voltage test: %s\n\r", error ? error : "unknown error");
+            printf("Error running random voltage test: %s\r\n", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Random voltage test loaded successfully!\n\r");
+            printf("Random voltage test loaded successfully!\r\n");
         }
         return 0;
     }
@@ -205,7 +225,7 @@ private:
         }
         
         print_table_recursive(L, 1, 0);
-        printf("\n\r");
+    printf("\r\n");
         fflush(stdout);
         return 0;
     }
@@ -295,7 +315,7 @@ public:
         
         L = luaL_newstate();
         if (!L) {
-            printf("Error: Could not create Lua state\n\r");
+            printf("Error: Could not create Lua state\r\n");
             return;
         }
         
@@ -381,10 +401,10 @@ public:
         if (!L) return;
         
         // Load ASL library first
-        printf("Loading embedded ASL library...\n\r");
+    printf("Loading embedded ASL library...\r\n");
         if (luaL_loadbuffer(L, (const char*)asl, asl_len, "asl.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error loading ASL library: %s\n\r", error ? error : "unknown error");
+            printf("Error loading ASL library: %s\r\n", error ? error : "unknown error");
             lua_pop(L, 1);
             return;
         }
@@ -397,10 +417,10 @@ public:
         lua_setglobal(L, "asl");
         
         // Load ASLLIB library
-        printf("Loading embedded ASLLIB library...\n\r");
+    printf("Loading embedded ASLLIB library...\r\n");
         if (luaL_loadbuffer(L, (const char*)asllib, asllib_len, "asllib.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error loading ASLLIB library: %s\n\r", error ? error : "unknown error");
+            printf("Error loading ASLLIB library: %s\r\n", error ? error : "unknown error");
             lua_pop(L, 1);
             return;
         }
@@ -416,15 +436,15 @@ public:
         
         if (luaL_dostring(L, setup_globals) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error setting up ASL globals: %s\n\r", error ? error : "unknown error");
+            printf("Error setting up ASL globals: %s\r\n", error ? error : "unknown error");
             lua_pop(L, 1);
         }
         
         // Load Output.lua class from embedded bytecode
-        printf("Loading embedded Output.lua class...\n\r");
+    printf("Loading embedded Output.lua class...\r\n");
         if (luaL_loadbuffer(L, (const char*)output, output_len, "output.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error loading Output.lua: %s\n\r", error ? error : "unknown error");
+            printf("Error loading Output.lua: %s\r\n", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
             // Output.lua returns the Output table - capture it
@@ -439,7 +459,7 @@ public:
                 print("Output objects created successfully!")
             )") != LUA_OK) {
                 const char* error = lua_tostring(L, -1);
-                printf("Error creating output objects: %s\n\r", error ? error : "unknown error");
+                printf("Error creating output objects: %s\r\n", error ? error : "unknown error");
                 lua_pop(L, 1);
             } else {
                 printf("Output.lua loaded successfully!\n\r");
@@ -877,9 +897,12 @@ public:
     void handle_command(C_cmd_t cmd)
     {
         switch (cmd) {
-            case C_version:
-                send_crow_response("^^version('blackbird-0.1')");
-                break;
+            case C_version: {
+                char response[96];
+                // Embed build date/time and debug format so a late serial connection can verify firmware
+                snprintf(response, sizeof(response), "^^version('blackbird-0.1 %s %s dbg=v2')", __DATE__, __TIME__);
+                send_crow_response(response);
+                break; }
                 
             case C_identity: {
                 uint64_t unique_id = UniqueCardID();
@@ -1067,6 +1090,41 @@ public:
             //     snprintf(debug, sizeof(debug), "-- CV1: %ld, CV2: %ld --", (long)v1, (long)v2);
             //     send_crow_response(debug);
             // }
+
+            // Crow-style: process one queued event per main loop iteration (on control core only)
+            event_next();
+
+            // Deferred debug print from audio core (atomic per snapshot)
+            if (g_debug_ready) {
+                // Manual copy out of volatile snapshot
+                float last[2], span[2], thr[2], hy[2], pct[2];
+                uint32_t st[2], rise[2], fall[2];
+                char conn[2], inst[2], valid[2];
+                for (int i=0;i<2;i++) {
+                    last[i] = g_debug_snapshot.ch_last[i];
+                    span[i] = g_debug_snapshot.ch_span[i];
+                    st[i]   = g_debug_snapshot.ch_state[i];
+                    rise[i] = g_debug_snapshot.ch_rise[i];
+                    fall[i] = g_debug_snapshot.ch_fall[i];
+                    thr[i]  = g_debug_snapshot.ch_thr[i];
+                    hy[i]   = g_debug_snapshot.ch_hy[i];
+                    conn[i] = g_debug_snapshot.ch_conn[i];
+                    inst[i] = g_debug_snapshot.ch_inst[i];
+                    valid[i]= g_debug_snapshot.ch_valid[i];
+                    pct[i]  = g_debug_snapshot.ch_conn_pct[i];
+                }
+                // Print two concise lines; single core ensures no interleaving.
+                printf("[1] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
+                       last[0], span[0], st[0],
+                       (unsigned long)rise[0], (unsigned long)fall[0],
+                       thr[0], hy[0], conn[0], inst[0], valid[0], pct[0]);
+                printf("[2] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
+                       last[1], span[1], st[1],
+                       (unsigned long)rise[1], (unsigned long)fall[1],
+                       thr[1], hy[1], conn[1], inst[1], valid[1], pct[1]);
+                fflush(stdout);
+                g_debug_ready = false; // mark consumed
+            }
         }
     }
 
@@ -1120,37 +1178,109 @@ public:
         }
         
         // Run detection on every sample to capture fast DC-coupled edges reliably
-        const bool input1_connected = Connected(ComputerCard::Input::Audio1);
-        const bool input2_connected = Connected(ComputerCard::Input::Audio2);
+        bool input1_connected_instant = Connected(ComputerCard::Input::Audio1);
+        bool input2_connected_instant = Connected(ComputerCard::Input::Audio2);
+
+        // Simple debounce / stability filter for connection status to avoid rapid probe-induced flicker
+        // Enter connected state after CONN_ON_COUNT consecutive instant=true samples;
+        // leave after CONN_OFF_COUNT consecutive instant=false samples.
+        const int CONN_ON_COUNT  = 256;   // ~5.3 ms at 48 kHz
+        const int CONN_OFF_COUNT = 256;   // symmetrical for now
+        static int conn1_accum = 0, conn2_accum = 0;
+        static bool input1_connected = false, input2_connected = false;
+        if (input1_connected_instant) {
+            if (conn1_accum < CONN_ON_COUNT) {
+                if (++conn1_accum >= CONN_ON_COUNT) input1_connected = true;
+            }
+        } else {
+            if (conn1_accum > -CONN_OFF_COUNT) {
+                if (--conn1_accum <= -CONN_OFF_COUNT) { input1_connected = false; }
+            }
+        }
+        if (input2_connected_instant) {
+            if (conn2_accum < CONN_ON_COUNT) {
+                if (++conn2_accum >= CONN_ON_COUNT) input2_connected = true;
+            }
+        } else {
+            if (conn2_accum > -CONN_OFF_COUNT) {
+                if (--conn2_accum <= -CONN_OFF_COUNT) { input2_connected = false; }
+            }
+        }
 
         float raw_input1 = hardware_get_input(1);
         float raw_input2 = hardware_get_input(2);
 
-        float input1 = input1_connected ? raw_input1 : 0.0f;
-        float input2 = input2_connected ? raw_input2 : 0.0f;
+    float input1 = input1_connected ? raw_input1 : 0.0f;
+    float input2 = input2_connected ? raw_input2 : 0.0f;
 
         Detect_process_sample(0, input1); // Channel 0 (input[1])
         Detect_process_sample(1, input2); // Channel 1 (input[2])
 
-        // Process queued change/stream events at a reduced rate to limit contention
-        static int event_counter = 0;
-        if (++event_counter >= 32) {
-            event_counter = 0;
-
-            // Optional: pulse LED 3 to show event service activity
-            static bool event_led_state = false;
-            event_led_state = !event_led_state;
-            if (event_led_state) {
-                debug_led_on(3);
-            } else {
-                debug_led_off(3);
-            }
-
-            // Drain multiple events per service slice to reduce backlog
-            for (int i = 0; i < 8; ++i) {
-                event_next();
-            }
+        // ---- DEBUG INSTRUMENTATION (input & detector diagnostics) ----
+        // Track min/max over a 1s window and print summary once per second.
+    static float in1_min =  1e9f, in1_max = -1e9f;
+    static float in2_min =  1e9f, in2_max = -1e9f;
+    static uint32_t in1_conn_samples = 0, in2_conn_samples = 0; // fraction of samples in window considered connected
+        static uint32_t debug_sample_counter = 0;
+        if (input1_connected) {
+            if (input1 < in1_min) in1_min = input1;
+            if (input1 > in1_max) in1_max = input1;
+            ++in1_conn_samples;
         }
+        if (input2_connected) {
+            if (input2 < in2_min) in2_min = input2;
+            if (input2 > in2_max) in2_max = input2;
+            ++in2_conn_samples;
+        }
+        if (++debug_sample_counter >= 48000) { // ~1 second
+            debug_sample_counter = 0;
+            Detect_t* d0 = Detect_ix_to_p(0);
+            Detect_t* d1 = Detect_ix_to_p(1);
+            bool in1_valid = d0 && (in1_min < 1e8f) && (in1_max > -1e8f) && (in1_min <= in1_max);
+            bool in2_valid = d1 && (in2_min < 1e8f) && (in2_max > -1e8f) && (in2_min <= in2_max);
+            float in1_span = in1_valid ? (in1_max - in1_min) : 0.0f;
+            float in2_span = in2_valid ? (in2_max - in2_min) : 0.0f;
+
+            // Publish snapshot only if previous one was consumed to avoid overwriting while USB core printing.
+            if (!g_debug_ready) {
+                DebugSnapshot snap;
+                snap.ch_last[0] = input1;          snap.ch_last[1] = input2;
+                snap.ch_span[0] = in1_span;        snap.ch_span[1] = in2_span;
+                snap.ch_state[0] = d0 ? d0->state : 0u;  snap.ch_state[1] = d1 ? d1->state : 0u;
+                snap.ch_rise[0] = d0 ? d0->change_rise_count : 0u; snap.ch_rise[1] = d1 ? d1->change_rise_count : 0u;
+                snap.ch_fall[0] = d0 ? d0->change_fall_count : 0u; snap.ch_fall[1] = d1 ? d1->change_fall_count : 0u;
+                snap.ch_thr[0]  = d0 ? d0->change.threshold : 0.0f; snap.ch_thr[1]  = d1 ? d1->change.threshold : 0.0f;
+                snap.ch_hy[0]   = d0 ? d0->change.hysteresis : 0.0f; snap.ch_hy[1]   = d1 ? d1->change.hysteresis : 0.0f;
+                snap.ch_conn[0] = input1_connected ? 'Y':'N'; snap.ch_conn[1] = input2_connected ? 'Y':'N';
+                snap.ch_inst[0] = input1_connected_instant ? 'Y':'N'; snap.ch_inst[1] = input2_connected_instant ? 'Y':'N';
+                snap.ch_valid[0]= in1_valid ? 'Y':'N'; snap.ch_valid[1]= in2_valid ? 'Y':'N';
+                snap.ch_conn_pct[0] = 100.0f * (float)in1_conn_samples / 48000.0f;
+                snap.ch_conn_pct[1] = 100.0f * (float)in2_conn_samples / 48000.0f;
+                snap.seq = g_debug_snapshot.seq + 1; // monotonic sequence
+                // Manual copy due to volatile qualification blocking aggregate assignment
+                for (int i=0;i<2;i++) {
+                    g_debug_snapshot.ch_last[i] = snap.ch_last[i];
+                    g_debug_snapshot.ch_span[i] = snap.ch_span[i];
+                    g_debug_snapshot.ch_state[i] = snap.ch_state[i];
+                    g_debug_snapshot.ch_rise[i] = snap.ch_rise[i];
+                    g_debug_snapshot.ch_fall[i] = snap.ch_fall[i];
+                    g_debug_snapshot.ch_thr[i]  = snap.ch_thr[i];
+                    g_debug_snapshot.ch_hy[i]   = snap.ch_hy[i];
+                    g_debug_snapshot.ch_conn[i] = snap.ch_conn[i];
+                    g_debug_snapshot.ch_inst[i] = snap.ch_inst[i];
+                    g_debug_snapshot.ch_valid[i]= snap.ch_valid[i];
+                    g_debug_snapshot.ch_conn_pct[i] = snap.ch_conn_pct[i];
+                }
+                g_debug_snapshot.seq = snap.seq;
+                g_debug_ready = true;    // publish
+            }
+            // reset window for next accumulation
+            in1_min =  1e9f; in1_max = -1e9f; in1_conn_samples = 0;
+            in2_min =  1e9f; in2_max = -1e9f; in2_conn_samples = 0;
+        }
+        // ---- END DEBUG INSTRUMENTATION ----
+
+        // (Option A) Event queue is now drained on core1 only; no draining here to keep audio loop deterministic
         
         // Process slopes system for all output channels (crow-style)
         // Using safe timer-based approach to avoid USB enumeration issues
@@ -1377,6 +1507,19 @@ static void detection_callback(int channel, float value) {
     
     // For change detection, 'value' is actually the state (0.0 or 1.0), not voltage
     bool state = (value > 0.5f);
+    // Suppress duplicate postings of identical state for a channel in case the
+    // detector state byte is being inadvertently reset or noisy input causes
+    // repeated triggers. Crow's firmware naturally suppresses this via its
+    // internal state machine; this mirrors that behavior defensively.
+    {
+        static int8_t last_reported_state[8] = { -1, -1, -1, -1, -1, -1, -1, -1 }; // supports up to 8 inputs safely
+        if (channel >= 0 && channel < 8) {
+            if (last_reported_state[channel] == (int8_t)state) {
+                return; // duplicate state -> ignore
+            }
+            last_reported_state[channel] = (int8_t)state;
+        }
+    }
     if (kDetectionDebug) {
         printf("CALLBACK #%lu: ch%d state=%s\n\r", callback_count, channel + 1, state ? "HIGH" : "LOW");
     }
@@ -1420,27 +1563,6 @@ extern "C" void L_handle_change_safe(event_t* e) {
         return;
     }
 
-    // Deferred pending change queue (single-producer single-consumer within core0)
-    struct PendingChange { uint8_t channel; uint8_t state; };
-    static PendingChange pending_changes[16];
-    static volatile uint8_t pending_head = 0; // next pop
-    static volatile uint8_t pending_tail = 0; // next push
-    auto pending_count = [&](){ return (uint8_t)(pending_tail - pending_head); };
-    auto pending_full  = [&](){ return pending_count() >= 16; };
-    auto enqueue_pending = [&](uint8_t ch, uint8_t st){
-        if (pending_full()) {
-            // drop oldest (overwrite head) to keep most recent edge
-            pending_head++;
-        }
-        pending_changes[pending_tail & 0x0F] = { ch, st };
-        pending_tail++;
-    };
-    auto dequeue_pending = [&](PendingChange &out)->bool {
-        if (pending_head == pending_tail) return false;
-        out = pending_changes[pending_head & 0x0F];
-        pending_head++;
-        return true;
-    };
     
     int channel = e->index.i + 1; // Convert to 1-based
     bool state = (e->data.f > 0.5f);
@@ -1453,45 +1575,18 @@ extern "C" void L_handle_change_safe(event_t* e) {
     
     // Use crow-style global change_handler dispatching for error isolation
     char lua_call[128];
-    snprintf(lua_call, sizeof(lua_call), 
-        "if change_handler then change_handler(%d, %s) end", 
-        channel, state ? "true" : "false");
+    // Pass numeric 0/1 like original crow firmware (Input.lua expects number, not boolean)
+    snprintf(lua_call, sizeof(lua_call),
+        "if change_handler then change_handler(%d, %d) end",
+        channel, state ? 1 : 0);
     
     // LED 1: About to call Lua (proves we reach Lua execution attempt)
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(1);
     }
     
-    // Call with non-blocking error protection - if mutex is busy, skip to prevent deadlock
-    if (!lua_mgr->evaluate_safe_non_blocking(lua_call)) {
-        if (kDetectionDebug) {
-            printf("Deferred change_handler ch%d (mutex busy) queue=%u\n\r", channel, pending_count());
-        }
-        if (g_blackbird_instance) {
-            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
-            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(1);
-        }
-        return;
-    }
-
-    // After a successful immediate call, opportunistically drain a few deferred items
-    if (pending_head != pending_tail) {
-        int drained = 0;
-        PendingChange pc;
-        while (drained < 3 && dequeue_pending(pc)) {
-            char deferred_call[96];
-            snprintf(deferred_call, sizeof(deferred_call),
-                "if change_handler then change_handler(%u, %s) end",
-                (unsigned)pc.channel, pc.state ? "true" : "false");
-            if (!lua_mgr->evaluate_safe(deferred_call)) {
-                // Could not run now; re-enqueue at tail (will attempt later)
-                enqueue_pending(pc.channel, pc.state);
-                break; // stop draining this round
-            }
-            drained++;
-        }
-    }
-    
+    // Now safe to use blocking safe evaluation (runs on control core, outside real-time audio path)
+    lua_mgr->evaluate_safe_thread_safe(lua_call);
     // LED 2: Lua callback completed successfully (proves no crash/hang)
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(2);
@@ -1780,6 +1875,17 @@ int main()
         }
     }
     stdio_init_all();
+    // Disable stdio buffering to ensure immediate visibility of debug prints
+    setvbuf(stdout, NULL, _IONBF, 0);
+    // Wait briefly (up to 1500ms) for a USB serial host to connect so the boot banner is visible
+    {
+        absolute_time_t until = make_timeout_time_ms(1500);
+        while (!stdio_usb_connected() && absolute_time_diff_us(get_absolute_time(), until) > 0) {
+            tight_loop_contents();
+        }
+    }
+    // Build / instrumentation fingerprint so we can verify the running firmware version on the device
+    printf("[boot] blackbird build %s %s dbg_format=v2 conn_smpl instrumentation active\r\n", __DATE__, __TIME__);
 
     BlackbirdCrow crow;
     crow.EnableNormalisationProbe();

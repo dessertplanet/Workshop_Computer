@@ -10,8 +10,17 @@
 static Detect_t* detectors = NULL;
 static int detector_count = 0;
 
+#define DETECT_CANARY 0xD37EC7u
+
 // Detection processing sample rate (matches audio engine)
 #define DETECT_SAMPLE_RATE 48000.0f
+// Crow evaluates detectors once per 32-sample audio block. We still call
+// Detect_process_sample() every sample for edge fidelity, but interval-based
+// modes (stream / volume / peak) should interpret the user-specified interval
+// the same way crow does: in units of 32-sample blocks. So we scale the
+// interval by (sample_rate / block_size) rather than raw sample_rate.
+#define DETECT_BLOCK_SIZE 32.0f
+#define DETECT_BLOCK_RATE (DETECT_SAMPLE_RATE / DETECT_BLOCK_SIZE)
 
 // VU Meter implementation
 VU_meter_t* VU_init(void) {
@@ -79,6 +88,10 @@ void Detect_init(int channels) {
         detectors[i].action = NULL;
         detectors[i].last = 0.0f;
         detectors[i].state = 0;
+        detectors[i].last_sample = 0.0f;
+        detectors[i].canary = DETECT_CANARY;
+        detectors[i].change_rise_count = 0;
+        detectors[i].change_fall_count = 0;
     }
 }
 
@@ -122,8 +135,8 @@ void Detect_stream(Detect_t* self, Detect_callback_t cb, float interval) {
     if (!self) return;
     self->modefn = d_stream;
     self->action = cb;
-    // Convert interval to blocks at ~1.5kHz processing rate
-    self->stream.blocks = (int)(interval * DETECT_SAMPLE_RATE);
+    // Crow semantics: interval (seconds) * (sample_rate / 32)
+    self->stream.blocks = (int)(interval * DETECT_BLOCK_RATE);
     if (self->stream.blocks <= 0) self->stream.blocks = 1;
     self->stream.countdown = self->stream.blocks;
 }
@@ -134,6 +147,11 @@ void Detect_change(Detect_t* self, Detect_callback_t cb, float threshold, float 
     self->action = cb;
     self->change.threshold = threshold;
     self->change.hysteresis = hysteresis;
+    // Safety clamp: extremely small or zero hysteresis leads to chatter/noise-triggered floods.
+    // crow firmware enforces minimum hysteresis in some modes (e.g. scale); we mirror that spirit here.
+    if (self->change.hysteresis < 0.001f) {
+        self->change.hysteresis = 0.001f; // ~1mV in crow volts domain (adjust if scaling differs)
+    }
     self->change.direction = direction;
     self->state = 0; // Reset state
 }
@@ -189,15 +207,15 @@ void Detect_volume(Detect_t* self, Detect_callback_t cb, float interval) {
     if (!self) return;
     self->modefn = d_volume;
     self->action = cb;
-    
+
     // Initialize VU meter if not already done
     if (!self->vu) {
         self->vu = VU_init();
         VU_time(self->vu, 0.018f); // 18ms time constant
     }
-    
-    // Convert interval to blocks at ~1.5kHz processing rate
-    self->volume.blocks = (int)(interval * DETECT_SAMPLE_RATE);
+
+    // Crow semantics (see Detect_stream)
+    self->volume.blocks = (int)(interval * DETECT_BLOCK_RATE);
     if (self->volume.blocks <= 0) self->volume.blocks = 1;
     self->volume.countdown = self->volume.blocks;
 }
@@ -206,13 +224,13 @@ void Detect_peak(Detect_t* self, Detect_callback_t cb, float threshold, float hy
     if (!self) return;
     self->modefn = d_peak;
     self->action = cb;
-    
+
     // Initialize VU meter if not already done
     if (!self->vu) {
         self->vu = VU_init();
         VU_time(self->vu, 0.18f); // 180ms time constant for peak detection
     }
-    
+
     self->peak.threshold = threshold;
     self->peak.hysteresis = hysteresis;
     self->peak.release = 0.01f;
@@ -246,10 +264,11 @@ static void d_change(Detect_t* self, float level) {
     if (self->state) { // high to low
         if (level < (self->change.threshold - self->change.hysteresis)) {
             if (DETECT_DEBUG) {
-                printf("[detect] ch%d FALL level=%.3f thresh=%.3f hyst=%.3f dir=%d\n\r",
+                printf("[detect] ch%d FALL level=%.3f thresh=%.3f hyst=%.3f dir=%d\r\n",
                        self->channel, level, self->change.threshold, self->change.hysteresis, self->change.direction);
             }
             self->state = 0;
+            self->change_fall_count++;
             if (self->change.direction != 1) { // not 'rising' only
                 if (self->action) {
                     (*self->action)(self->channel, (float)self->state);
@@ -259,10 +278,11 @@ static void d_change(Detect_t* self, float level) {
     } else { // low to high
         if (level > (self->change.threshold + self->change.hysteresis)) {
             if (DETECT_DEBUG) {
-                printf("[detect] ch%d RISE level=%.3f thresh=%.3f hyst=%.3f dir=%d\n\r",
+                printf("[detect] ch%d RISE level=%.3f thresh=%.3f hyst=%.3f dir=%d\r\n",
                        self->channel, level, self->change.threshold, self->change.hysteresis, self->change.direction);
             }
             self->state = 1;
+            self->change_rise_count++;
             if (self->change.direction != -1) { // not 'falling' only
                 if (self->action) {
                     (*self->action)(self->channel, (float)self->state);
@@ -386,6 +406,16 @@ void Detect_process_sample(int channel, float level) {
     if (channel >= detector_count || !detectors) return;
     
     Detect_t* detector = &detectors[channel];
+    // Canary check
+    if (detector->canary != DETECT_CANARY) {
+        static int warned = 0;
+        if (!warned) {
+            printf("[detect] CANARY CORRUPTION on ch%d!\r\n", channel);
+            warned = 1;
+        }
+        detector->canary = DETECT_CANARY; // restore to continue operation
+    }
+    detector->last_sample = level;
     if (detector->modefn) {
         detector->modefn(detector, level);
     }
