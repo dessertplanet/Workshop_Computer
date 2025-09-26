@@ -3,7 +3,6 @@
 #include <stdbool.h>
 
 #define MAX_DIV_LIST_LEN 24
-
 #define ASHAPER_CHANNELS 4
 
 typedef struct{

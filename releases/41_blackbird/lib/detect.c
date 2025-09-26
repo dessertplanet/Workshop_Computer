@@ -84,14 +84,15 @@ void Detect_init(int channels) {
     
     for (int i = 0; i < channels; i++) {
         detectors[i].channel = i;
-        detectors[i].modefn = NULL;
-        detectors[i].action = NULL;
         detectors[i].last = 0.0f;
         detectors[i].state = 0;
         detectors[i].last_sample = 0.0f;
         detectors[i].canary = DETECT_CANARY;
         detectors[i].change_rise_count = 0;
         detectors[i].change_fall_count = 0;
+        
+        // CRITICAL: Initialize all detectors to "none" mode like real crow
+        Detect_none(&detectors[i]);
     }
 }
 

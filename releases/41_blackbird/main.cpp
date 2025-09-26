@@ -77,8 +77,9 @@ static bool slopes_mutex_initialized = false;
 // Forward declaration of C interface function (implemented after BlackbirdCrow class)
 extern "C" void hardware_output_set_voltage(int channel, float voltage);
 
-// Forward declaration of safe event handler
+// Forward declaration of safe event handlers
 extern "C" void L_handle_change_safe(event_t* e);
+extern "C" void L_handle_stream_safe(event_t* e);
 
 // ---- Cross-core debug snapshot (avoid interleaved stdio from both cores) ----
 typedef struct {
@@ -773,7 +774,8 @@ public:
     
     float hardware_get_output(int channel) {
         if (channel < 1 || channel > 4) return 0.0f;
-        return (float)get_output_state_atomic(channel - 1) / 1000.0f;
+        // Use AShaper_get_state to match crow's behavior exactly
+        return AShaper_get_state(channel - 1);
     }
     
     // Hardware abstraction functions for input
@@ -817,6 +819,10 @@ public:
         
         // Initialize slopes system for crow-style output processing
         S_init(4); // Initialize 4 output channels
+        
+        // Initialize AShaper system for output quantization (pass-through mode)
+        AShaper_init(4); // Initialize 4 output channels
+        printf("AShaper system initialized (pass-through mode)\n");
         
         // Initialize slopes mutex for thread safety
 #ifdef PICO_BUILD
@@ -1114,14 +1120,14 @@ public:
                     pct[i]  = g_debug_snapshot.ch_conn_pct[i];
                 }
                 // Print two concise lines; single core ensures no interleaving.
-                printf("[1] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
-                       last[0], span[0], st[0],
-                       (unsigned long)rise[0], (unsigned long)fall[0],
-                       thr[0], hy[0], conn[0], inst[0], valid[0], pct[0]);
-                printf("[2] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
-                       last[1], span[1], st[1],
-                       (unsigned long)rise[1], (unsigned long)fall[1],
-                       thr[1], hy[1], conn[1], inst[1], valid[1], pct[1]);
+                //printf("[1] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
+                    //    last[0], span[0], st[0],
+                    //    (unsigned long)rise[0], (unsigned long)fall[0],
+                    //    thr[0], hy[0], conn[0], inst[0], valid[0], pct[0]);
+                //printf("[2] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
+                    //    last[1], span[1], st[1],
+                    //    (unsigned long)rise[1], (unsigned long)fall[1],
+                    //    thr[1], hy[1], conn[1], inst[1], valid[1], pct[1]);
                 fflush(stdout);
                 g_debug_ready = false; // mark consumed
             }
@@ -1177,61 +1183,44 @@ public:
             // }
         }
         
-        // Run detection on every sample to capture fast DC-coupled edges reliably
-        bool input1_connected_instant = Connected(ComputerCard::Input::Audio1);
-        bool input2_connected_instant = Connected(ComputerCard::Input::Audio2);
+        // Get raw input values - ComputerCard handles connection detection internally
+        // It returns 0 when nothing is plugged in, so crow detection can work directly on this
+        float input1 = hardware_get_input(1);
+        float input2 = hardware_get_input(2);
 
-        // Simple debounce / stability filter for connection status to avoid rapid probe-induced flicker
-        // Enter connected state after CONN_ON_COUNT consecutive instant=true samples;
-        // leave after CONN_OFF_COUNT consecutive instant=false samples.
-        const int CONN_ON_COUNT  = 256;   // ~5.3 ms at 48 kHz
-        const int CONN_OFF_COUNT = 256;   // symmetrical for now
-        static int conn1_accum = 0, conn2_accum = 0;
-        static bool input1_connected = false, input2_connected = false;
-        if (input1_connected_instant) {
-            if (conn1_accum < CONN_ON_COUNT) {
-                if (++conn1_accum >= CONN_ON_COUNT) input1_connected = true;
-            }
-        } else {
-            if (conn1_accum > -CONN_OFF_COUNT) {
-                if (--conn1_accum <= -CONN_OFF_COUNT) { input1_connected = false; }
-            }
+        // Process detection in 32-sample blocks like real crow
+        static int detect_block_counter = 0;
+        static float detect_block_buffer[2][32]; // Buffer for 2 channels x 32 samples
+        
+        // Store samples in block buffer
+        detect_block_buffer[0][detect_block_counter] = input1;
+        detect_block_buffer[1][detect_block_counter] = input2;
+        
+        if (++detect_block_counter >= 32) {
+            detect_block_counter = 0;
+            
+            // Process detection once per 32-sample block (matches real crow timing)
+            // Use the final sample of the block as the detection value
+            Detect_process_sample(0, detect_block_buffer[0][31]); // Channel 0 (input[1])
+            Detect_process_sample(1, detect_block_buffer[1][31]); // Channel 1 (input[2])
         }
-        if (input2_connected_instant) {
-            if (conn2_accum < CONN_ON_COUNT) {
-                if (++conn2_accum >= CONN_ON_COUNT) input2_connected = true;
-            }
-        } else {
-            if (conn2_accum > -CONN_OFF_COUNT) {
-                if (--conn2_accum <= -CONN_OFF_COUNT) { input2_connected = false; }
-            }
-        }
-
-        float raw_input1 = hardware_get_input(1);
-        float raw_input2 = hardware_get_input(2);
-
-    float input1 = input1_connected ? raw_input1 : 0.0f;
-    float input2 = input2_connected ? raw_input2 : 0.0f;
-
-        Detect_process_sample(0, input1); // Channel 0 (input[1])
-        Detect_process_sample(1, input2); // Channel 1 (input[2])
 
         // ---- DEBUG INSTRUMENTATION (input & detector diagnostics) ----
         // Track min/max over a 1s window and print summary once per second.
-    static float in1_min =  1e9f, in1_max = -1e9f;
-    static float in2_min =  1e9f, in2_max = -1e9f;
-    static uint32_t in1_conn_samples = 0, in2_conn_samples = 0; // fraction of samples in window considered connected
+        static float in1_min =  1e9f, in1_max = -1e9f;
+        static float in2_min =  1e9f, in2_max = -1e9f;
         static uint32_t debug_sample_counter = 0;
-        if (input1_connected) {
+        
+        // Always track min/max since ComputerCard returns 0 when nothing plugged in
+        if (input1 != 0.0f) {
             if (input1 < in1_min) in1_min = input1;
             if (input1 > in1_max) in1_max = input1;
-            ++in1_conn_samples;
         }
-        if (input2_connected) {
+        if (input2 != 0.0f) {
             if (input2 < in2_min) in2_min = input2;
             if (input2 > in2_max) in2_max = input2;
-            ++in2_conn_samples;
         }
+        
         if (++debug_sample_counter >= 48000) { // ~1 second
             debug_sample_counter = 0;
             Detect_t* d0 = Detect_ix_to_p(0);
@@ -1251,11 +1240,11 @@ public:
                 snap.ch_fall[0] = d0 ? d0->change_fall_count : 0u; snap.ch_fall[1] = d1 ? d1->change_fall_count : 0u;
                 snap.ch_thr[0]  = d0 ? d0->change.threshold : 0.0f; snap.ch_thr[1]  = d1 ? d1->change.threshold : 0.0f;
                 snap.ch_hy[0]   = d0 ? d0->change.hysteresis : 0.0f; snap.ch_hy[1]   = d1 ? d1->change.hysteresis : 0.0f;
-                snap.ch_conn[0] = input1_connected ? 'Y':'N'; snap.ch_conn[1] = input2_connected ? 'Y':'N';
-                snap.ch_inst[0] = input1_connected_instant ? 'Y':'N'; snap.ch_inst[1] = input2_connected_instant ? 'Y':'N';
+                snap.ch_conn[0] = 'C'; snap.ch_conn[1] = 'C'; // ComputerCard managed
+                snap.ch_inst[0] = 'C'; snap.ch_inst[1] = 'C'; // ComputerCard managed
                 snap.ch_valid[0]= in1_valid ? 'Y':'N'; snap.ch_valid[1]= in2_valid ? 'Y':'N';
-                snap.ch_conn_pct[0] = 100.0f * (float)in1_conn_samples / 48000.0f;
-                snap.ch_conn_pct[1] = 100.0f * (float)in2_conn_samples / 48000.0f;
+                snap.ch_conn_pct[0] = 0.0f; // No longer tracked
+                snap.ch_conn_pct[1] = 0.0f; // No longer tracked
                 snap.seq = g_debug_snapshot.seq + 1; // monotonic sequence
                 // Manual copy due to volatile qualification blocking aggregate assignment
                 for (int i=0;i<2;i++) {
@@ -1275,8 +1264,8 @@ public:
                 g_debug_ready = true;    // publish
             }
             // reset window for next accumulation
-            in1_min =  1e9f; in1_max = -1e9f; in1_conn_samples = 0;
-            in2_min =  1e9f; in2_max = -1e9f; in2_conn_samples = 0;
+            in1_min =  1e9f; in1_max = -1e9f;
+            in2_min =  1e9f; in2_max = -1e9f;
         }
         // ---- END DEBUG INSTRUMENTATION ----
 
@@ -1298,8 +1287,9 @@ public:
 #endif
 
             for (int i = 0; i < 4; i++) {
-                S_step_v(i, slope_buffer, 48);  // advance envelope over one millisecond
-                hardware_set_output(i + 1, slope_buffer[47]);
+                S_step_v(i, slope_buffer, 48);           // Generate envelope samples
+                AShaper_v(i, slope_buffer, 48);          // Apply AShaper (pass-through mode)
+                hardware_set_output(i + 1, slope_buffer[47]); // Output final sample
             }
 
 #ifdef PICO_BUILD
@@ -1497,22 +1487,44 @@ int LuaManager::lua_io_get_input(lua_State* L) {
     return 1;
 }
 
-// Event-based detection callback - queues events like real crow
+// Mode-specific detection callbacks - match real crow's architecture
 static constexpr bool kDetectionDebug = false;
 
-static void detection_callback(int channel, float value) {
-    // Reduce debug output to prevent buffer overflow
+// Stream callback - calls stream_handler
+static void stream_callback(int channel, float value) {
+    static uint32_t callback_count = 0;
+    callback_count++;
+    
+    if (kDetectionDebug) {
+        printf("STREAM CALLBACK #%lu: ch%d value=%.3f\n\r", callback_count, channel + 1, value);
+    }
+    
+    // Queue a stream event (using event system for safety)
+    event_t e = { 
+        .handler = L_handle_stream_safe,
+        .index = { .i = channel },
+        .data = { .f = value },
+        .type = EVENT_TYPE_STREAM,
+        .timestamp = to_ms_since_boot(get_absolute_time())
+    };
+    
+    if (!event_post(&e)) {
+        if (kDetectionDebug) {
+            printf("Failed to post stream event for channel %d\n\r", channel + 1);
+        }
+    }
+}
+
+// Change callback - calls change_handler
+static void change_callback(int channel, float value) {
     static uint32_t callback_count = 0;
     callback_count++;
     
     // For change detection, 'value' is actually the state (0.0 or 1.0), not voltage
     bool state = (value > 0.5f);
-    // Suppress duplicate postings of identical state for a channel in case the
-    // detector state byte is being inadvertently reset or noisy input causes
-    // repeated triggers. Crow's firmware naturally suppresses this via its
-    // internal state machine; this mirrors that behavior defensively.
+    // Suppress duplicate postings of identical state for a channel
     {
-        static int8_t last_reported_state[8] = { -1, -1, -1, -1, -1, -1, -1, -1 }; // supports up to 8 inputs safely
+        static int8_t last_reported_state[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
         if (channel >= 0 && channel < 8) {
             if (last_reported_state[channel] == (int8_t)state) {
                 return; // duplicate state -> ignore
@@ -1521,15 +1533,14 @@ static void detection_callback(int channel, float value) {
         }
     }
     if (kDetectionDebug) {
-        printf("CALLBACK #%lu: ch%d state=%s\n\r", callback_count, channel + 1, state ? "HIGH" : "LOW");
+        printf("CHANGE CALLBACK #%lu: ch%d state=%s\n\r", callback_count, channel + 1, state ? "HIGH" : "LOW");
     }
     
-    // Queue a change event like real crow does (using event system for safety)
-    // This prevents direct Lua calls that can corrupt the stack
+    // Queue a change event (using event system for safety)
     event_t e = { 
         .handler = L_handle_change_safe,
         .index = { .i = channel },
-        .data = { .f = value }, // Pass the state value directly
+        .data = { .f = value },
         .type = EVENT_TYPE_CHANGE,
         .timestamp = to_ms_since_boot(get_absolute_time())
     };
@@ -1538,6 +1549,59 @@ static void detection_callback(int channel, float value) {
         if (kDetectionDebug) {
             printf("Failed to post change event for channel %d\n\r", channel + 1);
         }
+    }
+}
+
+// Generic callback for other modes (volume, peak, etc.)
+static void generic_callback(int channel, float value) {
+    // For now, route other modes to change_handler to maintain compatibility
+    change_callback(channel, value);
+}
+
+// Core-safe stream event handler - NO BLOCKING CALLS, NO SLEEP!
+extern "C" void L_handle_stream_safe(event_t* e) {
+    // CRITICAL: This function can be called from either core
+    // Must be thread-safe and never block!
+    
+    static volatile uint32_t callback_counter = 0;
+    callback_counter++;
+    
+    // LED 3: Stream event handler called
+    if (g_blackbird_instance) {
+        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(3);
+    }
+    
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (!lua_mgr) {
+        if (g_blackbird_instance) {
+            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(3);
+        }
+        return;
+    }
+    
+    int channel = e->index.i + 1; // Convert to 1-based
+    float value = e->data.f;
+    
+    if (kDetectionDebug) {
+        printf("STREAM SAFE CALLBACK #%lu: ch%d value=%.3f\n\r",
+               callback_counter, channel, value);
+    }
+    
+    // Use crow-style global stream_handler dispatching
+    char lua_call[128];
+    snprintf(lua_call, sizeof(lua_call),
+        "if stream_handler then stream_handler(%d, %.6f) end",
+        channel, value);
+    
+    // Safe to use blocking safe evaluation (runs on control core)
+    lua_mgr->evaluate_safe_thread_safe(lua_call);
+    
+    if (g_blackbird_instance) {
+        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(3);
+    }
+    
+    if (kDetectionDebug) {
+        printf("STREAM SAFE CALLBACK #%lu: Completed successfully\n\r", callback_counter);
     }
 }
 
@@ -1600,14 +1664,14 @@ extern "C" void L_handle_change_safe(event_t* e) {
     }
 }
 
-// Input mode functions - connect to detection system
+// Input mode functions - connect to detection system with mode-specific callbacks
 int LuaManager::lua_set_input_stream(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
     float time = (float)luaL_checknumber(L, 2);
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_stream(detector, detection_callback, time);
+        Detect_stream(detector, stream_callback, time);
         printf("Input %d: stream mode, interval %.3fs\n\r", channel, time);
     }
     return 0;
@@ -1627,7 +1691,7 @@ int LuaManager::lua_set_input_change(lua_State* L) {
     if (detector) {
         int8_t dir = Detect_str_to_dir(direction);
         printf("DEBUG: Direction '%s' converted to %d\n\r", direction, dir);
-        Detect_change(detector, detection_callback, threshold, hysteresis, dir);
+        Detect_change(detector, change_callback, threshold, hysteresis, dir);
         printf("Input %d: change mode, thresh %.3f, hyst %.3f, dir %s\n\r", 
                channel, threshold, hysteresis, direction);
     } else {
@@ -1660,7 +1724,7 @@ int LuaManager::lua_set_input_window(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_window(detector, detection_callback, windows, wLen, hysteresis);
+        Detect_window(detector, generic_callback, windows, wLen, hysteresis);
         printf("Input %d: window mode, %d windows, hyst %.3f\n\r", channel, wLen, hysteresis);
     }
     return 0;
@@ -1689,7 +1753,7 @@ int LuaManager::lua_set_input_scale(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_scale(detector, detection_callback, scale, sLen, temp, scaling);
+        Detect_scale(detector, generic_callback, scale, sLen, temp, scaling);
         printf("Input %d: scale mode, %d notes, temp %.1f, scaling %.3f\n\r", 
                channel, sLen, temp, scaling);
     }
@@ -1702,7 +1766,7 @@ int LuaManager::lua_set_input_volume(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_volume(detector, detection_callback, time);
+        Detect_volume(detector, generic_callback, time);
         printf("Input %d: volume mode, interval %.3fs\n\r", channel, time);
     }
     return 0;
@@ -1715,7 +1779,7 @@ int LuaManager::lua_set_input_peak(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_peak(detector, detection_callback, threshold, hysteresis);
+        Detect_peak(detector, generic_callback, threshold, hysteresis);
         printf("Input %d: peak mode, thresh %.3f, hyst %.3f\n\r", 
                channel, threshold, hysteresis);
     }
@@ -1728,7 +1792,7 @@ int LuaManager::lua_set_input_freq(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_freq(detector, detection_callback, time);
+        Detect_freq(detector, generic_callback, time);
         printf("Input %d: freq mode, interval %.3fs (not fully implemented)\n\r", channel, time);
     }
     return 0;
@@ -1744,7 +1808,7 @@ int LuaManager::lua_set_input_clock(lua_State* L) {
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         // Use change detection as base for clock
-        Detect_change(detector, detection_callback, threshold, hysteresis, 1); // Rising edge
+        Detect_change(detector, change_callback, threshold, hysteresis, 1); // Rising edge
         printf("Input %d: clock mode, div %.3f, thresh %.3f, hyst %.3f\n\r", 
                channel, div, threshold, hysteresis);
     }

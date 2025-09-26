@@ -46,6 +46,9 @@ function Input:get_value()
 end
 
 function Input:set_mode( mode, ... )
+    -- CRITICAL FIX: Always clear previous detection mode first
+    set_input_none( self.channel )
+    
     -- TODO short circuit these comparisons by only looking at first char
     local args = {...}
     if mode == 'stream' then
@@ -100,7 +103,7 @@ function Input:set_mode( mode, ... )
                        , self.hysteresis
                        )
     else
-        set_input_none( self.channel )
+        -- 'none' mode or unrecognized mode - already cleared above
     end
     self._mode = mode
 end
