@@ -40,7 +40,6 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/metro.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/clock.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/events.c
-        ${CMAKE_CURRENT_LIST_DIR}/lib/lockfree.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/l_bootstrap.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/l_crowlib.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/l_ii_mod.c
@@ -118,12 +117,11 @@ function(add_lua_header LUA_FILE HEADER_VAR)
     set(${HEADER_VAR} ${HEADER_FILE} PARENT_SCOPE)
 endfunction()
 
-# Generate headers for Lua files
-add_lua_header(test_enhanced_multicore_safety.lua TEST_ENHANCED_MULTICORE_SAFETY_HEADER)
-add_lua_header(test_lockfree_performance.lua TEST_LOCKFREE_PERFORMANCE_HEADER)
-add_lua_header(test_random_voltage.lua TEST_RANDOM_VOLTAGE_HEADER)
-add_lua_header(test_phase2_performance.lua TEST_PHASE2_PERFORMANCE_HEADER)
-add_lua_header(test_simple_output.lua TEST_SIMPLE_OUTPUT_HEADER)
+# Debug build options for conditional test script embedding
+option(ENABLE_DEBUG_TESTS "Enable embedded debug test scripts" OFF)
+set(DEBUG_TEST_SCRIPT "" CACHE STRING "Single test script to embed (e.g., test_simple_output)")
+
+# Generate headers for core Lua libraries (always included)
 add_lua_header(lib/asl.lua ASL_HEADER)
 add_lua_header(lib/asllib.lua ASLLIB_HEADER)
 add_lua_header(lib/crowlib.lua CROWLIB_HEADER)
@@ -140,16 +138,44 @@ add_lua_header(lib/timeline.lua TIMELINE_HEADER)
 add_lua_header(lib/hotswap.lua HOTSWAP_HEADER)
 add_lua_header(lib/First.lua FIRST_HEADER)
 
+# Conditional test script generation
+set(TEST_HEADERS "")
+if(ENABLE_DEBUG_TESTS)
+    if(DEBUG_TEST_SCRIPT)
+        # Single test mode
+        message(STATUS "Blackbird: Embedding single test script: ${DEBUG_TEST_SCRIPT}.lua")
+        add_lua_header(${DEBUG_TEST_SCRIPT}.lua SINGLE_TEST_HEADER)
+        list(APPEND TEST_HEADERS ${SINGLE_TEST_HEADER})
+        # Define which test is embedded for conditional compilation
+        string(TOUPPER ${DEBUG_TEST_SCRIPT} TEST_SCRIPT_UPPER)
+        set(TEST_DEFINE "EMBED_${TEST_SCRIPT_UPPER}")
+    else()
+        # All tests mode (original behavior for full debugging)
+        message(STATUS "Blackbird: Embedding ALL test scripts (full debug mode)")
+        add_lua_header(test_enhanced_multicore_safety.lua TEST_ENHANCED_MULTICORE_SAFETY_HEADER)
+        add_lua_header(test_lockfree_performance.lua TEST_LOCKFREE_PERFORMANCE_HEADER)
+        add_lua_header(test_random_voltage.lua TEST_RANDOM_VOLTAGE_HEADER)
+        add_lua_header(test_phase2_performance.lua TEST_PHASE2_PERFORMANCE_HEADER)
+        add_lua_header(test_simple_output.lua TEST_SIMPLE_OUTPUT_HEADER)
+        list(APPEND TEST_HEADERS 
+            ${TEST_ENHANCED_MULTICORE_SAFETY_HEADER}
+            ${TEST_LOCKFREE_PERFORMANCE_HEADER}
+            ${TEST_RANDOM_VOLTAGE_HEADER}
+            ${TEST_PHASE2_PERFORMANCE_HEADER}
+            ${TEST_SIMPLE_OUTPUT_HEADER}
+        )
+        set(TEST_DEFINE "EMBED_ALL_TESTS")
+    endif()
+else()
+    message(STATUS "Blackbird: Production build - no test scripts embedded")
+    set(TEST_DEFINE "PRODUCTION_BUILD")
+endif()
+
 # Create card
 add_card(${CARD_NAME})
 
 # Add generated headers as dependencies
 target_sources(${CARD_NAME} PRIVATE 
-  ${TEST_ENHANCED_MULTICORE_SAFETY_HEADER}
-  ${TEST_LOCKFREE_PERFORMANCE_HEADER}
-  ${TEST_RANDOM_VOLTAGE_HEADER}
-  ${TEST_PHASE2_PERFORMANCE_HEADER}
-  ${TEST_SIMPLE_OUTPUT_HEADER}
   ${ASL_HEADER}
   ${ASLLIB_HEADER}
   ${CROWLIB_HEADER}
@@ -165,8 +191,19 @@ target_sources(${CARD_NAME} PRIVATE
   ${TIMELINE_HEADER}
   ${HOTSWAP_HEADER}
   ${FIRST_HEADER}
+  ${TEST_HEADERS}  # Conditionally populated test headers
 )
+
+# Add conditional compilation defines
+target_compile_definitions(${CARD_NAME} PRIVATE ${TEST_DEFINE})
 target_include_directories(${CARD_NAME} PRIVATE ${CMAKE_BINARY_DIR})
+
+# Add build size monitoring
+add_custom_command(TARGET ${CARD_NAME} POST_BUILD
+    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${CARD_NAME}> || echo "size tool not available"
+    COMMAND ${CMAKE_COMMAND} -E echo "Binary file: $<TARGET_FILE:${CARD_NAME}>"
+    COMMENT "Monitoring binary size for RAM analysis"
+)
 
 # Copy UF2 files to UF2 directory with descriptive names
 add_custom_command(

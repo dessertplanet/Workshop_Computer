@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include "pico/stdlib.h"
 
 // Timer implementation for RP2040 Workshop Computer with block processing optimization
 // Reduces function call overhead from 48kHz to ~1kHz while maintaining timing precision
@@ -75,7 +76,8 @@ void Timer_Set_Params(int timer_id, float seconds) {
            timer_id, seconds, timers[timer_id].period_samples);
 }
 
-void Timer_Process(void) {
+// Time-critical: Called at 48kHz sample rate - must be in RAM for optimal performance
+void __not_in_flash_func(Timer_Process)(void) {
     // Called from ProcessSample() at exactly 48kHz - optimized block processing
     global_sample_counter++;
     sample_accumulator++;
@@ -87,7 +89,8 @@ void Timer_Process(void) {
     }
 }
 
-void Timer_Process_Block(void) {
+// Critical: Timer callback processing - place in RAM for consistent timing
+void __not_in_flash_func(Timer_Process_Block)(void) {
     // Process all timer events that occurred in this block
     // This function runs at ~1kHz instead of 48kHz, reducing CPU overhead by 98%
     

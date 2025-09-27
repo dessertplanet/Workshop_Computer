@@ -1,6 +1,7 @@
 #include "io.h"
 
 #include <stdio.h>
+#include "pico/stdlib.h"
 
 #include "../ll/adda.h"        // _Init(), _Start(), _GetADCValue(), IO_block_t
 #include "slopes.h"            // S_init(), S_step_v()
@@ -35,8 +36,8 @@ void IO_Start( void )
     ADDA_Start();
 }
 
-// DSP process
-IO_block_t* IO_BlockProcess( IO_block_t* b )
+// DSP process - CRITICAL: Main audio processing function - place in RAM for optimal performance
+IO_block_t* __not_in_flash_func(IO_BlockProcess)( IO_block_t* b )
 {
     for( int j=0; j<IN_CHANNELS; j++ ){
         Detect_t* d = Detect_ix_to_p(j);

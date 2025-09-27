@@ -26,12 +26,7 @@ extern "C" {
 #include "lib/mailbox.h"
 }
 
-// Generated Lua bytecode headers
-#include "test_enhanced_multicore_safety.h"
-#include "test_lockfree_performance.h"
-#include "test_random_voltage.h"
-#include "test_phase2_performance.h"
-#include "test_simple_output.h"
+// Generated Lua bytecode headers - Core libraries (always included)
 #include "asl.h"
 #include "asllib.h"
 #include "output.h"
@@ -39,43 +34,46 @@ extern "C" {
 #include "metro.h"
 #include "First.h"
 
-// Lock-free output state storage for maximum performance
-extern "C" {
-#include "lib/lockfree.h"
+// Conditionally included test script headers
+#ifdef EMBED_ALL_TESTS
+#include "test_enhanced_multicore_safety.h"
+#include "test_lockfree_performance.h"
+#include "test_random_voltage.h"
+#include "test_phase2_performance.h"
+#include "test_simple_output.h"
+#elif defined(EMBED_TEST_ENHANCED_MULTICORE_SAFETY)
+#include "test_enhanced_multicore_safety.h"
+#elif defined(EMBED_TEST_LOCKFREE_PERFORMANCE)
+#include "test_lockfree_performance.h"
+#elif defined(EMBED_TEST_RANDOM_VOLTAGE)
+#include "test_random_voltage.h"
+#elif defined(EMBED_TEST_PHASE2_PERFORMANCE)
+#include "test_phase2_performance.h"
+#elif defined(EMBED_TEST_SIMPLE_OUTPUT)
+#include "test_simple_output.h"
+#endif
+
+// Simplified output state storage - no lock-free complexity needed
+static volatile int32_t g_output_state_mv[4] = {0, 0, 0, 0};
+
+// Simple output state access - direct variable access is sufficient
+static void set_output_state_simple(int channel, int32_t value_mv) {
+    if (channel >= 0 && channel < 4) {
+        g_output_state_mv[channel] = value_mv;
+    }
 }
 
-static lockfree_output_state_t g_output_state;
-
-// Initialize lock-free output state system
-static void init_output_state_protection() {
-    lockfree_output_init(&g_output_state);
-    printf("Lock-free output state system initialized\n");
-}
-
-// Set output state using lock-free algorithm
-static void set_output_state_atomic(int channel, int32_t value) {
-    lockfree_output_set(&g_output_state, channel, value);
-}
-
-// Get single channel output state using lock-free algorithm
-static int32_t get_output_state_atomic(int channel) {
-    return lockfree_output_get(&g_output_state, channel);
-}
-
-// Get all output states atomically (consistent snapshot)
-static bool get_all_output_states_atomic(int32_t values[4]) {
-    return lockfree_output_get_all(&g_output_state, values);
+static int32_t get_output_state_simple(int channel) {
+    if (channel >= 0 && channel < 4) {
+        return g_output_state_mv[channel];
+    }
+    return 0;
 }
 
 // Forward declaration
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
 
-// Global slopes mutex for thread safety
-#ifdef PICO_BUILD
-static mutex_t slopes_mutex;
-static bool slopes_mutex_initialized = false;
-#endif
 
 // Forward declaration of C interface function (implemented after BlackbirdCrow class)
 extern "C" void hardware_output_set_voltage(int channel, float voltage);
@@ -147,10 +145,6 @@ public:
 private:
     static LuaManager* instance;
     
-#ifdef PICO_BUILD
-    mutex_t lua_mutex;
-    bool lua_mutex_initialized;
-#endif
     
     // Lua print function - sends output to serial
     static int lua_print(lua_State* L) {
@@ -182,9 +176,11 @@ private:
     // Forward declaration - implementation after BlackbirdCrow class
     static int lua_unique_card_id(lua_State* L);
     
+    // Conditional test function implementations - only compiled when tests are embedded
+#ifdef EMBED_ALL_TESTS
     // Lua function to run enhanced multicore safety test
     static int lua_test_enhanced_multicore_safety(lua_State* L) {
-    printf("Running enhanced multicore safety test...\r\n");
+        printf("Running enhanced multicore safety test...\r\n");
         if (luaL_loadbuffer(L, (const char*)test_enhanced_multicore_safety, test_enhanced_multicore_safety_len, "test_enhanced_multicore_safety.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("Error running enhanced multicore safety test: %s\r\n", error ? error : "unknown error");
@@ -197,7 +193,7 @@ private:
     
     // Lua function to run lock-free performance test
     static int lua_test_lockfree_performance(lua_State* L) {
-    printf("Running lock-free performance test...\r\n");
+        printf("Running lock-free performance test...\r\n");
         if (luaL_loadbuffer(L, (const char*)test_lockfree_performance, test_lockfree_performance_len, "test_lockfree_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("Error running lock-free performance test: %s\r\n", error ? error : "unknown error");
@@ -210,7 +206,7 @@ private:
     
     // Lua function to run random voltage test
     static int lua_test_random_voltage(lua_State* L) {
-    printf("Running random voltage test...\r\n");
+        printf("Running random voltage test...\r\n");
         if (luaL_loadbuffer(L, (const char*)test_random_voltage, test_random_voltage_len, "test_random_voltage.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("Error running random voltage test: %s\r\n", error ? error : "unknown error");
@@ -246,6 +242,74 @@ private:
         }
         return 0;
     }
+#elif defined(EMBED_TEST_ENHANCED_MULTICORE_SAFETY)
+    // Single test: Enhanced multicore safety test
+    static int lua_test_enhanced_multicore_safety(lua_State* L) {
+        printf("Running enhanced multicore safety test...\r\n");
+        if (luaL_loadbuffer(L, (const char*)test_enhanced_multicore_safety, test_enhanced_multicore_safety_len, "test_enhanced_multicore_safety.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running enhanced multicore safety test: %s\r\n", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Enhanced multicore safety test completed successfully!\r\n");
+        }
+        return 0;
+    }
+#elif defined(EMBED_TEST_LOCKFREE_PERFORMANCE)
+    // Single test: Lock-free performance test
+    static int lua_test_lockfree_performance(lua_State* L) {
+        printf("Running lock-free performance test...\r\n");
+        if (luaL_loadbuffer(L, (const char*)test_lockfree_performance, test_lockfree_performance_len, "test_lockfree_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running lock-free performance test: %s\r\n", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Lock-free performance test completed successfully!\r\n");
+        }
+        return 0;
+    }
+#elif defined(EMBED_TEST_RANDOM_VOLTAGE)
+    // Single test: Random voltage test
+    static int lua_test_random_voltage(lua_State* L) {
+        printf("Running random voltage test...\r\n");
+        if (luaL_loadbuffer(L, (const char*)test_random_voltage, test_random_voltage_len, "test_random_voltage.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running random voltage test: %s\r\n", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Random voltage test loaded successfully!\r\n");
+        }
+        return 0;
+    }
+#elif defined(EMBED_TEST_PHASE2_PERFORMANCE)
+    // Single test: Phase 2 performance test
+    static int lua_test_phase2_performance(lua_State* L) {
+        printf("Running Phase 2 block processing performance test...\r\n");
+        if (luaL_loadbuffer(L, (const char*)test_phase2_performance, test_phase2_performance_len, "test_phase2_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running Phase 2 performance test: %s\r\n", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Phase 2 performance test completed successfully!\r\n");
+        }
+        return 0;
+    }
+#elif defined(EMBED_TEST_SIMPLE_OUTPUT)
+    // Single test: Simple output test
+    static int lua_test_simple_output(lua_State* L) {
+        printf("Running simple output hardware test...\r\n");
+        if (luaL_loadbuffer(L, (const char*)test_simple_output, test_simple_output_len, "test_simple_output.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running simple output test: %s\r\n", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Simple output test completed successfully!\r\n");
+        }
+        return 0;
+    }
+#else
+    // Production build - no test functions
+#endif
     
     // Lua tab.print function - pretty print tables
     static int lua_tab_print(lua_State* L) {
@@ -314,13 +378,6 @@ private:
 public:
     LuaManager() : L(nullptr) {
         instance = this;
-        
-#ifdef PICO_BUILD
-        mutex_init(&lua_mutex);
-        lua_mutex_initialized = true;
-        printf("Lua mutex initialized\n");
-#endif
-        
         init();
     }
     
@@ -329,13 +386,6 @@ public:
             lua_close(L);
         }
         instance = nullptr;
-        
-#ifdef PICO_BUILD
-        if (lua_mutex_initialized) {
-            // Note: RP2040 SDK doesn't have mutex_destroy, mutex is automatically cleaned up
-            lua_mutex_initialized = false;
-        }
-#endif
     }
     
     void init() {
@@ -361,12 +411,25 @@ public:
     // Add unique_card_id function for Workshop Computer compatibility
     lua_register(L, "unique_card_id", lua_unique_card_id);
     
-    // Register test functions
+    // Register test functions - conditional compilation
+#ifdef EMBED_ALL_TESTS
     lua_register(L, "test_enhanced_multicore_safety", lua_test_enhanced_multicore_safety);
     lua_register(L, "test_lockfree_performance", lua_test_lockfree_performance);
     lua_register(L, "test_random_voltage", lua_test_random_voltage);
     lua_register(L, "test_phase2_performance", lua_test_phase2_performance);
     lua_register(L, "test_simple_output", lua_test_simple_output);
+#elif defined(EMBED_TEST_ENHANCED_MULTICORE_SAFETY)
+    lua_register(L, "test_enhanced_multicore_safety", lua_test_enhanced_multicore_safety);
+#elif defined(EMBED_TEST_LOCKFREE_PERFORMANCE)
+    lua_register(L, "test_lockfree_performance", lua_test_lockfree_performance);
+#elif defined(EMBED_TEST_RANDOM_VOLTAGE)
+    lua_register(L, "test_random_voltage", lua_test_random_voltage);
+#elif defined(EMBED_TEST_PHASE2_PERFORMANCE)
+    lua_register(L, "test_phase2_performance", lua_test_phase2_performance);
+#elif defined(EMBED_TEST_SIMPLE_OUTPUT)
+    lua_register(L, "test_simple_output", lua_test_simple_output);
+#endif
+    // Production builds have no test functions registered
     
     // Essential crow library functions will be added after we implement them
     // lua_register(L, "nop_fn", lua_nop_fn);
@@ -647,9 +710,6 @@ public:
     static int lua_metro_set_time(lua_State* L);
     static int lua_metro_set_count(lua_State* L);
     
-    // Forward declaration - implementation will be after BlackbirdCrow class
-    static int lua_output_volts(lua_State* L);
-    
     // Evaluate Lua code and return result
     bool evaluate(const char* code) {
         if (!L) return false;
@@ -691,60 +751,6 @@ public:
         return true;
     }
     
-    // Thread-safe wrapper for evaluate() - protects Lua state with mutex
-    bool evaluate_thread_safe(const char* code) {
-        if (!L) return false;
-        
-#ifdef PICO_BUILD
-        if (lua_mutex_initialized) {
-            mutex_enter_blocking(&lua_mutex);
-            bool result = evaluate(code);
-            mutex_exit(&lua_mutex);
-            return result;
-        }
-#endif
-        // Fall back to non-thread-safe version if mutex not available
-        return evaluate(code);
-    }
-    
-    // Thread-safe wrapper for evaluate_safe() - protects Lua state with mutex
-    bool evaluate_safe_thread_safe(const char* code) {
-        if (!L) return false;
-        
-#ifdef PICO_BUILD
-        if (lua_mutex_initialized) {
-            mutex_enter_blocking(&lua_mutex);
-            bool result = evaluate_safe(code);
-            mutex_exit(&lua_mutex);
-            return result;
-        }
-#endif
-        // Fall back to non-thread-safe version if mutex not available
-        return evaluate_safe(code);
-    }
-    
-    // Non-blocking wrapper for evaluate_safe() - for use in event handlers
-    // Returns false if mutex is busy (don't wait)
-    bool evaluate_safe_non_blocking(const char* code) {
-        if (!L) return false;
-        
-#ifdef PICO_BUILD
-        if (lua_mutex_initialized) {
-            // Try to enter mutex without blocking
-            if (!mutex_try_enter(&lua_mutex, nullptr)) {
-                // Mutex is busy - skip this call to prevent deadlock
-                printf("Lua mutex busy - skipping event handler call\n\r");
-                return false;
-            }
-            
-            bool result = evaluate_safe(code);
-            mutex_exit(&lua_mutex);
-            return result;
-        }
-#endif
-        // Fall back to non-thread-safe version if mutex not available
-        return evaluate_safe(code);
-    }
     
     static LuaManager* getInstance() {
         return instance;
@@ -783,8 +789,8 @@ public:
         int32_t volts_mV = (int32_t)(volts * 1000.0f);
         int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
         
-        // Store state for lua queries (in millivolts) - thread-safe
-        set_output_state_atomic(channel - 1, volts_mV);
+        // Store state for lua queries (in millivolts) - simplified
+        set_output_state_simple(channel - 1, volts_mV);
         
         // Route to correct hardware output
         switch (channel) {
@@ -856,18 +862,12 @@ public:
         AShaper_init(4); // Initialize 4 output channels
         printf("AShaper system initialized (pass-through mode)\n");
         
-        // Initialize slopes mutex for thread safety
-#ifdef PICO_BUILD
-        mutex_init(&slopes_mutex);
-        slopes_mutex_initialized = true;
-        printf("Slopes mutex initialized\n");
-#endif
         
         // Initialize detection system for 2 input channels
         Detect_init(2);
         
-        // Initialize thread-safe output state protection
-        init_output_state_protection();
+        // Initialize simple output state storage
+        // (No special initialization needed for simple volatile array)
         
         // Initialize event system - CRITICAL for processing input events
         events_init();
@@ -1199,10 +1199,10 @@ public:
                         printf("First.lua loaded and executed successfully!\n\r");
 
                         // Model real crow: reset runtime so newly loaded script boots
-                        if (!lua_manager->evaluate_safe_thread_safe("if crow and crow.reset then crow.reset() end")) {
+                        if (!lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end")) {
                             printf("Warning: crow.reset() failed after First.lua load\n\r");
                         }
-                        if (!lua_manager->evaluate_safe_thread_safe("local ok, err = pcall(function() if init then init() end end); if not ok then print('init() error', err) end")) {
+                        if (!lua_manager->evaluate_safe("local ok, err = pcall(function() if init then init() end end); if not ok then print('init() error', err) end")) {
                             printf("Warning: init() invocation failed after First.lua load\n\r");
                         }
 
@@ -1469,23 +1469,11 @@ public:
         if (++slope_sample_accum >= 48) {
             slope_sample_accum = 0;
 
-#ifdef PICO_BUILD
-            if (slopes_mutex_initialized) {
-                mutex_enter_blocking(&slopes_mutex);
-            }
-#endif
-
             for (int i = 0; i < 4; i++) {
                 S_step_v(i, slope_buffer, 48);           // Generate envelope samples
                 AShaper_v(i, slope_buffer, 48);          // Apply AShaper (pass-through mode)
                 hardware_set_output(i + 1, slope_buffer[47]); // Output final sample
             }
-
-#ifdef PICO_BUILD
-            if (slopes_mutex_initialized) {
-                mutex_exit(&slopes_mutex);
-            }
-#endif
         }
         
         // Basic audio passthrough for now
@@ -1527,18 +1515,6 @@ int LuaManager::output_newindex(lua_State* L) {
         // Set voltage - use slopes system for smooth transitions
         float volts = (float)luaL_checknumber(L, 3);
         
-        // Thread-safe slopes system access - NON-BLOCKING for Lua calls
-#ifdef PICO_BUILD
-        if (slopes_mutex_initialized) {
-            // Try to enter mutex without blocking
-            if (!mutex_try_enter(&slopes_mutex, nullptr)) {
-                // Mutex is busy - skip this call to prevent deadlock
-                printf("Slopes mutex busy - skipping output voltage set to %.3fV\n\r", volts);
-                return 0;  // Graceful degradation instead of deadlock
-            }
-        }
-#endif
-        
         // Use slopes system to handle the voltage change
         // This enables slew and other crow features
         S_toward(output_data->channel - 1, // Convert to 0-based indexing
@@ -1546,12 +1522,6 @@ int LuaManager::output_newindex(lua_State* L) {
                 0.0,                     // Immediate (no slew for now)
                 SHAPE_Linear,            // Linear transition
                 nullptr);                // No callback
-        
-#ifdef PICO_BUILD
-        if (slopes_mutex_initialized) {
-            mutex_exit(&slopes_mutex);
-        }
-#endif
         
         return 0;
     }
@@ -1783,7 +1753,7 @@ extern "C" void L_handle_stream_safe(event_t* e) {
         channel, value);
     
     // Safe to use blocking safe evaluation (runs on control core)
-    lua_mgr->evaluate_safe_thread_safe(lua_call);
+    lua_mgr->evaluate_safe(lua_call);
     
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(3);
@@ -1839,7 +1809,7 @@ extern "C" void L_handle_change_safe(event_t* e) {
     }
     
     // Now safe to use blocking safe evaluation (runs on control core, outside real-time audio path)
-    lua_mgr->evaluate_safe_thread_safe(lua_call);
+    lua_mgr->evaluate_safe(lua_call);
     // LED 2: Lua callback completed successfully (proves no crash/hang)
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(2);
@@ -2059,30 +2029,6 @@ int LuaManager::lua_metro_set_count(lua_State* L) {
     Metro_set_count(id, count);
     printf("Metro %d count set to %d\n\r", id, count);
     return 0;
-}
-
-// Legacy function-based API (kept for backward compatibility during transition)
-int LuaManager::lua_output_volts(lua_State* L) {
-    // Get channel from upvalue
-    int channel = (int)lua_tointeger(L, lua_upvalueindex(1));
-    
-    if (lua_gettop(L) == 0) {
-        // Get current voltage
-        if (g_blackbird_instance) {
-            float volts = ((BlackbirdCrow*)g_blackbird_instance)->hardware_get_output(channel);
-            lua_pushnumber(L, volts);
-            return 1;
-        }
-        lua_pushnumber(L, 0.0);
-        return 1;
-    } else {
-        // Set voltage
-        float volts = (float)luaL_checknumber(L, 1);
-        if (g_blackbird_instance) {
-            ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, volts);
-        }
-        return 0;
-    }
 }
 
 // Implementation of lua_unique_card_id function (after BlackbirdCrow class is fully defined)

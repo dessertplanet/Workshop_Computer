@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
+#include "pico/stdlib.h"
 
 #define DETECT_DEBUG 0
 
@@ -402,8 +403,8 @@ static void scale_bounds(Detect_t* self, int ix, int oct) {
     s->upper = ideal + s->hyst + s->win;
 }
 
-// Main detection processing function - call this from ProcessSample
-void Detect_process_sample(int channel, float level) {
+// Main detection processing function - CRITICAL: Called from ProcessSample at audio rate
+void __not_in_flash_func(Detect_process_sample)(int channel, float level) {
     if (channel >= detector_count || !detectors) return;
     
     Detect_t* detector = &detectors[channel];
