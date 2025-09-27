@@ -30,6 +30,8 @@ extern "C" {
 #include "test_enhanced_multicore_safety.h"
 #include "test_lockfree_performance.h"
 #include "test_random_voltage.h"
+#include "test_phase2_performance.h"
+#include "test_simple_output.h"
 #include "asl.h"
 #include "asllib.h"
 #include "output.h"
@@ -219,6 +221,32 @@ private:
         return 0;
     }
     
+    // Lua function to run Phase 2 performance test
+    static int lua_test_phase2_performance(lua_State* L) {
+        printf("Running Phase 2 block processing performance test...\r\n");
+        if (luaL_loadbuffer(L, (const char*)test_phase2_performance, test_phase2_performance_len, "test_phase2_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running Phase 2 performance test: %s\r\n", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Phase 2 performance test completed successfully!\r\n");
+        }
+        return 0;
+    }
+    
+    // Lua function to run simple output test
+    static int lua_test_simple_output(lua_State* L) {
+        printf("Running simple output hardware test...\r\n");
+        if (luaL_loadbuffer(L, (const char*)test_simple_output, test_simple_output_len, "test_simple_output.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error running simple output test: %s\r\n", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            printf("Simple output test completed successfully!\r\n");
+        }
+        return 0;
+    }
+    
     // Lua tab.print function - pretty print tables
     static int lua_tab_print(lua_State* L) {
         if (lua_gettop(L) != 1) {
@@ -337,6 +365,8 @@ public:
     lua_register(L, "test_enhanced_multicore_safety", lua_test_enhanced_multicore_safety);
     lua_register(L, "test_lockfree_performance", lua_test_lockfree_performance);
     lua_register(L, "test_random_voltage", lua_test_random_voltage);
+    lua_register(L, "test_phase2_performance", lua_test_phase2_performance);
+    lua_register(L, "test_simple_output", lua_test_simple_output);
     
     // Essential crow library functions will be added after we implement them
     // lua_register(L, "nop_fn", lua_nop_fn);
@@ -931,6 +961,16 @@ public:
             // Random voltage on rising edge test
             if (lua_manager) {
                 lua_manager->evaluate_safe("test_random_voltage()");
+            }
+        } else if (strcmp(command, "test_phase2_performance") == 0) {
+            // Phase 2 block processing performance test
+            if (lua_manager) {
+                lua_manager->evaluate_safe("test_phase2_performance()");
+            }
+        } else if (strcmp(command, "test_simple_output") == 0) {
+            // Simple output hardware test
+            if (lua_manager) {
+                lua_manager->evaluate_safe("test_simple_output()");
             }
         } else if (strcmp(command, "debug_input_loading") == 0) {
             // Manual debug of Input.lua loading - can be triggered after connection

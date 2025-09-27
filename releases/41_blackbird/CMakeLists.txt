@@ -122,6 +122,8 @@ endfunction()
 add_lua_header(test_enhanced_multicore_safety.lua TEST_ENHANCED_MULTICORE_SAFETY_HEADER)
 add_lua_header(test_lockfree_performance.lua TEST_LOCKFREE_PERFORMANCE_HEADER)
 add_lua_header(test_random_voltage.lua TEST_RANDOM_VOLTAGE_HEADER)
+add_lua_header(test_phase2_performance.lua TEST_PHASE2_PERFORMANCE_HEADER)
+add_lua_header(test_simple_output.lua TEST_SIMPLE_OUTPUT_HEADER)
 add_lua_header(lib/asl.lua ASL_HEADER)
 add_lua_header(lib/asllib.lua ASLLIB_HEADER)
 add_lua_header(lib/crowlib.lua CROWLIB_HEADER)
@@ -146,6 +148,8 @@ target_sources(${CARD_NAME} PRIVATE
   ${TEST_ENHANCED_MULTICORE_SAFETY_HEADER}
   ${TEST_LOCKFREE_PERFORMANCE_HEADER}
   ${TEST_RANDOM_VOLTAGE_HEADER}
+  ${TEST_PHASE2_PERFORMANCE_HEADER}
+  ${TEST_SIMPLE_OUTPUT_HEADER}
   ${ASL_HEADER}
   ${ASLLIB_HEADER}
   ${CROWLIB_HEADER}
