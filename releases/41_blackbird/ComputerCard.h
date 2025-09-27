@@ -28,6 +28,15 @@ See examples/ directory
 // USB host status pin
 #define USB_HOST_STATUS 20
 
+// Block processing configuration
+#define COMPUTERCARD_BLOCK_SIZE 32
+
+typedef struct {
+    float    in[2][COMPUTERCARD_BLOCK_SIZE];   // Audio inputs (L, R)
+    float    out[4][COMPUTERCARD_BLOCK_SIZE];  // Outputs (Audio L, Audio R, CV1, CV2)
+    uint16_t size;                             // Actual block size (normally 32)
+} IO_block_t;
+
 class ComputerCard
 {
 	constexpr static int numLeds = 6;
@@ -58,12 +67,41 @@ public:
 		AudioWorker();
 	}
 
-	/// Use before Run() to enable Connected/Disconnected detection
-	void EnableNormalisationProbe() {useNormProbe = true;}
+/// Use before Run() to enable Connected/Disconnected detection
+void EnableNormalisationProbe() {useNormProbe = true;}
+
+/// Use before Run() to enable high-performance block processing (32 samples at 1.5kHz)
+void EnableBlockProcessing() {use_block_processing = true;}
+
+/// Use before Run() to disable block processing and use legacy sample-by-sample mode
+void DisableBlockProcessing() {use_block_processing = false;}
 
 protected:
-	/// Callback, called once per sample at 48kHz
-	virtual void ProcessSample() = 0;
+/// Callback, called once per sample at 48kHz (legacy interface)
+virtual void ProcessSample() = 0;
+
+/// Callback, called once per block at 1.5kHz (32 samples, high-performance interface)
+/// Default implementation calls ProcessSample() 32 times for backward compatibility
+virtual void ProcessBlock(IO_block_t* block) {
+    for (int i = 0; i < block->size; i++) {
+        // Set up single-sample inputs for legacy ProcessSample()
+        adcInL = (int16_t)(block->in[0][i] * 2048.0f);
+        adcInR = (int16_t)(block->in[1][i] * 2048.0f);
+        
+        // Call legacy sample-by-sample processing
+        ProcessSample();
+        
+        // Capture outputs from legacy interface (convert back to float)
+        block->out[0][i] = (float)dacOut[0] / 2048.0f;
+        block->out[1][i] = (float)dacOut[1] / 2048.0f;
+        
+        // For CV outputs, we'll use a simple approximation since PWM levels
+        // aren't easily readable in header-only mode. Real implementations
+        // should override ProcessBlock() for optimal performance.
+        block->out[2][i] = 0.0f; // CV1 - to be set by actual implementation
+        block->out[3][i] = 0.0f; // CV2 - to be set by actual implementation
+    }
+}
 
 
 
@@ -280,9 +318,14 @@ private:
 	volatile bool pulse[2] = { 0, 0 };
 	volatile bool last_pulse[2] = { 0, 0 };
 	volatile int32_t cv[2] = { 0, 0 }; // -2047 - 2048
-	volatile int16_t adcInL = 0x800, adcInR = 0x800;
+volatile int16_t adcInL = 0x800, adcInR = 0x800;
 
-	volatile uint8_t mxPos = 0; // external multiplexer value
+volatile uint8_t mxPos = 0; // external multiplexer value
+
+// Block processing state
+IO_block_t current_block;
+volatile int block_position = 0;
+volatile bool use_block_processing = false;
 
 	volatile int32_t plug_state[6] = {0,0,0,0,0,0};
 	volatile bool connected[6] = {0,0,0,0,0,0};
@@ -600,17 +643,46 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 		if (Disconnected(Input::Pulse2)) pulse[1] = 0;
 	}
 	
-	////////////////////////////////////////
-	// Run the DSP
-	ProcessSample();
+////////////////////////////////////////
+// Run the DSP - either block or sample processing
 
-	////////////////////////////////////////
-	// Collect DSP outputs and put them in the DAC SPI buffer
-	// CV/Pulse outputs are done immediately in ProcessSample
+if (use_block_processing) {
+    // Block processing mode - accumulate samples
+    
+    // Convert inputs to float and store in block buffer
+    current_block.in[0][block_position] = (float)adcInL / 2048.0f;
+    current_block.in[1][block_position] = (float)adcInR / 2048.0f;
+    
+    if (++block_position >= COMPUTERCARD_BLOCK_SIZE) {
+        // Block is full - process it
+        current_block.size = COMPUTERCARD_BLOCK_SIZE;
+        ProcessBlock(&current_block);
+        
+        // Convert block outputs back to hardware format and apply final sample
+        // Audio outputs (use final sample from block)
+        dacOut[0] = (int16_t)(current_block.out[0][COMPUTERCARD_BLOCK_SIZE-1] * 2048.0f);
+        dacOut[1] = (int16_t)(current_block.out[1][COMPUTERCARD_BLOCK_SIZE-1] * 2048.0f);
+        
+        // CV outputs (use final sample from block)
+        int16_t cv1_out = (int16_t)(current_block.out[2][COMPUTERCARD_BLOCK_SIZE-1] * 2048.0f);
+        int16_t cv2_out = (int16_t)(current_block.out[3][COMPUTERCARD_BLOCK_SIZE-1] * 2048.0f);
+        pwm_set_gpio_level(CV_OUT_1, (2047-cv1_out)>>1);
+        pwm_set_gpio_level(CV_OUT_2, (2047-cv2_out)>>1);
+        
+        block_position = 0;
+    }
+} else {
+    // Legacy sample-by-sample processing
+    ProcessSample();
+}
 
-	// Invert dacout to counteract inverting output configuration
-	SPI_Buffer[cpuPhase][0] = dacval(-dacOut[0], DAC_CHANNEL_A);
-	SPI_Buffer[cpuPhase][1] = dacval(-dacOut[1], DAC_CHANNEL_B);
+////////////////////////////////////////
+// Collect DSP outputs and put them in the DAC SPI buffer
+// CV/Pulse outputs are done immediately in ProcessSample
+
+// Invert dacout to counteract inverting output configuration
+SPI_Buffer[cpuPhase][0] = dacval(-dacOut[0], DAC_CHANNEL_A);
+SPI_Buffer[cpuPhase][1] = dacval(-dacOut[1], DAC_CHANNEL_B);
 
 	mux_state = next_mux_state;
 

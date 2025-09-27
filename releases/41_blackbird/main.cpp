@@ -881,6 +881,10 @@ public:
         // Initialize Lua manager
         lua_manager = new LuaManager();
         
+        // Enable high-performance block processing (32 samples at 1.5kHz)
+        EnableBlockProcessing();
+        printf("Block processing enabled (32 samples, 1.5kHz)\n");
+        
         // Start the second core for USB processing
         multicore_launch_core1(core1);
     }
@@ -1323,7 +1327,127 @@ public:
         }
     }
 
-    // 48kHz audio processing function
+    // Optimized 32-sample block processing (1.5kHz) - HIGH PERFORMANCE
+    virtual void ProcessBlock(IO_block_t* block) override {
+        // CRITICAL: Process timers for 32 samples at once - much more efficient
+        for (int i = 0; i < block->size; i++) {
+            Timer_Process();
+        }
+        
+        // Convert input block to detection system
+        for (int i = 0; i < block->size; i++) {
+            // Convert block inputs back to ComputerCard format for detection
+            float input1 = block->in[0][i] * 6.0f; // Convert to ±6V range
+            float input2 = block->in[1][i] * 6.0f;
+            
+            // Process detection (this already batches internally)
+            Detect_process_sample(0, input1); // Channel 0 (input[1])
+            Detect_process_sample(1, input2); // Channel 1 (input[2])
+        }
+        
+        // Process all 4 output channels in 32-sample blocks - MAXIMUM EFFICIENCY
+        for (int ch = 0; ch < 4; ch++) {
+            // Generate slopes envelope for entire block
+            S_step_v(ch, block->out[ch], block->size);
+            
+            // Apply AShaper to entire block (pass-through mode)
+            AShaper_v(ch, block->out[ch], block->size);
+        }
+        
+        // Hardware LED updates (much less frequent in block mode)
+        static uint32_t block_counter = 0;
+        if (++block_counter >= 1500) { // ~1 second at 1.5kHz block rate
+            block_counter = 0;
+            
+            // LED 5: Heartbeat (proves block processing is working)
+            static bool heartbeat_state = false;
+            heartbeat_state = !heartbeat_state;
+            if (heartbeat_state) {
+                debug_led_on(5);
+            } else {
+                debug_led_off(5);
+            }
+            
+            // LED 4: Input activity detection (check final sample)
+            float final_in1 = block->in[0][block->size-1] * 6.0f;
+            float final_in2 = block->in[1][block->size-1] * 6.0f;
+            if (fabs(final_in1) > 0.5f || fabs(final_in2) > 0.5f) {
+                debug_led_on(4);
+            } else {
+                debug_led_off(4);
+            }
+        }
+        
+        // Debug instrumentation (much more efficient in block mode)
+        static uint32_t debug_block_counter = 0;
+        if (++debug_block_counter >= 1500) { // ~1 second
+            debug_block_counter = 0;
+            
+            // Analyze final samples for debug snapshot
+            float input1 = block->in[0][block->size-1] * 6.0f;
+            float input2 = block->in[1][block->size-1] * 6.0f;
+            
+            // Find min/max across entire block for span calculation
+            float in1_min = 1e9f, in1_max = -1e9f;
+            float in2_min = 1e9f, in2_max = -1e9f;
+            
+            for (int i = 0; i < block->size; i++) {
+                float v1 = block->in[0][i] * 6.0f;
+                float v2 = block->in[1][i] * 6.0f;
+                if (v1 != 0.0f) {
+                    if (v1 < in1_min) in1_min = v1;
+                    if (v1 > in1_max) in1_max = v1;
+                }
+                if (v2 != 0.0f) {
+                    if (v2 < in2_min) in2_min = v2;
+                    if (v2 > in2_max) in2_max = v2;
+                }
+            }
+            
+            Detect_t* d0 = Detect_ix_to_p(0);
+            Detect_t* d1 = Detect_ix_to_p(1);
+            bool in1_valid = (in1_min < 1e8f) && (in1_max > -1e8f) && (in1_min <= in1_max);
+            bool in2_valid = (in2_min < 1e8f) && (in2_max > -1e8f) && (in2_min <= in2_max);
+            float in1_span = in1_valid ? (in1_max - in1_min) : 0.0f;
+            float in2_span = in2_valid ? (in2_max - in2_min) : 0.0f;
+            
+            // Publish debug snapshot if ready
+            if (!g_debug_ready) {
+                DebugSnapshot snap;
+                snap.ch_last[0] = input1;          snap.ch_last[1] = input2;
+                snap.ch_span[0] = in1_span;        snap.ch_span[1] = in2_span;
+                snap.ch_state[0] = d0 ? d0->state : 0u;  snap.ch_state[1] = d1 ? d1->state : 0u;
+                snap.ch_rise[0] = d0 ? d0->change_rise_count : 0u; snap.ch_rise[1] = d1 ? d1->change_rise_count : 0u;
+                snap.ch_fall[0] = d0 ? d0->change_fall_count : 0u; snap.ch_fall[1] = d1 ? d1->change_fall_count : 0u;
+                snap.ch_thr[0]  = d0 ? d0->change.threshold : 0.0f; snap.ch_thr[1]  = d1 ? d1->change.threshold : 0.0f;
+                snap.ch_hy[0]   = d0 ? d0->change.hysteresis : 0.0f; snap.ch_hy[1]   = d1 ? d1->change.hysteresis : 0.0f;
+                snap.ch_conn[0] = 'B'; snap.ch_conn[1] = 'B'; // Block mode
+                snap.ch_inst[0] = 'B'; snap.ch_inst[1] = 'B'; // Block mode
+                snap.ch_valid[0]= in1_valid ? 'Y':'N'; snap.ch_valid[1]= in2_valid ? 'Y':'N';
+                snap.ch_conn_pct[0] = 0.0f; snap.ch_conn_pct[1] = 0.0f;
+                snap.seq = g_debug_snapshot.seq + 1;
+                
+                // Copy to volatile snapshot
+                for (int i=0;i<2;i++) {
+                    g_debug_snapshot.ch_last[i] = snap.ch_last[i];
+                    g_debug_snapshot.ch_span[i] = snap.ch_span[i];
+                    g_debug_snapshot.ch_state[i] = snap.ch_state[i];
+                    g_debug_snapshot.ch_rise[i] = snap.ch_rise[i];
+                    g_debug_snapshot.ch_fall[i] = snap.ch_fall[i];
+                    g_debug_snapshot.ch_thr[i]  = snap.ch_thr[i];
+                    g_debug_snapshot.ch_hy[i]   = snap.ch_hy[i];
+                    g_debug_snapshot.ch_conn[i] = snap.ch_conn[i];
+                    g_debug_snapshot.ch_inst[i] = snap.ch_inst[i];
+                    g_debug_snapshot.ch_valid[i]= snap.ch_valid[i];
+                    g_debug_snapshot.ch_conn_pct[i] = snap.ch_conn_pct[i];
+                }
+                g_debug_snapshot.seq = snap.seq;
+                g_debug_ready = true;
+            }
+        }
+    }
+
+    // Legacy 48kHz sample-by-sample processing (fallback only)
     virtual void ProcessSample()
     {
         // CRITICAL: Process timers first - this drives the metro system at exact 48kHz
