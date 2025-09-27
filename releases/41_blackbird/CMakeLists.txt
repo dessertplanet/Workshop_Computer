@@ -47,6 +47,7 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/ll_timers.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/random.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/wrblocks.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/mailbox.c
       )
       target_compile_definitions(${_name} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
       pico_enable_stdio_usb(${_name} 1)

@@ -23,6 +23,7 @@ extern "C" {
 #include "lib/l_crowlib.h"
 #include "lib/ll_timers.h"
 #include "lib/metro.h"
+#include "lib/mailbox.h"
 }
 
 // Generated Lua bytecode headers
@@ -723,15 +724,15 @@ public:
 // Static instance pointer
 LuaManager* LuaManager::instance = nullptr;
 
+// Global USB buffer to ensure proper initialization across cores
+static const int USB_RX_BUFFER_SIZE = 256;
+static char g_rx_buffer[USB_RX_BUFFER_SIZE] = {0};
+static volatile int g_rx_buffer_pos = 0;
+
 class BlackbirdCrow : public ComputerCard
 {
     // Variables for communication between cores
     volatile uint32_t v1, v2;
-    
-    // USB communication buffer
-    static const int USB_RX_BUFFER_SIZE = 256;
-    char rx_buffer[USB_RX_BUFFER_SIZE];
-    int rx_buffer_pos;
     
     // Lua manager for REPL
     LuaManager* lua_manager;
@@ -808,8 +809,9 @@ public:
     
     BlackbirdCrow()
     {
-        rx_buffer_pos = 0;
-        memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
+        // Initialize global USB buffer
+        g_rx_buffer_pos = 0;
+        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
         
         // Cache the unique ID for Lua access
         cached_unique_id = UniqueCardID();
@@ -851,6 +853,197 @@ public:
         
         // Start the second core for USB processing
         multicore_launch_core1(core1);
+    }
+    
+    // Core0 main control loop - handles commands from mailbox and events
+    void MainControlLoop()
+    {
+        printf("Core0: Starting main control loop\n\r");
+        
+        while (1) {
+            // Check for commands from Core1 via mailbox
+            char command[128];
+            if (mailbox_get_command(command, sizeof(command))) {
+                handle_usb_command(command);
+                mailbox_mark_command_processed();
+            }
+            
+            // Process events (moved from Core1)
+            event_next();
+            
+            // Handle deferred debug printing from ProcessSample
+            if (g_debug_ready) {
+                // Manual copy out of volatile snapshot
+                float last[2], span[2], thr[2], hy[2], pct[2];
+                uint32_t st[2], rise[2], fall[2];
+                char conn[2], inst[2], valid[2];
+                for (int i=0;i<2;i++) {
+                    last[i] = g_debug_snapshot.ch_last[i];
+                    span[i] = g_debug_snapshot.ch_span[i];
+                    st[i]   = g_debug_snapshot.ch_state[i];
+                    rise[i] = g_debug_snapshot.ch_rise[i];
+                    fall[i] = g_debug_snapshot.ch_fall[i];
+                    thr[i]  = g_debug_snapshot.ch_thr[i];
+                    hy[i]   = g_debug_snapshot.ch_hy[i];
+                    conn[i] = g_debug_snapshot.ch_conn[i];
+                    inst[i] = g_debug_snapshot.ch_inst[i];
+                    valid[i]= g_debug_snapshot.ch_valid[i];
+                    pct[i]  = g_debug_snapshot.ch_conn_pct[i];
+                }
+                
+                // Optional: Print debug info (commented out for now)
+                // printf("[1] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
+                //        last[0], span[0], st[0],
+                //        (unsigned long)rise[0], (unsigned long)fall[0],
+                //        thr[0], hy[0], conn[0], inst[0], valid[0], pct[0]);
+                // printf("[2] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
+                //        last[1], span[1], st[1],
+                //        (unsigned long)rise[1], (unsigned long)fall[1],
+                //        thr[1], hy[1], conn[1], inst[1], valid[1], pct[1]);
+                // fflush(stdout);
+                
+                g_debug_ready = false; // mark consumed
+            }
+            
+            // Brief sleep to yield CPU and prevent busy-waiting
+            sleep_ms(1);
+        }
+    }
+    
+    // Handle USB commands received from Core1 via mailbox
+    void handle_usb_command(const char* command)
+    {
+        // Parse and handle command
+        C_cmd_t cmd = parse_command(command, strlen(command));
+        if (cmd != C_none) {
+            handle_command_with_response(cmd);
+        } else if (strcmp(command, "test_enhanced_multicore_safety") == 0) {
+            // Comprehensive multicore safety test
+            if (lua_manager) {
+                lua_manager->evaluate_safe("test_enhanced_multicore_safety()");
+            }
+        } else if (strcmp(command, "test_lockfree_performance") == 0) {
+            // Lock-free performance benchmark test
+            if (lua_manager) {
+                lua_manager->evaluate_safe("test_lockfree_performance()");
+            }
+        } else if (strcmp(command, "test_random_voltage") == 0) {
+            // Random voltage on rising edge test
+            if (lua_manager) {
+                lua_manager->evaluate_safe("test_random_voltage()");
+            }
+        } else if (strcmp(command, "debug_input_loading") == 0) {
+            // Manual debug of Input.lua loading - can be triggered after connection
+            if (lua_manager) {
+                printf("=== MANUAL INPUT DEBUG TRIGGERED ===\n\r");
+                lua_manager->load_embedded_asl();  // This will re-run the Input.lua loading with debug output
+                printf("=== INPUT DEBUG COMPLETED ===\n\r");
+            }
+        } else if (strcmp(command, "check_input_state") == 0) {
+            // Check current state of input objects
+            if (lua_manager) {
+                printf("=== CHECKING INPUT STATE ===\n\r");
+                lua_manager->evaluate_safe("print('Input class:', Input); print('input array:', input); if input then for i=1,2 do print('input[' .. i .. ']:', input[i]) end else print('input is nil!') end");
+                printf("=== INPUT STATE CHECK DONE ===\n\r");
+            }
+        } else {
+            // Not a ^^ command, treat as Lua code
+            if (lua_manager) {
+                lua_manager->evaluate_safe(command);
+            }
+        }
+    }
+    
+    // Handle commands and send responses via mailbox
+    void handle_command_with_response(C_cmd_t cmd)
+    {
+        char response[256];
+        
+        switch (cmd) {
+            case C_version: {
+                // Embed build date/time and debug format so a late serial connection can verify firmware
+                snprintf(response, sizeof(response), "^^version('blackbird-0.2 %s %s simplified')", __DATE__, __TIME__);
+                mailbox_send_response(response);
+                break; }
+                
+            case C_identity: {
+                uint64_t unique_id = UniqueCardID();
+                snprintf(response, sizeof(response), "^^identity('0x%016llx')", unique_id);
+                mailbox_send_response(response);
+                break;
+            }
+            
+            case C_print:
+                mailbox_send_response("-- no script loaded --");
+                break;
+                
+            case C_restart:
+                mailbox_send_response("restarting...");
+                // Could implement actual restart here
+                break;
+                
+            case C_killlua:
+                mailbox_send_response("lua killed");
+                break;
+                
+            case C_boot:
+                mailbox_send_response("entering bootloader mode");
+                break;
+                
+            case C_startupload:
+                mailbox_send_response("script upload started");
+                break;
+                
+            case C_endupload:
+                mailbox_send_response("script uploaded");
+                break;
+                
+            case C_flashupload:
+                mailbox_send_response("script saved to flash");
+                break;
+                
+            case C_flashclear:
+                mailbox_send_response("flash cleared");
+                break;
+                
+            case C_loadFirst:
+                mailbox_send_response("loading first.lua");
+                printf("[first] handler invoked, attempting bytecode load\n\r");
+                // Actually load First.lua using the compiled bytecode
+                if (lua_manager) {
+                    printf("Loading First.lua from embedded bytecode...\n\r");
+                    if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
+                        const char* error = lua_tostring(lua_manager->L, -1);
+                        printf("Error loading First.lua: %s\n\r", error ? error : "unknown error");
+                        lua_pop(lua_manager->L, 1);
+                        mailbox_send_response("error loading first.lua");
+                    } else {
+                        printf("First.lua loaded and executed successfully!\n\r");
+
+                        // Model real crow: reset runtime so newly loaded script boots
+                        if (!lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end")) {
+                            printf("Warning: crow.reset() failed after First.lua load\n\r");
+                        }
+                        if (!lua_manager->evaluate_safe("local ok, err = pcall(function() if init then init() end end); if not ok then print('init() error', err) end")) {
+                            printf("Warning: init() invocation failed after First.lua load\n\r");
+                        }
+
+                        float input1_volts = hardware_get_input(1);
+                        float input2_volts = hardware_get_input(2);
+                        printf("[diag] input volts after load: in1=%.3fV in2=%.3fV\n\r", input1_volts, input2_volts);
+
+                        mailbox_send_response("first.lua loaded");
+                    }
+                } else {
+                    mailbox_send_response("error: lua manager not available");
+                }
+                break;
+                
+            default:
+                // For unimplemented commands, send a simple acknowledgment
+                mailbox_send_response("ok");
+                break;
+        }
     }
     
     ~BlackbirdCrow() {
@@ -999,138 +1192,94 @@ public:
         return (last_char == '\n' || last_char == '\r' || last_char == '\0');
     }
 
-    // Core 1: USB Processing (blocking)
+    // Core 1: Simplified USB-only processing
     void USBProcessingCore()
     {
-        printf("Blackbird Crow Emulator v0.1\n");
+        printf("Blackbird Crow Emulator v0.2 (Simplified Dual-Core)\n");
         printf("Send ^^v for version, ^^i for identity\n");
+        
+        // Initialize mailbox communication
+        mailbox_init();
+        
+        // CRITICAL: Ensure buffer is properly initialized
+        g_rx_buffer_pos = 0;
+        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
         
         while (1) {
             // Read available characters
             int c = getchar_timeout_us(1000); // 1ms timeout
             
             if (c != PICO_ERROR_TIMEOUT) {
+                // Safety check - ensure buffer position is sane
+                if (g_rx_buffer_pos < 0 || g_rx_buffer_pos >= USB_RX_BUFFER_SIZE) {
+                    printf("ERROR: Buffer corruption detected! Resetting...\r\n");
+                    g_rx_buffer_pos = 0;
+                    memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+                }
+                
+                // Check for buffer overflow BEFORE adding character
+                if (g_rx_buffer_pos >= USB_RX_BUFFER_SIZE - 1) {
+                    // Buffer full - clear and start over
+                    g_rx_buffer_pos = 0;
+                    memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+                }
+                
                 // Add character to buffer
-                if (rx_buffer_pos < USB_RX_BUFFER_SIZE - 1) {
-                    rx_buffer[rx_buffer_pos++] = (char)c;
-                    rx_buffer[rx_buffer_pos] = '\0';
-                    
-                    // Check if we have a complete packet
-                    if (is_packet_complete(rx_buffer, rx_buffer_pos)) {
-                        // Strip trailing whitespace
-                        int clean_length = rx_buffer_pos;
-                        while (clean_length > 0 && 
-                               (rx_buffer[clean_length-1] == '\n' || 
-                                rx_buffer[clean_length-1] == '\r' || 
-                                rx_buffer[clean_length-1] == ' ' || 
-                                rx_buffer[clean_length-1] == '\t')) {
-                            clean_length--;
-                        }
-                        rx_buffer[clean_length] = '\0';
-                        
-                        // Skip empty commands
-                        if (clean_length == 0) {
-                            rx_buffer_pos = 0;
-                            memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
-                            continue;
-                        }
-                        
-                        // Parse and handle command
-                        C_cmd_t cmd = parse_command(rx_buffer, clean_length);
-                        if (cmd != C_none) {
-                            handle_command(cmd);
-                        } else if (strcmp(rx_buffer, "test_enhanced_multicore_safety") == 0) {
-                            // Comprehensive multicore safety test
-                            if (lua_manager) {
-                                lua_manager->evaluate_thread_safe("test_enhanced_multicore_safety()");
-                            }
-                        } else if (strcmp(rx_buffer, "test_lockfree_performance") == 0) {
-                            // Lock-free performance benchmark test
-                            if (lua_manager) {
-                                lua_manager->evaluate_thread_safe("test_lockfree_performance()");
-                            }
-                        } else if (strcmp(rx_buffer, "test_random_voltage") == 0) {
-                            // Random voltage on rising edge test
-                            if (lua_manager) {
-                                lua_manager->evaluate_thread_safe("test_random_voltage()");
-                            }
-                        } else if (strcmp(rx_buffer, "debug_input_loading") == 0) {
-                            // Manual debug of Input.lua loading - can be triggered after connection
-                            if (lua_manager) {
-                                printf("=== MANUAL INPUT DEBUG TRIGGERED ===\n\r");
-                                lua_manager->load_embedded_asl();  // This will re-run the Input.lua loading with debug output
-                                printf("=== INPUT DEBUG COMPLETED ===\n\r");
-                            }
-                        } else if (strcmp(rx_buffer, "check_input_state") == 0) {
-                            // Check current state of input objects
-                            if (lua_manager) {
-                                printf("=== CHECKING INPUT STATE ===\n\r");
-                                lua_manager->evaluate_thread_safe("print('Input class:', Input); print('input array:', input); if input then for i=1,2 do print('input[' .. i .. ']:', input[i]) end else print('input is nil!') end");
-                                printf("=== INPUT STATE CHECK DONE ===\n\r");
-                            }
-                        } else {
-                            // Not a ^^ command, treat as Lua code
-                            if (lua_manager) {
-                                lua_manager->evaluate_thread_safe(rx_buffer);
-                            }
-                        }
-                        
-                        // Clear buffer
-                        rx_buffer_pos = 0;
-                        memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
+                g_rx_buffer[g_rx_buffer_pos] = (char)c;
+                g_rx_buffer_pos++;
+                g_rx_buffer[g_rx_buffer_pos] = '\0';
+                
+                // Check if we have a complete packet
+                if (is_packet_complete(g_rx_buffer, g_rx_buffer_pos)) {
+                    // Strip trailing whitespace
+                    int clean_length = g_rx_buffer_pos;
+                    while (clean_length > 0 && 
+                           (g_rx_buffer[clean_length-1] == '\n' || 
+                            g_rx_buffer[clean_length-1] == '\r' || 
+                            g_rx_buffer[clean_length-1] == ' ' || 
+                            g_rx_buffer[clean_length-1] == '\t')) {
+                        clean_length--;
                     }
-                } else {
-                    // Buffer overflow - clear it
-                    rx_buffer_pos = 0;
-                    memset(rx_buffer, 0, USB_RX_BUFFER_SIZE);
-                    send_crow_response("!buffer overflow!");
+                    g_rx_buffer[clean_length] = '\0';
+                    
+                    // Skip empty commands
+                    if (clean_length == 0) {
+                        g_rx_buffer_pos = 0;
+                        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+                        continue;
+                    }
+                    
+                    // Send command to Core0 via mailbox
+                    if (!mailbox_send_command(g_rx_buffer)) {
+                        // Mailbox full - inform user (rate limited)
+                        static uint32_t last_full_msg = 0;
+                        uint32_t now = to_ms_since_boot(get_absolute_time());
+                        if (now - last_full_msg > 1000) {
+                            printf("Command queue full, try again\r\n");
+                            last_full_msg = now;
+                        }
+                    }
+                    
+                    // Clear buffer after processing
+                    g_rx_buffer_pos = 0;
+                    memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
                 }
             }
             
-            // // Optional: periodically show CV values for debugging
-            // static uint32_t last_debug = 0;
-            // uint32_t now = to_ms_since_boot(get_absolute_time());
-            // if (now - last_debug > 5000) { // every 5 seconds
-            //     last_debug = now;
-            //     char debug[64];
-            //     snprintf(debug, sizeof(debug), "-- CV1: %ld, CV2: %ld --", (long)v1, (long)v2);
-            //     send_crow_response(debug);
-            // }
-
-            // Crow-style: process one queued event per main loop iteration (on control core only)
-            event_next();
-
-            // Deferred debug print from audio core (atomic per snapshot)
-            if (g_debug_ready) {
-                // Manual copy out of volatile snapshot
-                float last[2], span[2], thr[2], hy[2], pct[2];
-                uint32_t st[2], rise[2], fall[2];
-                char conn[2], inst[2], valid[2];
-                for (int i=0;i<2;i++) {
-                    last[i] = g_debug_snapshot.ch_last[i];
-                    span[i] = g_debug_snapshot.ch_span[i];
-                    st[i]   = g_debug_snapshot.ch_state[i];
-                    rise[i] = g_debug_snapshot.ch_rise[i];
-                    fall[i] = g_debug_snapshot.ch_fall[i];
-                    thr[i]  = g_debug_snapshot.ch_thr[i];
-                    hy[i]   = g_debug_snapshot.ch_hy[i];
-                    conn[i] = g_debug_snapshot.ch_conn[i];
-                    inst[i] = g_debug_snapshot.ch_inst[i];
-                    valid[i]= g_debug_snapshot.ch_valid[i];
-                    pct[i]  = g_debug_snapshot.ch_conn_pct[i];
+            // Check for responses from Core0 and send them
+            char response[256];
+            if (mailbox_get_response(response, sizeof(response))) {
+                printf("%s", response);
+                // Check for crow-style line endings
+                if (strstr(response, "\n\r") == NULL && strstr(response, "\r\n") == NULL) {
+                    printf("\r\n"); // Add line ending if not present
                 }
-                // Print two concise lines; single core ensures no interleaving.
-                //printf("[1] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
-                    //    last[0], span[0], st[0],
-                    //    (unsigned long)rise[0], (unsigned long)fall[0],
-                    //    thr[0], hy[0], conn[0], inst[0], valid[0], pct[0]);
-                //printf("[2] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
-                    //    last[1], span[1], st[1],
-                    //    (unsigned long)rise[1], (unsigned long)fall[1],
-                    //    thr[1], hy[1], conn[1], inst[1], valid[1], pct[1]);
                 fflush(stdout);
-                g_debug_ready = false; // mark consumed
+                mailbox_mark_response_sent();
             }
+            
+            // Minimal CPU usage when idle
+            tight_loop_contents();
         }
     }
 
@@ -1953,5 +2102,7 @@ int main()
 
     BlackbirdCrow crow;
     crow.EnableNormalisationProbe();
-    crow.Run();
+    
+    // Start Core0 main control loop (handles commands and events)
+    crow.MainControlLoop();
 }
