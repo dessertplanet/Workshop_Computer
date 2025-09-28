@@ -789,6 +789,20 @@ static const int USB_RX_BUFFER_SIZE = 256;
 static char g_rx_buffer[USB_RX_BUFFER_SIZE] = {0};
 static volatile int g_rx_buffer_pos = 0;
 
+// Hardware timer-based PulseOut2 performance monitoring (outside class to avoid C++ issues)
+static volatile bool g_pulse2_state = false;
+static volatile uint32_t g_pulse2_counter = 0;
+static struct repeating_timer g_pulse2_timer;
+
+// Timer callback for consistent 250Hz PulseOut2 pulse (independent of audio processing load)
+static bool __not_in_flash_func(pulse2_timer_callback)(struct repeating_timer *t) {
+    g_pulse2_state = !g_pulse2_state;
+    // Use direct GPIO access since PulseOut2 is protected
+    gpio_put(PULSE_2_RAW_OUT, !g_pulse2_state); // Note: raw output is inverted
+    g_pulse2_counter++;
+    return true; // Continue repeating
+}
+
 class BlackbirdCrow : public ComputerCard
 {
     // Variables for communication between cores
@@ -915,6 +929,13 @@ public:
         // Enable high-performance block processing (32 samples at 1.5kHz)
         EnableBlockProcessing();
         printf("Block processing enabled (32 samples, 1.5kHz)\n");
+        
+        // Initialize hardware timer for consistent 250Hz PulseOut2 performance monitoring
+        if (!add_repeating_timer_us(-4000, pulse2_timer_callback, NULL, &g_pulse2_timer)) {
+            printf("Failed to start PulseOut2 timer\n");
+        } else {
+            printf("PulseOut2 timer started: 250Hz consistent pulse for performance monitoring\n");
+        }
         
         // Single-core architecture - no Core1 needed
         printf("Single-core architecture initialized\n");
@@ -1347,18 +1368,9 @@ public:
         }
     }
 
+    
     // Optimized 32-sample block processing (1.5kHz) - Uses ComputerCard's native Q12 block processing
     virtual void __not_in_flash_func(ProcessBlock)(IO_block_t* block) override {
-        // Performance monitoring: Generate 250Hz pulse on PulseOut2 for stability monitoring
-        static int pulse_counter = 0;
-        static bool pulse_state = false;
-        
-        // Toggle every 3 blocks for 250Hz (1500Hz ÷ 6 = 250Hz)
-        if (++pulse_counter >= 3) {
-            pulse_state = !pulse_state;
-            PulseOut2(pulse_state);
-            pulse_counter = 0;
-        }
         
         // CRITICAL: Process timers for entire block at once - maximum efficiency
         // Also synchronize sample counters between timer and clock systems
