@@ -771,11 +771,15 @@ if (use_block_processing) {
         // dacOut[0] = current_block.out[0][COMPUTERCARD_BLOCK_SIZE-1];
         // dacOut[1] = current_block.out[1][COMPUTERCARD_BLOCK_SIZE-1];
         
-        // CV outputs (use final sample from block) still updated here
-        int16_t cv1_out = current_block.out[2][COMPUTERCARD_BLOCK_SIZE-1];
-        int16_t cv2_out = current_block.out[3][COMPUTERCARD_BLOCK_SIZE-1];
-        pwm_set_gpio_level(CV_OUT_1, (2047-cv1_out)>>1);
-        pwm_set_gpio_level(CV_OUT_2, (2047-cv2_out)>>1);
+        // CV outputs end-of-block replay DISABLED (Option A for CV).
+        // Rationale: current_block.out[2/3] not populated; this periodic overwrite
+        // forced PWM toward stale/zero data creating apparent negative offset.
+        // Future (Option B): populate per-sample CV data in ProcessBlock and re-enable guarded.
+        // Original code:
+        // int16_t cv1_out = current_block.out[2][COMPUTERCARD_BLOCK_SIZE-1];
+        // int16_t cv2_out = current_block.out[3][COMPUTERCARD_BLOCK_SIZE-1];
+        // pwm_set_gpio_level(CV_OUT_1, (2047-cv1_out)>>1);
+        // pwm_set_gpio_level(CV_OUT_2, (2047-cv2_out)>>1);
         
         block_position = 0;
     }
