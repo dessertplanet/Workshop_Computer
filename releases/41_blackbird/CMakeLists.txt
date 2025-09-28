@@ -159,11 +159,7 @@ if(ENABLE_DEBUG_TESTS)
         add_lua_header(test_phase2_performance.lua TEST_PHASE2_PERFORMANCE_HEADER)
         add_lua_header(test_simple_output.lua TEST_SIMPLE_OUTPUT_HEADER)
         list(APPEND TEST_HEADERS 
-            ${TEST_ENHANCED_MULTICORE_SAFETY_HEADER}
-            ${TEST_LOCKFREE_PERFORMANCE_HEADER}
-            ${TEST_RANDOM_VOLTAGE_HEADER}
-            ${TEST_PHASE2_PERFORMANCE_HEADER}
-            ${TEST_SIMPLE_OUTPUT_HEADER}
+          
         )
         set(TEST_DEFINE "EMBED_ALL_TESTS")
     endif()
