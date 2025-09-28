@@ -178,17 +178,40 @@ void EnableBlockProcessing() {use_block_processing = true;}
 /// Use before Run() to disable block processing and use legacy sample-by-sample mode
 void DisableBlockProcessing() {use_block_processing = false;}
 
+/// Process any pending blocks (call from main loop when using block processing)
+/// This function is lock-free and should be called regularly to process completed blocks
+void ProcessPendingBlocks() {
+    if (block_ready) {
+        block_ready = false;  // Atomic clear
+        
+        // Process the completed buffer (no ISR interference)
+        ProcessBlock(&block_buffers[processing_block]);
+        
+        // Note: Block outputs are not automatically applied to hardware
+        // User code should handle block outputs as needed in their ProcessBlock implementation
+    }
+}
+
 protected:
 /// Callback, called once per sample at 48kHz (legacy interface)
 virtual void ProcessSample() = 0;
 
 /// Callback, called once per block at 1.5kHz (32 samples, high-performance Q12 interface)
 /// Default implementation calls ProcessSample() 32 times for backward compatibility
+/// ISOLATION FIX: Uses separate processing variables to prevent ISR corruption
 virtual void ProcessBlock(IO_block_t* block) {
+    // Save current global ADC values to restore later
+    int16_t saved_adcInL = adcInL;
+    int16_t saved_adcInR = adcInR;
+    
     for (int i = 0; i < block->size; i++) {
-        // Set up single-sample inputs for legacy ProcessSample() - direct Q12 format
-        adcInL = block->in[0][i];
-        adcInR = block->in[1][i];
+        // Set up single-sample inputs using isolated processing variables - direct Q12 format
+        proc_adcInL = block->in[0][i];
+        proc_adcInR = block->in[1][i];
+        
+        // Temporarily update global variables for ProcessSample compatibility
+        adcInL = proc_adcInL;
+        adcInR = proc_adcInR;
         
         // Call legacy sample-by-sample processing
         ProcessSample();
@@ -197,15 +220,15 @@ virtual void ProcessBlock(IO_block_t* block) {
         block->out[0][i] = dacOut[0];
         block->out[1][i] = dacOut[1];
         
-        // CV outputs: Read current PWM levels for block processing compatibility
-        // This provides reasonable CV output values even in legacy mode
-        uint16_t cv1_level = pwm_get_counter(pwm_gpio_to_slice_num(CV_OUT_1));
-        uint16_t cv2_level = pwm_get_counter(pwm_gpio_to_slice_num(CV_OUT_2));
-        
-        // Convert PWM levels back to Q12 format (reverse of CVOut calculation)
-        block->out[2][i] = 2047 - (cv1_level << 1); // CV1
-        block->out[3][i] = 2047 - (cv2_level << 1); // CV2
+        // CV outputs: Initialize to neutral values - user code should populate these
+        // in their ProcessBlock implementation if using CV outputs
+        block->out[2][i] = 0;  // CV1 - neutral 0V
+        block->out[3][i] = 0;  // CV2 - neutral 0V
     }
+    
+    // Restore original global ADC values (ISR-safe values)
+    adcInL = saved_adcInL;
+    adcInR = saved_adcInR;
 }
 
 
@@ -427,10 +450,17 @@ volatile int16_t adcInL = 0x800, adcInR = 0x800;
 
 volatile uint8_t mxPos = 0; // external multiplexer value
 
-// Block processing state
-IO_block_t current_block;
-volatile int block_position = 0;
+// Block processing state - lock-free double buffering
+IO_block_t block_buffers[2];           // Double buffer for lock-free operation
+volatile uint8_t active_block = 0;     // ISR writes to this buffer index
+volatile uint8_t processing_block = 1; // ProcessBlock reads from this buffer index
+volatile int16_t block_position = 0;   // Current position in active block
+volatile bool block_ready = false;     // Atomic flag indicating block ready for processing
 volatile bool use_block_processing = false;
+
+// Separate ISR and processing state to prevent corruption
+volatile int16_t isr_adcInL = 0x800, isr_adcInR = 0x800;  // ISR-only, never modified by ProcessBlock
+int16_t proc_adcInL = 0x800, proc_adcInR = 0x800;         // Processing-only, used by legacy ProcessSample
 
 	volatile int32_t plug_state[6] = {0,0,0,0,0,0};
 	volatile bool connected[6] = {0,0,0,0,0,0};
@@ -679,11 +709,15 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	cv[cvi] = 2048 - (cvsm[cvi] >> 4);
 
 
-	// Set audio inputs, by averaging the two samples collected.
-	// Invert to counteract inverting op-amp input configuration
-	adcInR = -(((ADC_Buffer[cpuPhase][0] + ADC_Buffer[cpuPhase][4]) - 0x1000) >> 1);
+// Set audio inputs, by averaging the two samples collected.
+// Invert to counteract inverting op-amp input configuration
+// Store in ISR-only variables first (never corrupted by ProcessBlock)
+isr_adcInR = -(((ADC_Buffer[cpuPhase][0] + ADC_Buffer[cpuPhase][4]) - 0x1000) >> 1);
+isr_adcInL = -(((ADC_Buffer[cpuPhase][1] + ADC_Buffer[cpuPhase][5]) - 0x1000) >> 1);
 
-	adcInL = -(((ADC_Buffer[cpuPhase][1] + ADC_Buffer[cpuPhase][5]) - 0x1000) >> 1);
+// Update public interface with fresh values
+adcInR = isr_adcInR;
+adcInL = isr_adcInL;
 
 	// Set pulse inputs
 	last_pulse[0] = pulse[0];
@@ -752,40 +786,45 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 // Run the DSP - either block or sample processing
 
 if (use_block_processing) {
-    // Block processing mode - accumulate samples in Q12 format
+    // Lock-free block processing mode - accumulate samples in Q12 format using ISR-safe values
     
-    // Store inputs directly in Q12 format - no conversion needed
-    current_block.in[0][block_position] = adcInL;
-    current_block.in[1][block_position] = adcInR;
+    // Store inputs directly in Q12 format using ISR-only variables (never corrupted)
+    block_buffers[active_block].in[0][block_position] = isr_adcInL;
+    block_buffers[active_block].in[1][block_position] = isr_adcInR;
     
+    // Safe pre-increment with bounds check
     if (++block_position >= COMPUTERCARD_BLOCK_SIZE) {
-        // Block is full - process it
-        current_block.size = COMPUTERCARD_BLOCK_SIZE;
-        ProcessBlock(&current_block);
+        // Block is full - prepare for processing
+        block_buffers[active_block].size = COMPUTERCARD_BLOCK_SIZE;
         
-        // Apply outputs directly from Q12 format - no conversion needed
-        // OPTION A: Preserve externally set DC levels on audio outputs.
-        // The crow emulator sets dacOut[0/1] directly via hardware_output_set_voltage().
-        // Previously these two lines overwrote those values once per block with stale zeros.
-        // Commented out to allow stable DC on output[1]/output[2].
-        // dacOut[0] = current_block.out[0][COMPUTERCARD_BLOCK_SIZE-1];
-        // dacOut[1] = current_block.out[1][COMPUTERCARD_BLOCK_SIZE-1];
-        
-        // CV outputs end-of-block replay DISABLED (Option A for CV).
-        // Rationale: current_block.out[2/3] not populated; this periodic overwrite
-        // forced PWM toward stale/zero data creating apparent negative offset.
-        // Future (Option B): populate per-sample CV data in ProcessBlock and re-enable guarded.
-        // Original code:
-        // int16_t cv1_out = current_block.out[2][COMPUTERCARD_BLOCK_SIZE-1];
-        // int16_t cv2_out = current_block.out[3][COMPUTERCARD_BLOCK_SIZE-1];
-        // pwm_set_gpio_level(CV_OUT_1, (2047-cv1_out)>>1);
-        // pwm_set_gpio_level(CV_OUT_2, (2047-cv2_out)>>1);
-        
+        // Atomic buffer swap (lock-free)
+        uint8_t completed_block = active_block;
+        active_block = 1 - active_block;  // Swap to other buffer
+        processing_block = completed_block;
         block_position = 0;
+        
+        // Signal block ready for processing (atomic on RP2040)
+        block_ready = true;
+        
+        // Note: ProcessBlock will be called from main loop, not ISR context
+        // This prevents corruption of adcInL/adcInR during processing
     }
 } else {
-    // Legacy sample-by-sample processing
+    // Legacy sample-by-sample processing - copy ISR values to processing variables
+    proc_adcInL = isr_adcInL;
+    proc_adcInR = isr_adcInR;
+    
+    // Temporarily update global variables for ProcessSample compatibility
+    int16_t saved_adcInL = adcInL;
+    int16_t saved_adcInR = adcInR;
+    adcInL = proc_adcInL;
+    adcInR = proc_adcInR;
+    
     ProcessSample();
+    
+    // Restore global variables to ISR values
+    adcInL = saved_adcInL;
+    adcInR = saved_adcInR;
 }
 
 ////////////////////////////////////////
