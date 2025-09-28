@@ -74,12 +74,14 @@ typedef struct{
 
 typedef struct detect{
     uint8_t channel;
-    void (*modefn)(struct detect* self, float level);
+    void (*modefn)(struct detect* self, float level, bool block_boundary);
     Detect_callback_t action;
 
 // state memory
     float      last;
     uint8_t    state; // for change/peak hysteresis
+    // block tracking for consolidated timing
+    int        samples_in_current_block; // Track position within 32-sample block
     // debug / diagnostics
     float      last_sample;   // last raw level processed
     uint32_t   canary;        // memory corruption sentinel
@@ -97,7 +99,7 @@ typedef struct detect{
     D_peak_t    peak;
 } Detect_t;
 
-typedef void (*Detect_mode_fn_t)(Detect_t* self, float level);
+typedef void (*Detect_mode_fn_t)(Detect_t* self, float level, bool block_boundary);
 
 ////////////////////////////////////
 // init

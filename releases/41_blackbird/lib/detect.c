@@ -68,13 +68,13 @@ float VU_step(VU_meter_t* vu, float input) {
 }
 
 // Forward declarations for detection mode functions
-static void d_none(Detect_t* self, float level);
-static void d_stream(Detect_t* self, float level);
-static void d_change(Detect_t* self, float level);
-static void d_window(Detect_t* self, float level);
-static void d_scale(Detect_t* self, float level);
-static void d_volume(Detect_t* self, float level);
-static void d_peak(Detect_t* self, float level);
+static void d_none(Detect_t* self, float level, bool block_boundary);
+static void d_stream(Detect_t* self, float level, bool block_boundary);
+static void d_change(Detect_t* self, float level, bool block_boundary);
+static void d_window(Detect_t* self, float level, bool block_boundary);
+static void d_scale(Detect_t* self, float level, bool block_boundary);
+static void d_volume(Detect_t* self, float level, bool block_boundary);
+static void d_peak(Detect_t* self, float level, bool block_boundary);
 
 // Helper functions
 static void scale_bounds(Detect_t* self, int ix, int oct);
@@ -248,21 +248,29 @@ void Detect_freq(Detect_t* self, Detect_callback_t cb, float interval) {
 }
 
 // Detection mode processing functions
-static void d_none(Detect_t* self, float level) {
+static void d_none(Detect_t* self, float level, bool block_boundary) {
     // Do nothing
+    (void)level;
+    (void)block_boundary;
     return;
 }
 
-static void d_stream(Detect_t* self, float level) {
-    if (--self->stream.countdown <= 0) {
-        self->stream.countdown = self->stream.blocks;
-        if (self->action) {
-            (*self->action)(self->channel, level);
+static void d_stream(Detect_t* self, float level, bool block_boundary) {
+    // Stream mode: Only decrement countdown on block boundaries for correct timing
+    if (block_boundary) {
+        if (--self->stream.countdown <= 0) {
+            self->stream.countdown = self->stream.blocks;
+            if (self->action) {
+                (*self->action)(self->channel, level);
+            }
         }
     }
 }
 
-static void d_change(Detect_t* self, float level) {
+static void d_change(Detect_t* self, float level, bool block_boundary) {
+    // Change mode: Process every sample for sample-accurate edge detection
+    (void)block_boundary; // Not used for change detection
+    
     if (self->state) { // high to low
         if (level < (self->change.threshold - self->change.hysteresis)) {
             if (DETECT_DEBUG) {
@@ -294,7 +302,10 @@ static void d_change(Detect_t* self, float level) {
     }
 }
 
-static void d_window(Detect_t* self, float level) {
+static void d_window(Detect_t* self, float level, bool block_boundary) {
+    // Window mode: Process every sample for accurate threshold detection
+    (void)block_boundary; // Not used for window detection
+    
     // Find which window contains the level
     int ix = 0;
     for (; ix < self->win.wLen; ix++) {
@@ -314,7 +325,10 @@ static void d_window(Detect_t* self, float level) {
     }
 }
 
-static void d_scale(Detect_t* self, float level) {
+static void d_scale(Detect_t* self, float level, bool block_boundary) {
+    // Scale mode: Process every sample for accurate note detection
+    (void)block_boundary; // Not used for scale detection
+    
     D_scale_t* s = &self->scale;
     
     if (level > s->upper || level < s->lower) {
@@ -347,20 +361,25 @@ static void d_scale(Detect_t* self, float level) {
     }
 }
 
-static void d_volume(Detect_t* self, float level) {
+static void d_volume(Detect_t* self, float level, bool block_boundary) {
     if (self->vu) {
         level = VU_step(self->vu, level);
     }
     
-    if (--self->volume.countdown <= 0) {
-        self->volume.countdown = self->volume.blocks;
-        if (self->action) {
-            (*self->action)(self->channel, level);
+    // Volume mode: Only decrement countdown on block boundaries for correct timing
+    if (block_boundary) {
+        if (--self->volume.countdown <= 0) {
+            self->volume.countdown = self->volume.blocks;
+            if (self->action) {
+                (*self->action)(self->channel, level);
+            }
         }
     }
 }
 
-static void d_peak(Detect_t* self, float level) {
+static void d_peak(Detect_t* self, float level, bool block_boundary) {
+    (void)block_boundary; // Process every sample for accurate peak detection
+    
     if (self->vu) {
         level = VU_step(self->vu, level);
     }
@@ -417,8 +436,16 @@ void __not_in_flash_func(Detect_process_sample)(int channel, float level) {
         }
         detector->canary = DETECT_CANARY; // restore to continue operation
     }
+    
+    // Track block boundaries for timing-based modes
+    detector->samples_in_current_block++;
+    bool block_boundary = (detector->samples_in_current_block >= DETECT_BLOCK_SIZE);
+    if (block_boundary) {
+        detector->samples_in_current_block = 0;
+    }
+    
     detector->last_sample = level;
     if (detector->modefn) {
-        detector->modefn(detector, level);
+        detector->modefn(detector, level, block_boundary);
     }
 }
