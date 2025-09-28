@@ -2,7 +2,7 @@
 
 #include <math.h>
 
-#include "l_bootstrap.h" 	// l_bootstrap_dofile
+#include "l_bootstrap.h" // l_bootstrap_dofile
 #include "l_ii_mod.h"       // l_ii_mod_preload
 #include "random.h"   // Random_Get()
 #include "lib/ii.h"         // ii_*()
@@ -12,6 +12,7 @@
 // Declare IO_GetADC function for compatibility (implemented in main.cpp)
 extern float IO_GetADC(uint8_t channel);
 #include "lib/events.h"     // event_t, event_post()
+#include "lib/events_lockfree.h"  // Lock-free event queues
 #include "lib/slopes.h"     // S_reset()
 
 #define L_CL_MIDDLEC 		(261.63f)
@@ -574,14 +575,53 @@ int chan = luaL_checknumber(L, -1);
     return 0;
 }
 
-// Missing L_queue_* functions extracted from crow's lualink.c
+// Lock-free metro queuing function - replaces old mutex-based version
 void L_queue_metro( int id, int state )
 {
+    // Try lock-free queue first (much faster, never blocks Core 1)
+    if (metro_lockfree_post(id, state)) {
+        return; // Success - event queued without blocking
+    }
+    
+    // Lock-free queue full - fallback to mutex queue (rare case)
+    printf("Warning: Lock-free metro queue full, using fallback\n");
     event_t e = { .handler = L_handle_metro
                 , .index.i = id
                 , .data.i  = state
                 };
     event_post(&e);
+}
+
+// New lock-free metro handler - processes events from lock-free queue
+void L_handle_metro_lockfree( metro_event_lockfree_t* event )
+{
+    extern lua_State* get_lua_state(void);
+    lua_State* L = get_lua_state();
+    
+    if (!L) {
+        printf("L_handle_metro_lockfree: no Lua state available\n");
+        return;
+    }
+    
+    int metro_id = event->metro_id;
+    int stage = event->stage;
+    
+    // Call the global metro_handler function in Lua like real crow
+    lua_getglobal(L, "metro_handler");
+    if (lua_isfunction(L, -1)) {
+        lua_pushinteger(L, metro_id);  // First argument: metro ID
+        lua_pushinteger(L, stage);     // Second argument: stage/count
+        
+        // Protected call to prevent crashes
+        if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("metro_handler error: %s\n", error ? error : "unknown");
+            lua_pop(L, 1);
+        }
+    } else {
+        // metro_handler not defined - this is normal if no metros are active
+        lua_pop(L, 1);
+    }
 }
 
 void L_queue_clock_resume( int coro_id )

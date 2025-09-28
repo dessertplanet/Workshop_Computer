@@ -111,8 +111,43 @@ end
 --- METAMETHODS
 Input.__newindex = function(self, ix, val)
     if ix == 'mode' then
-        self._mode = val
-        Input.set_mode(self, self._mode)
+        if type(val) == 'table' then
+            -- Table syntax: input[1].mode = {type='stream', time=0.1}
+            -- or input[1].mode = {'stream', 0.1}
+            local mode_type = val.type or val[1]
+            local args = {}
+            if val.type then
+                -- Named parameters: {type='change', threshold=1.0, hysteresis=0.1, direction='rising'}
+                if mode_type == 'stream' then
+                    args = {val.time}
+                elseif mode_type == 'change' then
+                    args = {val.threshold, val.hysteresis, val.direction}
+                elseif mode_type == 'window' then
+                    args = {val.windows, val.hysteresis}
+                elseif mode_type == 'scale' then
+                    args = {val.notes, val.temp, val.scaling}
+                elseif mode_type == 'volume' then
+                    args = {val.time}
+                elseif mode_type == 'peak' then
+                    args = {val.threshold, val.hysteresis}
+                elseif mode_type == 'freq' then
+                    args = {val.time}
+                elseif mode_type == 'clock' then
+                    args = {val.div}
+                end
+            else
+                -- Positional parameters: {'stream', 0.1}
+                for i = 2, #val do
+                    args[i-1] = val[i]
+                end
+            end
+            Input.set_mode(self, mode_type, table.unpack(args))
+            self._mode = mode_type
+        else
+            -- Simple syntax: input[1].mode = 'stream'
+            Input.set_mode(self, val)
+            self._mode = val
+        end
     else
         return rawset(self,ix,val)
     end
@@ -123,8 +158,8 @@ Input.__index = function(self, ix)
         return Input.get_value(self)
     elseif ix == 'query' then
         return function() stream_handler(self.channel,Input.get_value(self)) end
-    elseif ix == 'mode'  then
-        return function(...) Input.set_mode( self, ...) end
+    elseif ix == 'mode' then
+        return function(...) Input.set_mode(self, ...) end
     elseif ix == 'reset_events' then
         return function() Input.reset_events(self) end
     end

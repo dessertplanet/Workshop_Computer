@@ -2,6 +2,7 @@
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
 #include "pico/stdio_usb.h"
+#include "lib/debug.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -26,6 +27,7 @@ extern "C" {
 #include "lib/metro.h"
 #include "lib/mailbox.h"
 #include "lib/clock.h"
+#include "lib/events_lockfree.h"
 }
 
 // Generated Lua bytecode headers - Core libraries (always included)
@@ -917,6 +919,9 @@ public:
         // Initialize event system - CRITICAL for processing input events
         events_init();
         
+        // Initialize lock-free event queues for timing-critical events
+        events_lockfree_init();
+        
         // Initialize timer system for metro support (8 timers for full crow compatibility)
         Timer_Init(8);
         
@@ -955,9 +960,14 @@ public:
             // Handle USB input directly - no mailbox needed
             handle_usb_input();
             
-            // Process events 
-            event_next();
+            // Process lock-free metro events first (highest priority)
+            metro_event_lockfree_t metro_event;
+            while (metro_lockfree_get(&metro_event)) {
+                L_handle_metro_lockfree(&metro_event);
+            }
             
+            // Process regular events (lower priority - system events, etc.)
+            event_next();
             
             // Brief sleep to yield CPU and prevent busy-waiting
             sleep_ms(1);
@@ -1851,22 +1861,22 @@ int LuaManager::lua_set_input_stream(lua_State* L) {
 }
 
 int LuaManager::lua_set_input_change(lua_State* L) {
-    printf("DEBUG: lua_set_input_change called!\n\r");
+    DEBUG_AUDIO_PRINT("DEBUG: lua_set_input_change called!\n\r");
     int channel = luaL_checkinteger(L, 1);
     float threshold = (float)luaL_checknumber(L, 2);
     float hysteresis = (float)luaL_checknumber(L, 3);
     const char* direction = luaL_checkstring(L, 4);
     
-    printf("DEBUG: args: ch=%d, thresh=%.3f, hyst=%.3f, dir='%s'\n\r", 
-           channel, threshold, hysteresis, direction);
+    DEBUG_AUDIO_PRINT("DEBUG: args: ch=%d, thresh=%.3f, hyst=%.3f, dir='%s'\n\r", 
+                      channel, threshold, hysteresis, direction);
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         int8_t dir = Detect_str_to_dir(direction);
-        printf("DEBUG: Direction '%s' converted to %d\n\r", direction, dir);
+        DEBUG_AUDIO_PRINT("DEBUG: Direction '%s' converted to %d\n\r", direction, dir);
         Detect_change(detector, change_callback, threshold, hysteresis, dir);
-        printf("Input %d: change mode, thresh %.3f, hyst %.3f, dir %s\n\r", 
-               channel, threshold, hysteresis, direction);
+        DEBUG_DETECT_PRINT("Input %d: change mode, thresh %.3f, hyst %.3f, dir %s\n\r", 
+                           channel, threshold, hysteresis, direction);
     } else {
         printf("Input %d: Error - detector not found\n\r", channel);
     }

@@ -3,6 +3,7 @@
 #include "lua.h" // Fixed path for our Lua build
 #include "lauxlib.h"
 #include "lualib.h"
+#include "events_lockfree.h"  // For metro_event_lockfree_t type
 
 // initialize the default crow environment variables & data structures
 void l_crowlib_init(lua_State* L);
@@ -22,3 +23,6 @@ void L_queue_metro( int id, int state );
 void L_queue_clock_resume( int coro_id );
 void L_queue_clock_start( void );
 void L_queue_clock_stop( void );
+
+// Lock-free metro handler function
+void L_handle_metro_lockfree( metro_event_lockfree_t* event );
