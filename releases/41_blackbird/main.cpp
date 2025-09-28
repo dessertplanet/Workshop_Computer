@@ -2238,7 +2238,7 @@ int main()
     printf("[boot] blackbird build %s %s dbg_format=v2 conn_smpl instrumentation active\r\n", __DATE__, __TIME__);
 
     BlackbirdCrow crow;
-    crow.EnableNormalisationProbe();
+    //crow.EnableNormalisationProbe();
     
     // Launch audio/DAC engine on core1 (Run() blocks there)
     g_crow_core1 = &crow;
