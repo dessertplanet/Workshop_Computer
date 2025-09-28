@@ -6,7 +6,10 @@ local Dynmt = {
 }
 
 function Asl.new(id)
-    local c = {id = id or 1}
+    id = id or 1
+    assert(id >= 1 and id <= 4, "Asl.new: id out of range (1..4), got "..tostring(id))
+    print(("[ASL] new id=%d"):format(id))
+    local c = {id = id}
     c.dyn = setmetatable({_names={}, id=c.id}, Dynmt) -- needs link to `id`
     setmetatable(c, Asl)
     return c
@@ -46,6 +49,7 @@ end
 -- truthy always restarts
 -- falsey means 'release'
 function Asl:action(direc)
+    print(("[ASL] action id=%d direc=%s"):format(self.id, tostring(direc)))
     if direc == nil then -- no arg is always 'restart'
         casl_action(self.id, 1)
     elseif direc == 'unlock' then casl_action(self.id, 2) -- release lock construct

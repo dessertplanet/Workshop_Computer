@@ -8,7 +8,9 @@
 #include "lib/ii.h"         // ii_*()
 #include "lib/ashapes.h"    // AShaper_get_state
 #include "lib/caw.h"        // Caw_printf()
-#include "lib/io.h"         // IO_GetADC()
+// #include "lib/io.h"         // IO_GetADC() - not used in emulator
+// Declare IO_GetADC function for compatibility (implemented in main.cpp)
+extern float IO_GetADC(uint8_t channel);
 #include "lib/events.h"     // event_t, event_post()
 #include "lib/slopes.h"     // S_reset()
 

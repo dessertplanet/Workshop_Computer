@@ -196,6 +196,9 @@ void S_toward( int        index
             // only happens when assynchronously updating S_toward
             self->countdown = -0.0; // inactive.
         }
+        // Immediate hardware update for zero-time (instant) transitions
+        extern void hardware_output_set_voltage(int channel, float voltage);
+        hardware_output_set_voltage(index+1, self->shaped);
     } else {
         // save current output level as new starting point
         self->last   = self->shaped;
@@ -353,9 +356,9 @@ static float* shaper_v( Slope_t* self, float* out, int size )
     // save last state
     self->shaped = out[size-1];
     
-    // Trigger soutput_handler for real-time voltage updates
-    extern void trigger_soutput_handler(int channel, float voltage);
-    trigger_soutput_handler(self->index, self->shaped);
+    // Update hardware output directly for real-time response
+    extern void hardware_output_set_voltage(int channel, float voltage);
+    hardware_output_set_voltage(self->index + 1, self->shaped);  // Convert to 1-based channel
     
     return out;
 }
@@ -378,5 +381,10 @@ static float shaper( Slope_t* self, float out )
     out = (out * self->scale) + self->last;
     // save last state
     self->shaped = out;
+    
+    // Update hardware output directly for immediate response
+    extern void hardware_output_set_voltage(int channel, float voltage);
+    hardware_output_set_voltage(self->index + 1, self->shaped);  // Convert to 1-based channel
+    
     return out;
 }

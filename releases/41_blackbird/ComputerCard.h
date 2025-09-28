@@ -31,9 +31,111 @@ See examples/ directory
 // Block processing configuration
 #define COMPUTERCARD_BLOCK_SIZE 32
 
+// Q12 Fixed-Point Arithmetic Constants and Macros
+// Q12 format uses 12-bit fractional part: range -2048 to +2047 represents -1.0 to +0.99951171875
+#define Q12_ONE 2048              // 1.0 in Q12 format
+#define Q12_HALF 1024             // 0.5 in Q12 format
+#define Q12_QUARTER 512           // 0.25 in Q12 format
+#define Q12_MULTIPLY(a, b) (((int32_t)(a) * (b)) >> 12)  // Multiply two Q12 values
+#define Q12_DIVIDE(a, b) (((int32_t)(a) << 12) / (b))    // Divide Q12 by Q12, result in Q12
+
+// Additional Q12 utility macros
+#define Q12_FROM_FLOAT(f) ((int16_t)((f) * 2048.0f))     // Convert float to Q12
+#define Q12_TO_FLOAT(q) ((float)(q) / 2048.0f)           // Convert Q12 to float
+#define Q12_FROM_INT(i) ((int16_t)((i) << 12))           // Convert integer to Q12
+#define Q12_TO_INT(q) ((int16_t)((q) >> 12))             // Convert Q12 to integer (truncate)
+#define Q12_ABS(x) ((x) < 0 ? -(x) : (x))                // Absolute value in Q12
+#define Q12_MIN(a, b) ((a) < (b) ? (a) : (b))            // Minimum of two Q12 values
+#define Q12_MAX(a, b) ((a) > (b) ? (a) : (b))            // Maximum of two Q12 values
+#define Q12_CLAMP(x, min, max) Q12_MAX((min), Q12_MIN((max), (x)))  // Clamp Q12 value
+
+// CV voltage mapping constants (approximate)
+#define Q12_1V_PER_OCT 341        // ~1V/octave scaling (Q12_ONE/6)
+#define Q12_5V_RANGE 1707         // ~5V range (Q12_ONE * 5/6)
+#define Q12_10V_RANGE 3413        // ~10V range (limited by ±2048 range)
+
+/**
+ * Block processing structure using Q12 fixed-point format for optimal RP2040 performance.
+ * 
+ * PERFORMANCE BENEFITS:
+ * - Eliminates ALL float conversions (192 operations per block saved!)
+ * - Direct hardware compatibility - no format conversion overhead
+ * - Optimized for RP2040 which has no hardware FPU
+ * - 32x reduced interrupt overhead (1.5kHz vs 48kHz processing rate)
+ * 
+ * VALUE RANGES AND MAPPINGS:
+ * 
+ * Audio (channels 0,1): Q12 format, -2048 to +2047
+ *   - Maps directly to ±1.0 full scale audio
+ *   - No conversion needed - direct hardware DAC/ADC compatibility
+ * 
+ * CV Outputs (channels 2,3): Q12 format, -2048 to +2047  
+ *   - Maps to approximately ±6V output range
+ *   - Use Q12_1V_PER_OCT (341) for 1V/octave scaling
+ *   - Use Q12_5V_RANGE (1707) for ±5V modulation range
+ * 
+ * USAGE EXAMPLES:
+ * 
+ * Basic Audio Processing:
+ *   void ProcessBlock(IO_block_t* block) override {
+ *       for (int i = 0; i < block->size; i++) {
+ *           // Simple gain
+ *           block->out[0][i] = Q12_MULTIPLY(block->in[0][i], Q12_HALF);
+ *           
+ *           // Audio mixing
+ *           block->out[1][i] = Q12_MULTIPLY(block->in[0][i] + block->in[1][i], Q12_HALF);
+ *           
+ *           // Distortion (clipping)
+ *           int16_t signal = Q12_MULTIPLY(block->in[0][i], 3 * Q12_ONE);
+ *           block->out[0][i] = Q12_CLAMP(signal, -Q12_ONE, Q12_ONE);
+ *       }
+ *   }
+ * 
+ * CV Generation:
+ *   void ProcessBlock(IO_block_t* block) override {
+ *       for (int i = 0; i < block->size; i++) {
+ *           // MIDI note to 1V/octave CV
+ *           int note = 60;  // Middle C
+ *           block->out[2][i] = (note - 60) * Q12_1V_PER_OCT;
+ *           
+ *           // LFO: triangle wave CV output
+ *           static int16_t phase = 0;
+ *           phase += 64;  // Frequency control
+ *           int16_t triangle = (phase < 0) ? -phase - 16384 : phase - 16384;
+ *           block->out[3][i] = Q12_MULTIPLY(triangle, Q12_5V_RANGE) >> 14;
+ *       }
+ *   }
+ * 
+ * Advanced Processing:
+ *   void ProcessBlock(IO_block_t* block) override {
+ *       static int16_t delay_buffer[1024];
+ *       static int delay_index = 0;
+ *       
+ *       for (int i = 0; i < block->size; i++) {
+ *           // Simple delay line
+ *           int16_t delayed = delay_buffer[delay_index];
+ *           delay_buffer[delay_index] = block->in[0][i];
+ *           delay_index = (delay_index + 1) % 1024;
+ *           
+ *           // Mix with feedback
+ *           int16_t feedback = Q12_MULTIPLY(delayed, Q12_HALF);
+ *           block->out[0][i] = Q12_MULTIPLY(block->in[0][i] + feedback, Q12_HALF);
+ *       }
+ *   }
+ * 
+ * Converting Between Formats:
+ *   // From float (if needed during development)
+ *   int16_t q12_val = Q12_FROM_FLOAT(0.75f);  // 0.75 -> 1536 in Q12
+ *   
+ *   // To float (for debug or external libraries)  
+ *   float float_val = Q12_TO_FLOAT(q12_val);  // 1536 -> 0.75f
+ *   
+ *   // From integer
+ *   int16_t q12_two = Q12_FROM_INT(2);         // 2 -> 8192 in Q12
+ */
 typedef struct {
-    float    in[2][COMPUTERCARD_BLOCK_SIZE];   // Audio inputs (L, R)
-    float    out[4][COMPUTERCARD_BLOCK_SIZE];  // Outputs (Audio L, Audio R, CV1, CV2)
+    int16_t  in[2][COMPUTERCARD_BLOCK_SIZE];   // Audio inputs (L, R) - Q12 format
+    int16_t  out[4][COMPUTERCARD_BLOCK_SIZE];  // Outputs (Audio L, Audio R, CV1, CV2) - Q12 format
     uint16_t size;                             // Actual block size (normally 32)
 } IO_block_t;
 
@@ -80,29 +182,29 @@ protected:
 /// Callback, called once per sample at 48kHz (legacy interface)
 virtual void ProcessSample() = 0;
 
-/// Callback, called once per block at 1.5kHz (32 samples, high-performance interface)
+/// Callback, called once per block at 1.5kHz (32 samples, high-performance Q12 interface)
 /// Default implementation calls ProcessSample() 32 times for backward compatibility
 virtual void ProcessBlock(IO_block_t* block) {
     for (int i = 0; i < block->size; i++) {
-        // Set up single-sample inputs for legacy ProcessSample()
-        adcInL = (int16_t)(block->in[0][i] * 2048.0f);
-        adcInR = (int16_t)(block->in[1][i] * 2048.0f);
+        // Set up single-sample inputs for legacy ProcessSample() - direct Q12 format
+        adcInL = block->in[0][i];
+        adcInR = block->in[1][i];
         
         // Call legacy sample-by-sample processing
         ProcessSample();
         
-        // Capture outputs from legacy interface (convert back to float)
-        block->out[0][i] = (float)dacOut[0] / 2048.0f;
-        block->out[1][i] = (float)dacOut[1] / 2048.0f;
+        // Capture outputs from legacy interface - direct Q12 format
+        block->out[0][i] = dacOut[0];
+        block->out[1][i] = dacOut[1];
         
         // CV outputs: Read current PWM levels for block processing compatibility
         // This provides reasonable CV output values even in legacy mode
         uint16_t cv1_level = pwm_get_counter(pwm_gpio_to_slice_num(CV_OUT_1));
         uint16_t cv2_level = pwm_get_counter(pwm_gpio_to_slice_num(CV_OUT_2));
         
-        // Convert PWM levels back to voltage (reverse of CVOut calculation)
-        block->out[2][i] = (float)(2047 - (cv1_level * 2)) / 2048.0f * 6.0f; // CV1
-        block->out[3][i] = (float)(2047 - (cv2_level * 2)) / 2048.0f * 6.0f; // CV2
+        // Convert PWM levels back to Q12 format (reverse of CVOut calculation)
+        block->out[2][i] = 2047 - (cv1_level << 1); // CV1
+        block->out[3][i] = 2047 - (cv2_level << 1); // CV2
     }
 }
 
@@ -650,25 +752,28 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 // Run the DSP - either block or sample processing
 
 if (use_block_processing) {
-    // Block processing mode - accumulate samples
+    // Block processing mode - accumulate samples in Q12 format
     
-    // Convert inputs to float and store in block buffer
-    current_block.in[0][block_position] = (float)adcInL / 2048.0f;
-    current_block.in[1][block_position] = (float)adcInR / 2048.0f;
+    // Store inputs directly in Q12 format - no conversion needed
+    current_block.in[0][block_position] = adcInL;
+    current_block.in[1][block_position] = adcInR;
     
     if (++block_position >= COMPUTERCARD_BLOCK_SIZE) {
         // Block is full - process it
         current_block.size = COMPUTERCARD_BLOCK_SIZE;
         ProcessBlock(&current_block);
         
-        // Convert block outputs back to hardware format and apply final sample
-        // Audio outputs (use final sample from block)
-        dacOut[0] = (int16_t)(current_block.out[0][COMPUTERCARD_BLOCK_SIZE-1] * 2048.0f);
-        dacOut[1] = (int16_t)(current_block.out[1][COMPUTERCARD_BLOCK_SIZE-1] * 2048.0f);
+        // Apply outputs directly from Q12 format - no conversion needed
+        // OPTION A: Preserve externally set DC levels on audio outputs.
+        // The crow emulator sets dacOut[0/1] directly via hardware_output_set_voltage().
+        // Previously these two lines overwrote those values once per block with stale zeros.
+        // Commented out to allow stable DC on output[1]/output[2].
+        // dacOut[0] = current_block.out[0][COMPUTERCARD_BLOCK_SIZE-1];
+        // dacOut[1] = current_block.out[1][COMPUTERCARD_BLOCK_SIZE-1];
         
-        // CV outputs (use final sample from block)
-        int16_t cv1_out = (int16_t)(current_block.out[2][COMPUTERCARD_BLOCK_SIZE-1] * 2048.0f);
-        int16_t cv2_out = (int16_t)(current_block.out[3][COMPUTERCARD_BLOCK_SIZE-1] * 2048.0f);
+        // CV outputs (use final sample from block) still updated here
+        int16_t cv1_out = current_block.out[2][COMPUTERCARD_BLOCK_SIZE-1];
+        int16_t cv2_out = current_block.out[3][COMPUTERCARD_BLOCK_SIZE-1];
         pwm_set_gpio_level(CV_OUT_1, (2047-cv1_out)>>1);
         pwm_set_gpio_level(CV_OUT_2, (2047-cv2_out)>>1);
         

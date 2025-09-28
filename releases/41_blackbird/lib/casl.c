@@ -72,7 +72,10 @@ static void seq_append( Casl* self, To* t )
 static void parse_table( Casl* self, lua_State* L );
 void casl_describe( int index, lua_State* L )
 {
-    if(index < 0 || index >= SELVES_COUNT){ return; }
+    if(index < 0 || index >= SELVES_COUNT){
+        printf("casl_describe: invalid index %d (valid 0..%d)\n", index, SELVES_COUNT-1);
+        return;
+    }
     Casl* self = _selves[index];
 
     // deallocate everything
@@ -319,7 +322,10 @@ static ElemO resolve( Casl* self, Elem* e );
 
 void casl_action( int index, int action )
 {
-    if(index < 0 || index >= SELVES_COUNT){ return; }
+    if(index < 0 || index >= SELVES_COUNT){
+        printf("casl_action: invalid index %d (valid 0..%d)\n", index, SELVES_COUNT-1);
+        return;
+    }
     Casl* self = _selves[index];
 
     if( self->locked ){ // can't apply action until unlocked

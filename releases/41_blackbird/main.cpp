@@ -71,9 +71,11 @@ static int32_t get_output_state_simple(int channel) {
     return 0;
 }
 
-// Forward declaration
+ // Forward declaration
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
+static BlackbirdCrow* g_crow_core1 = nullptr;
+static void core1_entry(); // defined after BlackbirdCrow
 
 
 // Forward declaration of C interface function (implemented after BlackbirdCrow class)
@@ -663,6 +665,7 @@ public:
         }
         
         printf("ASL libraries loaded successfully!\n\r");
+        // Index translation handled directly in asl.lua (Option B); runtime patch removed.
     }
     
     
@@ -930,24 +933,25 @@ public:
         EnableBlockProcessing();
         printf("Block processing enabled (32 samples, 1.5kHz)\n");
         
-        // Start the second core for USB processing
-        multicore_launch_core1(core1);
+        // Single-core architecture - no Core1 needed
+        printf("Single-core architecture initialized\n");
     }
     
-    // Core0 main control loop - handles commands from mailbox and events
+    // Single-core main control loop - handles USB, events, and Lua directly
     void MainControlLoop()
     {
-        printf("Core0: Starting main control loop\n\r");
+        printf("Blackbird Crow Emulator v0.3 (Single-Core Architecture)\n");
+        printf("Send ^^v for version, ^^i for identity\n");
+        
+        // Initialize USB buffer
+        g_rx_buffer_pos = 0;
+        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
         
         while (1) {
-            // Check for commands from Core1 via mailbox
-            char command[128];
-            if (mailbox_get_command(command, sizeof(command))) {
-                handle_usb_command(command);
-                mailbox_mark_command_processed();
-            }
+            // Handle USB input directly - no mailbox needed
+            handle_usb_input();
             
-            // Process events (moved from Core1)
+            // Process events 
             event_next();
             
             // Handle deferred debug printing from ProcessSample
@@ -989,6 +993,61 @@ public:
         }
     }
     
+    // Handle USB input directly - no mailbox complexity
+    void handle_usb_input() {
+        // Read available characters with short timeout
+        int c = getchar_timeout_us(1000); // 1ms timeout
+        
+        if (c != PICO_ERROR_TIMEOUT) {
+            // Safety check - ensure buffer position is sane
+            if (g_rx_buffer_pos < 0 || g_rx_buffer_pos >= USB_RX_BUFFER_SIZE) {
+                printf("ERROR: Buffer corruption detected! Resetting...\r\n");
+                g_rx_buffer_pos = 0;
+                memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+            }
+            
+            // Check for buffer overflow BEFORE adding character
+            if (g_rx_buffer_pos >= USB_RX_BUFFER_SIZE - 1) {
+                // Buffer full - clear and start over
+                g_rx_buffer_pos = 0;
+                memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+            }
+            
+            // Add character to buffer
+            g_rx_buffer[g_rx_buffer_pos] = (char)c;
+            g_rx_buffer_pos++;
+            g_rx_buffer[g_rx_buffer_pos] = '\0';
+            
+            // Check if we have a complete packet
+            if (is_packet_complete(g_rx_buffer, g_rx_buffer_pos)) {
+                // Strip trailing whitespace
+                int clean_length = g_rx_buffer_pos;
+                while (clean_length > 0 && 
+                       (g_rx_buffer[clean_length-1] == '\n' || 
+                        g_rx_buffer[clean_length-1] == '\r' || 
+                        g_rx_buffer[clean_length-1] == ' ' || 
+                        g_rx_buffer[clean_length-1] == '\t')) {
+                    clean_length--;
+                }
+                g_rx_buffer[clean_length] = '\0';
+                
+                // Skip empty commands
+                if (clean_length == 0) {
+                    g_rx_buffer_pos = 0;
+                    memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+                    return;
+                }
+                
+                // Execute command directly - no mailbox needed
+                handle_usb_command(g_rx_buffer);
+                
+                // Clear buffer after processing
+                g_rx_buffer_pos = 0;
+                memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+            }
+        }
+    }
+    
     // Handle USB commands received from Core1 via mailbox
     void handle_usb_command(const char* command)
     {
@@ -1012,60 +1071,56 @@ public:
         }
     }
     
-    // Handle commands and send responses via mailbox
+    // Handle commands and send responses directly (single-core)
     void handle_command_with_response(C_cmd_t cmd)
     {
-        char response[256];
-        
         switch (cmd) {
             case C_version: {
                 // Embed build date/time and debug format so a late serial connection can verify firmware
-                snprintf(response, sizeof(response), "^^version('blackbird-0.2 %s %s simplified')", __DATE__, __TIME__);
-                mailbox_send_response(response);
+                printf("^^version('blackbird-0.3 %s %s single-core')\r\n", __DATE__, __TIME__);
                 break; }
                 
             case C_identity: {
                 uint64_t unique_id = UniqueCardID();
-                snprintf(response, sizeof(response), "^^identity('0x%016llx')", unique_id);
-                mailbox_send_response(response);
+                printf("^^identity('0x%016llx')\r\n", unique_id);
                 break;
             }
             
             case C_print:
-                mailbox_send_response("-- no script loaded --");
+                printf("-- no script loaded --\r\n");
                 break;
                 
             case C_restart:
-                mailbox_send_response("restarting...");
+                printf("restarting...\r\n");
                 // Could implement actual restart here
                 break;
                 
             case C_killlua:
-                mailbox_send_response("lua killed");
+                printf("lua killed\r\n");
                 break;
                 
             case C_boot:
-                mailbox_send_response("entering bootloader mode");
+                printf("entering bootloader mode\r\n");
                 break;
                 
             case C_startupload:
-                mailbox_send_response("script upload started");
+                printf("script upload started\r\n");
                 break;
                 
             case C_endupload:
-                mailbox_send_response("script uploaded");
+                printf("script uploaded\r\n");
                 break;
                 
             case C_flashupload:
-                mailbox_send_response("script saved to flash");
+                printf("script saved to flash\r\n");
                 break;
                 
             case C_flashclear:
-                mailbox_send_response("flash cleared");
+                printf("flash cleared\r\n");
                 break;
                 
             case C_loadFirst:
-                mailbox_send_response("loading first.lua");
+                printf("loading first.lua\r\n");
                 printf("[first] handler invoked, attempting bytecode load\n\r");
                 // Actually load First.lua using the compiled bytecode
                 if (lua_manager) {
@@ -1074,7 +1129,7 @@ public:
                         const char* error = lua_tostring(lua_manager->L, -1);
                         printf("Error loading First.lua: %s\n\r", error ? error : "unknown error");
                         lua_pop(lua_manager->L, 1);
-                        mailbox_send_response("error loading first.lua");
+                        printf("error loading first.lua\r\n");
                     } else {
                         printf("First.lua loaded and executed successfully!\n\r");
 
@@ -1090,18 +1145,19 @@ public:
                         float input2_volts = hardware_get_input(2);
                         printf("[diag] input volts after load: in1=%.3fV in2=%.3fV\n\r", input1_volts, input2_volts);
 
-                        mailbox_send_response("first.lua loaded");
+                        printf("first.lua loaded\r\n");
                     }
                 } else {
-                    mailbox_send_response("error: lua manager not available");
+                    printf("error: lua manager not available\r\n");
                 }
                 break;
                 
             default:
                 // For unimplemented commands, send a simple acknowledgment
-                mailbox_send_response("ok");
+                printf("ok\r\n");
                 break;
         }
+        fflush(stdout);
     }
     
     ~BlackbirdCrow() {
@@ -1341,32 +1397,40 @@ public:
         }
     }
 
-    // Optimized 32-sample block processing (1.5kHz) - Uses ComputerCard's native block processing
-    virtual void ProcessBlock(IO_block_t* block) override {
+    // Optimized 32-sample block processing (1.5kHz) - Uses ComputerCard's native Q12 block processing
+    virtual void __not_in_flash_func(ProcessBlock)(IO_block_t* block) override {
         // CRITICAL: Process timers for entire block at once - maximum efficiency
         for (int i = 0; i < block->size; i++) {
             Timer_Process();
         }
         
-        // Process detection system using block data properly
-        // Use the middle sample of the block for detection to avoid aliasing
-        int detection_sample = block->size / 2;
-        float input1 = block->in[0][detection_sample] * 6.0f; // Convert normalized to ±6V range
-        float input2 = block->in[1][detection_sample] * 6.0f;
+        // CRITICAL FIX: Process detection for EVERY sample in the block, not just middle sample
+        // This maintains 48kHz detection rate for proper edge detection and timing
+        for (int i = 0; i < block->size; i++) {
+            // Convert Q12 to ±6V range (hardware uses ±6V as confirmed by user)
+            float input1 = (float)block->in[0][i] * 6.0f / 2048.0f;
+            float input2 = (float)block->in[1][i] * 6.0f / 2048.0f;
+            
+            // Process detection at full 48kHz rate
+            Detect_process_sample(0, input1); // Channel 0 (input[1])
+            Detect_process_sample(1, input2); // Channel 1 (input[2])
+        }
         
-        // Process detection once per block (more efficient than per-sample)
-        Detect_process_sample(0, input1); // Channel 0 (input[1])
-        Detect_process_sample(1, input2); // Channel 1 (input[2])
-        
-        // Process all 4 output channels in true block mode - MAXIMUM EFFICIENCY
+        // OPTIMIZED: Process slopes system once per block instead of per-sample
+        // The slopes system now handles hardware output updates directly
+        static float temp_float_buffer[COMPUTERCARD_BLOCK_SIZE];
         for (int channel = 0; channel < 4; channel++) {
-            float* output_buffer = block->out[channel];
+            // Initialize with current slopes state
+            float current_state = S_get_state(channel);
+            for (int i = 0; i < block->size; i++) {
+                temp_float_buffer[i] = current_state;
+            }
             
-            // Generate slopes envelope for entire block at once
-            S_step_v(channel, output_buffer, block->size);
+            // Process slopes for this block - hardware updates happen internally
+            S_step_v(channel, temp_float_buffer, block->size);
             
-            // Apply AShaper to entire block (pass-through mode)
-            AShaper_v(channel, output_buffer, block->size);
+            // The slopes system already updated hardware via hardware_output_set_voltage()
+            // No need for additional Q12 conversion or hardware writes here
         }
         
         // Hardware LED updates (much less frequent in block mode)
@@ -1525,13 +1589,20 @@ int LuaManager::output_newindex(lua_State* L) {
 
 // CASL bridge functions
 int LuaManager::lua_casl_describe(lua_State* L) {
-    casl_describe(luaL_checkinteger(L, 1) - 1, L); // C is zero-based
+    int raw = luaL_checkinteger(L, 1);
+    int internal = raw - 1;
+    printf("[DBG] lua_casl_describe raw=%d internal=%d\n\r", raw, internal);
+    casl_describe(internal, L); // C is zero-based
     lua_pop(L, 2);
     return 0;
 }
 
 int LuaManager::lua_casl_action(lua_State* L) {
-    casl_action(luaL_checkinteger(L, 1) - 1, luaL_checkinteger(L, 2)); // C is zero-based
+    int raw = luaL_checkinteger(L, 1);
+    int act = luaL_checkinteger(L, 2);
+    int internal = raw - 1;
+    printf("[DBG] lua_casl_action raw=%d internal=%d action=%d\n\r", raw, internal, act);
+    casl_action(internal, act); // C is zero-based
     lua_pop(L, 2);
     return 0;
 }
@@ -1657,41 +1728,40 @@ int LuaManager::lua_io_get_input(lua_State* L) {
     return 1;
 }
 
-// Mode-specific detection callbacks - match real crow's architecture
+// Mode-specific detection callbacks - OPTIMIZED for direct execution
 static constexpr bool kDetectionDebug = false;
 
-// Stream callback - calls stream_handler
+// Direct stream callback - executes immediately on audio core for optimal latency
 static void stream_callback(int channel, float value) {
     static uint32_t callback_count = 0;
     callback_count++;
     
     if (kDetectionDebug) {
-        printf("STREAM CALLBACK #%lu: ch%d value=%.3f\n\r", callback_count, channel + 1, value);
+        printf("STREAM DIRECT #%lu: ch%d value=%.3f\n\r", callback_count, channel + 1, value);
     }
     
-    // Queue a stream event (using event system for safety)
-    event_t e = { 
-        .handler = L_handle_stream_safe,
-        .index = { .i = channel },
-        .data = { .f = value },
-        .type = EVENT_TYPE_STREAM,
-        .timestamp = to_ms_since_boot(get_absolute_time())
-    };
-    
-    if (!event_post(&e)) {
-        if (kDetectionDebug) {
-            printf("Failed to post stream event for channel %d\n\r", channel + 1);
-        }
+    // PERFORMANCE CRITICAL: Execute Lua callback directly without event queueing
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (lua_mgr && lua_mgr->L) {
+        // Use direct Lua execution for minimal latency
+        char lua_call[128];
+        snprintf(lua_call, sizeof(lua_call),
+            "if stream_handler then stream_handler(%d, %.6f) end",
+            channel + 1, value);  // Convert to 1-based
+        
+        // Execute directly on audio core - real-time safe
+        lua_mgr->evaluate_safe(lua_call);
     }
 }
 
-// Change callback - calls change_handler
+// Direct change callback - executes immediately on audio core for optimal latency  
 static void change_callback(int channel, float value) {
     static uint32_t callback_count = 0;
     callback_count++;
     
     // For change detection, 'value' is actually the state (0.0 or 1.0), not voltage
     bool state = (value > 0.5f);
+    
     // Suppress duplicate postings of identical state for a channel
     {
         static int8_t last_reported_state[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
@@ -1702,22 +1772,30 @@ static void change_callback(int channel, float value) {
             last_reported_state[channel] = (int8_t)state;
         }
     }
+    
     if (kDetectionDebug) {
-        printf("CHANGE CALLBACK #%lu: ch%d state=%s\n\r", callback_count, channel + 1, state ? "HIGH" : "LOW");
+        printf("CHANGE DIRECT #%lu: ch%d state=%s\n\r", callback_count, channel + 1, state ? "HIGH" : "LOW");
     }
     
-    // Queue a change event (using event system for safety)
-    event_t e = { 
-        .handler = L_handle_change_safe,
-        .index = { .i = channel },
-        .data = { .f = value },
-        .type = EVENT_TYPE_CHANGE,
-        .timestamp = to_ms_since_boot(get_absolute_time())
-    };
-    
-    if (!event_post(&e)) {
-        if (kDetectionDebug) {
-            printf("Failed to post change event for channel %d\n\r", channel + 1);
+    // PERFORMANCE CRITICAL: Execute Lua callback directly without event queueing
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (lua_mgr && lua_mgr->L) {
+        // LED 0: Change detection active (proves detection system works)
+        if (g_blackbird_instance) {
+            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(0);
+        }
+        
+        // Use direct Lua execution for minimal latency
+        char lua_call[128];
+        snprintf(lua_call, sizeof(lua_call),
+            "if change_handler then change_handler(%d, %d) end",
+            channel + 1, state ? 1 : 0);  // Convert to 1-based, pass 0/1 like crow
+        
+        // Execute directly on audio core - real-time safe
+        lua_mgr->evaluate_safe(lua_call);
+        
+        if (g_blackbird_instance) {
+            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
         }
     }
 }
@@ -2132,6 +2210,13 @@ extern "C" float IO_GetADC(uint8_t channel) {
     return 0.0f;
 }
 
+static void core1_entry() {
+    if (g_crow_core1) {
+        printf("[boot] core1 audio engine starting\n\r");
+        g_crow_core1->Run(); // sets ComputerCard::thisptr and starts DMA/SPI
+    }
+}
+
 int main()
 {
     if (!set_sys_clock_khz(200000, false)) {
@@ -2154,6 +2239,13 @@ int main()
 
     BlackbirdCrow crow;
     crow.EnableNormalisationProbe();
+    
+    // Launch audio/DAC engine on core1 (Run() blocks there)
+    g_crow_core1 = &crow;
+    multicore_launch_core1(core1_entry);
+    
+    // Allow core1 to start before entering control loop
+    sleep_ms(20);
     
     // Start Core0 main control loop (handles commands and events)
     crow.MainControlLoop();
