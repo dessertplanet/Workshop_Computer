@@ -87,24 +87,6 @@ extern "C" void L_handle_change_safe(event_t* e);
 extern "C" void L_handle_stream_safe(event_t* e);
 extern "C" void L_handle_asl_done_safe(event_t* e);
 
-// ---- Cross-core debug snapshot (avoid interleaved stdio from both cores) ----
-typedef struct {
-    float ch_last[2];
-    float ch_span[2];
-    uint32_t ch_state[2];
-    uint32_t ch_rise[2];
-    uint32_t ch_fall[2];
-    float ch_thr[2];
-    float ch_hy[2];
-    char  ch_conn[2];      // debounced Y/N
-    char  ch_inst[2];      // instant probe Y/N
-    char  ch_valid[2];     // span valid Y/N
-    float ch_conn_pct[2];  // 0..100
-    uint32_t seq;          // increment each publish
-} DebugSnapshot;
-
-static volatile DebugSnapshot g_debug_snapshot = {0};
-static volatile bool g_debug_ready = false; // set by audio core, consumed by USB core
 
 class LuaManager;
 
@@ -955,39 +937,6 @@ public:
             // Process events 
             event_next();
             
-            // Handle deferred debug printing from ProcessSample
-            if (g_debug_ready) {
-                // Manual copy out of volatile snapshot
-                float last[2], span[2], thr[2], hy[2], pct[2];
-                uint32_t st[2], rise[2], fall[2];
-                char conn[2], inst[2], valid[2];
-                for (int i=0;i<2;i++) {
-                    last[i] = g_debug_snapshot.ch_last[i];
-                    span[i] = g_debug_snapshot.ch_span[i];
-                    st[i]   = g_debug_snapshot.ch_state[i];
-                    rise[i] = g_debug_snapshot.ch_rise[i];
-                    fall[i] = g_debug_snapshot.ch_fall[i];
-                    thr[i]  = g_debug_snapshot.ch_thr[i];
-                    hy[i]   = g_debug_snapshot.ch_hy[i];
-                    conn[i] = g_debug_snapshot.ch_conn[i];
-                    inst[i] = g_debug_snapshot.ch_inst[i];
-                    valid[i]= g_debug_snapshot.ch_valid[i];
-                    pct[i]  = g_debug_snapshot.ch_conn_pct[i];
-                }
-                
-                // Optional: Print debug info (commented out for now)
-                // printf("[1] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
-                //        last[0], span[0], st[0],
-                //        (unsigned long)rise[0], (unsigned long)fall[0],
-                //        thr[0], hy[0], conn[0], inst[0], valid[0], pct[0]);
-                // printf("[2] v=% .3f sp=% .3f st=%u r=%lu/%lu th=%.3f hy=%.3f C=%c%c%c %.1f%%\n",
-                //        last[1], span[1], st[1],
-                //        (unsigned long)rise[1], (unsigned long)fall[1],
-                //        thr[1], hy[1], conn[1], inst[1], valid[1], pct[1]);
-                // fflush(stdout);
-                
-                g_debug_ready = false; // mark consumed
-            }
             
             // Brief sleep to yield CPU and prevent busy-waiting
             sleep_ms(1);
@@ -1449,73 +1398,6 @@ public:
         
         // LED debugging removed to prevent audio artifacts
         
-        // Debug instrumentation (much more efficient in block mode)
-        static uint32_t debug_block_counter = 0;
-        if (++debug_block_counter >= 1500) { // ~1 second
-            debug_block_counter = 0;
-            
-            // Analyze final samples for debug snapshot
-            float input1 = block->in[0][block->size-1] * 6.0f;
-            float input2 = block->in[1][block->size-1] * 6.0f;
-            
-            // Find min/max across entire block for span calculation
-            float in1_min = 1e9f, in1_max = -1e9f;
-            float in2_min = 1e9f, in2_max = -1e9f;
-            
-            for (int i = 0; i < block->size; i++) {
-                float v1 = block->in[0][i] * 6.0f;
-                float v2 = block->in[1][i] * 6.0f;
-                if (v1 != 0.0f) {
-                    if (v1 < in1_min) in1_min = v1;
-                    if (v1 > in1_max) in1_max = v1;
-                }
-                if (v2 != 0.0f) {
-                    if (v2 < in2_min) in2_min = v2;
-                    if (v2 > in2_max) in2_max = v2;
-                }
-            }
-            
-            Detect_t* d0 = Detect_ix_to_p(0);
-            Detect_t* d1 = Detect_ix_to_p(1);
-            bool in1_valid = (in1_min < 1e8f) && (in1_max > -1e8f) && (in1_min <= in1_max);
-            bool in2_valid = (in2_min < 1e8f) && (in2_max > -1e8f) && (in2_min <= in2_max);
-            float in1_span = in1_valid ? (in1_max - in1_min) : 0.0f;
-            float in2_span = in2_valid ? (in2_max - in2_min) : 0.0f;
-            
-            // Publish debug snapshot if ready
-            if (!g_debug_ready) {
-                DebugSnapshot snap;
-                snap.ch_last[0] = input1;          snap.ch_last[1] = input2;
-                snap.ch_span[0] = in1_span;        snap.ch_span[1] = in2_span;
-                snap.ch_state[0] = d0 ? d0->state : 0u;  snap.ch_state[1] = d1 ? d1->state : 0u;
-                snap.ch_rise[0] = d0 ? d0->change_rise_count : 0u; snap.ch_rise[1] = d1 ? d1->change_rise_count : 0u;
-                snap.ch_fall[0] = d0 ? d0->change_fall_count : 0u; snap.ch_fall[1] = d1 ? d1->change_fall_count : 0u;
-                snap.ch_thr[0]  = d0 ? d0->change.threshold : 0.0f; snap.ch_thr[1]  = d1 ? d1->change.threshold : 0.0f;
-                snap.ch_hy[0]   = d0 ? d0->change.hysteresis : 0.0f; snap.ch_hy[1]   = d1 ? d1->change.hysteresis : 0.0f;
-                snap.ch_conn[0] = 'B'; snap.ch_conn[1] = 'B'; // Block mode
-                snap.ch_inst[0] = 'B'; snap.ch_inst[1] = 'B'; // Block mode
-                snap.ch_valid[0]= in1_valid ? 'Y':'N'; snap.ch_valid[1]= in2_valid ? 'Y':'N';
-                snap.ch_conn_pct[0] = 0.0f; snap.ch_conn_pct[1] = 0.0f;
-                snap.seq = g_debug_snapshot.seq + 1;
-                
-                // Copy to volatile snapshot
-                for (int i=0;i<2;i++) {
-                    g_debug_snapshot.ch_last[i] = snap.ch_last[i];
-                    g_debug_snapshot.ch_span[i] = snap.ch_span[i];
-                    g_debug_snapshot.ch_state[i] = snap.ch_state[i];
-                    g_debug_snapshot.ch_rise[i] = snap.ch_rise[i];
-                    g_debug_snapshot.ch_fall[i] = snap.ch_fall[i];
-                    g_debug_snapshot.ch_thr[i]  = snap.ch_thr[i];
-                    g_debug_snapshot.ch_hy[i]   = snap.ch_hy[i];
-                    g_debug_snapshot.ch_conn[i] = snap.ch_conn[i];
-                    g_debug_snapshot.ch_inst[i] = snap.ch_inst[i];
-                    g_debug_snapshot.ch_valid[i]= snap.ch_valid[i];
-                    g_debug_snapshot.ch_conn_pct[i] = snap.ch_conn_pct[i];
-                }
-                g_debug_snapshot.seq = snap.seq;
-                g_debug_ready = true;
-            }
-        }
     }
 
     // Legacy 48kHz sample-by-sample processing (DISABLED - Block processing only)
