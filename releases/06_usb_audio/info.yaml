@@ -1,4 +1,5 @@
 Description: USB audio output
+Name: USB Audio
 Language: C (RPi Pico SDK)
 Creator: Chris Johnson
 Version: 0.1

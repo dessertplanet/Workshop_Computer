@@ -13,3 +13,6 @@ Icon?
 *.dmp
 .fseventsd
 build/
+.vscode/
+site/
+tools/sitegen/node_modules/
