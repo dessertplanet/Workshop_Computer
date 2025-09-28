@@ -25,6 +25,7 @@ extern "C" {
 #include "lib/ll_timers.h"
 #include "lib/metro.h"
 #include "lib/mailbox.h"
+#include "lib/clock.h"
 }
 
 // Generated Lua bytecode headers - Core libraries (always included)
@@ -1399,9 +1400,22 @@ public:
 
     // Optimized 32-sample block processing (1.5kHz) - Uses ComputerCard's native Q12 block processing
     virtual void __not_in_flash_func(ProcessBlock)(IO_block_t* block) override {
+        // Performance monitoring: Generate 250Hz pulse on PulseOut2 for stability monitoring
+        static int pulse_counter = 0;
+        static bool pulse_state = false;
+        
+        // Toggle every 3 blocks for 250Hz (1500Hz ÷ 6 = 250Hz)
+        if (++pulse_counter >= 3) {
+            pulse_state = !pulse_state;
+            PulseOut2(pulse_state);
+            pulse_counter = 0;
+        }
+        
         // CRITICAL: Process timers for entire block at once - maximum efficiency
+        // Also synchronize sample counters between timer and clock systems
         for (int i = 0; i < block->size; i++) {
             Timer_Process();
+            clock_increment_sample_counter(); // Keep clock system synchronized
         }
         
         // CRITICAL FIX: Process detection for EVERY sample in the block, not just middle sample
@@ -1433,29 +1447,7 @@ public:
             // No need for additional Q12 conversion or hardware writes here
         }
         
-        // Hardware LED updates (much less frequent in block mode)
-        static uint32_t block_counter = 0;
-        if (++block_counter >= 1500) { // ~1 second at 1.5kHz block rate
-            block_counter = 0;
-            
-            // LED 5: Heartbeat (proves block processing is working)
-            static bool heartbeat_state = false;
-            heartbeat_state = !heartbeat_state;
-            if (heartbeat_state) {
-                debug_led_on(5);
-            } else {
-                debug_led_off(5);
-            }
-            
-            // LED 4: Input activity detection (check final sample)
-            float final_in1 = block->in[0][block->size-1] * 6.0f;
-            float final_in2 = block->in[1][block->size-1] * 6.0f;
-            if (fabs(final_in1) > 0.5f || fabs(final_in2) > 0.5f) {
-                debug_led_on(4);
-            } else {
-                debug_led_off(4);
-            }
-        }
+        // LED debugging removed to prevent audio artifacts
         
         // Debug instrumentation (much more efficient in block mode)
         static uint32_t debug_block_counter = 0;

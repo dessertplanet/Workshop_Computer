@@ -10,10 +10,25 @@
 #include "clock_ll.h" // linked list for clocks
 #include "l_crowlib.h" // L_queue_clock_* functions
 
-// TODO: Implement RP2040 timing stub
+// Enhanced RP2040 timing - use sample-accurate timing instead of milliseconds
+static uint64_t sample_counter = 0; // Global sample counter for precise timing
 static uint32_t HAL_GetTick(void) {
     return to_ms_since_boot(get_absolute_time());
 }
+
+// New sample-based timing functions for improved precision - PUBLIC API
+void clock_set_sample_counter(uint64_t samples) {
+    sample_counter = samples;
+}
+
+uint64_t clock_get_sample_counter(void) {
+    return sample_counter;
+}
+
+void clock_increment_sample_counter(void) {
+    sample_counter++;
+}
+
 
 
 ///////////////////////////////

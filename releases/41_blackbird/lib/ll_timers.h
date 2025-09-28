@@ -8,8 +8,8 @@
 // Timer callback function type
 typedef void (*timer_callback_t)(int timer_id);
 
-// Block processing configuration
-#define TIMER_BLOCK_SIZE 48  // Process timers every 48 samples (~1kHz)
+// Block processing configuration - ALIGNED with audio block size for consistent timing
+#define TIMER_BLOCK_SIZE 32  // Process timers every 32 samples (1.5kHz, matches audio blocks)
 
 // Timer functions
 void Timer_Init(int num_timers);

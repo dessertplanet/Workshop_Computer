@@ -5,21 +5,22 @@
 #include "pico/stdlib.h"
 
 // Timer implementation for RP2040 Workshop Computer with block processing optimization
-// Reduces function call overhead from 48kHz to ~1kHz while maintaining timing precision
+// Aligned block size (32 samples) for consistent timing with audio processing
 
 typedef struct {
     timer_callback_t callback;
     float period_seconds;
     bool active;
     uint32_t period_samples;      // Period in 48kHz samples
-    uint32_t next_trigger_sample; // When to trigger next
+    uint64_t next_trigger_sample; // When to trigger next (64-bit for long-running systems)
+    float period_error;           // Accumulated fractional sample error for precision
 } timer_t;
 
 static timer_t* timers = NULL;
 static int max_timers = 0;
-static uint32_t global_sample_counter = 0; // Incremented every ProcessSample()
+static uint64_t global_sample_counter = 0; // Incremented every ProcessSample() - 64-bit for precision
 
-// Block processing state
+// Block processing state - aligned with audio blocks for consistent timing
 static int sample_accumulator = 0; // Count samples until next block processing
 
 void Timer_Init(int num_timers) {
@@ -70,10 +71,13 @@ void Timer_Set_Params(int timer_id, float seconds) {
     }
     
     timers[timer_id].period_seconds = seconds;
-    // Convert seconds to samples at 48kHz
-    timers[timer_id].period_samples = (uint32_t)(seconds * 48000.0f);
-    printf("Timer: Set timer %d period to %.3f seconds (%u samples)\n", 
-           timer_id, seconds, timers[timer_id].period_samples);
+    // Convert seconds to samples at 48kHz with precise fractional handling
+    float precise_samples = seconds * 48000.0f;
+    timers[timer_id].period_samples = (uint32_t)precise_samples;
+    timers[timer_id].period_error = precise_samples - (float)timers[timer_id].period_samples;
+    
+    printf("Timer: Set timer %d period to %.3f seconds (%u samples + %.6f fractional)\n", 
+           timer_id, seconds, timers[timer_id].period_samples, timers[timer_id].period_error);
 }
 
 // Time-critical: Called at 48kHz sample rate - must be in RAM for optimal performance
@@ -92,25 +96,38 @@ void __not_in_flash_func(Timer_Process)(void) {
 // Critical: Timer callback processing - place in RAM for consistent timing
 void __not_in_flash_func(Timer_Process_Block)(void) {
     // Process all timer events that occurred in this block
-    // This function runs at ~1kHz instead of 48kHz, reducing CPU overhead by 98%
+    // This function runs at 1.5kHz instead of 48kHz, reducing CPU overhead by 97%
     
     for (int i = 0; i < max_timers; i++) {
         if (timers[i].active && timers[i].callback) {
-            // Check if timer should have triggered in this block
-            // We need to check if next_trigger_sample is within the current block
-            uint32_t block_start = global_sample_counter - TIMER_BLOCK_SIZE;
+            static float accumulated_error[8] = {0}; // Track error for up to 8 timers
             
             while (timers[i].next_trigger_sample <= global_sample_counter) {
                 // Timer should have triggered - fire it now
                 timers[i].callback(i);
                 
-                // Schedule next trigger (repeating timer)
+                // Schedule next trigger with precise fractional error tracking
                 timers[i].next_trigger_sample += timers[i].period_samples;
+                
+                // Accumulate fractional sample error for long-term precision
+                if (i < 8) { // Safety check for static array
+                    accumulated_error[i] += timers[i].period_error;
+                    
+                    // When fractional error accumulates to >= 1 sample, add it
+                    if (accumulated_error[i] >= 1.0f) {
+                        timers[i].next_trigger_sample += 1;
+                        accumulated_error[i] -= 1.0f;
+                    } else if (accumulated_error[i] <= -1.0f) {
+                        timers[i].next_trigger_sample -= 1;
+                        accumulated_error[i] += 1.0f;
+                    }
+                }
                 
                 // Handle wrap-around for very long-running systems
                 if (timers[i].next_trigger_sample < global_sample_counter) {
                     // If we've wrapped around, just schedule for next period
                     timers[i].next_trigger_sample = global_sample_counter + timers[i].period_samples;
+                    if (i < 8) accumulated_error[i] = 0.0f; // Reset error on wrap
                     break; // Exit the while loop to prevent infinite loop
                 }
                 
