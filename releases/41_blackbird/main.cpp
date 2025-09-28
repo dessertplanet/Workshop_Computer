@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <cstdarg>
 
 // Lua includes
 extern "C" {
@@ -81,6 +82,7 @@ extern "C" void hardware_output_set_voltage(int channel, float voltage);
 // Forward declaration of safe event handlers
 extern "C" void L_handle_change_safe(event_t* e);
 extern "C" void L_handle_stream_safe(event_t* e);
+extern "C" void L_handle_asl_done_safe(event_t* e);
 
 // ---- Cross-core debug snapshot (avoid interleaved stdio from both cores) ----
 typedef struct {
@@ -100,6 +102,40 @@ typedef struct {
 
 static volatile DebugSnapshot g_debug_snapshot = {0};
 static volatile bool g_debug_ready = false; // set by audio core, consumed by USB core
+
+class LuaManager;
+
+static bool usb_log_printf(const char* fmt, ...) {
+    char buffer[240];
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    if (written < 0) {
+        return false;
+    }
+    if (!mailbox_send_response(buffer)) {
+        printf("%s\n\r", buffer);
+        fflush(stdout);
+        return false;
+    }
+    return true;
+}
+
+static bool parse_output_volts_command(const char* command, int* channel, float* value) {
+    if (!command || !channel || !value) {
+        return false;
+    }
+    int ch = 0;
+    float val = 0.0f;
+    if (sscanf(command, "output[%d].volts = %f", &ch, &val) == 2 ||
+        sscanf(command, "output[%d].volts=%f", &ch, &val) == 2) {
+        *channel = ch;
+        *value = val;
+        return true;
+    }
+    return false;
+}
 
 /*
 
@@ -454,6 +490,7 @@ public:
     // Register crow backend functions for Output.lua compatibility
     lua_register(L, "LL_get_state", lua_LL_get_state);
     lua_register(L, "set_output_scale", lua_set_output_scale);
+    lua_register(L, "soutput_handler", lua_soutput_handler);
     
     // Register crow backend functions for Input.lua compatibility
     lua_register(L, "io_get_input", lua_io_get_input);
@@ -685,6 +722,7 @@ public:
     static int lua_LL_get_state(lua_State* L);
     static int lua_set_output_scale(lua_State* L);
     static int lua_c_tell(lua_State* L);
+    static int lua_soutput_handler(lua_State* L);
     
     // Crow backend functions for Input.lua compatibility
     static int lua_io_get_input(lua_State* L);
@@ -780,6 +818,8 @@ public:
     void hardware_set_output(int channel, float volts) {
         if (channel < 1 || channel > 4) return;
         
+        static int debug_prints_remaining = 32;
+        
         // Clamp voltage to ±6V range
         if (volts > 6.0f) volts = 6.0f;
         if (volts < -6.0f) volts = -6.0f;
@@ -797,7 +837,7 @@ public:
             case 1: // Output 1 → AudioOut1
                 AudioOut1(dac_value);
                 break;
-            case 2: // Output 2 → AudioOut2  
+            case 2: // Output 2 → AudioOut2
                 AudioOut2(dac_value);
                 break;
             case 3: // Output 3 → CVOut1
@@ -806,6 +846,11 @@ public:
             case 4: // Output 4 → CVOut2
                 CVOut2(dac_value);
                 break;
+        }
+        
+        if (debug_prints_remaining > 0) {
+            printf("[hardware] set_output ch%d volts=%.3f dac=%d\n\r", channel, volts, dac_value);
+            debug_prints_remaining--;
         }
     }
     
@@ -947,51 +992,20 @@ public:
     // Handle USB commands received from Core1 via mailbox
     void handle_usb_command(const char* command)
     {
+        //printf("[core0] received cmd: \"%s\"\n\r", command);
         // Parse and handle command
         C_cmd_t cmd = parse_command(command, strlen(command));
         if (cmd != C_none) {
             handle_command_with_response(cmd);
-        } else if (strcmp(command, "test_enhanced_multicore_safety") == 0) {
-            // Comprehensive multicore safety test
-            if (lua_manager) {
-                lua_manager->evaluate_safe("test_enhanced_multicore_safety()");
-            }
-        } else if (strcmp(command, "test_lockfree_performance") == 0) {
-            // Lock-free performance benchmark test
-            if (lua_manager) {
-                lua_manager->evaluate_safe("test_lockfree_performance()");
-            }
-        } else if (strcmp(command, "test_random_voltage") == 0) {
-            // Random voltage on rising edge test
-            if (lua_manager) {
-                lua_manager->evaluate_safe("test_random_voltage()");
-            }
-        } else if (strcmp(command, "test_phase2_performance") == 0) {
-            // Phase 2 block processing performance test
-            if (lua_manager) {
-                lua_manager->evaluate_safe("test_phase2_performance()");
-            }
-        } else if (strcmp(command, "test_simple_output") == 0) {
-            // Simple output hardware test
-            if (lua_manager) {
-                lua_manager->evaluate_safe("test_simple_output()");
-            }
-        } else if (strcmp(command, "debug_input_loading") == 0) {
-            // Manual debug of Input.lua loading - can be triggered after connection
-            if (lua_manager) {
-                printf("=== MANUAL INPUT DEBUG TRIGGERED ===\n\r");
-                lua_manager->load_embedded_asl();  // This will re-run the Input.lua loading with debug output
-                printf("=== INPUT DEBUG COMPLETED ===\n\r");
-            }
-        } else if (strcmp(command, "check_input_state") == 0) {
-            // Check current state of input objects
-            if (lua_manager) {
-                printf("=== CHECKING INPUT STATE ===\n\r");
-                lua_manager->evaluate_safe("print('Input class:', Input); print('input array:', input); if input then for i=1,2 do print('input[' .. i .. ']:', input[i]) end else print('input is nil!') end");
-                printf("=== INPUT STATE CHECK DONE ===\n\r");
-            }
         } else {
             // Not a ^^ command, treat as Lua code
+            int parsed_channel = 0;
+            float parsed_volts = 0.0f;
+            // if (parse_output_volts_command(command, &parsed_channel, &parsed_volts)) {
+            //     if (parsed_channel >= 1 && parsed_channel <= 4) {
+            //         printf("[core0] request output[%d].volts -> %.3f (queued)\n\r", parsed_channel, parsed_volts);
+            //     }
+            // }
             if (lua_manager) {
                 lua_manager->evaluate_safe(command);
             }
@@ -1327,31 +1341,32 @@ public:
         }
     }
 
-    // Optimized 32-sample block processing (1.5kHz) - HIGH PERFORMANCE
+    // Optimized 32-sample block processing (1.5kHz) - Uses ComputerCard's native block processing
     virtual void ProcessBlock(IO_block_t* block) override {
-        // CRITICAL: Process timers for 32 samples at once - much more efficient
+        // CRITICAL: Process timers for entire block at once - maximum efficiency
         for (int i = 0; i < block->size; i++) {
             Timer_Process();
         }
         
-        // Convert input block to detection system
-        for (int i = 0; i < block->size; i++) {
-            // Convert block inputs back to ComputerCard format for detection
-            float input1 = block->in[0][i] * 6.0f; // Convert to ±6V range
-            float input2 = block->in[1][i] * 6.0f;
-            
-            // Process detection (this already batches internally)
-            Detect_process_sample(0, input1); // Channel 0 (input[1])
-            Detect_process_sample(1, input2); // Channel 1 (input[2])
-        }
+        // Process detection system using block data properly
+        // Use the middle sample of the block for detection to avoid aliasing
+        int detection_sample = block->size / 2;
+        float input1 = block->in[0][detection_sample] * 6.0f; // Convert normalized to ±6V range
+        float input2 = block->in[1][detection_sample] * 6.0f;
         
-        // Process all 4 output channels in 32-sample blocks - MAXIMUM EFFICIENCY
-        for (int ch = 0; ch < 4; ch++) {
-            // Generate slopes envelope for entire block
-            S_step_v(ch, block->out[ch], block->size);
+        // Process detection once per block (more efficient than per-sample)
+        Detect_process_sample(0, input1); // Channel 0 (input[1])
+        Detect_process_sample(1, input2); // Channel 1 (input[2])
+        
+        // Process all 4 output channels in true block mode - MAXIMUM EFFICIENCY
+        for (int channel = 0; channel < 4; channel++) {
+            float* output_buffer = block->out[channel];
+            
+            // Generate slopes envelope for entire block at once
+            S_step_v(channel, output_buffer, block->size);
             
             // Apply AShaper to entire block (pass-through mode)
-            AShaper_v(ch, block->out[ch], block->size);
+            AShaper_v(channel, output_buffer, block->size);
         }
         
         // Hardware LED updates (much less frequent in block mode)
@@ -1447,165 +1462,22 @@ public:
         }
     }
 
-    // Legacy 48kHz sample-by-sample processing (fallback only)
-    virtual void ProcessSample()
+    // Legacy 48kHz sample-by-sample processing (DISABLED - Block processing only)
+    virtual void ProcessSample() override
     {
-        // CRITICAL: Process timers first - this drives the metro system at exact 48kHz
+        // This should never be called when block processing is enabled
+        // ComputerCard will only call this if use_block_processing is false
+        // Since we enable block processing in constructor, this is just a fallback
+        
+        // Just process timers to maintain basic functionality if somehow called
         Timer_Process();
         
-        // Hardware verification LEDs - test basic functionality
-        static uint32_t heartbeat_counter = 0;
-        static uint32_t input_test_counter = 0;
-        
-        // LED 5: Heartbeat - blinks every second to prove ProcessSample is running
-        if (++heartbeat_counter >= 48000) { // 1 second at 48kHz
-            heartbeat_counter = 0;
-            static bool heartbeat_state = false;
-            heartbeat_state = !heartbeat_state;
-            debug_led_on(5); // LED 5 for heartbeat
-            if (!heartbeat_state) {
-                debug_led_off(5);
-            }
+        // LED indication that we're in fallback mode (should not happen)
+        static uint32_t fallback_counter = 0;
+        if (++fallback_counter >= 48000) { // 1 second
+            fallback_counter = 0;
+            debug_led_on(0); // LED 0 indicates fallback mode (should be off normally)
         }
-        
-        // LED 4: Input activity - lights when any input signal detected
-        if (++input_test_counter >= 1000) { // Check every ~20ms
-            input_test_counter = 0;
-            
-            // Get raw input values directly from hardware
-            int16_t raw1 = AudioIn1();
-            int16_t raw2 = AudioIn2();
-            
-            // Convert to voltages for display
-            float input1 = hardware_get_input(1);
-            float input2 = hardware_get_input(2);
-            
-            // LED 4: Any significant input detected (above 0.5V threshold)
-            if (fabs(input1) > 0.5f || fabs(input2) > 0.5f) {
-                debug_led_on(4);
-            } else {
-                debug_led_off(4);
-            }
-            
-            // // Debug print every 500ms (24000 samples)
-            // static uint32_t print_counter = 0;
-            // if (++print_counter >= 500) {
-            //     print_counter = 0;
-            //     printf("HW: raw1=%d raw2=%d, volt1=%.3f volt2=%.3f\n\r", 
-            //            raw1, raw2, input1, input2);
-            // }
-        }
-        
-        // Get raw input values - ComputerCard handles connection detection internally
-        // It returns 0 when nothing is plugged in, so crow detection can work directly on this
-        float input1 = hardware_get_input(1);
-        float input2 = hardware_get_input(2);
-
-        // Process detection in 32-sample blocks like real crow
-        static int detect_block_counter = 0;
-        static float detect_block_buffer[2][32]; // Buffer for 2 channels x 32 samples
-        
-        // Store samples in block buffer
-        detect_block_buffer[0][detect_block_counter] = input1;
-        detect_block_buffer[1][detect_block_counter] = input2;
-        
-        if (++detect_block_counter >= 32) {
-            detect_block_counter = 0;
-            
-            // Process detection once per 32-sample block (matches real crow timing)
-            // Use the final sample of the block as the detection value
-            Detect_process_sample(0, detect_block_buffer[0][31]); // Channel 0 (input[1])
-            Detect_process_sample(1, detect_block_buffer[1][31]); // Channel 1 (input[2])
-        }
-
-        // ---- DEBUG INSTRUMENTATION (input & detector diagnostics) ----
-        // Track min/max over a 1s window and print summary once per second.
-        static float in1_min =  1e9f, in1_max = -1e9f;
-        static float in2_min =  1e9f, in2_max = -1e9f;
-        static uint32_t debug_sample_counter = 0;
-        
-        // Always track min/max since ComputerCard returns 0 when nothing plugged in
-        if (input1 != 0.0f) {
-            if (input1 < in1_min) in1_min = input1;
-            if (input1 > in1_max) in1_max = input1;
-        }
-        if (input2 != 0.0f) {
-            if (input2 < in2_min) in2_min = input2;
-            if (input2 > in2_max) in2_max = input2;
-        }
-        
-        if (++debug_sample_counter >= 48000) { // ~1 second
-            debug_sample_counter = 0;
-            Detect_t* d0 = Detect_ix_to_p(0);
-            Detect_t* d1 = Detect_ix_to_p(1);
-            bool in1_valid = d0 && (in1_min < 1e8f) && (in1_max > -1e8f) && (in1_min <= in1_max);
-            bool in2_valid = d1 && (in2_min < 1e8f) && (in2_max > -1e8f) && (in2_min <= in2_max);
-            float in1_span = in1_valid ? (in1_max - in1_min) : 0.0f;
-            float in2_span = in2_valid ? (in2_max - in2_min) : 0.0f;
-
-            // Publish snapshot only if previous one was consumed to avoid overwriting while USB core printing.
-            if (!g_debug_ready) {
-                DebugSnapshot snap;
-                snap.ch_last[0] = input1;          snap.ch_last[1] = input2;
-                snap.ch_span[0] = in1_span;        snap.ch_span[1] = in2_span;
-                snap.ch_state[0] = d0 ? d0->state : 0u;  snap.ch_state[1] = d1 ? d1->state : 0u;
-                snap.ch_rise[0] = d0 ? d0->change_rise_count : 0u; snap.ch_rise[1] = d1 ? d1->change_rise_count : 0u;
-                snap.ch_fall[0] = d0 ? d0->change_fall_count : 0u; snap.ch_fall[1] = d1 ? d1->change_fall_count : 0u;
-                snap.ch_thr[0]  = d0 ? d0->change.threshold : 0.0f; snap.ch_thr[1]  = d1 ? d1->change.threshold : 0.0f;
-                snap.ch_hy[0]   = d0 ? d0->change.hysteresis : 0.0f; snap.ch_hy[1]   = d1 ? d1->change.hysteresis : 0.0f;
-                snap.ch_conn[0] = 'C'; snap.ch_conn[1] = 'C'; // ComputerCard managed
-                snap.ch_inst[0] = 'C'; snap.ch_inst[1] = 'C'; // ComputerCard managed
-                snap.ch_valid[0]= in1_valid ? 'Y':'N'; snap.ch_valid[1]= in2_valid ? 'Y':'N';
-                snap.ch_conn_pct[0] = 0.0f; // No longer tracked
-                snap.ch_conn_pct[1] = 0.0f; // No longer tracked
-                snap.seq = g_debug_snapshot.seq + 1; // monotonic sequence
-                // Manual copy due to volatile qualification blocking aggregate assignment
-                for (int i=0;i<2;i++) {
-                    g_debug_snapshot.ch_last[i] = snap.ch_last[i];
-                    g_debug_snapshot.ch_span[i] = snap.ch_span[i];
-                    g_debug_snapshot.ch_state[i] = snap.ch_state[i];
-                    g_debug_snapshot.ch_rise[i] = snap.ch_rise[i];
-                    g_debug_snapshot.ch_fall[i] = snap.ch_fall[i];
-                    g_debug_snapshot.ch_thr[i]  = snap.ch_thr[i];
-                    g_debug_snapshot.ch_hy[i]   = snap.ch_hy[i];
-                    g_debug_snapshot.ch_conn[i] = snap.ch_conn[i];
-                    g_debug_snapshot.ch_inst[i] = snap.ch_inst[i];
-                    g_debug_snapshot.ch_valid[i]= snap.ch_valid[i];
-                    g_debug_snapshot.ch_conn_pct[i] = snap.ch_conn_pct[i];
-                }
-                g_debug_snapshot.seq = snap.seq;
-                g_debug_ready = true;    // publish
-            }
-            // reset window for next accumulation
-            in1_min =  1e9f; in1_max = -1e9f;
-            in2_min =  1e9f; in2_max = -1e9f;
-        }
-        // ---- END DEBUG INSTRUMENTATION ----
-
-        // (Option A) Event queue is now drained on core1 only; no draining here to keep audio loop deterministic
-        
-        // Process slopes system for all output channels (crow-style)
-        // Using safe timer-based approach to avoid USB enumeration issues
-        static int slope_sample_accum = 0;
-        static float slope_buffer[48];
-
-        // Advance envelopes in 48-sample blocks (≈1 kHz) to stay aligned with SAMPLES_PER_MS
-        if (++slope_sample_accum >= 48) {
-            slope_sample_accum = 0;
-
-            for (int i = 0; i < 4; i++) {
-                S_step_v(i, slope_buffer, 48);           // Generate envelope samples
-                AShaper_v(i, slope_buffer, 48);          // Apply AShaper (pass-through mode)
-                hardware_set_output(i + 1, slope_buffer[47]); // Output final sample
-            }
-        }
-        
-        // Basic audio passthrough for now
-        // AudioOut1(AudioIn1());
-        // AudioOut2(AudioIn2());
-        
-        // Could add basic crow-like functionality here later
-        // For now just pass audio through
     }
 };
 
@@ -1638,14 +1510,10 @@ int LuaManager::output_newindex(lua_State* L) {
     if (strcmp(key, "volts") == 0) {
         // Set voltage - use slopes system for smooth transitions
         float volts = (float)luaL_checknumber(L, 3);
-        
-        // Use slopes system to handle the voltage change
-        // This enables slew and other crow features
-        S_toward(output_data->channel - 1, // Convert to 0-based indexing
-                volts,                    // Destination voltage
-                0.0,                     // Immediate (no slew for now)
-                SHAPE_Linear,            // Linear transition
-                nullptr);                // No callback
+
+        // Actually execute the voltage change (was missing!)
+        printf("[lua] output[%d].volts=%.3f -> executing\n\r", output_data->channel, volts);
+        hardware_output_set_voltage(output_data->channel, volts);
         
         return 0;
     }
@@ -1716,7 +1584,7 @@ int LuaManager::lua_set_output_scale(lua_State* L) {
     return 0;
 }
 
-// _c.tell('output', channel, value) - Send output to hardware
+// _c.tell('output', channel, value) - Send output to slopes system (proper crow behavior)
 int LuaManager::lua_c_tell(lua_State* L) {
     // Add safety check for argument count
     int argc = lua_gettop(L);
@@ -1731,13 +1599,12 @@ int LuaManager::lua_c_tell(lua_State* L) {
         if (strcmp(module, "output") == 0) {
             static int output_tell_debug_count = 0;
             float value = (float)luaL_checknumber(L, 3);
+            printf("[core0] _c.tell output[%d] %.3f\n\r", channel, value);
             if (output_tell_debug_count < 32) {
-                printf("[tell] output ch%d value=%.3f\n\r", channel, value);
+                usb_log_printf("log: output[%d].volts -> %.3f", channel, value);
                 output_tell_debug_count++;
             }
-            if (g_blackbird_instance) {
-                ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, value);
-            }
+            hardware_output_set_voltage(channel, value);
     } else if (strcmp(module, "change") == 0) {
         // Handle default change callback from Input.lua - just ignore for now
         // This prevents crashes when detection triggers before user defines custom callback
@@ -1750,6 +1617,26 @@ int LuaManager::lua_c_tell(lua_State* L) {
     } else {
         // Handle unknown modules gracefully
         printf("_c.tell: unsupported module '%s' (ch=%d)\n\r", module, channel);
+    }
+    
+    return 0;
+}
+
+// soutput_handler(channel, voltage) - Bridge from C to Lua output callbacks
+int LuaManager::lua_soutput_handler(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);  // 1-based channel from C
+    float voltage = (float)luaL_checknumber(L, 2);
+    
+    // Call the Lua soutput_handler function which will invoke output[channel].receive()
+    lua_getglobal(L, "soutput_handler");
+    if (lua_isfunction(L, -1)) {
+        lua_pushinteger(L, channel);
+        lua_pushnumber(L, voltage);
+        lua_call(L, 2, 0);
+    } else {
+        // soutput_handler not defined, just log it
+        printf("soutput_handler: ch%d=%.3f (no handler)\n\r", channel, voltage);
+        lua_pop(L, 1);
     }
     
     return 0;
@@ -1944,6 +1831,45 @@ extern "C" void L_handle_change_safe(event_t* e) {
     
     if (kDetectionDebug) {
         printf("SAFE CALLBACK #%lu: Completed successfully\n\r", callback_counter);
+    }
+}
+
+// Core-safe ASL done event handler - triggers Lua "done" callbacks
+extern "C" void L_handle_asl_done_safe(event_t* e) {
+    // CRITICAL: This function can be called from either core
+    // Must be thread-safe and never block!
+    
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (!lua_mgr) {
+        return;
+    }
+    
+    int channel = e->index.i + 1; // Convert to 1-based
+    
+    printf("ASL sequence completed on output[%d] - triggering 'done' callback\n\r", channel);
+    
+    // Use crow-style ASL completion callback dispatching
+    char lua_call[128];
+    snprintf(lua_call, sizeof(lua_call),
+        "if output and output[%d] and output[%d].done then output[%d].done() end",
+        channel, channel, channel);
+    
+    // Safe to use blocking safe evaluation (runs on control core)
+    lua_mgr->evaluate_safe(lua_call);
+}
+
+// L_queue_asl_done function - queues ASL completion event
+extern "C" void L_queue_asl_done(int channel) {
+    event_t e = { 
+        .handler = L_handle_asl_done_safe,
+        .index = { .i = channel }, // 0-based channel index
+        .data = { .f = 0.0f },
+        .type = EVENT_TYPE_CHANGE, // Reuse change event type
+        .timestamp = to_ms_since_boot(get_absolute_time())
+    };
+    
+    if (!event_post(&e)) {
+        printf("Failed to post ASL done event for channel %d\n\r", channel + 1);
     }
 }
 
@@ -2171,6 +2097,22 @@ int LuaManager::lua_unique_card_id(lua_State* L) {
 extern "C" void hardware_output_set_voltage(int channel, float voltage) {
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, voltage);
+    }
+}
+
+// Bridge function called from slopes.c to trigger Lua soutput_handler
+extern "C" void trigger_soutput_handler(int channel, float voltage) {
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (lua_mgr && lua_mgr->L) {
+        // Call the C binding for soutput_handler which will call the Lua function
+        lua_pushcfunction(lua_mgr->L, LuaManager::lua_soutput_handler);
+        lua_pushinteger(lua_mgr->L, channel + 1); // Convert to 1-based
+        lua_pushnumber(lua_mgr->L, voltage);
+        if (lua_pcall(lua_mgr->L, 2, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(lua_mgr->L, -1);
+            printf("soutput_handler error: %s\n\r", error ? error : "unknown error");
+            lua_pop(lua_mgr->L, 1);
+        }
     }
 }
 

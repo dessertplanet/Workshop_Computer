@@ -95,11 +95,14 @@ virtual void ProcessBlock(IO_block_t* block) {
         block->out[0][i] = (float)dacOut[0] / 2048.0f;
         block->out[1][i] = (float)dacOut[1] / 2048.0f;
         
-        // For CV outputs, we'll use a simple approximation since PWM levels
-        // aren't easily readable in header-only mode. Real implementations
-        // should override ProcessBlock() for optimal performance.
-        block->out[2][i] = 0.0f; // CV1 - to be set by actual implementation
-        block->out[3][i] = 0.0f; // CV2 - to be set by actual implementation
+        // CV outputs: Read current PWM levels for block processing compatibility
+        // This provides reasonable CV output values even in legacy mode
+        uint16_t cv1_level = pwm_get_counter(pwm_gpio_to_slice_num(CV_OUT_1));
+        uint16_t cv2_level = pwm_get_counter(pwm_gpio_to_slice_num(CV_OUT_2));
+        
+        // Convert PWM levels back to voltage (reverse of CVOut calculation)
+        block->out[2][i] = (float)(2047 - (cv1_level * 2)) / 2048.0f * 6.0f; // CV1
+        block->out[3][i] = (float)(2047 - (cv2_level * 2)) / 2048.0f * 6.0f; // CV2
     }
 }
 

@@ -361,7 +361,7 @@ static void next_action( int index )
                             , resolve(self, &t->a).f
                             , ms
                             , resolve(self, &t->c).shape
-                            , &next_action // recur upon breakpoint
+                            , (ms > 0.0) ? &next_action : NULL // callback only if there's a time delay
                             );
                     if(ms > 0.0){ return; } // wait for DSP callback before proceeding
                     break;}
@@ -383,10 +383,10 @@ static void next_action( int index )
         } else {
 stepup:
             if( !seq_up(self) ){ // To invalid. Jump up. return if nothing left to do
-                // DEADLOCK FIX: Don't post events from CASL completion
-                // In multicore environment, this creates circular Lua->Event->Lua deadlock
-                // Real crow doesn't need this because it's single-threaded
-                // The "done" callback functionality is handled directly by slopes system
+                // ASL sequence completed - trigger "done" callback via event system
+                // This is safe with the mailbox inter-core communication system
+                extern void L_queue_asl_done(int channel);
+                L_queue_asl_done(index);
                 return;
             }
         }

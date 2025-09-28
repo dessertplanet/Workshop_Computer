@@ -44,9 +44,7 @@ int l_bootstrap_c_tell(lua_State* L) {
         // Handle output commands - this is the critical missing piece!
         if (strcmp(event_type, "output") == 0 && nargs >= 3) {
             float voltage = (float)luaL_checknumber(L, 3);
-            
-            // Forward to hardware through C interface function
-            // This will be implemented in main.cpp and linked
+            printf("[bootstrap] tell output[%d] %.3f\n", channel, voltage);
             extern void hardware_output_set_voltage(int channel, float voltage);
             hardware_output_set_voltage(channel, voltage);
             return 0;

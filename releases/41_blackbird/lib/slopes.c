@@ -352,6 +352,11 @@ static float* shaper_v( Slope_t* self, float* out, int size )
          , size );
     // save last state
     self->shaped = out[size-1];
+    
+    // Trigger soutput_handler for real-time voltage updates
+    extern void trigger_soutput_handler(int channel, float voltage);
+    trigger_soutput_handler(self->index, self->shaped);
+    
     return out;
 }
 
