@@ -198,12 +198,6 @@ target_sources(${CARD_NAME} PRIVATE
 target_compile_definitions(${CARD_NAME} PRIVATE ${TEST_DEFINE})
 target_include_directories(${CARD_NAME} PRIVATE ${CMAKE_BINARY_DIR})
 
-# Add build size monitoring
-add_custom_command(TARGET ${CARD_NAME} POST_BUILD
-    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${CARD_NAME}> || echo "size tool not available"
-    COMMAND ${CMAKE_COMMAND} -E echo "Binary file: $<TARGET_FILE:${CARD_NAME}>"
-    COMMENT "Monitoring binary size for RAM analysis"
-)
 
 # Copy UF2 files to UF2 directory with descriptive names
 add_custom_command(
