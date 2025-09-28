@@ -931,8 +931,9 @@ public:
         // Initialize Lua manager
         lua_manager = new LuaManager();
         
-        // Note: New ComputerCard.h API uses sample-by-sample processing only
-        printf("Sample-by-sample processing (48kHz)\n");
+        // Enable high-performance block processing (32 samples at 1.5kHz)
+        EnableBlockProcessing();
+        printf("Block processing enabled (32 samples, 1.5kHz)\n");
         
         // Initialize hardware timer for consistent 250Hz PulseOut2 performance monitoring
         if (!add_repeating_timer_us(-4000, pulse2_timer_callback, NULL, &g_pulse2_timer)) {
@@ -959,8 +960,8 @@ public:
             // Handle USB input directly - no mailbox needed
             handle_usb_input();
             
-            // Note: New ComputerCard.h API doesn't use block processing
-            // All processing happens in ProcessSample() at 48kHz
+            // CRITICAL: Process pending block processing outside ISR context
+            ProcessPendingBlocks();
             
             // Process lock-free metro events first (highest priority)
             metro_event_lockfree_t metro_event;
@@ -1381,31 +1382,65 @@ public:
     }
 
     
-    // Timing-safe sample-by-sample processing (48kHz) - Preserves exact timing behavior
-    virtual void ProcessSample() override
-    {
-        // CRITICAL: Maintain exact same timing call frequency as block processing
-        Timer_Process();                    // Same frequency as before (48kHz)
-        clock_increment_sample_counter();   // Same frequency as before (48kHz)
+    // Optimized 32-sample block processing (1.5kHz) - Uses ComputerCard's native Q12 block processing
+    virtual void __not_in_flash_func(ProcessBlock)(IO_block_t* block) override {
         
-        // Process detection at full 48kHz rate (same as before)
-        // Convert from ComputerCard range (-2048 to 2047) to ±6V range  
-        float input1 = (float)AudioIn1() * 6.0f / 2048.0f;
-        float input2 = (float)AudioIn2() * 6.0f / 2048.0f;
+        // CRITICAL: Process timers for entire block at once - maximum efficiency
+        // Also synchronize sample counters between timer and clock systems
+        for (int i = 0; i < block->size; i++) {
+            Timer_Process();
+            clock_increment_sample_counter(); // Keep clock system synchronized
+        }
         
-        Detect_process_sample(0, input1); // Channel 0 (input[1])
-        Detect_process_sample(1, input2); // Channel 1 (input[2])
+        // CRITICAL FIX: Process detection for EVERY sample in the block, not just middle sample
+        // This maintains 48kHz detection rate for proper edge detection and timing
+        for (int i = 0; i < block->size; i++) {
+            // Convert Q12 to ±6V range (hardware uses ±6V as confirmed by user)
+            float input1 = (float)block->in[0][i] * 6.0f / 2048.0f;
+            float input2 = (float)block->in[1][i] * 6.0f / 2048.0f;
+            
+            // Process detection at full 48kHz rate
+            Detect_process_sample(0, input1); // Channel 0 (input[1])
+            Detect_process_sample(1, input2); // Channel 1 (input[2])
+        }
         
-        // Process slopes system at sample rate (adapted from block version)
-        // S_step_v() requires a buffer, so we use a single-element buffer for sample processing
-        static float single_sample_buffer[1];
+        // OPTIMIZED: Process slopes system once per block instead of per-sample
+        // The slopes system now handles hardware output updates directly
+        static float temp_float_buffer[COMPUTERCARD_BLOCK_SIZE];
         for (int channel = 0; channel < 4; channel++) {
-            single_sample_buffer[0] = S_get_state(channel); // Get current state
-            S_step_v(channel, single_sample_buffer, 1);     // Process single sample
-            // The slopes system handles hardware output updates internally via hardware_output_set_voltage()
+            // Initialize with current slopes state
+            float current_state = S_get_state(channel);
+            for (int i = 0; i < block->size; i++) {
+                temp_float_buffer[i] = current_state;
+            }
+            
+            // Process slopes for this block - hardware updates happen internally
+            S_step_v(channel, temp_float_buffer, block->size);
+            
+            // The slopes system already updated hardware via hardware_output_set_voltage()
+            // No need for additional Q12 conversion or hardware writes here
         }
         
         // LED debugging removed to prevent audio artifacts
+        
+    }
+
+    // Legacy 48kHz sample-by-sample processing (DISABLED - Block processing only)
+    virtual void ProcessSample() override
+    {
+        // This should never be called when block processing is enabled
+        // ComputerCard will only call this if use_block_processing is false
+        // Since we enable block processing in constructor, this is just a fallback
+        
+        // Just process timers to maintain basic functionality if somehow called
+        Timer_Process();
+        
+        // LED indication that we're in fallback mode (should not happen)
+        static uint32_t fallback_counter = 0;
+        if (++fallback_counter >= 48000) { // 1 second
+            fallback_counter = 0;
+            debug_led_on(0); // LED 0 indicates fallback mode (should be off normally)
+        }
     }
 };
 
