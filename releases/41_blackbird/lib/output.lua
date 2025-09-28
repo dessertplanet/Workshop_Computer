@@ -50,7 +50,7 @@ Output.__newindex = function(self, ix, val)
         end
         self.asl:describe(val)
     elseif ix == 'volts' then
-        print(string.format("[OUT] volts request channel=%d val=%.4f slew=%.4f shape=%s", self.channel, val, self.slew or -1, tostring(self.shape)))
+        -- print(string.format("[OUT] volts request channel=%d val=%.4f slew=%.4f shape=%s", self.channel, val, self.slew or -1, tostring(self.shape)))
         self.asl:describe(to(val, self.slew, self.shape))
         self.asl:action()
     elseif ix == 'scale' then

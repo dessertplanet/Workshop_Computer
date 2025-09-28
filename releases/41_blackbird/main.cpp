@@ -852,7 +852,7 @@ public:
         }
         
         if (debug_prints_remaining > 0) {
-            printf("[hardware] set_output ch%d volts=%.3f dac=%d\n\r", channel, volts, dac_value);
+           // printf("[hardware] set_output ch%d volts=%.3f dac=%d\n\r", channel, volts, dac_value);
             debug_prints_remaining--;
         }
     }
@@ -1591,7 +1591,7 @@ int LuaManager::output_newindex(lua_State* L) {
 int LuaManager::lua_casl_describe(lua_State* L) {
     int raw = luaL_checkinteger(L, 1);
     int internal = raw - 1;
-    printf("[DBG] lua_casl_describe raw=%d internal=%d\n\r", raw, internal);
+    //printf("[DBG] lua_casl_describe raw=%d internal=%d\n\r", raw, internal);
     casl_describe(internal, L); // C is zero-based
     lua_pop(L, 2);
     return 0;
@@ -1601,7 +1601,7 @@ int LuaManager::lua_casl_action(lua_State* L) {
     int raw = luaL_checkinteger(L, 1);
     int act = luaL_checkinteger(L, 2);
     int internal = raw - 1;
-    printf("[DBG] lua_casl_action raw=%d internal=%d action=%d\n\r", raw, internal, act);
+   // printf("[DBG] lua_casl_action raw=%d internal=%d action=%d\n\r", raw, internal, act);
     casl_action(internal, act); // C is zero-based
     lua_pop(L, 2);
     return 0;
@@ -1924,7 +1924,7 @@ extern "C" void L_handle_asl_done_safe(event_t* e) {
     
     int channel = e->index.i + 1; // Convert to 1-based
     
-    printf("ASL sequence completed on output[%d] - triggering 'done' callback\n\r", channel);
+    // printf("ASL sequence completed on output[%d] - triggering 'done' callback\n\r", channel);
     
     // Use crow-style ASL completion callback dispatching
     char lua_call[128];

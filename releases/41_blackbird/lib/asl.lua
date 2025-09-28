@@ -49,7 +49,7 @@ end
 -- truthy always restarts
 -- falsey means 'release'
 function Asl:action(direc)
-    print(("[ASL] action id=%d direc=%s"):format(self.id, tostring(direc)))
+    -- print(("[ASL] action id=%d direc=%s"):format(self.id, tostring(direc)))
     if direc == nil then -- no arg is always 'restart'
         casl_action(self.id, 1)
     elseif direc == 'unlock' then casl_action(self.id, 2) -- release lock construct
