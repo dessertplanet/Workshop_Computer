@@ -183,17 +183,8 @@ end
 
 setmetatable(Input, Input) -- capture the metamethods
 
--- callback
-function stream_handler( chan, val ) Input.inputs[chan].stream( val ) end
-function change_handler( chan, val ) Input.inputs[chan].change( val ~= 0 ) end
-function window_handler( chan, win, dir ) Input.inputs[chan].window( win, dir ~= 0 ) end
-function scale_handler(chan,i,o,n,v)
-    --TODO build this table in C as it'll be faster?
-    s={index=i, octave=o, note=n, volts=v}
-    Input.inputs[chan].scale(s)
-end
-function volume_handler( chan, val ) Input.inputs[chan].volume( val ) end
-function peak_handler( chan ) Input.inputs[chan].peak() end
-function freq_handler( chan, val ) Input.inputs[chan].freq( val ) end
+-- REMOVED: Conflicting global handlers that override main.cpp's safe handlers
+-- These unsafe handlers caused "attempt to call nil/table value" errors during rapid mode switching
+-- The main.cpp handlers have proper validation and are used instead
 
 return Input

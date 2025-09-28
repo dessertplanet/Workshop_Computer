@@ -87,6 +87,8 @@ void Detect_init(int channels) {
         detectors[i].channel = i;
         detectors[i].last = 0.0f;
         detectors[i].state = 0;
+        detectors[i].samples_in_current_block = 0;
+        detectors[i].mode_switching = false;
         detectors[i].last_sample = 0.0f;
         detectors[i].canary = DETECT_CANARY;
         detectors[i].change_rise_count = 0;
@@ -445,7 +447,9 @@ void __not_in_flash_func(Detect_process_sample)(int channel, float level) {
     }
     
     detector->last_sample = level;
-    if (detector->modefn) {
+    
+    // Lock-free thread safety: Skip processing if mode is being switched
+    if (!detector->mode_switching && detector->modefn) {
         detector->modefn(detector, level, block_boundary);
     }
 }

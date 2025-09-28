@@ -82,6 +82,8 @@ typedef struct detect{
     uint8_t    state; // for change/peak hysteresis
     // block tracking for consolidated timing
     int        samples_in_current_block; // Track position within 32-sample block
+    // lock-free thread safety for mode switching
+    volatile bool mode_switching; // Atomic flag to prevent race conditions
     // debug / diagnostics
     float      last_sample;   // last raw level processed
     uint32_t   canary;        // memory corruption sentinel

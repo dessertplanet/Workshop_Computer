@@ -2003,7 +2003,15 @@ int LuaManager::lua_set_input_none(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
+        // ATOMIC MODE SWITCHING: Set flag to prevent callback corruption
+        detector->mode_switching = true;
+        
+        // Clear detection mode safely
         Detect_none(detector);
+        
+        // Clear flag after mode change is complete
+        detector->mode_switching = false;
+        
         printf("Input %d: none mode (detection disabled)\n\r", channel);
     }
     return 0;
