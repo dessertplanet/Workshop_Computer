@@ -1026,6 +1026,10 @@ public:
             printf("PulseOut2 timer started: 250Hz consistent pulse for performance monitoring\n");
         }
         
+        // Start slopes processing timer (runs at 1.5kHz via Timer_Process_Block)
+        // This processes all slope channels and outputs the results
+        printf("Slopes processing will run via Timer_Process_Block at 1.5kHz\n");
+        
         // Dual-core architecture: Core0=USB/Control, Core1=Audio
         printf("Dual-core architecture initialized\n");
     }
@@ -1470,38 +1474,24 @@ public:
         }
     }
     
-    // Timing-safe sample-by-sample processing (48kHz) - Preserves exact timing behavior
+    // Minimal audio callback like real crow - just CV input and detection
+    // Slopes system runs asynchronously via timers (not in audio callback)
     virtual void ProcessSample() override
     {
-        // CRITICAL: Maintain exact same timing call frequency as block processing
-        Timer_Process();                    // Same frequency as before (48kHz)
-        clock_increment_sample_counter();   // Same frequency as before (48kHz)
+        // CRITICAL: Maintain exact same timing call frequency
+        Timer_Process();                    // 48kHz - drives slopes asynchronously
+        clock_increment_sample_counter();   // 48kHz
         
-        // Process detection at full 48kHz rate (same as before)
-        // Convert from ComputerCard range (-2048 to 2047) to ±6V range  
-        hardware_get_input(1); // Update g_input_state_q12[0]
-        hardware_get_input(2); // Update g_input_state_q12[1]
+        // Read CV inputs directly - clean and simple
+        int16_t cv1 = CVIn1();
+        int16_t cv2 = CVIn2();
         
-        // Pre-computed conversion constant: 6.0V / 2047 ADC counts
-        static const float ADC_TO_VOLTS = 6.0f / 2047.0f;
+        // Process detection sample-by-sample for edge accuracy
+        Detect_process_sample(0, cv1);
+        Detect_process_sample(1, cv2);
         
-        // Convert ADC values to volts BEFORE passing to detection system
-        float input1_volts = (float)g_input_state_q12[0] * ADC_TO_VOLTS;
-        float input2_volts = (float)g_input_state_q12[1] * ADC_TO_VOLTS;
-        
-        Detect_process_sample(0, input1_volts); // Channel 0 (input[1]) - now in volts!
-        Detect_process_sample(1, input2_volts); // Channel 1 (input[2]) - now in volts!
-        
-        // Process slopes system at sample rate (adapted from block version)
-        // S_step_v() requires a buffer, so we use a single-element buffer for sample processing
-        static float single_sample_buffer[1];
-        for (int channel = 0; channel < 4; channel++) {
-            single_sample_buffer[0] = S_get_state(channel); // Get current state
-            S_step_v(channel, single_sample_buffer, 1);     // Process single sample
-            // The slopes system handles hardware output updates internally via hardware_output_set_voltage()
-        }
-        
-        // LED debugging removed to prevent audio artifacts
+        // That's it! Slopes update outputs via Timer_Process() callbacks
+        // No need to call S_step_v() here - it runs asynchronously
     }
 };
 
@@ -1691,34 +1681,28 @@ int LuaManager::lua_io_get_input(lua_State* L) {
 // Mode-specific detection callbacks - OPTIMIZED for direct execution
 static constexpr bool kDetectionDebug = false;
 
-// Direct stream callback - executes immediately on audio core for optimal latency
+// Lock-free stream callback - posts to queue without blocking ISR
 static void stream_callback(int channel, float value) {
-    static uint32_t callback_count = 0;
-    callback_count++;
+    // Post to lock-free event queue instead of executing Lua directly
+    event_t e = {
+        .handler = L_handle_stream_safe,
+        .index = { .i = channel },  // 0-based channel
+        .data = { .f = value },
+        .type = EVENT_TYPE_CHANGE,
+        .timestamp = to_ms_since_boot(get_absolute_time())
+    };
     
-    if (kDetectionDebug) {
-        queue_debug_message("STREAM DIRECT #%lu: ch%d value=%.3f", callback_count, channel + 1, value);
-    }
-    
-    // PERFORMANCE CRITICAL: Execute Lua callback directly without event queueing
-    LuaManager* lua_mgr = LuaManager::getInstance();
-    if (lua_mgr && lua_mgr->L) {
-        // Use direct Lua execution for minimal latency
-        char lua_call[128];
-        snprintf(lua_call, sizeof(lua_call),
-            "if stream_handler then stream_handler(%d, %.6f) end",
-            channel + 1, value);  // Convert to 1-based
-        
-        // Execute directly on audio core - real-time safe
-        lua_mgr->evaluate_safe(lua_call);
+    if (!event_post(&e)) {
+        // Queue full - drop event (better than blocking ISR)
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            queue_debug_message("Stream event queue full, dropped %lu events", drop_count);
+        }
     }
 }
 
-// Direct change callback - executes immediately on audio core for optimal latency  
+// Lock-free change callback - posts to queue without blocking ISR
 static void change_callback(int channel, float value) {
-    static uint32_t callback_count = 0;
-    callback_count++;
-    
     // For change detection, 'value' is actually the state (0.0 or 1.0), not voltage
     bool state = (value > 0.5f);
     
@@ -1733,29 +1717,20 @@ static void change_callback(int channel, float value) {
         }
     }
     
-    if (kDetectionDebug) {
-        queue_debug_message("CHANGE DIRECT #%lu: ch%d state=%s", callback_count, channel + 1, state ? "HIGH" : "LOW");
-    }
+    // Post to lock-free event queue instead of executing Lua directly
+    event_t e = {
+        .handler = L_handle_change_safe,
+        .index = { .i = channel },  // 0-based channel
+        .data = { .f = value },
+        .type = EVENT_TYPE_CHANGE,
+        .timestamp = to_ms_since_boot(get_absolute_time())
+    };
     
-    // PERFORMANCE CRITICAL: Execute Lua callback directly without event queueing
-    LuaManager* lua_mgr = LuaManager::getInstance();
-    if (lua_mgr && lua_mgr->L) {
-        // LED 0: Change detection active (proves detection system works)
-        if (g_blackbird_instance) {
-            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(0);
-        }
-        
-        // Use direct Lua execution for minimal latency
-        char lua_call[128];
-        snprintf(lua_call, sizeof(lua_call),
-            "if change_handler then change_handler(%d, %d) end",
-            channel + 1, state ? 1 : 0);  // Convert to 1-based, pass 0/1 like crow
-        
-        // Execute directly on audio core - real-time safe
-        lua_mgr->evaluate_safe(lua_call);
-        
-        if (g_blackbird_instance) {
-            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
+    if (!event_post(&e)) {
+        // Queue full - drop event (better than blocking ISR)
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            queue_debug_message("Change event queue full, dropped %lu events", drop_count);
         }
     }
 }

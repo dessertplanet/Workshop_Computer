@@ -98,6 +98,40 @@ void __not_in_flash_func(Timer_Process_Block)(void) {
     // Process all timer events that occurred in this block
     // This function runs at 1.5kHz instead of 48kHz, reducing CPU overhead by 97%
     
+    // OPTIMIZATION: Only process slopes that are actually changing
+    // Check which channels have active slopes before expensive S_step_v calls
+    extern float S_get_state(int index);
+    extern float* S_step_v(int index, float* out, int size);
+    
+    // Access slope internals to check if processing is needed
+    typedef struct {
+        int index;
+        float dest;
+        float last;
+        int shape;
+        void* action;
+        float here;
+        float delta;
+        float countdown;
+        float scale;
+        float shaped;
+    } Slope_t;
+    extern Slope_t* slopes; // Defined in slopes.c
+    
+    static float slope_buffer[TIMER_BLOCK_SIZE];
+    
+    for (int ch = 0; ch < 4; ch++) {
+        // Skip channels that are idle (no active slope/slew/action)
+        if (slopes && slopes[ch].countdown <= 0.0f && slopes[ch].action == NULL) {
+            continue; // Channel is static, no processing needed
+        }
+        
+        // Process this channel's slope over the block
+        S_step_v(ch, slope_buffer, TIMER_BLOCK_SIZE);
+        // Hardware output update happens inside S_step_v via hardware_output_set_voltage
+    }
+    
+    // Process timer callbacks
     for (int i = 0; i < max_timers; i++) {
         if (timers[i].active && timers[i].callback) {
             static float accumulated_error[8] = {0}; // Track error for up to 8 timers

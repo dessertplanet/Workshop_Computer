@@ -159,4 +159,4 @@ void Detect_freq( Detect_t*         self
 ////////////////////////////////////
 // processing functions
 
-void Detect_process_sample(int channel, float level_volts);
+void Detect_process_sample(int channel, int16_t raw_adc);
