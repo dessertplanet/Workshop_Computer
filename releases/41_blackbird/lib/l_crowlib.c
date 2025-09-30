@@ -10,7 +10,7 @@
 #include "lib/caw.h"        // Caw_printf()
 // #include "lib/io.h"         // IO_GetADC() - not used in emulator
 // Declare IO_GetADC function for compatibility (implemented in main.cpp)
-extern float IO_GetADC(uint8_t channel);
+extern int16_t get_input_state_simple(int channel); // returns input voltage in volts
 #include "lib/events.h"     // event_t, event_post()
 #include "lib/events_lockfree.h"  // Lock-free event queues
 #include "lib/slopes.h"     // S_reset()
@@ -570,7 +570,7 @@ static int _tell_get_out( lua_State* L ){
 // C.tell( 'stream', channel, io_get_input( channel ))
 static int _tell_get_cv( lua_State* L ){
 int chan = luaL_checknumber(L, -1);
-    Caw_printf( "^^stream(%i,%f)", chan, (double)IO_GetADC(chan-1));
+    Caw_printf( "^^stream(%i,%f)", chan, get_input_state_simple(chan-1));
     lua_settop(L, 0);
     return 0;
 }

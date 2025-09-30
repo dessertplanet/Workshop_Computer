@@ -60,10 +60,27 @@ extern "C" {
 // Simplified output state storage - no lock-free complexity needed
 static volatile int32_t g_output_state_mv[4] = {0, 0, 0, 0};
 
+//Simplified input state storage
+static volatile int32_t g_input_state_q12[2] = {0, 0};
+
 // Simple output state access - direct variable access is sufficient
 static void set_output_state_simple(int channel, int32_t value_mv) {
     if (channel >= 0 && channel < 4) {
         g_output_state_mv[channel] = value_mv;
+    }
+}
+
+float get_input_state_simple(int channel) {
+    if (channel >= 0 && channel < 2) {
+        return (float) g_input_state_q12[channel] * (6.0f / 2047.0f);
+    }
+    return 0.0f;
+}
+
+// Simple input state access - direct variable access is sufficient
+static void set_input_state_simple(int channel, int16_t rawValue) {
+    if (channel >= 0 && channel < 2) {
+        g_input_state_q12[channel] = rawValue;
     }
 }
 
@@ -92,6 +109,73 @@ extern "C" void L_handle_asl_done_safe(event_t* e);
 
 class LuaManager;
 
+// Message queue system for audio-safe printf replacement
+#define MESSAGE_QUEUE_SIZE 32
+#define MESSAGE_MAX_LENGTH 240
+
+typedef struct {
+    char message[MESSAGE_MAX_LENGTH];
+    uint32_t timestamp;
+    bool is_debug;
+} queued_message_t;
+
+static volatile queued_message_t g_message_queue[MESSAGE_QUEUE_SIZE];
+static volatile uint32_t g_message_write_idx = 0;
+static volatile uint32_t g_message_read_idx = 0;
+
+// Audio-safe message queuing - replaces printf calls
+static bool queue_message(bool is_debug, const char* fmt, ...) {
+    // Get next write position
+    uint32_t next_write = (g_message_write_idx + 1) % MESSAGE_QUEUE_SIZE;
+    
+    // Check for queue full
+    if (next_write == g_message_read_idx) {
+        return false; // Queue full, drop message
+    }
+    
+    // Format message
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf((char*)g_message_queue[g_message_write_idx].message, 
+                           MESSAGE_MAX_LENGTH, fmt, args);
+    va_end(args);
+    
+    if (written < 0) {
+        return false;
+    }
+    
+    // Store metadata
+    g_message_queue[g_message_write_idx].timestamp = to_ms_since_boot(get_absolute_time());
+    g_message_queue[g_message_write_idx].is_debug = is_debug;
+    
+    // Update write index (atomic on single-core writes)
+    g_message_write_idx = next_write;
+    
+    return true;
+}
+
+// Process queued messages on Core0
+static void process_queued_messages() {
+    while (g_message_read_idx != g_message_write_idx) {
+        // Cast away volatile for local use
+        const queued_message_t* msg = (const queued_message_t*)&g_message_queue[g_message_read_idx];
+        
+        // Output message
+        printf("%s", msg->message);
+        if (!strstr(msg->message, "\n") && !strstr(msg->message, "\r")) {
+            printf("\r\n"); // Add line ending if not present
+        }
+        fflush(stdout);
+        
+        // Update read index
+        g_message_read_idx = (g_message_read_idx + 1) % MESSAGE_QUEUE_SIZE;
+    }
+}
+
+// Convenience macros for different message types
+#define queue_user_message(fmt, ...) queue_message(false, fmt, ##__VA_ARGS__)
+#define queue_debug_message(fmt, ...) queue_message(true, fmt, ##__VA_ARGS__)
+
 static bool usb_log_printf(const char* fmt, ...) {
     char buffer[240];
     va_list args;
@@ -102,8 +186,7 @@ static bool usb_log_printf(const char* fmt, ...) {
         return false;
     }
     if (!mailbox_send_response(buffer)) {
-        printf("%s\n\r", buffer);
-        fflush(stdout);
+        queue_user_message("%s", buffer);
         return false;
     }
     return true;
@@ -816,6 +899,8 @@ class BlackbirdCrow : public ComputerCard
 public:
     // Cached unique ID for Lua access (since UniqueCardID() is protected)
     uint64_t cached_unique_id;
+
+    uint16_t inputs[4];
     // Hardware abstraction functions for output
     void hardware_set_output(int channel, float volts) {
         if (channel < 1 || channel > 4) return;
@@ -863,18 +948,18 @@ public:
     }
     
     // Hardware abstraction functions for input
-    float hardware_get_input(int channel) {
-        if (channel < 1 || channel > 2) return 0.0f;
+    void hardware_get_input(int channel) {
         
         int16_t raw_value = 0;
         if (channel == 1) {
-            raw_value = AudioIn1();
+            raw_value = CVIn1();
         } else if (channel == 2) {
-            raw_value = AudioIn2();
+            raw_value = CVIn2();
         }
-        
-        // Convert from ComputerCard range (-2048 to 2047) to crow voltage range (±6V)
-        return (float)raw_value * 6.0f / 2048.0f;
+
+        set_input_state_simple(channel - 1, raw_value);
+
+        return;
     }
     
     // Public LED control functions for debugging
@@ -941,14 +1026,14 @@ public:
             printf("PulseOut2 timer started: 250Hz consistent pulse for performance monitoring\n");
         }
         
-        // Single-core architecture - no Core1 needed
-        printf("Single-core architecture initialized\n");
+        // Dual-core architecture: Core0=USB/Control, Core1=Audio
+        printf("Dual-core architecture initialized\n");
     }
     
-    // Single-core main control loop - handles USB, events, and Lua directly
+    // Core0 main control loop - handles USB, events, and Lua directly
     void MainControlLoop()
     {
-        printf("Blackbird Crow Emulator v0.3 (Single-Core Architecture)\n");
+        printf("Blackbird Crow Emulator v0.3 (Dual-Core Architecture)\n");
         printf("Send ^^v for version, ^^i for identity\n");
         
         // Initialize USB buffer
@@ -958,6 +1043,9 @@ public:
         while (1) {
             // Handle USB input directly - no mailbox needed
             handle_usb_input();
+            
+            // Process queued messages from audio thread
+            process_queued_messages();
             
             // Note: New ComputerCard.h API doesn't use block processing
             // All processing happens in ProcessSample() at 48kHz
@@ -1060,7 +1148,7 @@ public:
         switch (cmd) {
             case C_version: {
                 // Embed build date/time and debug format so a late serial connection can verify firmware
-                printf("^^version('blackbird-0.3 %s %s single-core')\r\n", __DATE__, __TIME__);
+                printf("^^version('blackbird-0.3 %s %s dual-core')\r\n", __DATE__, __TIME__);
                 break; }
                 
             case C_identity: {
@@ -1124,8 +1212,10 @@ public:
                             printf("Warning: init() invocation failed after First.lua load\n\r");
                         }
 
-                        float input1_volts = hardware_get_input(1);
-                        float input2_volts = hardware_get_input(2);
+                        //convert 12 bit signed raw input to volts
+                        // 0 = 0V, 2047 = +6V, -2048 = -6V
+                        float input1_volts = get_input_state_simple(0);
+                        float input2_volts = get_input_state_simple(1);
                         printf("[diag] input volts after load: in1=%.3fV in2=%.3fV\n\r", input1_volts, input2_volts);
 
                         printf("first.lua loaded\r\n");
@@ -1263,8 +1353,8 @@ public:
                             printf("Warning: init() invocation failed after First.lua load\n\r");
                         }
 
-                        float input1_volts = hardware_get_input(1);
-                        float input2_volts = hardware_get_input(2);
+                        float input1_volts = get_input_state_simple(0);
+                        float input2_volts = get_input_state_simple(1);
                         printf("[diag] input volts after load: in1=%.3fV in2=%.3fV\n\r", input1_volts, input2_volts);
 
                         send_crow_response("first.lua loaded");
@@ -1379,7 +1469,6 @@ public:
             tight_loop_contents();
         }
     }
-
     
     // Timing-safe sample-by-sample processing (48kHz) - Preserves exact timing behavior
     virtual void ProcessSample() override
@@ -1390,11 +1479,18 @@ public:
         
         // Process detection at full 48kHz rate (same as before)
         // Convert from ComputerCard range (-2048 to 2047) to ±6V range  
-        float input1 = (float)AudioIn1() * 6.0f / 2048.0f;
-        float input2 = (float)AudioIn2() * 6.0f / 2048.0f;
+        hardware_get_input(1); // Update g_input_state_q12[0]
+        hardware_get_input(2); // Update g_input_state_q12[1]
         
-        Detect_process_sample(0, input1); // Channel 0 (input[1])
-        Detect_process_sample(1, input2); // Channel 1 (input[2])
+        // Pre-computed conversion constant: 6.0V / 2047 ADC counts
+        static const float ADC_TO_VOLTS = 6.0f / 2047.0f;
+        
+        // Convert ADC values to volts BEFORE passing to detection system
+        float input1_volts = (float)g_input_state_q12[0] * ADC_TO_VOLTS;
+        float input2_volts = (float)g_input_state_q12[1] * ADC_TO_VOLTS;
+        
+        Detect_process_sample(0, input1_volts); // Channel 0 (input[1]) - now in volts!
+        Detect_process_sample(1, input2_volts); // Channel 1 (input[2]) - now in volts!
         
         // Process slopes system at sample rate (adapted from block version)
         // S_step_v() requires a buffer, so we use a single-element buffer for sample processing
@@ -1585,7 +1681,7 @@ int LuaManager::lua_io_get_input(lua_State* L) {
     float volts = 0.0f;
     
     if (g_blackbird_instance) {
-        volts = ((BlackbirdCrow*)g_blackbird_instance)->hardware_get_input(channel);
+        volts = get_input_state_simple(channel - 1); // Convert to 0-based
     }
     
     lua_pushnumber(L, volts);
@@ -1601,7 +1697,7 @@ static void stream_callback(int channel, float value) {
     callback_count++;
     
     if (kDetectionDebug) {
-        printf("STREAM DIRECT #%lu: ch%d value=%.3f\n\r", callback_count, channel + 1, value);
+        queue_debug_message("STREAM DIRECT #%lu: ch%d value=%.3f", callback_count, channel + 1, value);
     }
     
     // PERFORMANCE CRITICAL: Execute Lua callback directly without event queueing
@@ -1638,7 +1734,7 @@ static void change_callback(int channel, float value) {
     }
     
     if (kDetectionDebug) {
-        printf("CHANGE DIRECT #%lu: ch%d state=%s\n\r", callback_count, channel + 1, state ? "HIGH" : "LOW");
+        queue_debug_message("CHANGE DIRECT #%lu: ch%d state=%s", callback_count, channel + 1, state ? "HIGH" : "LOW");
     }
     
     // PERFORMANCE CRITICAL: Execute Lua callback directly without event queueing
@@ -2072,30 +2168,19 @@ extern "C" lua_State* get_lua_state(void) {
     return lua_mgr ? lua_mgr->L : nullptr;
 }
 
-// Stub implementation of IO_GetADC for crow compatibility
-// This is hardware-specific to real crow, so we provide Workshop Computer version
-extern "C" float IO_GetADC(uint8_t channel) {
-    if (g_blackbird_instance) {
-        // Convert from crow's 0-based indexing to Workshop Computer's 1-based indexing
-        return ((BlackbirdCrow*)g_blackbird_instance)->hardware_get_input(channel + 1);
-    }
-    return 0.0f;
-}
+BlackbirdCrow crow;
 
 static void core1_entry() {
-    if (g_crow_core1) {
         printf("[boot] core1 audio engine starting\n\r");
-        g_crow_core1->Run(); // sets ComputerCard::thisptr and starts DMA/SPI
-    }
+        //Normalisation probe was causing issues so disabling.
+        //crow.EnableNormalisationProbe();
+        crow.Run(); 
 }
 
 int main()
 {
-    if (!set_sys_clock_khz(200000, false)) {
-        if (!set_sys_clock_khz(150000, false)) {
-            set_sys_clock_khz(133000, true);
-        }
-    }
+    set_sys_clock_khz(200000, true);
+
     stdio_init_all();
     // Disable stdio buffering to ensure immediate visibility of debug prints
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -2106,18 +2191,11 @@ int main()
             tight_loop_contents();
         }
     }
-    // Build / instrumentation fingerprint so we can verify the running firmware version on the device
-    printf("[boot] blackbird build %s %s dbg_format=v2 conn_smpl instrumentation active\r\n", __DATE__, __TIME__);
 
-    BlackbirdCrow crow;
-    crow.EnableNormalisationProbe();
-    
-    // Launch audio/DAC engine on core1 (Run() blocks there)
-    g_crow_core1 = &crow;
     multicore_launch_core1(core1_entry);
     
     // Allow core1 to start before entering control loop
-    sleep_ms(20);
+    sleep_ms(500);
     
     // Start Core0 main control loop (handles commands and events)
     crow.MainControlLoop();

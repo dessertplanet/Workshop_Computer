@@ -425,7 +425,8 @@ static void scale_bounds(Detect_t* self, int ix, int oct) {
 }
 
 // Main detection processing function - CRITICAL: Called from ProcessSample at audio rate
-void __not_in_flash_func(Detect_process_sample)(int channel, float level) {
+// level_volts is already converted to ±6V range by caller
+void __not_in_flash_func(Detect_process_sample)(int channel, float level_volts) {
     if (channel >= detector_count || !detectors) return;
     
     Detect_t* detector = &detectors[channel];
@@ -446,10 +447,10 @@ void __not_in_flash_func(Detect_process_sample)(int channel, float level) {
         detector->samples_in_current_block = 0;
     }
     
-    detector->last_sample = level;
+    detector->last_sample = level_volts;
     
     // Lock-free thread safety: Skip processing if mode is being switched
     if (!detector->mode_switching && detector->modefn) {
-        detector->modefn(detector, level, block_boundary);
+        detector->modefn(detector, level_volts, block_boundary);
     }
 }
