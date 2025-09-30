@@ -18,7 +18,7 @@ typedef struct {
 
 static timer_t* timers = NULL;
 static int max_timers = 0;
-static uint64_t global_sample_counter = 0; // Incremented every ProcessSample() - 64-bit for precision
+volatile uint64_t global_sample_counter = 0; // Incremented in ProcessSample() ISR - 64-bit for precision
 
 // Block processing state - aligned with audio blocks for consistent timing
 static int sample_accumulator = 0; // Count samples until next block processing
@@ -80,16 +80,19 @@ void Timer_Set_Params(int timer_id, float seconds) {
            timer_id, seconds, timers[timer_id].period_samples, timers[timer_id].period_error);
 }
 
-// Time-critical: Called at 48kHz sample rate - must be in RAM for optimal performance
-void __not_in_flash_func(Timer_Process)(void) {
-    // Called from ProcessSample() at exactly 48kHz - optimized block processing
-    global_sample_counter++;
-    sample_accumulator++;
+// Timer processing - called from MainControlLoop at ~1.5kHz
+// NO LONGER IN ISR! Safe to take time for complex calculations
+void Timer_Process(void) {
+    // Check if enough samples have passed for next block
+    // global_sample_counter incremented by ProcessSample() ISR
+    static uint64_t last_processed_sample = 0;
     
-    // Only process timers every TIMER_BLOCK_SIZE samples (~1kHz instead of 48kHz)
-    if (sample_accumulator >= TIMER_BLOCK_SIZE) {
+    uint64_t samples_elapsed = global_sample_counter - last_processed_sample;
+    
+    // Process a block when TIMER_BLOCK_SIZE samples have accumulated
+    if (samples_elapsed >= TIMER_BLOCK_SIZE) {
         Timer_Process_Block();
-        sample_accumulator = 0;
+        last_processed_sample = global_sample_counter;
     }
 }
 

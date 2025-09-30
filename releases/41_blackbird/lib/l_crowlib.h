@@ -24,5 +24,6 @@ void L_queue_clock_resume( int coro_id );
 void L_queue_clock_start( void );
 void L_queue_clock_stop( void );
 
-// Lock-free metro handler function
+// Lock-free event handler functions
 void L_handle_metro_lockfree( metro_event_lockfree_t* event );
+void L_handle_input_lockfree( input_event_lockfree_t* event );
