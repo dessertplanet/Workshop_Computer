@@ -1734,20 +1734,33 @@ static void stream_callback(int channel, float value) {
     }
 }
 
+// Shared state for change callback duplicate suppression - MUST BE SHARED!
+static int8_t g_change_last_reported_state[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+
+// Reset function for change callback state - called when input modes change
+static void reset_change_callback_state(int channel) {
+    if (channel >= 0 && channel < 8) {
+        g_change_last_reported_state[channel] = -1;
+    }
+}
+
 // Lock-free change callback - posts to queue without blocking ISR
 static void change_callback(int channel, float value) {
     // For change detection, 'value' is actually the state (0.0 or 1.0), not voltage
     bool state = (value > 0.5f);
     
-    // Suppress duplicate postings of identical state for a channel
-    {
-        static int8_t last_reported_state[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
-        if (channel >= 0 && channel < 8) {
-            if (last_reported_state[channel] == (int8_t)state) {
-                return; // duplicate state -> ignore
-            }
-            last_reported_state[channel] = (int8_t)state;
-        }
+    // CRITICAL FIX: Don't suppress duplicates here!
+    // The detect.c layer already handles proper edge detection and only calls us on transitions.
+    // The old duplicate suppression was breaking 'rising'/'falling' modes because:
+    // - rising mode: rise(1) -> fall(silent) -> rise(1) <- second rise was blocked as "duplicate 1"
+    // - falling mode: fall(0) -> rise(silent) -> fall(0) <- second fall was blocked as "duplicate 0"
+    // 
+    // For 'both' mode, detect.c alternates between 0 and 1, so no duplicates occur anyway.
+    // Therefore, this duplicate check was incorrect - remove it entirely.
+    
+    // Update tracking state (for debugging/diagnostics only)
+    if (channel >= 0 && channel < 8) {
+        g_change_last_reported_state[channel] = (int8_t)state;
     }
     
     // Post to lock-free input queue - NEVER BLOCKS!
@@ -1995,6 +2008,9 @@ int LuaManager::lua_set_input_change(lua_State* L) {
     
     DEBUG_AUDIO_PRINT("DEBUG: args: ch=%d, thresh=%.3f, hyst=%.3f, dir='%s'\n\r", 
                       channel, threshold, hysteresis, direction);
+    
+    // CRITICAL FIX: Reset callback state when mode changes to allow new callbacks to fire
+    reset_change_callback_state(channel - 1);
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {

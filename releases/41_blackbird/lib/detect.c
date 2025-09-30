@@ -157,7 +157,15 @@ void Detect_change(Detect_t* self, Detect_callback_t cb, float threshold, float 
         self->change.hysteresis = 0.001f; // ~1mV in crow volts domain (adjust if scaling differs)
     }
     self->change.direction = direction;
-    self->state = 0; // Reset state
+    
+    // CRITICAL FIX: Initialize state based on current input voltage to prevent false triggers
+    // This ensures we don't get a spurious callback when mode is set while input is already high/low
+    // Real crow samples the current state before starting detection to avoid this issue
+    if (self->last_sample > threshold) {
+        self->state = 1; // Input is currently above threshold (high state)
+    } else {
+        self->state = 0; // Input is currently below threshold (low state)
+    }
 }
 
 void Detect_scale(Detect_t* self, Detect_callback_t cb, float* scale, int sLen, float divs, float scaling) {
