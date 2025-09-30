@@ -21,14 +21,19 @@ volatile uint32_t v1, v2;
 
 class USBSerial : public ComputerCard
 {
-	
+	int16_t Audio1, Audio2, CV1, CV2;
 public:
 	// 48kHz audio processing function
 	virtual void ProcessSample()
 	{
 		// Copy the main knob and CV input 1 into v1 and v2, for transmission to printf
-		v1 = KnobVal(Main);
-		v2 = CVIn1();
+		Audio1 = AudioIn1();
+		Audio2 = AudioIn2();
+		CV1 = CVIn1();
+		CV2 = CVIn2();
+
+		v1 = Audio1;
+		v2 = Audio2;
 	}
 };
 
@@ -36,6 +41,7 @@ public:
 void core1()
 {
 	USBSerial usbs;
+	usbs.EnableNormalisationProbe();
 	usbs.Run();
 }
 
