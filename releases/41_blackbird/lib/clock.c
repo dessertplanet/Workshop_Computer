@@ -245,6 +245,13 @@ void clock_internal_start( float new_beat, bool transport_start )
     // immediately update precise_beat_now after reference is set
     // this ensures sync events have correct beat reference on restart
     precise_beat_now = internal_beat;
+    
+    // Wake up ALL sync'd coroutines so they can reschedule relative to the new beat
+    // This ensures clock.sync() coroutines resume properly after clock.stop()/clock.start()
+    while(sync_head) {
+        L_queue_clock_resume(sync_head->coro_id);
+        ll_insert_idle(ll_pop(&sync_head));
+    }
 }
 
 void clock_internal_stop(void)
