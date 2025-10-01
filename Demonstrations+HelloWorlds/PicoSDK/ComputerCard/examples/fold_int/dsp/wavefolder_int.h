@@ -12,7 +12,14 @@
 #include "bitcrusher_int.h"
 #include "xmod_xfade_int.h"
 #include "freq_shifter_int.h"
-#include "vocoder_int.h"
+#include "bitwise_and_int.h"
+#include "bitwise_or_int.h"
+#include "bitwise_nand_int.h"
+#include "bitwise_rotate_int.h"
+#include "bitwise_interleave_int.h"
+#include "bitwise_mask_int.h"
+#include "bitwise_xor_rotate_int.h"
+#include "bitwise_majority_int.h"
 
 namespace cc_dsp {
 
@@ -46,7 +53,14 @@ enum class Algorithm : uint8_t {
     Bitcrusher = 9,
     Xfade = 10,
     FreqShifter = 11,
-    Vocoder = 12,
+    BitwiseAnd = 12,
+    BitwiseOr = 13,
+    BitwiseNand = 14,
+    BitwiseRotate = 15,
+    BitwiseInterleave = 16,
+    BitwiseMask = 17,
+    BitwiseXorRotate = 18,
+    BitwiseMajority = 19,
     Count
 };
 
@@ -103,10 +117,12 @@ inline int32_t process_algorithm_q15(Algorithm algo,
             static FreqShifterState fs;
             return process_freq_shifter_q15(fs, x1_q15, x2_q15, p1_q15, p2_q15);
         }
-        case Algorithm::Vocoder: {
-            static VocoderState vs;
-            return process_vocoder_q15(vs, x1_q15, x2_q15, p1_q15, p2_q15);
-        }
+        case Algorithm::BitwiseAnd:
+            return process_and_q15(x1_q15, x2_q15, p1_q15);
+        case Algorithm::BitwiseXorRotate:
+            return process_xor_rotate_q15(x1_q15, x2_q15, p1_q15);
+        case Algorithm::BitwiseMajority:
+            return process_majority_q15(x1_q15, x2_q15, p1_q15);
         default:
             return process_fold_q15(x1_q15, x2_q15, p1_q15, p2_q15);
     }
