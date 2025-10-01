@@ -362,9 +362,10 @@ static void next_action( int index )
         if(t){ // To is valid
             switch(t->ctrl){
                 case ToLiteral:{
+                    float volts = resolve(self, &t->a).f;
                     float ms = resolve(self, &t->b).f * 1000.0;
                     S_toward( index
-                            , resolve(self, &t->a).f
+                            , volts
                             , ms
                             , resolve(self, &t->c).shape
                             , (ms > 0.0) ? &next_action : NULL // callback only if there's a time delay

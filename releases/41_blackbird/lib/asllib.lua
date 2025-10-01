@@ -26,11 +26,15 @@ function pulse(time, level, polarity)
     level = level or 5
     polarity = polarity or 1
 
-    return{ asl._if(polarity, { to(level, time, 'now')
-                              , to(0, 0)
+    -- Fixed: instant transition to level, hold for time, instant transition to 0
+    -- This matches expected clock/gate behavior where time is the pulse width
+    return{ asl._if(polarity, { to(level, 0, 'now')    -- instant jump to level
+                              , to(level, time)         -- hold at level for time duration
+                              , to(0, 0, 'now')         -- instant jump to 0
                               })
-          , asl._if(1-polarity, { to(0, time, 'now')
-                                , to(level, 0)
+          , asl._if(1-polarity, { to(0, 0, 'now')       -- instant jump to 0
+                                , to(0, time)            -- hold at 0 for time duration
+                                , to(level, 0, 'now')    -- instant jump to level
                                 })
           }
 end

@@ -304,6 +304,12 @@ void S_toward( int        index
         // Immediate hardware update for zero-time (instant) transitions
         extern void hardware_output_set_voltage(int channel, float voltage);
         hardware_output_set_voltage(index+1, self->shaped);
+        
+        // Schedule callback for instant transitions
+        // Fire on next audio cycle to allow ASL sequences to continue
+        if(self->action){
+            self->countdown = 1.0; // Fire callback after 1 sample
+        }
     } else {
         // save current output level as new starting point
         self->last   = self->shaped;
