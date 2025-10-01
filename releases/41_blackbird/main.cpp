@@ -603,6 +603,18 @@ public:
     lua_register(L, "metro_set_time", lua_metro_set_time);
     lua_register(L, "metro_set_count", lua_metro_set_count);
     
+    // Register clock system functions for full crow compatibility
+    lua_register(L, "clock_cancel", lua_clock_cancel);
+    lua_register(L, "clock_schedule_sleep", lua_clock_schedule_sleep);
+    lua_register(L, "clock_schedule_sync", lua_clock_schedule_sync);
+    lua_register(L, "clock_schedule_beat", lua_clock_schedule_beat);
+    lua_register(L, "clock_get_time_beats", lua_clock_get_time_beats);
+    lua_register(L, "clock_get_tempo", lua_clock_get_tempo);
+    lua_register(L, "clock_set_source", lua_clock_set_source);
+    lua_register(L, "clock_internal_set_tempo", lua_clock_internal_set_tempo);
+    lua_register(L, "clock_internal_start", lua_clock_internal_start);
+    lua_register(L, "clock_internal_stop", lua_clock_internal_stop);
+    
     // Create _c table for _c.tell function
     lua_newtable(L);
     lua_pushcfunction(L, lua_c_tell);
@@ -887,6 +899,18 @@ public:
     static int lua_metro_set_time(lua_State* L);
     static int lua_metro_set_count(lua_State* L);
     
+    // Clock system Lua bindings
+    static int lua_clock_cancel(lua_State* L);
+    static int lua_clock_schedule_sleep(lua_State* L);
+    static int lua_clock_schedule_sync(lua_State* L);
+    static int lua_clock_schedule_beat(lua_State* L);
+    static int lua_clock_get_time_beats(lua_State* L);
+    static int lua_clock_get_tempo(lua_State* L);
+    static int lua_clock_set_source(lua_State* L);
+    static int lua_clock_internal_set_tempo(lua_State* L);
+    static int lua_clock_internal_start(lua_State* L);
+    static int lua_clock_internal_stop(lua_State* L);
+    
     // Evaluate Lua code and return result
     bool evaluate(const char* code) {
         if (!L) return false;
@@ -1085,6 +1109,10 @@ public:
         // Initialize metro system (depends on timer system)
         Metro_Init(8);
         
+        // Initialize clock system for coroutine scheduling (8 max clock threads)
+        clock_init(8);
+        printf("Clock system initialized (8 threads)\n");
+        
         // Initialize Lua manager
         lua_manager = new LuaManager();
         
@@ -1137,6 +1165,11 @@ public:
             uint32_t now_us = time_us_32();
             if (now_us - last_timer_process_us >= timer_interval_us) {
                 Timer_Process();  // Safe here - not in ISR context!
+                
+                // Update clock system - call every 1ms for proper clock scheduling
+                uint32_t time_now_ms = to_ms_since_boot(get_absolute_time());
+                clock_update(time_now_ms);
+                
                 last_timer_process_us = now_us;
             }
             
@@ -2276,6 +2309,102 @@ int LuaManager::lua_metro_set_count(lua_State* L) {
     // Call C metro backend
     Metro_set_count(id, count);
     printf("Metro %d count set to %d\n\r", id, count);
+    return 0;
+}
+
+// Clock system Lua bindings implementation
+
+// clock_cancel(coro_id) - Cancel a running clock coroutine
+int LuaManager::lua_clock_cancel(lua_State* L) {
+    int coro_id = (int)luaL_checkinteger(L, 1);
+    clock_cancel_coro(coro_id);
+    lua_pop(L, 1);
+    return 0;
+}
+
+// clock_schedule_sleep(coro_id, seconds) - Schedule coroutine resume after seconds
+int LuaManager::lua_clock_schedule_sleep(lua_State* L) {
+    int coro_id = (int)luaL_checkinteger(L, 1);
+    float seconds = (float)luaL_checknumber(L, 2);
+    
+    if (seconds <= 0) {
+        L_queue_clock_resume(coro_id); // immediate callback
+    } else {
+        clock_schedule_resume_sleep(coro_id, seconds);
+    }
+    lua_pop(L, 2);
+    return 0;
+}
+
+// clock_schedule_sync(coro_id, beats) - Schedule coroutine resume at beat sync point
+int LuaManager::lua_clock_schedule_sync(lua_State* L) {
+    int coro_id = (int)luaL_checkinteger(L, 1);
+    float beats = (float)luaL_checknumber(L, 2);
+    
+    if (beats <= 0) {
+        L_queue_clock_resume(coro_id); // immediate callback
+    } else {
+        clock_schedule_resume_sync(coro_id, beats);
+    }
+    lua_pop(L, 2);
+    return 0;
+}
+
+// clock_schedule_beat(coro_id, beats) - Schedule coroutine resume after beats (not synced)
+int LuaManager::lua_clock_schedule_beat(lua_State* L) {
+    int coro_id = (int)luaL_checkinteger(L, 1);
+    float beats = (float)luaL_checknumber(L, 2);
+    
+    if (beats <= 0) {
+        L_queue_clock_resume(coro_id); // immediate callback
+    } else {
+        clock_schedule_resume_beatsync(coro_id, beats);
+    }
+    lua_pop(L, 2);
+    return 0;
+}
+
+// clock_get_time_beats() - Get current time in beats
+int LuaManager::lua_clock_get_time_beats(lua_State* L) {
+    lua_pushnumber(L, clock_get_time_beats());
+    return 1;
+}
+
+// clock_get_tempo() - Get current tempo in BPM
+int LuaManager::lua_clock_get_tempo(lua_State* L) {
+    lua_pushnumber(L, clock_get_tempo());
+    return 1;
+}
+
+// clock_set_source(source) - Set clock source (1-based in Lua)
+int LuaManager::lua_clock_set_source(lua_State* L) {
+    int source = (int)luaL_checkinteger(L, 1);
+    clock_set_source((clock_source_t)(source - 1)); // Convert to 0-based
+    lua_pop(L, 1);
+    return 0;
+}
+
+// clock_internal_set_tempo(bpm) - Set internal clock tempo
+int LuaManager::lua_clock_internal_set_tempo(lua_State* L) {
+    float bpm = (float)luaL_checknumber(L, 1);
+    clock_internal_set_tempo(bpm);
+    lua_pop(L, 1);
+    return 0;
+}
+
+// clock_internal_start(new_beat) - Start internal clock at specified beat
+int LuaManager::lua_clock_internal_start(lua_State* L) {
+    float new_beat = (float)luaL_checknumber(L, 1);
+    clock_set_source(CLOCK_SOURCE_INTERNAL);
+    clock_internal_start(new_beat, true);
+    lua_pop(L, 1);
+    return 0;
+}
+
+// clock_internal_stop() - Stop internal clock
+int LuaManager::lua_clock_internal_stop(lua_State* L) {
+    clock_set_source(CLOCK_SOURCE_INTERNAL);
+    clock_internal_stop();
     return 0;
 }
 

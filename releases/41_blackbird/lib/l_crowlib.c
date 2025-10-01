@@ -681,15 +681,76 @@ void L_handle_metro( event_t* e )
 
 void L_handle_clock_resume( event_t* e )
 {
-    printf("L_handle_clock_resume: coro_id=%d (stub)\n", e->index.i);
+    extern lua_State* get_lua_state(void);
+    lua_State* L = get_lua_state();
+    
+    if (!L) {
+        printf("L_handle_clock_resume: no Lua state available\n");
+        return;
+    }
+    
+    int coro_id = e->index.i;
+    
+    // Call the global clock_resume_handler function in Lua
+    lua_getglobal(L, "clock_resume_handler");
+    if (lua_isfunction(L, -1)) {
+        lua_pushinteger(L, coro_id);  // Pass coroutine ID
+        
+        // Protected call to prevent crashes
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("clock_resume_handler error: %s\n", error ? error : "unknown");
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
 }
 
 void L_handle_clock_start( event_t* e )
 {
-    printf("L_handle_clock_start (stub)\n");
+    extern lua_State* get_lua_state(void);
+    lua_State* L = get_lua_state();
+    
+    if (!L) {
+        printf("L_handle_clock_start: no Lua state available\n");
+        return;
+    }
+    
+    // Call the global clock_start_handler function in Lua
+    lua_getglobal(L, "clock_start_handler");
+    if (lua_isfunction(L, -1)) {
+        // Protected call to prevent crashes
+        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("clock_start_handler error: %s\n", error ? error : "unknown");
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
 }
 
 void L_handle_clock_stop( event_t* e )
 {
-    printf("L_handle_clock_stop (stub)\n");
+    extern lua_State* get_lua_state(void);
+    lua_State* L = get_lua_state();
+    
+    if (!L) {
+        printf("L_handle_clock_stop: no Lua state available\n");
+        return;
+    }
+    
+    // Call the global clock_stop_handler function in Lua
+    lua_getglobal(L, "clock_stop_handler");
+    if (lua_isfunction(L, -1)) {
+        // Protected call to prevent crashes
+        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("clock_stop_handler error: %s\n", error ? error : "unknown");
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
 }
