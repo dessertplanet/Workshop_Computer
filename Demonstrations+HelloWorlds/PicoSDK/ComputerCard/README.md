@@ -158,6 +158,7 @@ Early versions do not include a version number in the source code, but can be id
 | 0.2.4   | 2025/02/28 | 2247e04b8719cdc6df8c625057e8cad1 |
 | 0.2.5   | 2025/03/02 | b76132bc5126e2cb2ee14617f72b7f64 |
 | 0.2.6   | 2025/07/31 | Version number in ComputerCard.h |
+| 0.2.7   | 2025/08/03 |                                  |
 #### 0.1.4
 Transfer of code to public Workshop_Computer repository.
 
@@ -198,7 +199,18 @@ Lots of fixes found during Utility Pair development:
 - Bug fixes to USB MIDI example to handle multiple MIDI messages sent in a short time frame
 - Bug fix in `CVOutMIDINote` where calibration was always that of CV out 1
 - New `usb_serial` example
+
+
+#### 0.2.7
+- Bug fix in ADC DNL nonlinearity correction (thanks Andrew Cooke)
+- Applying DNL nonlinearity correction to audio inputs, as well as CV
+- Added `CVOutMillivolts` functions for calibrated CV output voltages
+- Added `CVOutsCalibrated` function to detect if CV outputs have been calibrated
+- New `calibrated_cv_out` example
+
+
 # [Reference](#reference)
+
 
 The following is a list of public and protected methods of the `ComputerCard` class. 
 
@@ -285,6 +297,14 @@ In all jack input and output methods with a parameter `int i`, jack 1 (on the le
   `void CVOut2MIDINote(uint8_t noteNum)`
   
   Set the value of an CV output jack. Accepts a 12-bit MIDI note number 0–127. If the calibration data has been saved, this will be used to produce calibrated output voltages. The precision of the voltage output is roughly 5.9mV (7 cents at 1 volt per octave).
+  
+- `bool CVOutMillivolts(int i, uint32_t millivolts)`
+
+  `bool CVOut1Millivolts(uint32_t millivolts)`
+  
+  `bool CVOut2Millivolts(uint32_t millivolts)`
+  
+  Set the value of an CV output jack to a voltage in millivolts. If the calibration data has been saved, this will be used to produce calibrated output voltages. Return true if the requested value is outside the range possible and the output has been limited; achievable range will vary depending on calibration values.
   
 - `void PulseOut(int i, bool val)`
 
@@ -410,6 +430,10 @@ For all LED functions, the `index` parameter takes a value 0–5 and identifies 
    Returns a 64-bit integer unique to the program card.
    This is the unique ID returned by the flash chip, with a scrambling function applied to ensure that all bits in the returned integer are unpredictable, even if many bits in the original unique ID are common between flash chips.
 
+- `bool CVOutsCalibrated()`
+
+Returns `true` if CV Output calibration data has been loaded, or false if no calibration data detected. 
+	
 - `void Abort()`
 
    When called from `ProcessSample`, stops the processing started when `Run()` was called, and returns from the (otherwise blocking) `Run` method. This allows `Run` to be called again, potentially on a different `ComputerCard` class.

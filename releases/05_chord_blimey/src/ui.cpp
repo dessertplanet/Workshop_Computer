@@ -136,8 +136,8 @@ void UI::checkSwitch()
     {
         if ((now - down_press_start) >= LONGPRESS_MS)
         {
-            // LONG PRESS: cycle through arp direction modes (6 modes)
-            arp_mode = (ArpMode)((arp_mode + 1) % 6);
+            // LONG PRESS: cycle through arp direction modes (7 modes)
+            arp_mode = (ArpMode)((arp_mode + 1) % 7);
             mode_changed = true; // notify main to adopt new mode
             down_long_consumed = true;
             down_pending_short = false; // suppress short press action
@@ -149,22 +149,25 @@ void UI::checkSwitch()
             {
             case ARP_UP:
                 led_pattern = 0b000001;
-                break; // rightmost
+                break; // top left
             case ARP_DOWN:
-                led_pattern = 0b100000;
-                break; // leftmost
+                led_pattern = 0b010000;
+                break; // bottom left
             case ARP_UPUP:
                 led_pattern = 0b000011;
-                break; // two rightmost
+                break; // two at the top
             case ARP_DOWNDOWN:
                 led_pattern = 0b110000;
-                break; // two leftmost
+                break; // two at the bottom
             case ARP_UPDOWN_INC:
                 led_pattern = 0b010010;
-                break; // symmetric middle hint
+                break; // top right and bottom left
             case ARP_UPDOWN_EXC:
-                led_pattern = 0b001100;
-                break; // adjacent middle hint
+                led_pattern = 0b100001;
+                break; // top left and bottom right
+            case ARP_RANDOM:
+                led_pattern = 0b011001;
+                break; // top left, middle right, bottom left
             default:
                 led_pattern = 0b000001;
                 break;

@@ -2,6 +2,9 @@
 
 # Workshop Computer  
 
+[**CLICK HERE TO FIND PROGRAM CARDS TO DOWNLOAD**](https://tomwhitwell.github.io/Workshop_Computer/index.html) 
+
+
 Dev material for the Music Thing Workshop Computer  
 [Music Thing Workshop System Homepage](https://www.musicthing.co.uk/workshopsystem/)  
 Further discussion in the Discord - invite in the documentation below.   
