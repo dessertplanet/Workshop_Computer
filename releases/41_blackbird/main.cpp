@@ -917,27 +917,31 @@ public:
         if (volts > 6.0f) volts = 6.0f;
         if (volts < -6.0f) volts = -6.0f;
         
-        // Convert to DAC range: -6V to +6V maps to -2048 to +2047
-        // Use integer math for RP2040 efficiency
+        // Convert to millivolts for calibrated output functions
         int32_t volts_mV = (int32_t)(volts * 1000.0f);
-        int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
         
         // Store state for lua queries (in millivolts) - simplified
         set_output_state_simple(channel - 1, volts_mV);
         
         // Route to correct hardware output
         switch (channel) {
-            case 1: // Output 1 → AudioOut1
-                AudioOut1(dac_value);
+            case 1: // Output 1 → AudioOut1 (audio outputs use raw 12-bit values)
+                {
+                    int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
+                    AudioOut1(dac_value);
+                }
                 break;
-            case 2: // Output 2 → AudioOut2
-                AudioOut2(dac_value);
+            case 2: // Output 2 → AudioOut2 (audio outputs use raw 12-bit values)
+                {
+                    int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
+                    AudioOut2(dac_value);
+                }
                 break;
-            case 3: // Output 3 → CVOut1
-                CVOut1(dac_value);
+            case 3: // Output 3 → CVOut1 (use calibrated millivolts function)
+                CVOut1Millivolts(volts_mV);
                 break;
-            case 4: // Output 4 → CVOut2
-                CVOut2(dac_value);
+            case 4: // Output 4 → CVOut2 (use calibrated millivolts function)
+                CVOut2Millivolts(volts_mV);
                 break;
         }
         
@@ -1514,6 +1518,10 @@ public:
         // Read CV inputs directly - clean and simple
         int16_t cv1 = CVIn1();
         int16_t cv2 = CVIn2();
+        
+        // Update input state for .volts queries
+        set_input_state_simple(0, cv1);
+        set_input_state_simple(1, cv2);
         
         // Process detection sample-by-sample for edge accuracy
         Detect_process_sample(0, cv1);
