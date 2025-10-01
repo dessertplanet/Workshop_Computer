@@ -23,6 +23,7 @@ extern "C" {
 #include "lib/detect.h"
 #include "lib/events.h"
 #include "lib/l_crowlib.h"
+#include "lib/l_bootstrap.h"
 #include "lib/ll_timers.h"
 #include "lib/metro.h"
 #include "lib/mailbox.h"
@@ -37,6 +38,22 @@ extern "C" {
 #include "input.h"
 #include "metro.h"
 #include "First.h"
+
+// Crow ecosystem library headers
+#include "calibrate.h"
+#include "sequins.h"
+// Note: public.h contains 'public' which is a C++ keyword, so we rename it
+#define public public_lua
+#include "public.h"
+#undef public
+// Similarly for clock which might conflict with lib/clock.h
+extern "C" {
+extern const unsigned char clock[];
+extern const unsigned int clock_len;
+}
+#include "quote.h"
+#include "timeline.h"
+#include "hotswap.h"
 
 // Conditionally included test script headers
 #ifdef EMBED_ALL_TESTS
@@ -70,7 +87,7 @@ static void set_output_state_simple(int channel, int32_t value_mv) {
     }
 }
 
-float get_input_state_simple(int channel) {
+extern "C" float get_input_state_simple(int channel) {
     if (channel >= 0 && channel < 2) {
         return (float) g_input_state_q12[channel] * (6.0f / 2047.0f);
     }
@@ -740,6 +757,51 @@ public:
         
         printf("ASL libraries loaded successfully!\n\r");
         // Index translation handled directly in asl.lua (Option B); runtime patch removed.
+        
+        // Load crow ecosystem libraries (sequins, public, clock, quote, timeline)
+        load_crow_ecosystem();
+    }
+    
+    // Load crow ecosystem libraries that don't conflict with our custom setup
+    void load_crow_ecosystem() {
+        if (!L) return;
+        
+        printf("Loading minimal crow ecosystem (sequins, public, clock)...\n\r");
+        
+        // Helper lambda to load a library from embedded bytecode
+        auto load_lib = [this](const char* lib_name, const char* global_name, 
+                               const unsigned char* bytecode, size_t len) {
+            printf("  Loading %s...\n\r", lib_name);
+            if (luaL_loadbuffer(L, (const char*)bytecode, len, lib_name) != LUA_OK) {
+                printf("  ERROR loading %s: %s\n\r", lib_name, lua_tostring(L, -1));
+                lua_pop(L, 1);
+                return;
+            }
+            if (lua_pcall(L, 0, 1, 0) != LUA_OK) {
+                printf("  ERROR executing %s: %s\n\r", lib_name, lua_tostring(L, -1));
+                lua_pop(L, 1);
+                return;
+            }
+            lua_setglobal(L, global_name);
+            printf("  %s loaded as '%s'\n\r", lib_name, global_name);
+        };
+        
+        // Load only essential libraries (sequins before public!)
+        load_lib("sequins.lua", "sequins", sequins, sequins_len);
+        load_lib("public.lua", "public", public_lua, public_len);
+        load_lib("clock.lua", "clock", clock, clock_len);
+        
+        // Optional libraries - comment these out to save memory:
+        // load_lib("calibrate.lua", "cal", calibrate, calibrate_len);
+        // load_lib("quote.lua", "quote", quote, quote_len);
+        // load_lib("timeline.lua", "timeline", timeline, timeline_len);
+        // load_lib("hotswap.lua", "hotswap", hotswap, hotswap_len);
+        
+        printf("Minimal crow ecosystem loaded (3 libraries)!\n\r");
+        
+        // Print Lua memory usage for diagnostics
+        int lua_mem_kb = lua_gc(L, LUA_GCCOUNT, 0);
+        printf("Lua memory usage: %d KB\n\r", lua_mem_kb);
     }
     
     

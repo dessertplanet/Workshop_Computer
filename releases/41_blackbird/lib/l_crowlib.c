@@ -9,8 +9,8 @@
 #include "lib/ashapes.h"    // AShaper_get_state
 #include "lib/caw.h"        // Caw_printf()
 // #include "lib/io.h"         // IO_GetADC() - not used in emulator
-// Declare IO_GetADC function for compatibility (implemented in main.cpp)
-extern int16_t get_input_state_simple(int channel); // returns input voltage in volts
+// Declare get_input_state_simple function for compatibility (implemented in main.cpp)
+extern float get_input_state_simple(int channel); // returns input voltage in volts
 #include "lib/events.h"     // event_t, event_post()
 #include "lib/events_lockfree.h"  // Lock-free event queues
 #include "lib/slopes.h"     // S_reset()
@@ -67,9 +67,9 @@ void l_crowlib_init(lua_State* L){
 	_load_lib(L, "ii", "ii");
 
 	_load_lib(L, "calibrate", "cal");
+	_load_lib(L, "sequins", "sequins");
 	_load_lib(L, "public", "public");
 	_load_lib(L, "clock", "clock");
-	_load_lib(L, "sequins", "sequins");
 	_load_lib(L, "quote", "quote");
 	_load_lib(L, "timeline", "timeline");
 	_load_lib(L, "hotswap", "hotswap");
