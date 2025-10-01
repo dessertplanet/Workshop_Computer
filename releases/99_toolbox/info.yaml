@@ -1,0 +1,5 @@
+Description: Mixer, VCA, noise, S&H, clock generator, etc.
+Language: C++ (ComputerCard)
+Creator: divmod/@olt
+Version: 0.1.1
+Status: Released
