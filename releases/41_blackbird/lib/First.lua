@@ -11,12 +11,12 @@ decay  = 0.4
 attack = 0.04
 
 function set_d(t)
+  output[1].dyn.d = (t-1)/8 + 0.05
   output[2].dyn.d = (t-1)/8 + 0.05
-  output[4].dyn.d = (t-1)/8 + 0.05
 end
 function set_a(t)
+  output[1].dyn.a = (t-1)/64 + 0.003
   output[2].dyn.a = (t-1)/64 + 0.003
-  output[4].dyn.a = (t-1)/64 + 0.003
 end
 
 function play(out,ix)
@@ -24,7 +24,7 @@ function play(out,ix)
   if rhythm[ix][ step[ix] ] & 8 == 8 then
     if ix == 1 then set_d(t[ix]) else set_a(t[ix]) end
     t[ix] = 0
-    output[out+1]()
+    output[out-2]()
   end
   -- set note
   if rhythm[ix+2][ step[ix+2] ] & 8 == 8 then
@@ -43,8 +43,8 @@ function play(out,ix)
 end
 
 input[1].change = function(s)
-  play(1,1)
-  play(3,2)
+  play(3,1)
+  play(4,2)
 end
 
 sd = 0
@@ -84,12 +84,12 @@ function init()
   end
 
   -- out params
-  output[1].slew   = 0
-  output[1].volts  = 0
-  output[2].action = ar(dyn{a=0.04},dyn{d=0.4})
-  output[3].slew   = 0.01
+  output[3].slew   = 0
   output[3].volts  = 0
-  output[4].action = ar(dyn{a=0.04},dyn{d=0.4})
+  output[1].action = ar(dyn{a=0.04},dyn{d=0.4})
+  output[4].slew   = 0.01
+  output[4].volts  = 0
+  output[2].action = ar(dyn{a=0.04},dyn{d=0.4})
 
   -- start sequence!
   input[1]{ mode = 'change', direction = 'rising' }
