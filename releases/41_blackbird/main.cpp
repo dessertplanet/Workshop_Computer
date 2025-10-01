@@ -283,6 +283,7 @@ private:
     
     // Forward declaration - implementation after BlackbirdCrow class
     static int lua_unique_card_id(lua_State* L);
+    static int lua_unique_id(lua_State* L);
     
     // Conditional test function implementations - only compiled when tests are embedded
 #ifdef EMBED_ALL_TESTS
@@ -518,6 +519,9 @@ public:
     
     // Add unique_card_id function for Workshop Computer compatibility
     lua_register(L, "unique_card_id", lua_unique_card_id);
+    
+    // Add unique_id function for crow compatibility (returns 3 integers)
+    lua_register(L, "unique_id", lua_unique_id);
     
     // Register test functions - conditional compilation
 #ifdef EMBED_ALL_TESTS
@@ -2215,6 +2219,33 @@ int LuaManager::lua_unique_card_id(lua_State* L) {
     
     lua_pushinteger(L, 0);
     return 1;
+}
+
+// Implementation of lua_unique_id function - crow-compatible version
+// Returns 3 integers like crow's unique_id() which returns getUID_Word(0), getUID_Word(4), getUID_Word(8)
+int LuaManager::lua_unique_id(lua_State* L) {
+    // Get the cached 64-bit ID from the global instance
+    if (g_blackbird_instance) {
+        uint64_t id = ((BlackbirdCrow*)g_blackbird_instance)->cached_unique_id;
+        
+        // Split the 64-bit ID into three parts to mimic crow's behavior
+        // Crow returns 3 32-bit words from different offsets of the STM32 UID
+        // We'll split our 64-bit value into 3 parts with some bit mixing
+        uint32_t word0 = (uint32_t)(id & 0xFFFFFFFF);           // Lower 32 bits
+        uint32_t word1 = (uint32_t)((id >> 32) & 0xFFFFFFFF);   // Upper 32 bits
+        uint32_t word2 = (uint32_t)(word0 ^ word1);             // XOR for third word
+        
+        lua_pushinteger(L, (lua_Integer)word0);
+        lua_pushinteger(L, (lua_Integer)word1);
+        lua_pushinteger(L, (lua_Integer)word2);
+        return 3;
+    }
+    
+    // Return zeros if no instance available
+    lua_pushinteger(L, 0);
+    lua_pushinteger(L, 0);
+    lua_pushinteger(L, 0);
+    return 3;
 }
 
 // Implementation of C interface function (after BlackbirdCrow class is fully defined)

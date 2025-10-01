@@ -20,7 +20,6 @@ function set_a(t)
 end
 
 function play(out,ix)
-  print("[first] play", out, ix, "step", step[ix], "t", t[ix])
   -- play rhythm
   if rhythm[ix][ step[ix] ] & 8 == 8 then
     if ix == 1 then set_d(t[ix]) else set_a(t[ix]) end
@@ -57,11 +56,12 @@ end
 
 t = {0,0}
 function env(count)
-  print("[first] env", count)
   for i=1,2 do t[i] = t[i] + 1 end
 end
 
 function init()
+  -- generate unique tables
+  lcg(unique_id())
   lcg()
   lcg()
   lcg()
