@@ -1137,12 +1137,20 @@ public:
     // Core0 main control loop - handles USB, events, Lua AND timer processing
     void MainControlLoop()
     {
-        printf("Blackbird Crow Emulator v0.3 (Dual-Core Architecture)\n");
-        printf("Send ^^v for version, ^^i for identity\n");
+        printf("Blackbird Crow Emulator v0.4\r\n");
+        printf("Send ^^v for version, ^^i for identity\r\n");
+        printf("Anything without a ^^ prefix is interpreted as lua\r\n");
         
         // Initialize USB buffer
         g_rx_buffer_pos = 0;
         memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+        
+        // Zero out all outputs on startup
+        for (int i = 1; i <= 4; i++) {
+            char zero_cmd[32];
+            snprintf(zero_cmd, sizeof(zero_cmd), "output[%d].volts = 0", i);
+            lua_manager->evaluate_safe(zero_cmd);
+        }
         
         // Timer processing state - moved from ISR!
         static uint32_t last_timer_process_us = 0;
@@ -1150,9 +1158,6 @@ public:
         // Calculation: 96 samples / 48000 Hz = 0.002s = 2000us
         // But we check more frequently to reduce jitter
         const uint32_t timer_interval_us = 667;
-        
-        printf("Timer processing will run at ~1.5kHz in MainControlLoop (NOT in ISR)\n");
-        printf("This prevents input corruption from output processing overruns\n");
         
         while (1) {
             // Handle USB input directly - no mailbox needed
@@ -1277,7 +1282,7 @@ public:
         switch (cmd) {
             case C_version: {
                 // Embed build date/time and debug format so a late serial connection can verify firmware
-                printf("^^version('blackbird-0.3 %s %s dual-core')\r\n", __DATE__, __TIME__);
+                printf("^^version('blackbird-0.4')\r\n");
                 break; }
                 
             case C_identity: {
@@ -1321,17 +1326,13 @@ public:
                 
             case C_loadFirst:
                 printf("loading first.lua\r\n");
-                printf("[first] handler invoked, attempting bytecode load\n\r");
                 // Actually load First.lua using the compiled bytecode
                 if (lua_manager) {
-                    printf("Loading First.lua from embedded bytecode...\n\r");
                     if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
                         const char* error = lua_tostring(lua_manager->L, -1);
-                        printf("Error loading First.lua: %s\n\r", error ? error : "unknown error");
                         lua_pop(lua_manager->L, 1);
                         printf("error loading first.lua\r\n");
                     } else {
-                        printf("First.lua loaded and executed successfully!\n\r");
 
                         // Model real crow: reset runtime so newly loaded script boots
                         if (!lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end")) {
@@ -1345,7 +1346,6 @@ public:
                         // 0 = 0V, 2047 = +6V, -2048 = -6V
                         float input1_volts = get_input_state_simple(0);
                         float input2_volts = get_input_state_simple(1);
-                        printf("[diag] input volts after load: in1=%.3fV in2=%.3fV\n\r", input1_volts, input2_volts);
 
                         printf("first.lua loaded\r\n");
                     }
@@ -1462,17 +1462,14 @@ public:
                 
             case C_loadFirst:
                 send_crow_response("loading first.lua");
-                printf("[first] handler invoked, attempting bytecode load\n\r");
                 // Actually load First.lua using the compiled bytecode
                 if (lua_manager) {
-                    printf("Loading First.lua from embedded bytecode...\n\r");
                     if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
                         const char* error = lua_tostring(lua_manager->L, -1);
                         printf("Error loading First.lua: %s\n\r", error ? error : "unknown error");
                         lua_pop(lua_manager->L, 1);
                         send_crow_response("error loading first.lua");
                     } else {
-                        printf("First.lua loaded and executed successfully!\n\r");
 
                         // Model real crow: reset runtime so newly loaded script boots
                         if (!lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end")) {
@@ -1484,7 +1481,6 @@ public:
 
                         float input1_volts = get_input_state_simple(0);
                         float input2_volts = get_input_state_simple(1);
-                        printf("[diag] input volts after load: in1=%.3fV in2=%.3fV\n\r", input1_volts, input2_volts);
 
                         send_crow_response("first.lua loaded");
                     }
@@ -2261,7 +2257,7 @@ int LuaManager::lua_set_input_none(lua_State* L) {
         // Clear flag after mode change is complete
         detector->mode_switching = false;
         
-        printf("Input %d: none mode (detection disabled)\n\r", channel);
+        //printf("Input %d: none mode (detection disabled)\n\r", channel);
     }
     return 0;
 }
@@ -2276,7 +2272,7 @@ int LuaManager::lua_metro_start(lua_State* L) {
     // Set time first, then start (crow-style)
     Metro_set_time(id, time);
     Metro_start(id);
-    printf("Metro %d started with interval %.3fs\n\r", id, time);
+    //printf("Metro %d started with interval %.3fs\n\r", id, time);
     return 0;
 }
 
@@ -2286,7 +2282,7 @@ int LuaManager::lua_metro_stop(lua_State* L) {
     
     // Call C metro backend
     Metro_stop(id);
-    printf("Metro %d stopped\n\r", id);
+    //printf("Metro %d stopped\n\r", id);
     return 0;
 }
 
@@ -2297,7 +2293,7 @@ int LuaManager::lua_metro_set_time(lua_State* L) {
     
     // Call C metro backend
     Metro_set_time(id, time);
-    printf("Metro %d time set to %.3fs\n\r", id, time);
+    //printf("Metro %d time set to %.3fs\n\r", id, time);
     return 0;
 }
 
@@ -2308,7 +2304,7 @@ int LuaManager::lua_metro_set_count(lua_State* L) {
     
     // Call C metro backend
     Metro_set_count(id, count);
-    printf("Metro %d count set to %d\n\r", id, count);
+   // printf("Metro %d count set to %d\n\r", id, count);
     return 0;
 }
 

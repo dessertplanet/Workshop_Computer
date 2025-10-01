@@ -51,7 +51,7 @@ void Timer_Start(int timer_id, timer_callback_t callback) {
     timers[timer_id].active = true;
     // Schedule first trigger based on current sample counter
     timers[timer_id].next_trigger_sample = global_sample_counter + timers[timer_id].period_samples;
-    printf("Timer: Start timer %d (next trigger at sample %u)\n", timer_id, timers[timer_id].next_trigger_sample);
+    // printf("Timer: Start timer %d (next trigger at sample %u)\n", timer_id, timers[timer_id].next_trigger_sample);
 }
 
 void Timer_Stop(int timer_id) {
@@ -76,8 +76,8 @@ void Timer_Set_Params(int timer_id, float seconds) {
     timers[timer_id].period_samples = (uint32_t)precise_samples;
     timers[timer_id].period_error = precise_samples - (float)timers[timer_id].period_samples;
     
-    printf("Timer: Set timer %d period to %.3f seconds (%u samples + %.6f fractional)\n", 
-           timer_id, seconds, timers[timer_id].period_samples, timers[timer_id].period_error);
+    // printf("Timer: Set timer %d period to %.3f seconds (%u samples + %.6f fractional)\n", 
+    //        timer_id, seconds, timers[timer_id].period_samples, timers[timer_id].period_error);
 }
 
 // Timer processing - called from MainControlLoop at ~1.5kHz
