@@ -11,7 +11,6 @@
 #include "comparator_cheby_int.h"
 #include "bitcrusher_int.h"
 #include "xmod_xfade_int.h"
-#include "xmod_nop_int.h"
 #include "freq_shifter_int.h"
 #include "vocoder_int.h"
 
@@ -26,7 +25,7 @@ inline int32_t fold_reflect_q15(int32_t x) {
         x = (Q15_MAX << 1) - x;
     }
     while (x < Q15_MIN) {
-        x = (Q15_MIN << 1) - x;
+        x = (Q15_MIN * 2) - x;
     }
     return x;
 }
@@ -46,9 +45,8 @@ enum class Algorithm : uint8_t {
     ComparatorChebyshev = 8,
     Bitcrusher = 9,
     Xfade = 10,
-    Nop = 11,
-    FreqShifter = 12,
-    Vocoder = 13,
+    FreqShifter = 11,
+    Vocoder = 12,
     Count
 };
 
@@ -101,8 +99,6 @@ inline int32_t process_algorithm_q15(Algorithm algo,
             return process_bitcrusher_q15(x1_q15, x2_q15, p1_q15, p2_q15);
         case Algorithm::Xfade:
             return process_xfade_q15(x1_q15, x2_q15, p1_q15);
-        case Algorithm::Nop:
-            return process_nop_q15(x1_q15, x2_q15, p1_q15);
         case Algorithm::FreqShifter: {
             static FreqShifterState fs;
             return process_freq_shifter_q15(fs, x1_q15, x2_q15, p1_q15, p2_q15);

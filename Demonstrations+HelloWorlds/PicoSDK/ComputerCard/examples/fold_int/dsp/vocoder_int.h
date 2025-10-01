@@ -33,14 +33,16 @@ struct VocoderState {
 
 inline int32_t q15_from_float(double x) {
     long v = std::lround(x * 32768.0);
-    if (v > 32767) v = 32767; if (v < -32768) v = -32768;
+    if (v > 32767) v = 32767;
+    if (v < -32768) v = -32768;
     return static_cast<int32_t>(v);
 }
 
 inline int32_t alpha_from_hz(double fc, double fs) {
     // alpha = 1 - exp(-2*pi*fc/fs)
     double a = 1.0 - std::exp(-2.0 * M_PI * fc / fs);
-    if (a < 0.0001) a = 0.0001; if (a > 0.9999) a = 0.9999;
+    if (a < 0.0001) a = 0.0001;
+    if (a > 0.9999) a = 0.9999;
     return q15_from_float(a);
 }
 
@@ -69,7 +71,8 @@ inline void vocoder_update_coefs(VocoderState &st, int32_t p1_q15, int32_t p2_q1
     // p1: release time mapping 5ms..500ms → alpha
     double rel_ms = 5.0 + (static_cast<double>(p1_q15) / 32768.0) * (500.0 - 5.0);
     double a_env = 1.0 - std::exp(-1.0 / (rel_ms * 0.001 * fs));
-    if (a_env < 0.00005) a_env = 0.00005; if (a_env > 0.2) a_env = 0.2;
+    if (a_env < 0.00005) a_env = 0.00005;
+    if (a_env > 0.2) a_env = 0.2;
     st.release_a_q15 = q15_from_float(a_env);
 }
 
