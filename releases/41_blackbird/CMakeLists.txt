@@ -27,10 +27,11 @@ macro (add_card _name)
     add_executable(${ARGV})
     if (TARGET ${_name})
       target_include_directories(${_name} PUBLIC ${CMAKE_CURRENT_LIST_DIR})
-      target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi lua)
+      target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi lua tinyusb_device tinyusb_board)
       pico_add_extra_outputs(${_name})
       target_sources(${_name} PUBLIC 
         ${CMAKE_CURRENT_LIST_DIR}/main.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/casl.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/slopes.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/ashapes.c
@@ -51,7 +52,9 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/mailbox.c
       )
       target_compile_definitions(${_name} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
-      pico_enable_stdio_usb(${_name} 1)
+      # Disable stdio USB - we're using TinyUSB directly with custom descriptors for druid compatibility
+      pico_enable_stdio_usb(${_name} 0)
+      pico_enable_stdio_uart(${_name} 0)
     endif()
   endmacro()
 

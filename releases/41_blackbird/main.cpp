@@ -1,7 +1,8 @@
 #include "ComputerCard.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
-#include "pico/stdio_usb.h"
+#include "tusb.h"
+#include "class/cdc/cdc_device.h"
 #include "lib/debug.h"
 #include <cstdio>
 #include <cstring>
@@ -273,6 +274,8 @@ private:
     
     // Lua print function - sends output to serial
     static int lua_print(lua_State* L) {
+        if (!tud_cdc_connected()) return 0;
+        
         int n = lua_gettop(L);  // number of arguments
         lua_getglobal(L, "tostring");
         for (int i = 1; i <= n; i++) {
@@ -281,13 +284,14 @@ private:
             lua_call(L, 1, 1);
             const char* s = lua_tostring(L, -1);  // get result
             if (s != NULL) {
-                if (i > 1) printf("\t");
-                printf("%s", s);
+                if (i > 1) tud_cdc_write_char('\t');
+                tud_cdc_write_str(s);
             }
             lua_pop(L, 1);  // pop result
         }
-    printf("\r\n");
-        fflush(stdout);
+        tud_cdc_write_char('\n');  // crow line ending: LF then CR
+        tud_cdc_write_char('\r');
+        tud_cdc_write_flush();
         return 0;
     }
     
@@ -918,8 +922,10 @@ public:
         int result = luaL_dostring(L, code);
         if (result != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("lua error: %s\n\r", error ? error : "unknown error");
-            fflush(stdout);
+            tud_cdc_write_str("lua error: ");
+            tud_cdc_write_str(error ? error : "unknown error");
+            tud_cdc_write_str("\n\r");
+            tud_cdc_write_flush();
             lua_pop(L, 1);  // remove error from stack
             return false;
         }
@@ -935,7 +941,10 @@ public:
         int result = luaL_loadstring(L, code);
         if (result != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("lua load error: %s\n\r", error ? error : "unknown error");
+            tud_cdc_write_str("lua load error: ");
+            tud_cdc_write_str(error ? error : "unknown error");
+            tud_cdc_write_str("\n\r");
+            tud_cdc_write_flush();
             lua_pop(L, 1);
             return false;
         }
@@ -944,7 +953,10 @@ public:
         result = lua_pcall(L, 0, 0, 0);
         if (result != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("lua runtime error: %s\n\r", error ? error : "unknown error");
+            tud_cdc_write_str("lua runtime error: ");
+            tud_cdc_write_str(error ? error : "unknown error");
+            tud_cdc_write_str("\n\r");
+            tud_cdc_write_flush();
             lua_pop(L, 1);
             return false;
         }
@@ -1088,7 +1100,7 @@ public:
         
         // Initialize AShaper system for output quantization (pass-through mode)
         AShaper_init(4); // Initialize 4 output channels
-        printf("AShaper system initialized (pass-through mode)\n");
+        //printf("AShaper system initialized (pass-through mode)\n");
         
         
         // Initialize detection system for 2 input channels
@@ -1111,39 +1123,39 @@ public:
         
         // Initialize clock system for coroutine scheduling (8 max clock threads)
         clock_init(8);
-        printf("Clock system initialized (8 threads)\n");
+        //printf("Clock system initialized (8 threads)\n");
         
         // Initialize Lua manager
         lua_manager = new LuaManager();
         
         // Note: New ComputerCard.h API uses sample-by-sample processing only
-        printf("Sample-by-sample processing (48kHz)\n");
+        //printf("Sample-by-sample processing (48kHz)\n");
         
         // Initialize hardware timer for consistent 250Hz PulseOut2 performance monitoring
         if (!add_repeating_timer_us(-4000, pulse2_timer_callback, NULL, &g_pulse2_timer)) {
             printf("Failed to start PulseOut2 timer\n");
         } else {
-            printf("PulseOut2 timer started: 250Hz consistent pulse for performance monitoring\n");
+           // printf("PulseOut2 timer started: 250Hz consistent pulse for performance monitoring\n");
         }
         
         // Start slopes processing timer (runs at 1.5kHz via Timer_Process_Block)
         // This processes all slope channels and outputs the results
-        printf("Slopes processing will run via Timer_Process_Block at 1.5kHz\n");
+       // printf("Slopes processing will run via Timer_Process_Block at 1.5kHz\n");
         
         // Dual-core architecture: Core0=USB/Control, Core1=Audio
-        printf("Dual-core architecture initialized\n");
+        //printf("Dual-core architecture initialized\n");
     }
     
     // Core0 main control loop - handles USB, events, Lua AND timer processing
     void MainControlLoop()
     {
-        printf("Blackbird Crow Emulator v0.4\r\n");
-        printf("Send ^^v for version, ^^i for identity\r\n");
-        printf("Anything without a ^^ prefix is interpreted as lua\r\n");
-        
         // Initialize USB buffer
         g_rx_buffer_pos = 0;
         memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+        
+        // Welcome message timing - send 1.5s after startup
+        bool welcome_sent = false;
+        absolute_time_t welcome_time = make_timeout_time_ms(1500);
         
         // Zero out all outputs on startup
         for (int i = 1; i <= 4; i++) {
@@ -1160,6 +1172,18 @@ public:
         const uint32_t timer_interval_us = 667;
         
         while (1) {
+            // CRITICAL: Service TinyUSB stack regularly
+            tud_task();
+            
+            // Send welcome message 1.5s after startup
+            if (!welcome_sent && absolute_time_diff_us(get_absolute_time(), welcome_time) <= 0) {
+                tud_cdc_write_str("Blackbird Crow Emulator v0.4\n\r");
+                tud_cdc_write_str("Send ^^v for version, ^^i for identity\n\r");
+                tud_cdc_write_str("Anything without a ^^ prefix is interpreted as lua\n\r");
+                tud_cdc_write_flush();
+                welcome_sent = true;
+            }
+            
             // Handle USB input directly - no mailbox needed
             handle_usb_input();
             
@@ -1200,10 +1224,18 @@ public:
     
     // Handle USB input directly - no mailbox complexity
     void handle_usb_input() {
-        // Read available characters with short timeout
-        int c = getchar_timeout_us(1000); // 1ms timeout
+        // Check for available data from TinyUSB CDC
+        if (!tud_cdc_available()) {
+            return;
+        }
         
-        if (c != PICO_ERROR_TIMEOUT) {
+        // Read available characters
+        uint8_t buf[64];
+        uint32_t count = tud_cdc_read(buf, sizeof(buf));
+        
+        for (uint32_t i = 0; i < count; i++) {
+            int c = buf[i];
+            
             // Safety check - ensure buffer position is sane
             if (g_rx_buffer_pos < 0 || g_rx_buffer_pos >= USB_RX_BUFFER_SIZE) {
                 printf("ERROR: Buffer corruption detected! Resetting...\r\n");
@@ -1256,7 +1288,6 @@ public:
     // Handle USB commands received from Core1 via mailbox
     void handle_usb_command(const char* command)
     {
-        //printf("[core0] received cmd: \"%s\"\n\r", command);
         // Parse and handle command
         C_cmd_t cmd = parse_command(command, strlen(command));
         if (cmd != C_none) {
@@ -1282,46 +1313,59 @@ public:
         switch (cmd) {
             case C_version: {
                 // Embed build date/time and debug format so a late serial connection can verify firmware
-                printf("^^version('blackbird-0.4')\r\n");
+                tud_cdc_write_str("^^version('blackbird-0.4')\n\r");
+                tud_cdc_write_flush();
                 break; }
                 
             case C_identity: {
-                uint64_t unique_id = UniqueCardID();
-                printf("^^identity('0x%016llx')\r\n", unique_id);
+                uint64_t unique_id = cached_unique_id;
+                char response[80];
+                snprintf(response, sizeof(response), "^^identity('0x%08X%08X')\n\r", 
+                         (uint32_t)(unique_id >> 32), (uint32_t)(unique_id & 0xFFFFFFFF));
+                tud_cdc_write_str(response);
+                tud_cdc_write_flush();
                 break;
             }
             
             case C_print:
-                printf("-- no script loaded --\r\n");
+                tud_cdc_write_str("-- no script loaded --\n\r");
+                tud_cdc_write_flush();
                 break;
                 
             case C_restart:
-                printf("restarting...\r\n");
+                tud_cdc_write_str("restarting...\n\r");
+                tud_cdc_write_flush();
                 // Could implement actual restart here
                 break;
                 
             case C_killlua:
-                printf("lua killed\r\n");
+                tud_cdc_write_str("lua killed\n\r");
+                tud_cdc_write_flush();
                 break;
                 
             case C_boot:
-                printf("entering bootloader mode\r\n");
+                tud_cdc_write_str("entering bootloader mode\n\r");
+                tud_cdc_write_flush();
                 break;
                 
             case C_startupload:
-                printf("script upload started\r\n");
+                tud_cdc_write_str("script upload started\n\r");
+                tud_cdc_write_flush();
                 break;
                 
             case C_endupload:
-                printf("script uploaded\r\n");
+                tud_cdc_write_str("script uploaded\n\r");
+                tud_cdc_write_flush();
                 break;
                 
             case C_flashupload:
-                printf("script saved to flash\r\n");
+                tud_cdc_write_str("script saved to flash\n\r");
+                tud_cdc_write_flush();
                 break;
                 
             case C_flashclear:
-                printf("flash cleared\r\n");
+                tud_cdc_write_str("flash cleared\n\r");
+                tud_cdc_write_flush();
                 break;
                 
             case C_loadFirst:
@@ -1401,11 +1445,12 @@ public:
     // Send string with crow-style line ending (\n\r)
     void send_crow_response(const char* text)
     {
-        printf("%s", text);
-        // Send raw bytes for proper crow line ending
-        putchar_raw('\n');
-        putchar_raw('\r');
-        fflush(stdout);
+        if (tud_cdc_connected()) {
+            tud_cdc_write_str(text);
+            tud_cdc_write_char('\n');
+            tud_cdc_write_char('\r');
+            tud_cdc_write_flush();
+        }
     }
     
     // Handle crow commands
@@ -1420,9 +1465,21 @@ public:
                 break; }
                 
             case C_identity: {
-                uint64_t unique_id = UniqueCardID();
-                char response[64];
-                snprintf(response, sizeof(response), "^^identity('0x%016llx')", unique_id);
+                // Debug: send immediate response to verify we're in this case
+                tud_cdc_write_str(">>> IDENTITY CASE REACHED <<<\n\r");
+                tud_cdc_write_flush();
+                
+                uint64_t unique_id = cached_unique_id;
+                char response[80];
+                int len = snprintf(response, sizeof(response), "^^identity('0x%08X%08X')", 
+                         (uint32_t)(unique_id >> 32), (uint32_t)(unique_id & 0xFFFFFFFF));
+                
+                // Debug: show what we're about to send
+                tud_cdc_write_str(">>> SENDING: ");
+                tud_cdc_write_str(response);
+                tud_cdc_write_str(" <<<\n\r");
+                tud_cdc_write_flush();
+                
                 send_crow_response(response);
                 break;
             }
@@ -2474,6 +2531,17 @@ extern "C" lua_State* get_lua_state(void) {
 
 BlackbirdCrow crow;
 
+// Expose card unique ID for USB descriptors
+// This ensures the USB serial number follows the card, not the board
+extern "C" uint64_t get_card_unique_id(void) {
+    // Access through the blackbird instance if available
+    if (g_blackbird_instance) {
+        return ((BlackbirdCrow*)g_blackbird_instance)->cached_unique_id;
+    }
+    // Fallback to 0 during early initialization
+    return 0;
+}
+
 static void core1_entry() {
         printf("[boot] core1 audio engine starting\n\r");
         //Normalisation probe was causing issues so disabling.
@@ -2481,17 +2549,58 @@ static void core1_entry() {
         crow.Run(); 
 }
 
+// Redirect stdio functions to TinyUSB CDC
+extern "C" {
+    // Override putchar for printf support
+    int putchar(int c) {
+        if (tud_cdc_connected()) {
+            uint8_t ch = (uint8_t)c;
+            tud_cdc_write(&ch, 1);
+            if (c == '\n' || c == '\r') {
+                tud_cdc_write_flush();
+            }
+        }
+        return c;
+    }
+    
+    // Override puts for string output
+    int puts(const char* s) {
+        if (tud_cdc_connected()) {
+            tud_cdc_write_str(s);
+            tud_cdc_write_char('\n');
+            tud_cdc_write_flush();
+        }
+        return 1;
+    }
+    
+    // Newlib write function
+    int _write(int handle, char *data, int size) {
+        if (handle == 1 || handle == 2) { // stdout or stderr
+            if (tud_cdc_connected()) {
+                tud_cdc_write(data, size);
+                tud_cdc_write_flush();
+            }
+            return size;
+        }
+        return -1;
+    }
+}
+
 int main()
 {
     set_sys_clock_khz(200000, true);
 
-    stdio_init_all();
+    // Initialize TinyUSB (replaces stdio_init_all)
+    tusb_init();
+    
     // Disable stdio buffering to ensure immediate visibility of debug prints
     setvbuf(stdout, NULL, _IONBF, 0);
+    
     // Wait briefly (up to 1500ms) for a USB serial host to connect so the boot banner is visible
     {
         absolute_time_t until = make_timeout_time_ms(1500);
-        while (!stdio_usb_connected() && absolute_time_diff_us(get_absolute_time(), until) > 0) {
+        while (!tud_cdc_connected() && absolute_time_diff_us(get_absolute_time(), until) > 0) {
+            tud_task();  // Must service TinyUSB while waiting
             tight_loop_contents();
         }
     }
@@ -2503,4 +2612,22 @@ int main()
     
     // Start Core0 main control loop (handles commands and events)
     crow.MainControlLoop();
+}
+
+// TinyUSB CDC line state callback - called when DTR/RTS changes (connection state)
+// Must use C linkage for TinyUSB to find it
+extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
+{
+    (void)itf;
+    (void)rts;
+    
+    // When DTR goes high, host has opened the port - send welcome
+    if (dtr) {
+        // Small delay to ensure host is ready to receive
+        sleep_ms(10);
+        tud_cdc_write_str("Blackbird Crow Emulator v0.4\n\r");
+        tud_cdc_write_str("Send ^^v for version, ^^i for identity\n\r");
+        tud_cdc_write_str("Anything without a ^^ prefix is interpreted as lua\n\r");
+        tud_cdc_write_flush();
+    }
 }

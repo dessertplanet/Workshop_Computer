@@ -31,3 +31,6 @@
 [submodule "releases/41_blackbird/submodules/crow"]
 	path = releases/41_blackbird/submodules/crow
 	url = https://github.com/monome/crow.git
+[submodule "releases/41_blackbird/submodules/druid"]
+	path = releases/41_blackbird/submodules/druid
+	url = https://github.com/monome/druid.git
