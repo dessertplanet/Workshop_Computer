@@ -1555,10 +1555,16 @@ public:
                 
                 // Skip empty commands
             if (clean_length > 0) {
-                // Route based on mode
-                if (g_repl_mode == REPL_reception) {
+                // Check for system commands FIRST (even in reception mode)
+                C_cmd_t cmd = parse_command(g_rx_buffer, clean_length);
+                if (cmd != C_none) {
+                    // System command - process it
+                    handle_command_with_response(cmd);
+                } else if (g_repl_mode == REPL_reception) {
+                    // In reception mode and not a command - accumulate as script data
                     receive_script_data(g_rx_buffer, clean_length);
                 } else {
+                    // Normal REPL mode - execute Lua
                     handle_usb_command(g_rx_buffer);
                 }
             }                // Clear buffer after processing
@@ -1566,6 +1572,20 @@ public:
                 memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
             }
             // In multiline mode, just keep accumulating characters
+        }
+        
+        // After processing all characters in this USB packet, check if we have a command
+        // without a newline (like ^^e, ^^s, etc.) - this handles the case where druid
+        // sends commands as 3-byte packets without line endings
+        if (g_rx_buffer_pos >= 3 && g_rx_buffer_pos <= 10) {  // Commands are short
+            C_cmd_t cmd = parse_command(g_rx_buffer, g_rx_buffer_pos);
+            if (cmd != C_none) {
+                // Found a command without newline - handle it
+                handle_command_with_response(cmd);
+                // Clear buffer
+                g_rx_buffer_pos = 0;
+                memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+            }
         }
     }
     
@@ -1698,12 +1718,15 @@ public:
                 } else if (g_new_script_len > 0 && lua_manager) {
                     // Run script in RAM (temporary)
                     if (lua_manager->evaluate_safe(g_new_script)) {
-                        tud_cdc_write_str("script uploaded and running from RAM\n\r");
+                        // Script loaded successfully - now reset crow environment and call init()
+                        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                        lua_manager->evaluate_safe("if init then init() end");
+                        // Silent success - script is now running
                     } else {
-                        tud_cdc_write_str("User script evaluation failed.\n\r");
+                        tud_cdc_write_str("\\script evaluation failed\n\r");
                     }
                 } else {
-                    tud_cdc_write_str("no script data received\n\r");
+                    tud_cdc_write_str("\\no script data received\n\r");
                 }
                 g_repl_mode = REPL_normal;
                 tud_cdc_write_flush();
@@ -1715,6 +1738,10 @@ public:
                 } else if (g_new_script_len > 0 && lua_manager) {
                     // Run script AND save to flash
                     if (lua_manager->evaluate_safe(g_new_script)) {
+                        // Script loaded successfully - reset crow environment and call init()
+                        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                        lua_manager->evaluate_safe("if init then init() end");
+                        
                         if (FlashStorage::write_user_script(g_new_script, g_new_script_len)) {
                             tud_cdc_write_str("User script updated.\n\r");
                         } else {
@@ -1795,7 +1822,8 @@ public:
     {
         for (int i = 0; i < length - 2; i++) {
             if (buffer[i] == '^' && buffer[i + 1] == '^') {
-                switch (buffer[i + 2]) {
+                char cmd_char = buffer[i + 2];
+                switch (cmd_char) {
                     case 'v': return C_version;
                     case 'i': return C_identity;
                     case 'p': return C_print;
