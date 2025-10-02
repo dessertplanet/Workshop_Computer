@@ -117,6 +117,17 @@ static bool is_packet_complete(const char* buffer, int length) {
     return (last_char == '\n' || last_char == '\r');
 }
 
+// Helper function to detect triple backticks (multi-line delimiter)
+static inline bool check_for_backticks(const char* buffer, int pos) {
+    // Need at least 3 chars in buffer
+    if (pos < 3) return false;
+    
+    // Check if last 3 characters are backticks
+    return (buffer[pos-3] == '`' && 
+            buffer[pos-2] == '`' && 
+            buffer[pos-1] == '`');
+}
+
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
 static BlackbirdCrow* g_crow_core1 = nullptr;
@@ -1102,9 +1113,10 @@ public:
 LuaManager* LuaManager::instance = nullptr;
 
 // Global USB buffer to ensure proper initialization across cores
-static const int USB_RX_BUFFER_SIZE = 256;
+static const int USB_RX_BUFFER_SIZE = 2048;  // Increased to support multi-line scripts
 static char g_rx_buffer[USB_RX_BUFFER_SIZE] = {0};
 static volatile int g_rx_buffer_pos = 0;
+static volatile bool g_multiline_mode = false;  // Track multi-line mode (triple backticks)
 
 // Hardware timer-based PulseOut2 performance monitoring (outside class to avoid C++ issues)
 static volatile bool g_pulse2_state = false;
@@ -1374,14 +1386,27 @@ public:
             if (g_rx_buffer_pos < 0 || g_rx_buffer_pos >= USB_RX_BUFFER_SIZE) {
                 printf("ERROR: Buffer corruption detected! Resetting...\r\n");
                 g_rx_buffer_pos = 0;
+                g_multiline_mode = false;
                 memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+            }
+            
+            // Check for escape key (clears buffer and multiline mode)
+            if (c == 0x1B) {  // ESC key
+                g_rx_buffer_pos = 0;
+                g_multiline_mode = false;
+                memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+                continue;
             }
             
             // Check for buffer overflow BEFORE adding character
             if (g_rx_buffer_pos >= USB_RX_BUFFER_SIZE - 1) {
-                // Buffer full - clear and start over
+                // Buffer full - send error message matching crow
+                tud_cdc_write_str("!chunk too long!\n\r");
+                tud_cdc_write_flush();
                 g_rx_buffer_pos = 0;
+                g_multiline_mode = false;  // Reset multiline state on overflow
                 memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+                continue;
             }
             
             // Add character to buffer
@@ -1389,8 +1414,34 @@ public:
             g_rx_buffer_pos++;
             g_rx_buffer[g_rx_buffer_pos] = '\0';
             
-            // Check if we have a complete packet
-            if (is_packet_complete(g_rx_buffer, g_rx_buffer_pos)) {
+            // Check for triple backticks (multi-line delimiter)
+            if (check_for_backticks(g_rx_buffer, g_rx_buffer_pos)) {
+                // Toggle multiline mode
+                g_multiline_mode = !g_multiline_mode;
+                
+                if (g_multiline_mode) {
+                    // Started multiline - strip the opening backticks
+                    g_rx_buffer_pos -= 3;
+                    g_rx_buffer[g_rx_buffer_pos] = '\0';
+                } else {
+                    // Ended multiline - strip the closing backticks and execute
+                    g_rx_buffer_pos -= 3;
+                    g_rx_buffer[g_rx_buffer_pos] = '\0';
+                    
+                    // Execute the accumulated command if not empty
+                    if (g_rx_buffer_pos > 0) {
+                        handle_usb_command(g_rx_buffer);
+                    }
+                    
+                    // Clear buffer
+                    g_rx_buffer_pos = 0;
+                    memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+                }
+                continue;
+            }
+            
+            // In single-line mode, execute on newline
+            if (!g_multiline_mode && is_packet_complete(g_rx_buffer, g_rx_buffer_pos)) {
                 // Strip trailing whitespace
                 int clean_length = g_rx_buffer_pos;
                 while (clean_length > 0 && 
@@ -1403,19 +1454,16 @@ public:
                 g_rx_buffer[clean_length] = '\0';
                 
                 // Skip empty commands
-                if (clean_length == 0) {
-                    g_rx_buffer_pos = 0;
-                    memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-                    return;
+                if (clean_length > 0) {
+                    // Execute command directly - no mailbox needed
+                    handle_usb_command(g_rx_buffer);
                 }
-                
-                // Execute command directly - no mailbox needed
-                handle_usb_command(g_rx_buffer);
                 
                 // Clear buffer after processing
                 g_rx_buffer_pos = 0;
                 memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
             }
+            // In multiline mode, just keep accumulating characters
         }
     }
     
