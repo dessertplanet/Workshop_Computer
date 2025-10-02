@@ -30,6 +30,7 @@ extern "C" {
 #include "lib/mailbox.h"
 #include "lib/clock.h"
 #include "lib/events_lockfree.h"
+#include "lib/flash_storage.h"
 }
 
 // Generated Lua bytecode headers - Core libraries (always included)
@@ -1118,6 +1119,17 @@ static char g_rx_buffer[USB_RX_BUFFER_SIZE] = {0};
 static volatile int g_rx_buffer_pos = 0;
 static volatile bool g_multiline_mode = false;  // Track multi-line mode (triple backticks)
 
+// Upload state machine (matches crow's REPL mode)
+typedef enum {
+    REPL_normal = 0,
+    REPL_reception,
+    REPL_discard
+} repl_mode_t;
+
+static volatile repl_mode_t g_repl_mode = REPL_normal;
+static char g_new_script[16 * 1024];  // 16KB script buffer for uploads
+static volatile uint32_t g_new_script_len = 0;
+
 // Hardware timer-based PulseOut2 performance monitoring (outside class to avoid C++ issues)
 static volatile bool g_pulse2_state = false;
 static volatile uint32_t g_pulse2_counter = 0;
@@ -1265,8 +1277,14 @@ public:
         clock_init(8);
         //printf("Clock system initialized (8 threads)\n");
         
-        // Initialize Lua manager
+        // Initialize flash storage system
+        FlashStorage::init();
+        
+        // Initialize Lua manager (but don't load scripts yet - wait for hardware init)
         lua_manager = new LuaManager();
+        
+        // Note: Script loading deferred until after welcome message in MainControlLoop()
+        // This ensures all C-side systems (ASL, slopes, etc.) are fully initialized
         
         // Note: New ComputerCard.h API uses sample-by-sample processing only
         //printf("Sample-by-sample processing (48kHz)\n");
@@ -1284,6 +1302,58 @@ public:
         
         // Dual-core architecture: Core0=USB/Control, Core1=Audio
         //printf("Dual-core architecture initialized\n");
+    }
+    
+    // Load boot script from flash (called after hardware init)
+    void load_boot_script()
+    {
+        // Load script from flash based on what's stored
+        switch(FlashStorage::which_user_script()) {
+            case USERSCRIPT_Default:
+                // Load First.lua from compiled bytecode
+                if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK 
+                    || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
+                    printf("Failed to load First.lua\n");
+                } else {
+                    printf("Loaded: First.lua (default)\n");
+                    // Call crow.reset() and init() like real crow does
+                    lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                    lua_manager->evaluate_safe("if init then init() end");
+                }
+                break;
+                
+            case USERSCRIPT_User:
+                {
+                    uint16_t script_len = FlashStorage::get_user_script_length();
+                    const char* script_addr = FlashStorage::get_user_script_addr();
+                    
+                    // Execute directly from flash (XIP)
+                    if (script_addr && luaL_loadbuffer(lua_manager->L, script_addr, script_len, "=userscript") == LUA_OK
+                        && lua_pcall(lua_manager->L, 0, 0, 0) == LUA_OK) {
+                        printf("Loaded: user script from flash (%u bytes)\n", script_len);
+                        // Call crow.reset() and init() like real crow does
+                        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                        lua_manager->evaluate_safe("if init then init() end");
+                    } else {
+                        printf("Failed to load user script from flash, loading First.lua\n");
+                        // Fallback to First.lua
+                        if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") == LUA_OK 
+                            && lua_pcall(lua_manager->L, 0, 0, 0) == LUA_OK) {
+                            printf("Loaded First.lua fallback\n");
+                            // Call crow.reset() and init() for fallback too
+                            lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                            lua_manager->evaluate_safe("if init then init() end");
+                        } else {
+                            printf("Failed to load First.lua fallback\n");
+                        }
+                    }
+                }
+                break;
+                
+            case USERSCRIPT_Clear:
+                printf("No user script loaded (cleared)\n");
+                break;
+        }
     }
     
     // Core0 main control loop - handles USB, events, Lua AND timer processing
@@ -1328,6 +1398,9 @@ public:
                 tud_cdc_write_str("\n\r");
                 tud_cdc_write_flush();
                 welcome_sent = true;
+                
+                // NOW load the boot script - all hardware is initialized
+                load_boot_script();
             }
             
             // Handle USB input directly - no mailbox needed
@@ -1368,6 +1441,29 @@ public:
         }
     }
     
+    // Accumulate script data during upload (REPL_reception mode)
+    void receive_script_data(const char* buf, uint32_t len) {
+        if (g_repl_mode != REPL_reception) {
+            return;  // Safety check
+        }
+        
+        if (g_new_script_len + len >= sizeof(g_new_script)) {
+            tud_cdc_write_str("!ERROR! Script is too long.\n\r");
+            tud_cdc_write_flush();
+            g_repl_mode = REPL_discard;
+            return;
+        }
+        
+        // Accumulate script data
+        memcpy(&g_new_script[g_new_script_len], buf, len);
+        g_new_script_len += len;
+        
+        // Add newline if not present (preserves formatting)
+        if (len > 0 && buf[len-1] != '\n') {
+            g_new_script[g_new_script_len++] = '\n';
+        }
+    }
+    
     // Handle USB input directly - no mailbox complexity
     void handle_usb_input() {
         // Check for available data from TinyUSB CDC
@@ -1390,10 +1486,11 @@ public:
                 memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
             }
             
-            // Check for escape key (clears buffer and multiline mode)
+            // Check for escape key (clears buffer, multiline mode, and reception mode)
             if (c == 0x1B) {  // ESC key
                 g_rx_buffer_pos = 0;
                 g_multiline_mode = false;
+                g_repl_mode = REPL_normal;
                 memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
                 continue;
             }
@@ -1405,6 +1502,9 @@ public:
                 tud_cdc_write_flush();
                 g_rx_buffer_pos = 0;
                 g_multiline_mode = false;  // Reset multiline state on overflow
+                if (g_repl_mode == REPL_reception) {
+                    g_repl_mode = REPL_discard;  // Mark upload as failed
+                }
                 memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
                 continue;
             }
@@ -1454,12 +1554,14 @@ public:
                 g_rx_buffer[clean_length] = '\0';
                 
                 // Skip empty commands
-                if (clean_length > 0) {
-                    // Execute command directly - no mailbox needed
+            if (clean_length > 0) {
+                // Route based on mode
+                if (g_repl_mode == REPL_reception) {
+                    receive_script_data(g_rx_buffer, clean_length);
+                } else {
                     handle_usb_command(g_rx_buffer);
                 }
-                
-                // Clear buffer after processing
+            }                // Clear buffer after processing
                 g_rx_buffer_pos = 0;
                 memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
             }
@@ -1472,17 +1574,21 @@ public:
     {
         // Parse and handle command
         C_cmd_t cmd = parse_command(command, strlen(command));
+        
+        // System commands are ALWAYS processed (even in reception mode)
         if (cmd != C_none) {
             handle_command_with_response(cmd);
+            return;
+        }
+        
+        // For non-command data:
+        if (g_repl_mode == REPL_reception) {
+            // We're in upload mode - this shouldn't normally happen
+            // (script data should come through receive_script_data)
+            // But handle it anyway for robustness
+            receive_script_data(command, strlen(command));
         } else {
-            // Not a ^^ command, treat as Lua code
-            int parsed_channel = 0;
-            float parsed_volts = 0.0f;
-            // if (parse_output_volts_command(command, &parsed_channel, &parsed_volts)) {
-            //     if (parsed_channel >= 1 && parsed_channel <= 4) {
-            //         printf("[core0] request output[%d].volts -> %.3f (queued)\n\r", parsed_channel, parsed_volts);
-            //     }
-            // }
+            // Normal REPL mode - execute Lua immediately
             if (lua_manager) {
                 lua_manager->evaluate_safe(command);
             }
@@ -1578,33 +1684,67 @@ public:
                 break;
                 
             case C_startupload:
+                // Clear and prepare for script reception
+                g_new_script_len = 0;
+                memset(g_new_script, 0, sizeof(g_new_script));
+                g_repl_mode = REPL_reception;
                 tud_cdc_write_str("script upload started\n\r");
                 tud_cdc_write_flush();
                 break;
                 
             case C_endupload:
-                tud_cdc_write_str("script uploaded\n\r");
+                if (g_repl_mode == REPL_discard) {
+                    tud_cdc_write_str("upload failed, returning to normal mode\n\r");
+                } else if (g_new_script_len > 0 && lua_manager) {
+                    // Run script in RAM (temporary)
+                    if (lua_manager->evaluate_safe(g_new_script)) {
+                        tud_cdc_write_str("script uploaded and running from RAM\n\r");
+                    } else {
+                        tud_cdc_write_str("User script evaluation failed.\n\r");
+                    }
+                } else {
+                    tud_cdc_write_str("no script data received\n\r");
+                }
+                g_repl_mode = REPL_normal;
                 tud_cdc_write_flush();
                 break;
                 
             case C_flashupload:
-                tud_cdc_write_str("script saved to flash\n\r");
+                if (g_repl_mode == REPL_discard) {
+                    tud_cdc_write_str("upload failed, returning to normal mode\n\r");
+                } else if (g_new_script_len > 0 && lua_manager) {
+                    // Run script AND save to flash
+                    if (lua_manager->evaluate_safe(g_new_script)) {
+                        if (FlashStorage::write_user_script(g_new_script, g_new_script_len)) {
+                            tud_cdc_write_str("User script updated.\n\r");
+                        } else {
+                            tud_cdc_write_str("flash write failed\n\r");
+                        }
+                    } else {
+                        tud_cdc_write_str("User script evaluation failed.\n\r");
+                    }
+                } else {
+                    tud_cdc_write_str("no script data received\n\r");
+                }
+                g_repl_mode = REPL_normal;
                 tud_cdc_write_flush();
                 break;
                 
             case C_flashclear:
-                tud_cdc_write_str("flash cleared\n\r");
+                FlashStorage::clear_user_script();
+                tud_cdc_write_str("User script cleared.\n\r");
                 tud_cdc_write_flush();
                 break;
                 
             case C_loadFirst:
-                printf("loading first.lua\r\n");
+                FlashStorage::load_default_script();
+                printf("loading First.lua\r\n");
                 // Actually load First.lua using the compiled bytecode
                 if (lua_manager) {
                     if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
                         const char* error = lua_tostring(lua_manager->L, -1);
                         lua_pop(lua_manager->L, 1);
-                        printf("error loading first.lua\r\n");
+                        printf("error loading First.lua\r\n");
                     } else {
 
                         // Model real crow: reset runtime so newly loaded script boots
