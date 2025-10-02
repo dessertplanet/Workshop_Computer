@@ -110,6 +110,13 @@ static int32_t get_output_state_simple(int channel) {
 }
 
  // Forward declaration
+// Helper function to check if we have a complete packet (ends with \n or \r)
+static bool is_packet_complete(const char* buffer, int length) {
+    if (length == 0) return false;
+    char last_char = buffer[length - 1];
+    return (last_char == '\n' || last_char == '\r');
+}
+
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
 static BlackbirdCrow* g_crow_core1 = nullptr;
@@ -1177,9 +1184,15 @@ public:
             
             // Send welcome message 1.5s after startup
             if (!welcome_sent && absolute_time_diff_us(get_absolute_time(), welcome_time) <= 0) {
-                tud_cdc_write_str("Blackbird Crow Emulator v0.4\n\r");
-                tud_cdc_write_str("Send ^^v for version, ^^i for identity\n\r");
-                tud_cdc_write_str("Anything without a ^^ prefix is interpreted as lua\n\r");
+                char card_id_str[32];
+                snprintf(card_id_str, sizeof(card_id_str), " Program Card ID: 0x%08X%08X\n\r", 
+                         (uint32_t)(cached_unique_id >> 32), (uint32_t)(cached_unique_id & 0xFFFFFFFF));
+                
+                tud_cdc_write_str("\n\r");
+                tud_cdc_write_str(" Blackbird-v0.4\n\r");
+                tud_cdc_write_str(" Music Thing Modular Workshop Computer\n\r");
+                tud_cdc_write_str(card_id_str);
+                tud_cdc_write_str("\n\r");
                 tud_cdc_write_flush();
                 welcome_sent = true;
             }
@@ -1412,10 +1425,13 @@ public:
         }
     }
 
-    // Boilerplate to call member function as second core
+    // Core1 is no longer used - all processing happens on Core0 now
     static void core1()
     {
-        ((BlackbirdCrow *)ThisPtr())->USBProcessingCore();
+        // Core1 unused in current architecture
+        while(1) {
+            tight_loop_contents();
+        }
     }
 
     // Parse command from buffer
