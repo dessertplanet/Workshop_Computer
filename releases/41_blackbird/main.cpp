@@ -312,6 +312,7 @@ private:
     // Forward declaration - implementation after BlackbirdCrow class
     static int lua_unique_card_id(lua_State* L);
     static int lua_unique_id(lua_State* L);
+    static int lua_memstats(lua_State* L);
     
     // Conditional test function implementations - only compiled when tests are embedded
 #ifdef EMBED_ALL_TESTS
@@ -511,6 +512,110 @@ private:
         for (int i = 0; i < depth; i++) printf("  ");
         printf("}");
     }
+    
+    // Lua panic handler - called when Lua encounters an unrecoverable error
+    static int lua_panic_handler(lua_State* L) {
+        const char* msg = lua_tostring(L, -1);
+        char buffer[256];
+        
+        // Use TinyUSB CDC for output
+        tud_cdc_write_str("\n\r");
+        tud_cdc_write_str("========================================\n\r");
+        tud_cdc_write_str("*** LUA PANIC - UNRECOVERABLE ERROR ***\n\r");
+        tud_cdc_write_str("========================================\n\r");
+        
+        snprintf(buffer, sizeof(buffer), "Error: %s\n\r", msg ? msg : "unknown error");
+        tud_cdc_write_str(buffer);
+        
+        // Print memory usage
+        int kb_used = lua_gc(L, LUA_GCCOUNT, 0);
+        int bytes = lua_gc(L, LUA_GCCOUNTB, 0);
+        snprintf(buffer, sizeof(buffer), "Lua memory usage: %d KB + %d bytes (%.2f KB total)\n\r", 
+                 kb_used, bytes, kb_used + (bytes / 1024.0f));
+        tud_cdc_write_str(buffer);
+        
+        tud_cdc_write_str("========================================\n\r");
+        tud_cdc_write_str("System halted. Please reset the device.\n\r");
+        tud_cdc_write_str("========================================\n\r");
+        tud_cdc_write_flush();
+        
+        // Flash LED rapidly to indicate panic state
+        while (true) {
+            gpio_put(PICO_DEFAULT_LED_PIN, 1);
+            sleep_ms(100);
+            gpio_put(PICO_DEFAULT_LED_PIN, 0);
+            sleep_ms(100);
+        }
+        
+        return 0;  // Never reached
+    }
+    
+    // Custom allocator with memory tracking and diagnostics
+    static void* lua_custom_alloc(void* ud, void* ptr, size_t osize, size_t nsize) {
+        (void)ud;  // unused
+        
+        // Print detailed allocation info for debugging (can be disabled in production)
+        static size_t total_allocated = 0;
+        static size_t peak_allocated = 0;
+        static size_t allocation_count = 0;
+        
+        if (nsize == 0) {
+            // Free
+            if (ptr) {
+                total_allocated -= osize;
+                free(ptr);
+            }
+            return NULL;
+        } else {
+            // Allocate or reallocate
+            void* new_ptr = realloc(ptr, nsize);
+            
+            if (new_ptr == NULL) {
+                // Allocation failed! Use TinyUSB CDC for output
+                char buffer[256];
+                
+                tud_cdc_write_str("\n\r");
+                tud_cdc_write_str("========================================\n\r");
+                tud_cdc_write_str("*** LUA MEMORY ALLOCATION FAILED ***\n\r");
+                tud_cdc_write_str("========================================\n\r");
+                
+                snprintf(buffer, sizeof(buffer), "Requested: %zu bytes\n\r", nsize);
+                tud_cdc_write_str(buffer);
+                
+                snprintf(buffer, sizeof(buffer), "Old size: %zu bytes\n\r", osize);
+                tud_cdc_write_str(buffer);
+                
+                snprintf(buffer, sizeof(buffer), "Total allocated: %zu bytes (%.2f KB)\n\r", 
+                         total_allocated, total_allocated / 1024.0f);
+                tud_cdc_write_str(buffer);
+                
+                snprintf(buffer, sizeof(buffer), "Peak allocated: %zu bytes (%.2f KB)\n\r", 
+                         peak_allocated, peak_allocated / 1024.0f);
+                tud_cdc_write_str(buffer);
+                
+                snprintf(buffer, sizeof(buffer), "Allocation #%zu\n\r", allocation_count);
+                tud_cdc_write_str(buffer);
+                
+                tud_cdc_write_str("========================================\n\r");
+                tud_cdc_write_str("Try: 1) Run collectgarbage()\n\r");
+                tud_cdc_write_str("     2) Simplify your script\n\r");
+                tud_cdc_write_str("     3) Remove unused libraries\n\r");
+                tud_cdc_write_str("========================================\n\r");
+                tud_cdc_write_flush();
+                
+                return NULL;  // Return NULL to let Lua handle it
+            }
+            
+            // Update statistics
+            total_allocated = total_allocated - osize + nsize;
+            if (total_allocated > peak_allocated) {
+                peak_allocated = total_allocated;
+            }
+            allocation_count++;
+            
+            return new_ptr;
+        }
+    }
 
 public:
     LuaManager() : L(nullptr) {
@@ -530,14 +635,27 @@ public:
             lua_close(L);
         }
         
-        L = luaL_newstate();
+        // Create Lua state with custom allocator for memory tracking
+        L = lua_newstate(lua_custom_alloc, NULL);
         if (!L) {
             printf("Error: Could not create Lua state\r\n");
             return;
         }
         
+        // Set panic handler for unrecoverable errors
+        lua_atpanic(L, lua_panic_handler);
+        printf("Lua panic handler installed\r\n");
+        
         // Load basic Lua libraries
         luaL_openlibs(L);
+        
+        // CRITICAL: Set aggressive garbage collection like crow does
+        // Without this, Lua will run out of memory on embedded systems!
+        // setpause = 55 (default 200) - run GC more frequently
+        // setstepmul = 260 (default 200) - do more work per GC cycle
+        lua_gc(L, LUA_GCSETPAUSE, 55);
+        lua_gc(L, LUA_GCSETSTEPMUL, 260);
+        printf("Lua GC configured: pause=55, stepmul=260 (aggressive for embedded)\r\n");
         
         // Override print function
         lua_register(L, "print", lua_print);
@@ -550,6 +668,9 @@ public:
     
     // Add unique_id function for crow compatibility (returns 3 integers)
     lua_register(L, "unique_id", lua_unique_id);
+    
+    // Add memory statistics function for debugging
+    lua_register(L, "memstats", lua_memstats);
     
     // Register test functions - conditional compilation
 #ifdef EMBED_ALL_TESTS
@@ -816,11 +937,11 @@ public:
         
         // Optional libraries - comment these out to save memory:
         // load_lib("calibrate.lua", "cal", calibrate, calibrate_len);
-        // load_lib("quote.lua", "quote", quote, quote_len);
-        // load_lib("timeline.lua", "timeline", timeline, timeline_len);
-        // load_lib("hotswap.lua", "hotswap", hotswap, hotswap_len);
+        load_lib("quote.lua", "quote", quote, quote_len);
+        load_lib("timeline.lua", "timeline", timeline, timeline_len);
+        load_lib("hotswap.lua", "hotswap", hotswap, hotswap_len);
         
-        printf("Minimal crow ecosystem loaded (3 libraries)!\n\r");
+        printf("Crow ecosystem loaded (6 libraries: sequins, public, clock, quote, timeline, hotswap)!\n\r");
         
         // Print Lua memory usage for diagnostics
         int lua_mem_kb = lua_gc(L, LUA_GCCOUNT, 0);
@@ -2514,6 +2635,40 @@ int LuaManager::lua_unique_id(lua_State* L) {
     lua_pushinteger(L, 0);
     lua_pushinteger(L, 0);
     return 3;
+}
+
+// Implementation of lua_memstats (memory statistics and debugging)
+int LuaManager::lua_memstats(lua_State* L) {
+    if (!tud_cdc_connected()) return 0;
+    
+    int kb_used = lua_gc(L, LUA_GCCOUNT, 0);
+    int bytes = lua_gc(L, LUA_GCCOUNTB, 0);
+    float total_kb = kb_used + (bytes / 1024.0f);
+    
+    // Use TinyUSB CDC functions for output (printf doesn't work with TinyUSB)
+    char buffer[128];
+    
+    tud_cdc_write_str("Lua Memory Usage:\n\r");
+    tud_cdc_write_flush();
+    
+    snprintf(buffer, sizeof(buffer), "  Current: %.2f KB (%d KB + %d bytes)\n\r", 
+             total_kb, kb_used, bytes);
+    tud_cdc_write_str(buffer);
+    tud_cdc_write_flush();
+    
+    // Trigger a GC cycle and report change
+    lua_gc(L, LUA_GCCOLLECT, 0);
+    int kb_after = lua_gc(L, LUA_GCCOUNT, 0);
+    int bytes_after = lua_gc(L, LUA_GCCOUNTB, 0);
+    float total_after = kb_after + (bytes_after / 1024.0f);
+    float freed = total_kb - total_after;
+    
+    snprintf(buffer, sizeof(buffer), "  After GC: %.2f KB (freed %.2f KB)\n\r", 
+             total_after, freed);
+    tud_cdc_write_str(buffer);
+    tud_cdc_write_flush();
+    
+    return 0;
 }
 
 // Implementation of C interface function (after BlackbirdCrow class is fully defined)
