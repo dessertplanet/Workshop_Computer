@@ -1,8 +1,7 @@
 - Quantized output
 - test inputs: Volume? Window? Clock? Scale?
-- druid compat
 - flash storage
 - User script load
-- upload (multiline)
+- upload
 
 - other ^^ commands like reset

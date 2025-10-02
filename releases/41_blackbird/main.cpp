@@ -1515,18 +1515,65 @@ public:
                 break;
                 
             case C_restart:
-                tud_cdc_write_str("restarting...\n\r");
+                tud_cdc_write_str("Push the reset button to reset Workshop Computer.\n\r");
                 tud_cdc_write_flush();
                 // Could implement actual restart here
                 break;
                 
             case C_killlua:
-                tud_cdc_write_str("lua killed\n\r");
+                tud_cdc_write_str("killing lua...\n\r");
+                tud_cdc_write_flush();
+                if (lua_manager) {
+                    // Soft reset: clear Lua state but don't reboot hardware
+                    // This matches real Crow's Lua_Reset() behavior
+                    
+                    // 1. Stop all metros
+                    Metro_stop_all();
+                    
+                    // 2. Clear input detectors
+                    for (int i = 0; i < 2; i++) {
+                        Detect_none(Detect_ix_to_p(i));
+                    }
+                    
+                    // 3. Stop all output slopes
+                    for (int i = 0; i < 4; i++) {
+                        S_toward(i, 0.0, 0.0, SHAPE_Linear, NULL);
+                    }
+                    
+                    // 4. Clear event queue
+                    events_clear();
+                    
+                    // 5. Cancel all clock coroutines
+                    clock_cancel_coro_all();
+                    
+                    // 6. Reset crow modules to defaults (calls crow.reset() in Lua)
+                    lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                    
+                    // 7. Clear user globals using Crow's _user table approach
+                    // Note: _user table may not exist if l_bootstrap wasn't called
+                    lua_manager->evaluate_safe(
+                        "if _user then "
+                        "  for k,_ in pairs(_user) do "
+                        "    _G[k] = nil "
+                        "  end "
+                        "end "
+                        "_G._user = {}"
+                    );
+                    
+                    // 8. Reset init() to empty function
+                    lua_manager->evaluate_safe("_G.init = function() end");
+                    
+                    // 9. Garbage collect twice for thorough cleanup
+                    lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
+                    lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
+                    
+                    tud_cdc_write_str("lua environment reset\n\r");
+                }
                 tud_cdc_write_flush();
                 break;
                 
             case C_boot:
-                tud_cdc_write_str("entering bootloader mode\n\r");
+                tud_cdc_write_str("Workshop Computer does not support bootloader command sorry.\n\r");
                 tud_cdc_write_flush();
                 break;
                 
@@ -1625,117 +1672,6 @@ public:
             }
         }
         return C_none;
-    }
-    
-    // Send string with crow-style line ending (\n\r)
-    void send_crow_response(const char* text)
-    {
-        if (tud_cdc_connected()) {
-            tud_cdc_write_str(text);
-            tud_cdc_write_char('\n');
-            tud_cdc_write_char('\r');
-            tud_cdc_write_flush();
-        }
-    }
-    
-    // Handle crow commands
-    void handle_command(C_cmd_t cmd)
-    {
-        switch (cmd) {
-            case C_version: {
-                char response[96];
-                // Embed build date/time and debug format so a late serial connection can verify firmware
-                snprintf(response, sizeof(response), "^^version('blackbird-0.1 %s %s dbg=v2')", __DATE__, __TIME__);
-                send_crow_response(response);
-                break; }
-                
-            case C_identity: {
-                // Debug: send immediate response to verify we're in this case
-                tud_cdc_write_str(">>> IDENTITY CASE REACHED <<<\n\r");
-                tud_cdc_write_flush();
-                
-                uint64_t unique_id = cached_unique_id;
-                char response[80];
-                int len = snprintf(response, sizeof(response), "^^identity('0x%08X%08X')", 
-                         (uint32_t)(unique_id >> 32), (uint32_t)(unique_id & 0xFFFFFFFF));
-                
-                // Debug: show what we're about to send
-                tud_cdc_write_str(">>> SENDING: ");
-                tud_cdc_write_str(response);
-                tud_cdc_write_str(" <<<\n\r");
-                tud_cdc_write_flush();
-                
-                send_crow_response(response);
-                break;
-            }
-            
-            case C_print:
-                send_crow_response("-- no script loaded --");
-                break;
-                
-            case C_restart:
-                send_crow_response("restarting...");
-                // Could implement actual restart here
-                break;
-                
-            case C_killlua:
-                send_crow_response("lua killed");
-                break;
-                
-            case C_boot:
-                send_crow_response("entering bootloader mode");
-                break;
-                
-            case C_startupload:
-                send_crow_response("script upload started");
-                break;
-                
-            case C_endupload:
-                send_crow_response("script uploaded");
-                break;
-                
-            case C_flashupload:
-                send_crow_response("script saved to flash");
-                break;
-                
-            case C_flashclear:
-                send_crow_response("flash cleared");
-                break;
-                
-            case C_loadFirst:
-                send_crow_response("loading first.lua");
-                // Actually load First.lua using the compiled bytecode
-                if (lua_manager) {
-                    if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
-                        const char* error = lua_tostring(lua_manager->L, -1);
-                        printf("Error loading First.lua: %s\n\r", error ? error : "unknown error");
-                        lua_pop(lua_manager->L, 1);
-                        send_crow_response("error loading first.lua");
-                    } else {
-
-                        // Model real crow: reset runtime so newly loaded script boots
-                        if (!lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end")) {
-                            printf("Warning: crow.reset() failed after First.lua load\n\r");
-                        }
-                        if (!lua_manager->evaluate_safe("local ok, err = pcall(function() if init then init() end end); if not ok then print('init() error', err) end")) {
-                            printf("Warning: init() invocation failed after First.lua load\n\r");
-                        }
-
-                        float input1_volts = get_input_state_simple(0);
-                        float input2_volts = get_input_state_simple(1);
-
-                        send_crow_response("first.lua loaded");
-                    }
-                } else {
-                    send_crow_response("error: lua manager not available");
-                }
-                break;
-                
-            default:
-                // For unimplemented commands, send a simple acknowledgment
-                send_crow_response("ok");
-                break;
-        }
     }
     
     // Check if we have a complete packet (ends with newline or carriage return)
