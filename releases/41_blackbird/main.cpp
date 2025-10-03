@@ -729,6 +729,11 @@ public:
     lua_register(L, "set_output_scale", lua_set_output_scale);
     lua_register(L, "soutput_handler", lua_soutput_handler);
     
+    // Register Just Intonation functions
+    lua_register(L, "justvolts", lua_justvolts);
+    lua_register(L, "just12", lua_just12);
+    lua_register(L, "hztovolts", lua_hztovolts);
+    
     // Register crow backend functions for Input.lua compatibility
     lua_register(L, "io_get_input", lua_io_get_input);
     lua_register(L, "set_input_stream", lua_set_input_stream);
@@ -1018,6 +1023,11 @@ public:
     static int lua_set_output_scale(lua_State* L);
     static int lua_c_tell(lua_State* L);
     static int lua_soutput_handler(lua_State* L);
+    
+    // Just Intonation functions
+    static int lua_justvolts(lua_State* L);
+    static int lua_just12(lua_State* L);
+    static int lua_hztovolts(lua_State* L);
     
     // Crow backend functions for Input.lua compatibility
     static int lua_io_get_input(lua_State* L);
@@ -2283,6 +2293,102 @@ int LuaManager::lua_set_output_scale(lua_State* L) {
     
     lua_pop(L, nargs);
     return 0;
+}
+
+// Helper function for justvolts/just12 implementation
+static int lua_justvolts_impl(lua_State* L, float mul) {
+    // Apply optional offset
+    float offset = 0.0f;
+    int nargs = lua_gettop(L);
+    
+    switch(nargs) {
+        case 1: 
+            break;
+        case 2: 
+            offset = log2f(luaL_checknumber(L, 2)) * mul;
+            break;
+        default:
+            return luaL_error(L, "justvolts: need 1 or 2 args");
+    }
+    
+    // Handle single number or table
+    int lua_type_1 = lua_type(L, 1);
+    
+    if (lua_type_1 == LUA_TNUMBER) {
+        // Single ratio
+        float result = log2f(lua_tonumber(L, 1)) * mul + offset;
+        lua_settop(L, 0);
+        lua_pushnumber(L, result);
+        return 1;
+    }
+    else if (lua_type_1 == LUA_TTABLE) {
+        // Table of ratios
+        int telems = lua_rawlen(L, 1);
+        
+        // Create result table
+        lua_createtable(L, telems, 0);
+        
+        for(int i = 1; i <= telems; i++) {
+            lua_rawgeti(L, 1, i);
+            float ratio = luaL_checknumber(L, -1);
+            float result = log2f(ratio) * mul + offset;
+            lua_pop(L, 1);
+            
+            lua_pushnumber(L, result);
+            lua_rawseti(L, 2, i); // Store in result table
+        }
+        
+        // Remove original table, leave result on stack
+        lua_remove(L, 1);
+        return 1;
+    }
+    else {
+        return luaL_error(L, "justvolts: argument must be number or table");
+    }
+}
+
+// justvolts(ratio_or_table, [offset]) - Convert JI ratios to 1V/oct voltages
+// Examples:
+//   justvolts(2) -> 1.0 (one octave)
+//   justvolts({1/1, 2/1, 4/1}) -> {0, 1, 2}
+int LuaManager::lua_justvolts(lua_State* L) {
+    return lua_justvolts_impl(L, 1.0f);
+}
+
+// just12(ratio_or_table, [offset]) - Convert JI ratios to 12TET semitone voltages
+// Examples:
+//   just12(3/2) -> 7.02 (perfect fifth in semitones)
+//   just12({1/1, 5/4, 3/2}) -> {0, 3.86, 7.02}
+//   just12({1/1, 5/4, 3/2}, 2) -> {12, 15.86, 19.02} (offset by 1 octave)
+int LuaManager::lua_just12(lua_State* L) {
+    return lua_justvolts_impl(L, 12.0f);
+}
+
+// hztovolts(freq, [reference]) - Convert frequency to voltage
+// Examples:
+//   hztovolts(440) -> 0 (A4 at 0V by default)
+//   hztovolts(880) -> 1.0 (A5, one octave up)
+//   hztovolts(440, 261.626) -> 0.585 (A4 referenced to C4)
+int LuaManager::lua_hztovolts(lua_State* L) {
+    const float MIDDLE_C_INV = 1.0f / 261.626f; // 1/C4 frequency
+    
+    float retval = 0.0f;
+    int nargs = lua_gettop(L);
+    
+    switch(nargs) {
+        case 1: // use default middle C reference
+            retval = log2f(luaL_checknumber(L, 1) * MIDDLE_C_INV);
+            break;
+        case 2: // use provided reference
+            retval = log2f(luaL_checknumber(L, 1) / luaL_checknumber(L, 2));
+            break;
+        default:
+            return luaL_error(L, "hztovolts: need 1 or 2 args");
+    }
+    
+    lua_settop(L, 0);
+    lua_pushnumber(L, retval);
+    return 1;
 }
 
 // _c.tell('output', channel, value) - Send output to slopes system (proper crow behavior)
