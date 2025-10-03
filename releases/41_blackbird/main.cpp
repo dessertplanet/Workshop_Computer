@@ -1132,6 +1132,7 @@ typedef enum {
 static volatile repl_mode_t g_repl_mode = REPL_normal;
 static char g_new_script[16 * 1024];  // 16KB script buffer for uploads
 static volatile uint32_t g_new_script_len = 0;
+static char g_new_script_name[64] = "";  // Store script name from first comment line
 
 // Hardware timer-based PulseOut2 performance monitoring (outside class to avoid C++ issues)
 static volatile bool g_pulse2_state = false;
@@ -1145,6 +1146,55 @@ static bool __not_in_flash_func(pulse2_timer_callback)(struct repeating_timer *t
     gpio_put(PULSE_2_RAW_OUT, !g_pulse2_state); // Note: raw output is inverted
     g_pulse2_counter++;
     return true; // Continue repeating
+}
+
+// Try to extract script name from first comment line (e.g., "-- Fiirst.lua")
+static void extract_script_name(const char* script, uint32_t length) {
+    g_new_script_name[0] = '\0';
+    if (!script || length < 5) return;
+    
+    // Look for "-- filename.lua" pattern in first 200 chars
+    const char* end = script + (length < 200 ? length : 200);
+    const char* p = script;
+    
+    // Skip whitespace at start
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
+    
+    // Check if it starts with "--"
+    if (p + 2 < end && p[0] == '-' && p[1] == '-') {
+        p += 2;
+        // Skip spaces after "--"
+        while (p < end && (*p == ' ' || *p == '\t')) p++;
+        
+        // Look for .lua extension
+        const char* start = p;
+        const char* lua_ext = nullptr;
+        while (p < end && *p != '\r' && *p != '\n') {
+            if (p + 4 < end && strncmp(p, ".lua", 4) == 0) {
+                lua_ext = p + 4;
+                break;
+            }
+            p++;
+        }
+        
+        // If we found .lua, extract the filename
+        if (lua_ext) {
+            // Back up to start of filename (look for last space before extension)
+            const char* name_start = start;
+            for (const char* s = start; s < lua_ext - 4; s++) {
+                if (*s == ' ' || *s == '\t' || *s == '/') {
+                    name_start = s + 1;
+                }
+            }
+            
+            // Copy filename
+            size_t name_len = lua_ext - name_start;
+            if (name_len > 0 && name_len < sizeof(g_new_script_name) - 1) {
+                memcpy(g_new_script_name, name_start, name_len);
+                g_new_script_name[name_len] = '\0';
+            }
+        }
+    }
 }
 
 class BlackbirdCrow : public ComputerCard
@@ -1316,9 +1366,11 @@ public:
                 // Load First.lua from compiled bytecode
                 if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK 
                     || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
-                    printf("Failed to load First.lua\n");
+                    tud_cdc_write_str(" Failed to load First.lua\n\r");
+                    tud_cdc_write_flush();
                 } else {
-                    printf("Loaded: First.lua (default)\n");
+                    tud_cdc_write_str(" Loaded: First.lua (default)\n\r");
+                    tud_cdc_write_flush();
                     // Call crow.reset() and init() like real crow does
                     lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
                     lua_manager->evaluate_safe("if init then init() end");
@@ -1329,28 +1381,36 @@ public:
                 {
                     uint16_t script_len = FlashStorage::get_user_script_length();
                     const char* script_addr = FlashStorage::get_user_script_addr();
+                    const char* script_name = FlashStorage::get_script_name();
                     
                     // Execute directly from flash (XIP)
                     if (script_addr && luaL_loadbuffer(lua_manager->L, script_addr, script_len, "=userscript") == LUA_OK
                         && lua_pcall(lua_manager->L, 0, 0, 0) == LUA_OK) {
                         char msg[128];
-                        snprintf(msg, sizeof(msg), "\n>>> USER SCRIPT loaded from flash (%u bytes)\n\n", script_len);
+                        if (script_name && script_name[0]) {
+                            snprintf(msg, sizeof(msg), "\n>>> Loaded: %s (%u bytes)\n\n", script_name, script_len);
+                        } else {
+                            snprintf(msg, sizeof(msg), "\n>>> USER SCRIPT loaded from flash (%u bytes)\n\n", script_len);
+                        }
                         tud_cdc_write_str(msg);
                         tud_cdc_write_flush();
                         // Call crow.reset() and init() like real crow does
                         lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
                         lua_manager->evaluate_safe("if init then init() end");
                     } else {
-                        printf("Failed to load user script from flash, loading First.lua\n");
+                        tud_cdc_write_str(" Failed to load user script from flash, loading First.lua\n\r");
+                        tud_cdc_write_flush();
                         // Fallback to First.lua
                         if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") == LUA_OK 
                             && lua_pcall(lua_manager->L, 0, 0, 0) == LUA_OK) {
-                            printf("Loaded First.lua fallback\n");
+                            tud_cdc_write_str(" Loaded First.lua fallback\n\r");
+                            tud_cdc_write_flush();
                             // Call crow.reset() and init() for fallback too
                             lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
                             lua_manager->evaluate_safe("if init then init() end");
                         } else {
-                            printf("Failed to load First.lua fallback\n");
+                            tud_cdc_write_str(" Failed to load First.lua fallback\n\r");
+                            tud_cdc_write_flush();
                         }
                     }
                 }
@@ -1394,14 +1454,14 @@ public:
             // Send welcome message 1.5s after startup
             if (!welcome_sent && absolute_time_diff_us(get_absolute_time(), welcome_time) <= 0) {
                 char card_id_str[32];
-                snprintf(card_id_str, sizeof(card_id_str), " Program Card ID: 0x%08X%08X\n\r", 
-                         (uint32_t)(cached_unique_id >> 32), (uint32_t)(cached_unique_id & 0xFFFFFFFF));
+                
                 
                 tud_cdc_write_str("\n\r");
                 tud_cdc_write_str(" Blackbird-v0.4\n\r");
                 tud_cdc_write_str(" Music Thing Modular Workshop Computer\n\r");
+                snprintf(card_id_str, sizeof(card_id_str), " Program Card ID: 0x%08X%08X\n\r", 
+                         (uint32_t)(cached_unique_id >> 32), (uint32_t)(cached_unique_id & 0xFFFFFFFF));
                 tud_cdc_write_str(card_id_str);
-                tud_cdc_write_str("\n\r");
                 tud_cdc_write_flush();
                 welcome_sent = true;
                 
@@ -1713,6 +1773,7 @@ public:
                 // Clear and prepare for script reception
                 g_new_script_len = 0;
                 memset(g_new_script, 0, sizeof(g_new_script));
+                g_new_script_name[0] = '\0';  // Clear script name
                 g_repl_mode = REPL_reception;
                 tud_cdc_write_str("script upload started\n\r");
                 tud_cdc_write_flush();
@@ -1743,15 +1804,24 @@ public:
                     tud_cdc_write_str("upload failed, discard mode\n\r");
                     tud_cdc_write_flush();
                 } else if (g_new_script_len > 0 && lua_manager) {
+                    // Try to extract script name from first comment line
+                    extract_script_name(g_new_script, g_new_script_len);
+                    
                     // Run script AND save to flash - matches crow's REPL_upload(1)
                     // Tell user to prepare for manual reset BEFORE we write to flash
                     tud_cdc_write_str("\n\r");
                     tud_cdc_write_str("========================================\n\r");
-                    tud_cdc_write_str("Writing script to flash...\n\r");
+                    if (g_new_script_name[0]) {
+                        char msg[128];
+                        snprintf(msg, sizeof(msg), "Writing %s to flash...\n\r", g_new_script_name);
+                        tud_cdc_write_str(msg);
+                    } else {
+                        tud_cdc_write_str("Writing script to flash...\n\r");
+                    }
                     tud_cdc_write_flush();
                     
                     // Write to flash (this will reset core1, do the flash write, then restart core1)
-                    if (FlashStorage::write_user_script(g_new_script, g_new_script_len)) {
+                    if (FlashStorage::write_user_script_with_name(g_new_script, g_new_script_len, g_new_script_name)) {
                         tud_cdc_write_str("User script saved to flash!\n\r");
                         tud_cdc_write_str("\n\r");
                         tud_cdc_write_str("Press the HARDWARE RESET button on\n\r");
@@ -1765,6 +1835,8 @@ public:
                         this->LedOn(1);
                         this->LedOn(2);
                         this->LedOn(3);
+                        this->LedOn(4);
+                        this->LedOn(5);
                         
                         // Note: System continues running with old script until hardware reset
                     } else {
@@ -1783,15 +1855,45 @@ public:
             }
                 
             case C_flashclear:
-                FlashStorage::clear_user_script();
-                tud_cdc_write_str("User script cleared.\n\r");
+                // Output status BEFORE flash operation (which disables interrupts)
+                tud_cdc_write_str("\n\r");
+                tud_cdc_write_str("========================================\n\r");
+                tud_cdc_write_str("Clearing user script...\n\r");
                 tud_cdc_write_flush();
+                
+                // Give USB time to transmit before disabling interrupts
+                sleep_ms(100);
+                
+                // Write to flash (this will disable interrupts briefly)
+                if (FlashStorage::set_default_script_mode()) {
+                    // Give USB time to stabilize after core1 restart
+                    sleep_ms(50);
+                    
+                    tud_cdc_write_str("User script cleared!\n\r");
+                    tud_cdc_write_str("First.lua will load on next boot.\n\r");
+                    tud_cdc_write_str("\n\r");
+                    tud_cdc_write_str("Press the HARDWARE RESET button on\n\r");
+                    tud_cdc_write_str("Workshop Computer to load First.lua.\n\r");
+                    tud_cdc_write_str("========================================\n\r");
+                    tud_cdc_write_str("\n\r");
+                    tud_cdc_write_flush();
+                    
+                    // Light up all LEDs to indicate operation complete
+                    this->LedOn(0);
+                    this->LedOn(1);
+                    this->LedOn(2);
+                    this->LedOn(3);
+                    this->LedOn(4);
+                    this->LedOn(5);
+                } else {
+                    tud_cdc_write_str("flash write failed\n\r");
+                    tud_cdc_write_flush();
+                }
                 break;
                 
             case C_loadFirst:
-                FlashStorage::load_default_script();
                 printf("loading First.lua\r\n");
-                // Actually load First.lua using the compiled bytecode
+                // Load First.lua immediately without touching flash
                 if (lua_manager) {
                     if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
                         const char* error = lua_tostring(lua_manager->L, -1);
