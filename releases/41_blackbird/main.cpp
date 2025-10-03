@@ -132,7 +132,7 @@ static inline bool check_for_backticks(const char* buffer, int pos) {
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
 static BlackbirdCrow* g_crow_core1 = nullptr;
-static void core1_entry(); // defined after BlackbirdCrow
+void core1_entry(); // defined after BlackbirdCrow - non-static so flash_storage can call it
 
 
 // Forward declaration of C interface function (implemented after BlackbirdCrow class)
@@ -1119,6 +1119,9 @@ static char g_rx_buffer[USB_RX_BUFFER_SIZE] = {0};
 static volatile int g_rx_buffer_pos = 0;
 static volatile bool g_multiline_mode = false;  // Track multi-line mode (triple backticks)
 
+// Global flag to signal core1 to pause for flash operations (not static - accessed from flash_storage.cpp)
+volatile bool g_flash_operation_pending = false;
+
 // Upload state machine (matches crow's REPL mode)
 typedef enum {
     REPL_normal = 0,
@@ -1330,7 +1333,10 @@ public:
                     // Execute directly from flash (XIP)
                     if (script_addr && luaL_loadbuffer(lua_manager->L, script_addr, script_len, "=userscript") == LUA_OK
                         && lua_pcall(lua_manager->L, 0, 0, 0) == LUA_OK) {
-                        printf("Loaded: user script from flash (%u bytes)\n", script_len);
+                        char msg[128];
+                        snprintf(msg, sizeof(msg), "\n>>> USER SCRIPT loaded from flash (%u bytes)\n\n", script_len);
+                        tud_cdc_write_str(msg);
+                        tud_cdc_write_flush();
                         // Call crow.reset() and init() like real crow does
                         lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
                         lua_manager->evaluate_safe("if init then init() end");
@@ -1716,11 +1722,11 @@ public:
                 if (g_repl_mode == REPL_discard) {
                     tud_cdc_write_str("upload failed, returning to normal mode\n\r");
                 } else if (g_new_script_len > 0 && lua_manager) {
-                    // Run script in RAM (temporary)
+                    // Run script in RAM (temporary) - matches crow's REPL_upload(0)
                     if (lua_manager->evaluate_safe(g_new_script)) {
-                        // Script loaded successfully - now reset crow environment and call init()
-                        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                        // Script loaded successfully - now call init() to start it (like Lua_crowbegin)
                         lua_manager->evaluate_safe("if init then init() end");
+                        tud_cdc_write_str("^^ready()\n\r"); // Inform host that script is running
                         // Silent success - script is now running
                     } else {
                         tud_cdc_write_str("\\script evaluation failed\n\r");
@@ -1732,30 +1738,49 @@ public:
                 tud_cdc_write_flush();
                 break;
                 
-            case C_flashupload:
+            case C_flashupload: {
                 if (g_repl_mode == REPL_discard) {
-                    tud_cdc_write_str("upload failed, returning to normal mode\n\r");
+                    tud_cdc_write_str("upload failed, discard mode\n\r");
+                    tud_cdc_write_flush();
                 } else if (g_new_script_len > 0 && lua_manager) {
-                    // Run script AND save to flash
-                    if (lua_manager->evaluate_safe(g_new_script)) {
-                        // Script loaded successfully - reset crow environment and call init()
-                        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
-                        lua_manager->evaluate_safe("if init then init() end");
+                    // Run script AND save to flash - matches crow's REPL_upload(1)
+                    // Tell user to prepare for manual reset BEFORE we write to flash
+                    tud_cdc_write_str("\n\r");
+                    tud_cdc_write_str("========================================\n\r");
+                    tud_cdc_write_str("Writing script to flash...\n\r");
+                    tud_cdc_write_flush();
+                    
+                    // Write to flash (this will reset core1, do the flash write, then restart core1)
+                    if (FlashStorage::write_user_script(g_new_script, g_new_script_len)) {
+                        tud_cdc_write_str("User script saved to flash!\n\r");
+                        tud_cdc_write_str("\n\r");
+                        tud_cdc_write_str("Press the HARDWARE RESET button on\n\r");
+                        tud_cdc_write_str("Workshop Computer to load your script.\n\r");
+                        tud_cdc_write_str("========================================\n\r");
+                        tud_cdc_write_str("\n\r");
+                        tud_cdc_write_flush();
                         
-                        if (FlashStorage::write_user_script(g_new_script, g_new_script_len)) {
-                            tud_cdc_write_str("User script updated.\n\r");
-                        } else {
-                            tud_cdc_write_str("flash write failed\n\r");
-                        }
+                        // Light up all LEDs to indicate upload complete
+                        this->LedOn(0);
+                        this->LedOn(1);
+                        this->LedOn(2);
+                        this->LedOn(3);
+                        
+                        // Note: System continues running with old script until hardware reset
                     } else {
-                        tud_cdc_write_str("User script evaluation failed.\n\r");
+                        tud_cdc_write_str("flash write failed\n\r");
+                        tud_cdc_write_flush();
                     }
                 } else {
-                    tud_cdc_write_str("no script data received\n\r");
+                    char debug_buf[128];
+                    snprintf(debug_buf, sizeof(debug_buf), "no script data (len=%lu, lua_manager=%p)\n\r", 
+                             (unsigned long)g_new_script_len, (void*)lua_manager);
+                    tud_cdc_write_str(debug_buf);
                 }
                 g_repl_mode = REPL_normal;
                 tud_cdc_write_flush();
                 break;
+            }
                 
             case C_flashclear:
                 FlashStorage::clear_user_script();
@@ -2865,7 +2890,7 @@ extern "C" uint64_t get_card_unique_id(void) {
     return 0;
 }
 
-static void core1_entry() {
+void core1_entry() {
         printf("[boot] core1 audio engine starting\n\r");
         //Normalisation probe was causing issues so disabling.
         //crow.EnableNormalisationProbe();

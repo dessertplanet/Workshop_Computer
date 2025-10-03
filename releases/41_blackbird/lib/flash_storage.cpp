@@ -1,10 +1,14 @@
 #include "flash_storage.h"
 #include <cstring>
-#include <cstdio>
+#include "pico/multicore.h"
+#include "tusb.h"
+
+// External flag from main.cpp to signal core1
+extern volatile bool g_flash_operation_pending;
 
 void FlashStorage::init() {
     // Nothing special needed - XIP is already configured by SDK
-    printf("Flash storage initialized at offset 0x%X\n", USER_SCRIPT_OFFSET);
+    // Silent init - no output needed
 }
 
 USERSCRIPT_t FlashStorage::which_user_script() {
@@ -18,41 +22,65 @@ USERSCRIPT_t FlashStorage::which_user_script() {
     }
 }
 
+// Static buffer for flash operations - must not use dynamic allocation during flash write
+static uint8_t flash_write_buffer[USER_SCRIPT_SIZE + 256] __attribute__((aligned(256)));
+
+// Helper function in RAM that does the actual flash write
+// Must be in RAM because XIP is disabled during flash operations
+static void __not_in_flash_func(do_flash_write)(uint32_t offset, const uint8_t* data, size_t size) {
+    // Disable interrupts during flash operations
+    uint32_t ints = save_and_disable_interrupts();
+    
+    // Erase the required sectors
+    flash_range_erase(offset, USER_SCRIPT_SECTORS * 4096);
+    
+    // Program the flash
+    flash_range_program(offset, data, size);
+    
+    restore_interrupts(ints);
+}
+
 bool FlashStorage::write_user_script(const char* script, uint32_t length) {
     if (length > USER_SCRIPT_SIZE) {
-        printf("Script too large: %u bytes (max %u)\n", length, USER_SCRIPT_SIZE);
         return false;
     }
     
-    // Prepare aligned buffer for flash programming
+    // Don't use tud_cdc_write here - it might interfere with USB in some way
+    // Just do the work silently
+    
+    // Prepare aligned buffer for flash programming (use static buffer to avoid heap allocation)
     const size_t total_size = 4 + length;  // status word + script
     const size_t aligned_size = (total_size + FLASH_PAGE_SIZE - 1) & ~(FLASH_PAGE_SIZE - 1);  // Round up to page
     
-    uint8_t* buffer = new uint8_t[aligned_size];
-    memset(buffer, 0xFF, aligned_size);  // Fill with 0xFF (erased flash value)
+    memset(flash_write_buffer, 0xFF, aligned_size);
     
     // Build status word: [magic:4][version:12][length:16]
     uint32_t status_word = USER_MAGIC 
                          | (get_version_word() << 4) 
                          | (length << 16);
-    memcpy(buffer, &status_word, 4);
-    memcpy(buffer + 4, script, length);
+    memcpy(flash_write_buffer, &status_word, 4);
+    memcpy(flash_write_buffer + 4, script, length);
     
-    // Critical section: disable interrupts and erase/program flash
-    // RP2040 requires ALL cores to be stopped during flash operations
+    // CRITICAL: On RP2040 multicore, we MUST stop core1 before flash operations
+    // because flash_range_erase/program disable XIP which would crash core1
+    // We'll reset core1, do the flash write, then restart it
+    // This will cause audio to stop temporarily (~1 second) but is unavoidable
+    
+    // Store core1 entry point so we can restart it
+    extern void core1_entry();
+    
+    // Reset core1 (this stops it completely)
+    multicore_reset_core1();
+    
+    // Now it's safe to write to flash
     uint32_t ints = save_and_disable_interrupts();
-    
-    // Erase sectors (must erase before programming)
     flash_range_erase(USER_SCRIPT_OFFSET, USER_SCRIPT_SECTORS * 4096);
-    
-    // Program flash (256 bytes at a time)
-    flash_range_program(USER_SCRIPT_OFFSET, buffer, aligned_size);
-    
+    flash_range_program(USER_SCRIPT_OFFSET, flash_write_buffer, aligned_size);
     restore_interrupts(ints);
     
-    delete[] buffer;
+    // Restart core1
+    multicore_launch_core1(core1_entry);
     
-    printf("Script saved to flash: %u bytes at 0x%X\n", length, USER_SCRIPT_OFFSET);
     return true;
 }
 
@@ -99,7 +127,8 @@ void FlashStorage::clear_user_script() {
     flash_range_program(USER_SCRIPT_OFFSET, buffer, FLASH_PAGE_SIZE);
     restore_interrupts(ints);
     
-    printf("User script cleared\n");
+    tud_cdc_write_str("User script cleared\n\r");
+    tud_cdc_write_flush();
 }
 
 void FlashStorage::load_default_script() {
@@ -115,7 +144,8 @@ void FlashStorage::load_default_script() {
     flash_range_program(USER_SCRIPT_OFFSET, buffer, FLASH_PAGE_SIZE);
     restore_interrupts(ints);
     
-    printf("Reset to default script mode\n");
+    tud_cdc_write_str("Reset to default script mode\n\r");
+    tud_cdc_write_flush();
 }
 
 uint32_t FlashStorage::get_version_word() {
