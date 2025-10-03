@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include "pico/stdlib.h"
+#include "ashapes.h"  // For output quantization
 
 // Timer implementation for RP2040 Workshop Computer with block processing optimization
 // Aligned block size (32 samples) for consistent timing with audio processing
@@ -130,8 +131,8 @@ void __not_in_flash_func(Timer_Process_Block)(void) {
         }
         
         // Process this channel's slope over the block
+        // Quantization is applied inside S_step_v before hardware output
         S_step_v(ch, slope_buffer, TIMER_BLOCK_SIZE);
-        // Hardware output update happens inside S_step_v via hardware_output_set_voltage
     }
     
     // Process timer callbacks

@@ -2216,12 +2216,72 @@ int LuaManager::lua_LL_get_state(lua_State* L) {
     return 1;
 }
 
-// set_output_scale(channel, ...) - Set voltage scaling (stub for now)
+// set_output_scale(channel, scale_table, [modulo], [scaling]) - Set output quantization
 int LuaManager::lua_set_output_scale(lua_State* L) {
-    int channel = luaL_checkinteger(L, 1);  // 1-based channel from Lua
-    // For now, just consume the arguments - real crow has complex scaling
-    // TODO: Implement proper voltage scaling if needed
-    printf("set_output_scale called for channel %d (not implemented)\n\r", channel);
+    // Default values - shared between calls (matches crow behavior)
+    static float mod = 12.0;     // default to 12TET
+    static float scaling = 1.0;  // default to 1V/octave
+    
+    int nargs = lua_gettop(L);
+    int channel = luaL_checkinteger(L, 1) - 1;  // Convert to 0-based
+    
+    // Validate channel
+    if (channel < 0 || channel >= 4) {
+        lua_pop(L, nargs);
+        return luaL_error(L, "Invalid channel: %d (must be 1-4)", channel + 1);
+    }
+    
+    // Case 1: No scale argument -> chromatic quantization (semitones)
+    if (nargs == 1) {
+        float divs[12] = {0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0};
+        AShaper_set_scale(channel, divs, 12, 12.0, 1.0);
+        lua_pop(L, 1);
+        return 0;
+    }
+    
+    // Case 2: String argument 'none' -> disable quantization
+    if (lua_isstring(L, 2)) {
+        const char* str = lua_tostring(L, 2);
+        if (strcmp(str, "none") == 0) {
+            AShaper_unset_scale(channel);
+            lua_pop(L, nargs);
+            return 0;
+        }
+    }
+    
+    // Case 3: Table of scale degrees (semitones or ratios)
+    if (!lua_istable(L, 2)) {
+        lua_pop(L, nargs);
+        return luaL_error(L, "Second argument must be table or 'none'");
+    }
+    
+    int tlen = lua_rawlen(L, 2);
+    if (tlen == 0 || tlen > MAX_DIV_LIST_LEN) {
+        lua_pop(L, nargs);
+        return luaL_error(L, "Scale table length must be 1-%d", MAX_DIV_LIST_LEN);
+    }
+    
+    float divs[MAX_DIV_LIST_LEN];
+    for (int i = 0; i < tlen; i++) {
+        lua_pushnumber(L, i + 1);  // Lua is 1-based
+        lua_gettable(L, 2);
+        divs[i] = luaL_checknumber(L, -1);
+        lua_pop(L, 1);
+    }
+    
+    // Optional modulo parameter (arg 3)
+    if (nargs >= 3) {
+        mod = luaL_checknumber(L, 3);
+    }
+    
+    // Optional scaling parameter (arg 4)
+    if (nargs >= 4) {
+        scaling = luaL_checknumber(L, 4);
+    }
+    
+    AShaper_set_scale(channel, divs, tlen, mod, scaling);
+    
+    lua_pop(L, nargs);
     return 0;
 }
 

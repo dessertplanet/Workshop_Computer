@@ -302,8 +302,11 @@ void S_toward( int        index
             self->countdown = -0.0; // inactive.
         }
         // Immediate hardware update for zero-time (instant) transitions
+        // Apply quantization before hardware output
+        extern float AShaper_quantize_single(int index, float voltage);
+        float quantized = AShaper_quantize_single(index, self->shaped);
         extern void hardware_output_set_voltage(int channel, float voltage);
-        hardware_output_set_voltage(index+1, self->shaped);
+        hardware_output_set_voltage(index+1, quantized);
         
         // Schedule callback for instant transitions
         // Fire on next audio cycle to allow ASL sequences to continue
@@ -467,9 +470,13 @@ static float* shaper_v( Slope_t* self, float* out, int size )
     // save last state
     self->shaped = out[size-1];
     
+    // Apply quantization before hardware output
+    extern float AShaper_quantize_single(int index, float voltage);
+    float quantized = AShaper_quantize_single(self->index, self->shaped);
+    
     // Update hardware output directly for real-time response
     extern void hardware_output_set_voltage(int channel, float voltage);
-    hardware_output_set_voltage(self->index + 1, self->shaped);  // Convert to 1-based channel
+    hardware_output_set_voltage(self->index + 1, quantized);  // Convert to 1-based channel
     
     return out;
 }
@@ -493,9 +500,13 @@ static float shaper( Slope_t* self, float out )
     // save last state
     self->shaped = out;
     
+    // Apply quantization before hardware output
+    extern float AShaper_quantize_single(int index, float voltage);
+    float quantized = AShaper_quantize_single(self->index, self->shaped);
+    
     // Update hardware output directly for immediate response
     extern void hardware_output_set_voltage(int channel, float voltage);
-    hardware_output_set_voltage(self->index + 1, self->shaped);  // Convert to 1-based channel
+    hardware_output_set_voltage(self->index + 1, quantized);  // Convert to 1-based channel
     
     return out;
 }

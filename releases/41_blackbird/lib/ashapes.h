@@ -31,3 +31,5 @@ float* AShaper_v( int     index
                 , float*  out
                 , int     size
                 );
+
+float AShaper_quantize_single( int index, float voltage );

@@ -63,10 +63,7 @@ void AShaper_set_scale( int    index
 
     self->offset = 0.5 * self->scaling / self->modulo;
     
-    // TODO: Implement quantization later
-    // For now, keep as pass-through
-    // self->active = true;
-    printf("AShaper_set_scale called for channel %d (quantization not implemented)\n", index + 1);
+    self->active = true;
 }
 
 float AShaper_get_state( int index )
@@ -77,20 +74,59 @@ float AShaper_get_state( int index )
     return self->state;
 }
 
-// Pass-through implementation - just saves the last value for state queries
+// TODO optimization
 float* AShaper_v( int     index
                 , float*  out
                 , int     size
                 )
 {
     if( index < 0 || index >= ASHAPER_CHANNELS ){ return out; }
+    AShape_t* self = &ashapers[index]; // safe pointer
+
+    if( !self->active ){ // shaper inactive so just return
+        self->state = out[size-1]; // save latest value
+        return out;
+    }
+
+    float* out2 = out;
+    for( int i=0; i<size; i++ ){
+        float samp = *out2 + self->offset; // apply shift for centering and transpose
+
+        float n_samp = samp/self->scaling; // samp normalized to [0,1.0)
+
+        float divs = floorf(n_samp);
+        float phase = n_samp - divs; // [0,1.0)
+
+        int note = (int)(phase * self->dlLen); // map phase to num of note choices
+        float note_map = self->divlist[note]; // apply lookup table
+        note_map /= self->modulo; // remap via num of options
+
+        *out2++ = self->scaling * (divs + note_map);
+    }
+    self->state = out[size-1]; // save last value
+    return out;
+}
+
+// Single-sample quantization for real-time hardware output
+float AShaper_quantize_single( int index, float voltage )
+{
+    if( index < 0 || index >= ASHAPER_CHANNELS ){ return voltage; }
     AShape_t* self = &ashapers[index];
 
-    // Always pass-through for now (quantization disabled)
-    // Just save the last value for state queries
-    if( size > 0 ){
-        self->state = out[size-1];
+    if( !self->active ){ // quantization disabled
+        return voltage;
     }
+
+    // Apply the same quantization algorithm as AShaper_v
+    float samp = voltage + self->offset; // apply shift for centering and transpose
+    float n_samp = samp / self->scaling; // samp normalized to [0,1.0)
     
-    return out;  // Pass-through unchanged
+    float divs = floorf(n_samp);
+    float phase = n_samp - divs; // [0,1.0)
+    
+    int note = (int)(phase * self->dlLen); // map phase to num of note choices
+    float note_map = self->divlist[note]; // apply lookup table
+    note_map /= self->modulo; // remap via num of options
+    
+    return self->scaling * (divs + note_map);
 }
