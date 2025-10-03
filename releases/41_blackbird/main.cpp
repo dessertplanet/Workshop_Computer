@@ -2893,8 +2893,12 @@ int LuaManager::lua_set_input_clock(lua_State* L) {
     // Clock mode is a specialized change detection
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        // Use change detection as base for clock
-        Detect_change(detector, change_callback, threshold, hysteresis, 1); // Rising edge
+        // Set clock to external input source and configure division
+        clock_set_source(CLOCK_SOURCE_CROW);
+        clock_crow_in_div(div);
+        
+        // Use clock_input_handler instead of generic change_callback
+        Detect_change(detector, clock_input_handler, threshold, hysteresis, 1); // Rising edge
         printf("Input %d: clock mode, div %.3f, thresh %.3f, hyst %.3f\n\r", 
                channel, div, threshold, hysteresis);
     }
