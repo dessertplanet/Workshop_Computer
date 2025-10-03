@@ -1388,9 +1388,9 @@ public:
                         && lua_pcall(lua_manager->L, 0, 0, 0) == LUA_OK) {
                         char msg[128];
                         if (script_name && script_name[0]) {
-                            snprintf(msg, sizeof(msg), "\n>>> Loaded: %s (%u bytes)\n\n", script_name, script_len);
+                            snprintf(msg, sizeof(msg), " Loaded: %s (%u bytes)\n\r", script_name, script_len);
                         } else {
-                            snprintf(msg, sizeof(msg), "\n>>> USER SCRIPT loaded from flash (%u bytes)\n\n", script_len);
+                            snprintf(msg, sizeof(msg), " Loaded: Untitled User Script (%u bytes)\n\r", script_len);
                         }
                         tud_cdc_write_str(msg);
                         tud_cdc_write_flush();
@@ -1453,14 +1453,15 @@ public:
             
             // Send welcome message 1.5s after startup
             if (!welcome_sent && absolute_time_diff_us(get_absolute_time(), welcome_time) <= 0) {
-                char card_id_str[32];
-                
+                char card_id_str[48];
                 
                 tud_cdc_write_str("\n\r");
                 tud_cdc_write_str(" Blackbird-v0.4\n\r");
                 tud_cdc_write_str(" Music Thing Modular Workshop Computer\n\r");
+                tud_cdc_write_flush();
                 snprintf(card_id_str, sizeof(card_id_str), " Program Card ID: 0x%08X%08X\n\r", 
                          (uint32_t)(cached_unique_id >> 32), (uint32_t)(cached_unique_id & 0xFFFFFFFF));
+                
                 tud_cdc_write_str(card_id_str);
                 tud_cdc_write_flush();
                 welcome_sent = true;
@@ -1701,13 +1702,30 @@ public:
                 break;
             }
             
-            case C_print:
-                tud_cdc_write_str("-- no script loaded --\n\r");
+            case C_print: {
+                // Check if there's a user script in flash and print its name
+                USERSCRIPT_t script_type = FlashStorage::which_user_script();
+                if (script_type == USERSCRIPT_User) {
+                    const char* script_name = FlashStorage::get_script_name();
+                    if (script_name && script_name[0] != '\0') {
+                        char msg[128];
+                        snprintf(msg, sizeof(msg), "Running: %s\n\r", script_name);
+                        tud_cdc_write_str(msg);
+                    } else {
+                        tud_cdc_write_str("Running: user script (unnamed)\n\r");
+                    }
+                } else if (script_type == USERSCRIPT_Default) {
+                    tud_cdc_write_str("Running: First.lua (default)\n\r");
+                } else {
+                    tud_cdc_write_str("No user script.\n\r");
+                }
                 tud_cdc_write_flush();
+                sleep_ms(50);  // Give USB time to transmit before next command
                 break;
+            }
                 
             case C_restart:
-                tud_cdc_write_str("Push the reset button to reset Workshop Computer.\n\r");
+                tud_cdc_write_str("Press the RESET button to reset Workshop Computer.\n\r");
                 tud_cdc_write_flush();
                 // Could implement actual restart here
                 break;
@@ -1809,10 +1827,12 @@ public:
                     
                     // Run script AND save to flash - matches crow's REPL_upload(1)
                     // Tell user to prepare for manual reset BEFORE we write to flash
+                    tud_cdc_write_flush();
                     tud_cdc_write_str("\n\r");
                     tud_cdc_write_str("========================================\n\r");
+                    tud_cdc_write_flush();
                     if (g_new_script_name[0]) {
-                        char msg[128];
+                        char msg[64];
                         snprintf(msg, sizeof(msg), "Writing %s to flash...\n\r", g_new_script_name);
                         tud_cdc_write_str(msg);
                     } else {
@@ -1820,18 +1840,15 @@ public:
                     }
                     tud_cdc_write_flush();
                     
-                    // Give USB time to transmit before flash operation
-                    sleep_ms(100);
-                    
                     // Write to flash (this will reset core1, do the flash write, then restart core1)
                     if (FlashStorage::write_user_script_with_name(g_new_script, g_new_script_len, g_new_script_name)) {
                         // Give USB time to stabilize after core1 restart
-                        sleep_ms(100);
                         
+                        tud_cdc_write_flush();
                         tud_cdc_write_str("User script saved to flash!\n\r");
                         tud_cdc_write_str("\n\r");
-                        tud_cdc_write_str("Press the HARDWARE RESET button on\n\r");
-                        tud_cdc_write_str("Workshop Computer to load your script.\n\r");
+                        tud_cdc_write_str("Press the RESET button (next to card slot)\n\r");
+                        tud_cdc_write_str("on your Workshop Computer to load your script.\n\r");
                         tud_cdc_write_str("========================================\n\r");
                         tud_cdc_write_str("\n\r");
                         tud_cdc_write_flush();
@@ -1862,24 +1879,19 @@ public:
                 
             case C_flashclear:
                 // Output status BEFORE flash operation (which disables interrupts)
+                tud_cdc_write_flush();
                 tud_cdc_write_str("\n\r");
                 tud_cdc_write_str("========================================\n\r");
                 tud_cdc_write_str("Clearing user script...\n\r");
-                tud_cdc_write_flush();
-                
-                // Give USB time to transmit before disabling interrupts
-                sleep_ms(100);
                 
                 // Write to flash (this will disable interrupts briefly)
                 if (FlashStorage::set_default_script_mode()) {
-                    // Give USB time to stabilize after core1 restart
-                    sleep_ms(50);
                     
                     tud_cdc_write_str("User script cleared!\n\r");
                     tud_cdc_write_str("First.lua will load on next boot.\n\r");
                     tud_cdc_write_str("\n\r");
-                    tud_cdc_write_str("Press the HARDWARE RESET button on\n\r");
-                    tud_cdc_write_str("Workshop Computer to load First.lua.\n\r");
+                    tud_cdc_write_str("Press the RESET button (next to card slot)\n\r");
+                    tud_cdc_write_str("on your Workshop Computer to load First.lua.\n\r");
                     tud_cdc_write_str("========================================\n\r");
                     tud_cdc_write_str("\n\r");
                     tud_cdc_write_flush();
@@ -1891,6 +1903,7 @@ public:
                     this->LedOn(3);
                     this->LedOn(4);
                     this->LedOn(5);
+
                 } else {
                     tud_cdc_write_str("flash write failed\n\r");
                     tud_cdc_write_flush();
