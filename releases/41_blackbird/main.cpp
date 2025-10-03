@@ -1820,8 +1820,14 @@ public:
                     }
                     tud_cdc_write_flush();
                     
+                    // Give USB time to transmit before flash operation
+                    sleep_ms(100);
+                    
                     // Write to flash (this will reset core1, do the flash write, then restart core1)
                     if (FlashStorage::write_user_script_with_name(g_new_script, g_new_script_len, g_new_script_name)) {
+                        // Give USB time to stabilize after core1 restart
+                        sleep_ms(100);
+                        
                         tud_cdc_write_str("User script saved to flash!\n\r");
                         tud_cdc_write_str("\n\r");
                         tud_cdc_write_str("Press the HARDWARE RESET button on\n\r");
