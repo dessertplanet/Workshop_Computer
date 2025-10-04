@@ -1495,6 +1495,12 @@ public:
             // Process queued messages from audio thread
             process_queued_messages();
             
+            // *** OPTIMIZATION: Process detection events on Core 0 ***
+            // This does the FP conversion and fires callbacks
+            // Deferred from Core 1 ISR to eliminate FP math from audio thread
+            extern void Detect_process_events_core0(void);
+            Detect_process_events_core0();
+            
             // *** CRITICAL: Process timer/slopes updates at ~1.5kHz (OUTSIDE ISR!) ***
             uint32_t now_us = time_us_32();
             if (now_us - last_timer_process_us >= timer_interval_us) {

@@ -82,10 +82,21 @@ typedef struct detect{
     uint8_t    state; // for change/peak hysteresis
     // block tracking for consolidated timing
     int        samples_in_current_block; // Track position within 32-sample block
+    
+    // *** OPTIMIZATION: Integer-only ISR state (Core 1) ***
+    int16_t    last_raw_adc;      // Last ADC value (integer) for ISR
+    uint32_t   sample_counter;    // Sample counter for block tracking
+    volatile bool state_changed;  // Flag for Core 0: new event pending
+    int16_t    event_raw_value;   // Raw ADC at event time (for Core 0 conversion)
+    
+    // *** Pre-computed integer thresholds for ISR (no FP math!) ***
+    int16_t    threshold_raw;     // Threshold in raw ADC counts
+    int16_t    hysteresis_raw;    // Hysteresis in raw ADC counts
+    
     // lock-free thread safety for mode switching
     volatile bool mode_switching; // Atomic flag to prevent race conditions
     // debug / diagnostics
-    float      last_sample;   // last raw level processed
+    float      last_sample;   // last raw level processed (Core 0)
     uint32_t   canary;        // memory corruption sentinel
     uint32_t   change_rise_count; // number of rising edges detected
     uint32_t   change_fall_count; // number of falling edges detected
@@ -108,6 +119,9 @@ typedef void (*Detect_mode_fn_t)(Detect_t* self, float level, bool block_boundar
 
 void Detect_init( int channels );
 void Detect_deinit( void );
+
+// Core 0 event processing (deferred FP work)
+void Detect_process_events_core0( void );
 
 ////////////////////////////////////
 // global functions
