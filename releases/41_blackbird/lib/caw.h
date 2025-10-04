@@ -22,7 +22,7 @@ void Caw_Init( int timer_index );
 void Caw_DeInit( void );
 
 void Caw_send_raw( uint8_t* buf, uint32_t len );
-void Caw_printf( char* text, ... );
+void Caw_printf( const char* text, ... );
 void Caw_send_luachunk( char* text );
 void Caw_send_luaerror( char* error_msg );
 void Caw_send_value( uint8_t type, float value ); // enum the type

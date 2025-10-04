@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "tusb.h"  // For TinyUSB CDC functions
 
 // Stub implementations for RP2040 build
 
@@ -28,13 +29,39 @@ void Caw_send_raw(uint8_t* buf, uint32_t len) {
     }
 }
 
-void Caw_printf(char* text, ...) {
+void Caw_printf(const char* text, ...) {
     if (!text) return;
     
+    // Use direct TinyUSB CDC write like ^^pubview messages
+    // This ensures proper formatting without prefixes
     va_list args;
     va_start(args, text);
-    printf("CAW: ");
-    vprintf(text, args);
+    
+    // First get the length
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int len = vsnprintf(NULL, 0, text, args_copy);
+    va_end(args_copy);
+    
+    if (len > 0) {
+        // Allocate buffer (+3 for \r\n\0)
+        char buf[len + 3];
+        
+        // Format the message
+        vsnprintf(buf, len + 1, text, args);
+        
+        // Add crow-style line ending
+        buf[len] = '\r';
+        buf[len + 1] = '\n';
+        buf[len + 2] = '\0';
+        
+        // Send directly via TinyUSB CDC (same method as ^^pubview)
+        if (tud_cdc_connected()) {
+            tud_cdc_write(buf, len + 2);
+            tud_cdc_write_flush();
+        }
+    }
+    
     va_end(args);
 }
 

@@ -31,6 +31,7 @@ extern "C" {
 #include "lib/clock.h"
 #include "lib/events_lockfree.h"
 #include "lib/flash_storage.h"
+#include "lib/caw.h"
 }
 
 // Generated Lua bytecode headers - Core libraries (always included)
@@ -110,7 +111,9 @@ static int32_t get_output_state_simple(int channel) {
     return 0;
 }
 
- // Forward declaration
+// Forward declarations
+static void public_update();
+
 // Helper function to check if we have a complete packet (ends with \n or \r)
 static bool is_packet_complete(const char* buffer, int length) {
     if (length == 0) return false;
@@ -261,22 +264,7 @@ To test, connect USB and use a serial terminal at 115200 baud.
 Send commands like ^^v and ^^i to test the protocol.
 */
 
-// Command types (from crow's caw.h)
-typedef enum {
-    C_none = 0,
-    C_repl,
-    C_boot,
-    C_startupload,
-    C_endupload,
-    C_flashupload,
-    C_restart,
-    C_print,
-    C_version,
-    C_identity,
-    C_killlua,
-    C_flashclear,
-    C_loadFirst
-} C_cmd_t;
+// Command types (from crow's caw.h) - now included via lib/caw.h
 
 // Output userdata structure for metamethods
 typedef struct {
@@ -325,6 +313,9 @@ private:
     static int lua_unique_card_id(lua_State* L);
     static int lua_unique_id(lua_State* L);
     static int lua_memstats(lua_State* L);
+    static int lua_pub_view_in(lua_State* L);
+    static int lua_pub_view_out(lua_State* L);
+    static int lua_tell(lua_State* L);
     
     // Conditional test function implementations - only compiled when tests are embedded
 #ifdef EMBED_ALL_TESTS
@@ -684,6 +675,13 @@ public:
     // Add memory statistics function for debugging
     lua_register(L, "memstats", lua_memstats);
     
+    // Add public view functions for norns integration
+    lua_register(L, "pub_view_in", lua_pub_view_in);
+    lua_register(L, "pub_view_out", lua_pub_view_out);
+    
+    // Add tell function for ^^event messages (critical for input.stream/change)
+    lua_register(L, "tell", lua_tell);
+    
     // Register test functions - conditional compilation
 #ifdef EMBED_ALL_TESTS
     lua_register(L, "test_enhanced_multicore_safety", lua_test_enhanced_multicore_safety);
@@ -764,10 +762,21 @@ public:
     lua_register(L, "clock_internal_start", lua_clock_internal_start);
     lua_register(L, "clock_internal_stop", lua_clock_internal_stop);
     
-    // Create _c table for _c.tell function
-    lua_newtable(L);
-    lua_pushcfunction(L, lua_c_tell);
-    lua_setfield(L, -2, "tell");
+    // Set up crow.tell to point to the global tell() function
+    // This is what l_crowlib_init() does, but we do it manually to avoid loading all libraries
+    lua_getglobal(L, "crow");       // Get crow table (should exist from crowlib.lua)
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);              // Pop nil
+        lua_newtable(L);            // Create crow table
+        lua_setglobal(L, "crow");   // Set it as global
+        lua_getglobal(L, "crow");   // Get it back
+    }
+    lua_getglobal(L, "tell");       // Get the global tell function
+    lua_setfield(L, -2, "tell");    // Set crow.tell = tell
+    lua_pop(L, 1);                  // Pop crow table
+    
+    // Also create _c alias for crow (for compatibility with input.lua which uses _c.tell)
+    lua_getglobal(L, "crow");
     lua_setglobal(L, "_c");
     
     // Initialize CASL instances for all 4 outputs
@@ -1238,23 +1247,23 @@ public:
         
         // Route to correct hardware output
         switch (channel) {
-            case 1: // Output 1 → AudioOut1 (audio outputs use raw 12-bit values)
+            case 1: // Output 3 → CVOut1 (use calibrated millivolts function)
+                CVOut1Millivolts(volts_mV);
+                break;
+            case 2: // Output 4 → CVOut2 (use calibrated millivolts function)
+                CVOut2Millivolts(volts_mV);
+                break;
+            case 3: // Output 1 → AudioOut1 (audio outputs use raw 12-bit values)
                 {
                     int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
                     AudioOut1(dac_value);
                 }
                 break;
-            case 2: // Output 2 → AudioOut2 (audio outputs use raw 12-bit values)
+            case 4: // Output 2 → AudioOut2 (audio outputs use raw 12-bit values)
                 {
                     int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
                     AudioOut2(dac_value);
                 }
-                break;
-            case 3: // Output 3 → CVOut1 (use calibrated millivolts function)
-                CVOut1Millivolts(volts_mV);
-                break;
-            case 4: // Output 4 → CVOut2 (use calibrated millivolts function)
-                CVOut2Millivolts(volts_mV);
                 break;
         }
         
@@ -1512,6 +1521,14 @@ public:
             
             // Process regular events (lower priority - system events, etc.)
             event_next();
+            
+            // Update public view monitoring (~15fps)
+            static uint32_t last_pubview_time = 0;
+            uint32_t now = to_ms_since_boot(get_absolute_time());
+            if (now - last_pubview_time >= 66) { // ~15fps (66ms = 1000/15)
+                last_pubview_time = now;
+                public_update();
+            }
             
             // Reduced sleep for tighter timer loop - 100us allows 10kHz loop rate
             sleep_us(100);  // Was sleep_ms(1) - now much more responsive
@@ -2575,18 +2592,21 @@ extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
     }
     
     // Call appropriate Lua handler based on detection type
+    // IMPORTANT: Call input[n].stream() / input[n].change() methods which internally call _c.tell()
+    // to send ^^stream and ^^change messages to druid/norns
     char lua_call[128];
     if (detection_type == 1) {
-        // Stream mode
+        // Stream mode - call input[n].stream(value)
         snprintf(lua_call, sizeof(lua_call),
-            "if stream_handler then stream_handler(%d, %.6f) end",
-            channel, value);
+            "if input and input[%d] and input[%d].stream then input[%d].stream(%.6f) end",
+            channel, channel, channel, value);
     } else {
-        // Change mode (and other modes)
+        // Change mode - call input[n].change(state)
+        // IMPORTANT: Pass true/false not 1/0, because in Lua 0 is truthy!
         bool state = (value > 0.5f);
         snprintf(lua_call, sizeof(lua_call),
-            "if change_handler then change_handler(%d, %d) end",
-            channel, state ? 1 : 0);
+            "if input and input[%d] and input[%d].change then input[%d].change(%s) end",
+            channel, channel, channel, state ? "true" : "false");
     }
     
     if (kDetectionDebug) {
@@ -2755,7 +2775,13 @@ int LuaManager::lua_set_input_stream(lua_State* L) {
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         Detect_stream(detector, stream_callback, time);
-        printf("Input %d: stream mode, interval %.3fs\n\r", channel, time);
+        // Use TinyUSB CDC for output
+        if (tud_cdc_connected()) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Input %d: stream mode, interval %.3fs\r\n", channel, time);
+            tud_cdc_write_str(msg);
+            tud_cdc_write_flush();
+        }
     }
     return 0;
 }
@@ -3103,6 +3129,154 @@ int LuaManager::lua_unique_id(lua_State* L) {
     lua_pushinteger(L, 0);
     lua_pushinteger(L, 0);
     return 3;
+}
+
+// Public view tracking - global state for monitoring channels
+static bool g_view_chans[6] = {false, false, false, false, false, false};
+static float g_last_view_values[6] = {-6.0f, -6.0f, -6.0f, -6.0f, -6.0f, -6.0f};
+
+// pub_view_in(channel, state) - Enable/disable viewing of input channel
+int LuaManager::lua_pub_view_in(lua_State* L) {
+    int chan = luaL_checkinteger(L, 1) - 1; // lua is 1-based
+    bool state;
+    if (lua_isboolean(L, 2)) { 
+        state = lua_toboolean(L, 2); 
+    } else { 
+        state = (bool)lua_tointeger(L, 2); 
+    }
+    
+    // Inputs are channels 4-5 in the view_chans array (outputs are 0-3)
+    int view_idx = chan + 4;
+    if (view_idx >= 0 && view_idx < 6) {
+        g_view_chans[view_idx] = state;
+        if (state) {
+            g_last_view_values[view_idx] = -6.0f; // reset to force update
+        }
+    }
+    
+    lua_pop(L, 2);
+    return 0;
+}
+
+// pub_view_out(channel, state) - Enable/disable viewing of output channel
+int LuaManager::lua_pub_view_out(lua_State* L) {
+    int chan = luaL_checkinteger(L, 1) - 1; // lua is 1-based
+    bool state;
+    if (lua_isboolean(L, 2)) { 
+        state = lua_toboolean(L, 2); 
+    } else { 
+        state = (bool)lua_tointeger(L, 2); 
+    }
+    
+    // Outputs are channels 0-3 in the view_chans array
+    if (chan >= 0 && chan < 4) {
+        g_view_chans[chan] = state;
+        if (state) {
+            g_last_view_values[chan] = -6.0f; // reset to force update
+        }
+    }
+    
+    lua_pop(L, 2);
+    return 0;
+}
+
+// public_update() - Send ^^pubview messages to norns/druid for monitored channels
+// Called at ~15fps from main loop
+static void public_update() {
+    const float VDIFF = 0.1f; // 100mV hysteresis
+    static int chan = 0; // rotate through channels 0-5
+    
+    if (g_view_chans[chan]) {
+        float new_val;
+        char msg_buf[64]; // Buffer for the message
+        
+        if (chan < 4) { // outputs
+            new_val = S_get_state(chan);
+            if (new_val + VDIFF < g_last_view_values[chan] ||
+                new_val - VDIFF > g_last_view_values[chan]) {
+                g_last_view_values[chan] = new_val;
+                
+                // Format the pubview message
+                int len = snprintf(msg_buf, sizeof(msg_buf), 
+                                  "^^pubview('output',%d,%g)\r\n", 
+                                  chan + 1, new_val);
+                
+                // Send directly via TinyUSB CDC
+                if (len > 0 && tud_cdc_connected()) {
+                    tud_cdc_write(msg_buf, len);
+                    tud_cdc_write_flush();
+                }
+            }
+        } else { // inputs (4-5 -> 0-1)
+            int input_chan = chan - 4;
+            new_val = get_input_state_simple(input_chan);
+            if (new_val + VDIFF < g_last_view_values[chan] ||
+                new_val - VDIFF > g_last_view_values[chan]) {
+                g_last_view_values[chan] = new_val;
+                
+                // Format the pubview message
+                int len = snprintf(msg_buf, sizeof(msg_buf), 
+                                  "^^pubview('input',%d,%g)\r\n", 
+                                  input_chan + 1, new_val);
+                
+                // Send directly via TinyUSB CDC
+                if (len > 0 && tud_cdc_connected()) {
+                    tud_cdc_write(msg_buf, len);
+                    tud_cdc_write_flush();
+                }
+            }
+        }
+    }
+    
+    chan = (chan + 1) % 6; // round-robin through all 6 channels
+}
+
+// tell(event, ...) - Send ^^event messages to druid/norns
+// This is the core function that input.stream() and input.change() use
+int LuaManager::lua_tell(lua_State* L) {
+    int nargs = lua_gettop(L);
+    
+    // Need at least the event name
+    if (nargs == 0) {
+        return luaL_error(L, "tell: no event name provided");
+    }
+    
+    // All arguments are converted to strings for the ^^ message format
+    // Use Caw_printf which now properly sends via TinyUSB CDC
+    // Note: luaL_checkstring() will coerce numbers to strings
+    switch(nargs) {
+        case 1:
+            Caw_printf("^^%s()", luaL_checkstring(L, 1));
+            break;
+        case 2:
+            Caw_printf("^^%s(%s)", luaL_checkstring(L, 1),
+                                   luaL_checkstring(L, 2));
+            break;
+        case 3:
+            Caw_printf("^^%s(%s,%s)", luaL_checkstring(L, 1),
+                                      luaL_checkstring(L, 2),
+                                      luaL_checkstring(L, 3));
+            break;
+        case 4:
+            Caw_printf("^^%s(%s,%s,%s)", luaL_checkstring(L, 1),
+                                         luaL_checkstring(L, 2),
+                                         luaL_checkstring(L, 3),
+                                         luaL_checkstring(L, 4));
+            break;
+        case 5:
+            Caw_printf("^^%s(%s,%s,%s,%s)", luaL_checkstring(L, 1),
+                                            luaL_checkstring(L, 2),
+                                            luaL_checkstring(L, 3),
+                                            luaL_checkstring(L, 4),
+                                            luaL_checkstring(L, 5));
+            break;
+        default:
+            return luaL_error(L, "tell: too many arguments (max 5)");
+    }
+    
+    lua_pop(L, nargs);
+    lua_settop(L, 0);
+    return 0;
 }
 
 // Implementation of lua_memstats (memory statistics and debugging)
