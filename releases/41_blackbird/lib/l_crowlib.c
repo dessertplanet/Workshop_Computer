@@ -592,6 +592,10 @@ void L_queue_metro( int id, int state )
     event_post(&e);
 }
 
+// Forward declarations for output batching (defined in main.cpp)
+extern void output_batch_begin(void);
+extern void output_batch_flush(void);
+
 // New lock-free metro handler - processes events from lock-free queue
 void L_handle_metro_lockfree( metro_event_lockfree_t* event )
 {
@@ -602,6 +606,11 @@ void L_handle_metro_lockfree( metro_event_lockfree_t* event )
         printf("L_handle_metro_lockfree: no Lua state available\n");
         return;
     }
+    
+    // ===============================================
+    // OPTIMIZATION 2: Enable batching for metro callbacks
+    // ===============================================
+    output_batch_begin();
     
     int metro_id = event->metro_id;
     int stage = event->stage;
@@ -622,6 +631,11 @@ void L_handle_metro_lockfree( metro_event_lockfree_t* event )
         // metro_handler not defined - this is normal if no metros are active
         lua_pop(L, 1);
     }
+    
+    // ===============================================
+    // OPTIMIZATION 2: Flush batched outputs
+    // ===============================================
+    output_batch_flush();
 }
 
 void L_queue_clock_resume( int coro_id )

@@ -148,6 +148,12 @@ extern "C" void L_handle_asl_done_safe(event_t* e);
 extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event);
 extern "C" void L_handle_metro_lockfree(metro_event_lockfree_t* event);
 
+// Forward declaration of output batching functions
+extern "C" void output_batch_begin();
+extern "C" void output_batch_flush();
+static void output_batch_queue(int channel, float volts);
+static bool output_is_batching();
+
 
 class LuaManager;
 
@@ -1096,6 +1102,11 @@ public:
     bool evaluate_safe(const char* code) {
         if (!L) return false;
         
+        // ===============================================
+        // OPTIMIZATION 2: Enable batching for script execution
+        // ===============================================
+        output_batch_begin();
+        
         // Use protected call to prevent crashes
         int result = luaL_loadstring(L, code);
         if (result != LUA_OK) {
@@ -1105,11 +1116,18 @@ public:
             tud_cdc_write_str("\n\r");
             tud_cdc_write_flush();
             lua_pop(L, 1);
+            output_batch_flush(); // Flush even on error
             return false;
         }
         
         // Call with error handler
         result = lua_pcall(L, 0, 0, 0);
+        
+        // ===============================================
+        // OPTIMIZATION 2: Flush batched outputs after execution
+        // ===============================================
+        output_batch_flush();
+        
         if (result != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             tud_cdc_write_str("lua runtime error: ");
@@ -1140,6 +1158,60 @@ static volatile bool g_multiline_mode = false;  // Track multi-line mode (triple
 
 // Global flag to signal core1 to pause for flash operations (not static - accessed from flash_storage.cpp)
 volatile bool g_flash_operation_pending = false;
+
+// ========================================================================
+// Output Batching System - OPTIMIZATION 2
+// Queue output changes during Lua execution, flush all at once to avoid
+// redundant calibration calculations and hardware writes
+// ========================================================================
+typedef struct {
+    bool pending;       // Has this output changed?
+    float target_volts; // Target voltage to set
+} pending_output_t;
+
+static struct {
+    pending_output_t outputs[4];
+    bool batch_mode_active;
+} g_output_batch = {
+    {{false, 0.0f}, {false, 0.0f}, {false, 0.0f}, {false, 0.0f}},
+    false
+};
+
+// Enable batching (call before Lua execution)
+// Exported for use from C files
+extern "C" void output_batch_begin() {
+    g_output_batch.batch_mode_active = true;
+    // Don't clear pending flags - allow accumulation across calls
+}
+
+// Queue an output change (called from lua_manager)
+static void output_batch_queue(int channel, float volts) {
+    if (channel < 1 || channel > 4) return;
+    g_output_batch.outputs[channel - 1].pending = true;
+    g_output_batch.outputs[channel - 1].target_volts = volts;
+}
+
+// Execute all queued changes (call after Lua execution)
+// Exported for use from C files
+extern "C" void output_batch_flush() {
+    if (!g_output_batch.batch_mode_active) return;
+    
+    for (int i = 0; i < 4; i++) {
+        if (g_output_batch.outputs[i].pending) {
+            // Call actual hardware function once per changed output
+            extern void hardware_output_set_voltage(int channel, float voltage);
+            hardware_output_set_voltage(i + 1, g_output_batch.outputs[i].target_volts);
+            g_output_batch.outputs[i].pending = false;
+        }
+    }
+    
+    g_output_batch.batch_mode_active = false;
+}
+
+// Check if in batch mode
+static inline bool output_is_batching() {
+    return g_output_batch.batch_mode_active;
+}
 
 // Upload state machine (matches crow's REPL mode)
 typedef enum {
@@ -2178,9 +2250,17 @@ int LuaManager::output_newindex(lua_State* L) {
         // Set voltage - use slopes system for smooth transitions
         float volts = (float)luaL_checknumber(L, 3);
 
-        // Actually execute the voltage change (was missing!)
-        printf("[lua] output[%d].volts=%.3f -> executing\n\r", output_data->channel, volts);
-        hardware_output_set_voltage(output_data->channel, volts);
+        // ===============================================
+        // OPTIMIZATION 2: Queue output changes during batch mode
+        // ===============================================
+        if (output_is_batching()) {
+            // Queue for later execution (avoids redundant calibration)
+            output_batch_queue(output_data->channel, volts);
+        } else {
+            // Execute immediately (for interactive commands)
+            printf("[lua] output[%d].volts=%.3f -> executing\n\r", output_data->channel, volts);
+            hardware_output_set_voltage(output_data->channel, volts);
+        }
         
         return 0;
     }
@@ -2588,6 +2668,11 @@ extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
     LuaManager* lua_mgr = LuaManager::getInstance();
     if (!lua_mgr) return;
     
+    // ===============================================
+    // OPTIMIZATION 2: Enable batching for input callbacks
+    // ===============================================
+    output_batch_begin();
+    
     int channel = event->channel + 1;  // Convert to 1-based for Lua
     float value = event->value;
     int detection_type = event->detection_type;
@@ -2621,7 +2706,14 @@ extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
     }
     
     // Execute Lua callback (safe on Core 0)
+    // Note: evaluate_safe already does batch begin/flush, but we're already in batch mode
+    // so it will just accumulate more changes
     lua_mgr->evaluate_safe(lua_call);
+    
+    // ===============================================
+    // OPTIMIZATION 2: Flush batched outputs
+    // ===============================================
+    output_batch_flush();
     
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
