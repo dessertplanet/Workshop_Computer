@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdio.h>
 #include "pico/stdlib.h"
+#include "tusb.h"
 
 #define DETECT_DEBUG 0
 
@@ -215,8 +216,9 @@ void Detect_scale(Detect_t* self, Detect_callback_t cb, float* scale, int sLen, 
     // Calculate parameters
     s->offset = 0.5f * scaling / divs;
     s->win = scaling / ((float)s->sLen);
-    s->hyst = s->win / 20.0f;
-    if (s->hyst < 0.006f) s->hyst = 0.006f;
+    // Use fixed 40mV hysteresis for maximum noise immunity while still reaching all chromatic notes
+    // For chromatic (83.3mV window), max is win/2 = 41.7mV before windows become unreachable
+    s->hyst = 0.040f;  // 40mV fixed hysteresis
     
     // Set to invalid note initially
     scale_bounds(self, 0, -10);
@@ -468,8 +470,15 @@ static void scale_bounds(Detect_t* self, int ix, int oct) {
     ideal = ideal - s->offset;
     
     // Calculate bounds with hysteresis
+    // Use crow's formula - small hysteresis to avoid window gaps/overlaps
     s->lower = ideal - s->hyst;
     s->upper = ideal + s->hyst + s->win;
+    
+    // Convert to integer ADC counts for fast ISR comparison
+    // ADC_TO_VOLTS = 0.002930, so VOLTS_TO_ADC = 341.297
+    static const float VOLTS_TO_ADC = 341.297f;
+    s->lower_int = (int16_t)(s->lower * VOLTS_TO_ADC);
+    s->upper_int = (int16_t)(s->upper * VOLTS_TO_ADC);
 }
 
 // ========================================================================
@@ -559,14 +568,23 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
         return; // EXIT: ~2µs on boundary, ~1µs otherwise
     }
     
-    // WINDOW/SCALE MODE: Defer ALL processing to Core 0
-    // These modes have complex FP math - too slow for ISR
+    // WINDOW/SCALE MODE: Integer-only bounds checking in ISR
+    // Only signal Core 0 when bounds are crossed (not every sample!)
     if (detector->modefn == d_window || detector->modefn == d_scale) {
-        // Store raw value and set flag for Core 0 to process
+        // Convert float bounds to integer for comparison
+        // These are updated when scale/window changes, so read-only here
+        int16_t upper_int = detector->scale.upper_int;
+        int16_t lower_int = detector->scale.lower_int;
+        
+        // Check if we've crossed the boundary
+        if (raw_adc > upper_int || raw_adc < lower_int) {
+            // Crossed boundary! Signal Core 0 to do FP math and fire callback
+            detector->event_raw_value = raw_adc;
+            detector->state_changed = true;
+        }
+        
         detector->last_raw_adc = raw_adc;
-        detector->state_changed = true;
-        detector->event_raw_value = raw_adc;
-        return; // EXIT: ~1.5µs
+        return; // EXIT: ~1-2µs
     }
     
     // Store last value for next iteration
@@ -592,20 +610,26 @@ void Detect_process_events_core0(void) {
         // Clear flag immediately to avoid missing new events
         detector->state_changed = false;
         
+        // For scale/window modes, use last_raw_adc (always current)
+        // For other modes, use event_raw_value (captured at event time)
+        int16_t raw_value = (detector->modefn == d_window || detector->modefn == d_scale) 
+                            ? detector->last_raw_adc 
+                            : detector->event_raw_value;
+        
         // NOW do the floating-point conversion (on Core 0!)
-        float level_volts = (float)detector->event_raw_value * ADC_TO_VOLTS;
+        float level_volts = (float)raw_value * ADC_TO_VOLTS;
         
         // Update last_sample for Core 0 use
         detector->last_sample = level_volts;
         
-        // For complex modes (window/scale), call their processing functions
-        // These were deferred from the ISR to avoid FP math in Core 1
+        // For scale/window modes, Core 1 already did integer bounds check
+        // Now do FP math to calculate the actual note/window and fire callback
         if (detector->modefn == d_window || detector->modefn == d_scale) {
-            // Call the mode function with block_boundary = false (not timing critical here)
+            // Call the mode function with the captured voltage
             if (!detector->mode_switching) {
                 detector->modefn(detector, level_volts, false);
             }
-            continue; // Mode function already fired callback if needed
+            continue; // Mode function already fired callback
         }
         
         // For simple modes (stream/change/volume/peak), just fire the callback

@@ -46,6 +46,9 @@ typedef struct{
     // pre-calc for detection of next window
     float upper;
     float lower;
+    // Integer versions for fast ISR comparison (volatile for inter-core visibility)
+    volatile int16_t upper_int;
+    volatile int16_t lower_int;
     // saved for remote access
     int lastIndex;
     int lastOct;
