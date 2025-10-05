@@ -1,4 +1,4 @@
--- fifths.lua
+-- fifths
 -- hard autotune a voltage at input 1 to the major scale (or any of its modes)
 -- modulate the position of the current key on the circle of fifths at input 2
 -- each of the the first 3 outputs is a fifth apart

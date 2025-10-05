@@ -337,17 +337,36 @@ static void d_window(Detect_t* self, float level, bool block_boundary) {
     // Window mode: Process every sample for accurate threshold detection
     (void)block_boundary; // Not used for window detection
     
-    // Find which window contains the level
+    // Find which window contains the level WITH HYSTERESIS
+    // Hysteresis prevents rapid toggling when voltage is near a boundary
     int ix = 0;
+    int lastWin = self->win.lastWin;
+    float hyst = self->win.hysteresis;
+    
     for (; ix < self->win.wLen; ix++) {
-        if (level < self->win.windows[ix]) {
+        float boundary = self->win.windows[ix];
+        float effective_boundary = boundary;
+        
+        // Apply hysteresis based on which side of this boundary we're coming from
+        // If we're currently in a lower window (lastWin <= ix+1), add hysteresis
+        // This means we need to go ABOVE (boundary + hyst) to cross upward
+        // If we're currently in a higher window (lastWin > ix+1), subtract hysteresis
+        // This means we need to go BELOW (boundary - hyst) to cross downward
+        if (lastWin <= ix + 1) {
+            // Coming from below or at this window - need to exceed boundary + hyst to go up
+            effective_boundary = boundary + hyst;
+        } else {
+            // Coming from above - need to go below boundary - hyst to go down
+            effective_boundary = boundary - hyst;
+        }
+        
+        if (level < effective_boundary) {
             break;
         }
     }
     ix++; // 1-based index
     
     // Check if window has changed
-    int lastWin = self->win.lastWin;
     if (ix != lastWin) {
         if (self->action) {
             (*self->action)(self->channel, (ix > lastWin) ? ix : -ix);

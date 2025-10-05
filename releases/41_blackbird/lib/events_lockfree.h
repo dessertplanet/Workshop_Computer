@@ -20,8 +20,21 @@ typedef struct {
 typedef struct {
     int channel;        // Input channel (0-based)
     float value;        // Detection value (voltage or state)
-    int detection_type; // 0=change, 1=stream, 2=other
+    int detection_type; // 0=change, 1=stream, 2=window, 3=scale, 4=volume, 5=peak, 6=freq
     uint32_t timestamp_us;
+    // Additional data for modes that need it
+    union {
+        struct {  // For scale mode
+            int index;
+            int octave;
+            float note;
+            float volts;
+        } scale;
+        struct {  // For window mode (alternative to encoding in value)
+            int window;
+            bool direction;  // true=up, false=down
+        } window;
+    } extra;
 } input_event_lockfree_t;
 
 // Lock-free SPSC (Single Producer Single Consumer) ring buffer
@@ -60,6 +73,7 @@ uint32_t metro_lockfree_queue_depth(void);
 
 // Input queue functions (Core 1 = producer, Core 0 = consumer)  
 bool input_lockfree_post(int channel, float value, int detection_type);
+bool input_lockfree_post_extended(const input_event_lockfree_t* event);
 bool input_lockfree_get(input_event_lockfree_t* event);
 uint32_t input_lockfree_queue_depth(void);
 

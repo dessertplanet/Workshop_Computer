@@ -2636,29 +2636,87 @@ static void change_callback(int channel, float value) {
     }
 }
 
-// Generic callback for other modes (volume, peak, etc.) with time-based batching
-static void generic_callback(int channel, float value) {
-    // OPTIMIZATION: Time-based batching for volume/peak modes
+// Window callback - called when input crosses window boundaries
+static void window_callback(int channel, float value) {
+    // Value contains signed window index (positive=up, negative=down)
+    if (!input_lockfree_post(channel, value, 2)) {  // type=2 for window
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            queue_debug_message("Window lock-free queue full, dropped %lu events", drop_count);
+        }
+    }
+}
+
+// Scale callback - called when input moves to a new note
+static void scale_callback(int channel, float value) {
+    // For scale mode, we need to pass the scale data (index, octave, note, volts)
+    // Access the detector to get scale information
+    Detect_t* detector = Detect_ix_to_p(channel);
+    if (!detector) return;
+    
+    input_event_lockfree_t event;
+    event.channel = channel;
+    event.value = value;
+    event.detection_type = 3;  // type=3 for scale
+    event.timestamp_us = time_us_32();
+    event.extra.scale.index = detector->scale.lastIndex;
+    event.extra.scale.octave = detector->scale.lastOct;
+    event.extra.scale.note = detector->scale.lastNote;
+    event.extra.scale.volts = detector->scale.lastVolts;
+    
+    // Post the full event with scale data
+    extern bool input_lockfree_post_extended(const input_event_lockfree_t* event);
+    if (!input_lockfree_post_extended(&event)) {
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            queue_debug_message("Scale lock-free queue full, dropped %lu events", drop_count);
+        }
+    }
+}
+
+// Volume callback - called periodically with RMS level
+static void volume_callback(int channel, float level) {
+    // OPTIMIZATION: Time-based batching for volume mode
     static float last_value[8] = {0};
     static uint32_t last_post_time[8] = {0};
     
     uint32_t now = time_us_32();
-    float delta = fabsf(value - last_value[channel]);
+    float delta = fabsf(level - last_value[channel]);
     uint32_t time_since_post = now - last_post_time[channel];
     
-    // Post if significant change (>5mV) OR timeout (5ms for volume/peak)
+    // Post if significant change (>5mV) OR timeout (5ms)
     bool significant_change = (delta > 0.005f);  // 5mV threshold
     bool timeout = (time_since_post > 5000);     // 5ms timeout
     
     if (significant_change || timeout) {
-        if (input_lockfree_post(channel, value, 2)) {  // type=2 for generic
-            last_value[channel] = value;
+        if (input_lockfree_post(channel, level, 4)) {  // type=4 for volume
+            last_value[channel] = level;
             last_post_time[channel] = now;
         } else {
             static uint32_t drop_count = 0;
             if (++drop_count % 100 == 0) {
-                queue_debug_message("Generic lock-free queue full, dropped %lu events", drop_count);
+                queue_debug_message("Volume lock-free queue full, dropped %lu events", drop_count);
             }
+        }
+    }
+}
+
+// Peak callback - called when envelope exceeds threshold
+static void peak_callback(int channel, float value) {
+    if (!input_lockfree_post(channel, 0.0f, 5)) {  // type=5 for peak, no value needed
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            queue_debug_message("Peak lock-free queue full, dropped %lu events", drop_count);
+        }
+    }
+}
+
+// Freq callback - called periodically with frequency estimate
+static void freq_callback(int channel, float freq) {
+    if (!input_lockfree_post(channel, freq, 6)) {  // type=6 for freq
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            queue_debug_message("Freq lock-free queue full, dropped %lu events", drop_count);
         }
     }
 }
@@ -2683,21 +2741,59 @@ extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
     }
     
     // Call appropriate Lua handler based on detection type
-    // IMPORTANT: Call input[n].stream() / input[n].change() methods which internally call _c.tell()
-    // to send ^^stream and ^^change messages to druid/norns
-    char lua_call[128];
+    // IMPORTANT: Call input[n].stream() / input[n].change() / input[n].window() etc. methods
+    // which internally call _c.tell() to send ^^stream, ^^change, ^^window messages to druid/norns
+    char lua_call[256];
     if (detection_type == 1) {
         // Stream mode - call input[n].stream(value)
         snprintf(lua_call, sizeof(lua_call),
             "if input and input[%d] and input[%d].stream then input[%d].stream(%.6f) end",
             channel, channel, channel, value);
-    } else {
+    } else if (detection_type == 0) {
         // Change mode - call input[n].change(state)
         // IMPORTANT: Pass true/false not 1/0, because in Lua 0 is truthy!
         bool state = (value > 0.5f);
         snprintf(lua_call, sizeof(lua_call),
             "if input and input[%d] and input[%d].change then input[%d].change(%s) end",
             channel, channel, channel, state ? "true" : "false");
+    } else if (detection_type == 2) {
+        // Window mode
+        // value is the window index (1-based) if positive, or negative index if moving down
+        // Call input[n].window(win, dir) where dir indicates direction (positive=up, negative=down)
+        int win = (int)fabsf(value);
+        bool dir = (value > 0);
+        snprintf(lua_call, sizeof(lua_call),
+            "if input and input[%d] and input[%d].window then input[%d].window(%d, %s) end",
+            channel, channel, channel, win, dir ? "true" : "false");
+    } else if (detection_type == 3) {
+        // Scale mode - call input[n].scale({index=i, octave=o, note=n, volts=v})
+        // Build a table with all scale data
+        snprintf(lua_call, sizeof(lua_call),
+            "if input and input[%d] and input[%d].scale then "
+            "input[%d].scale({index=%d,octave=%d,note=%.6f,volts=%.6f}) end",
+            channel, channel, channel,
+            event->extra.scale.index + 1, // Convert to 1-based
+            event->extra.scale.octave,
+            event->extra.scale.note,
+            event->extra.scale.volts);
+    } else if (detection_type == 4) {
+        // Volume mode - call input[n].volume(level)
+        snprintf(lua_call, sizeof(lua_call),
+            "if input and input[%d] and input[%d].volume then input[%d].volume(%.6f) end",
+            channel, channel, channel, value);
+    } else if (detection_type == 5) {
+        // Peak mode - call input[n].peak() - no arguments
+        snprintf(lua_call, sizeof(lua_call),
+            "if input and input[%d] and input[%d].peak then input[%d].peak() end",
+            channel, channel, channel);
+    } else if (detection_type == 6) {
+        // Freq mode - call input[n].freq(freq)
+        snprintf(lua_call, sizeof(lua_call),
+            "if input and input[%d] and input[%d].freq then input[%d].freq(%.6f) end",
+            channel, channel, channel, value);
+    } else {
+        // Unknown detection type - skip
+        snprintf(lua_call, sizeof(lua_call), "-- unknown detection_type=%d", detection_type);
     }
     
     if (kDetectionDebug) {
@@ -2934,7 +3030,7 @@ int LuaManager::lua_set_input_window(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_window(detector, generic_callback, windows, wLen, hysteresis);
+        Detect_window(detector, window_callback, windows, wLen, hysteresis);
         printf("Input %d: window mode, %d windows, hyst %.3f\n\r", channel, wLen, hysteresis);
     }
     return 0;
@@ -2963,7 +3059,7 @@ int LuaManager::lua_set_input_scale(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_scale(detector, generic_callback, scale, sLen, temp, scaling);
+        Detect_scale(detector, scale_callback, scale, sLen, temp, scaling);
         printf("Input %d: scale mode, %d notes, temp %.1f, scaling %.3f\n\r", 
                channel, sLen, temp, scaling);
     }
@@ -2976,7 +3072,7 @@ int LuaManager::lua_set_input_volume(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_volume(detector, generic_callback, time);
+        Detect_volume(detector, volume_callback, time);
         printf("Input %d: volume mode, interval %.3fs\n\r", channel, time);
     }
     return 0;
@@ -2989,7 +3085,7 @@ int LuaManager::lua_set_input_peak(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_peak(detector, generic_callback, threshold, hysteresis);
+        Detect_peak(detector, peak_callback, threshold, hysteresis);
         printf("Input %d: peak mode, thresh %.3f, hyst %.3f\n\r", 
                channel, threshold, hysteresis);
     }
@@ -3002,7 +3098,7 @@ int LuaManager::lua_set_input_freq(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_freq(detector, generic_callback, time);
+        Detect_freq(detector, freq_callback, time);
         printf("Input %d: freq mode, interval %.3fs (not fully implemented)\n\r", channel, time);
     }
     return 0;

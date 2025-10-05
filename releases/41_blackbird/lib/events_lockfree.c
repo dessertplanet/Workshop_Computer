@@ -139,6 +139,35 @@ bool input_lockfree_post(int channel, float value, int detection_type) {
     queue->events[current_write].value = value;
     queue->events[current_write].detection_type = detection_type;
     queue->events[current_write].timestamp_us = time_us_32();
+    // Note: extra union is left uninitialized for simple modes
+    
+    // Memory barrier - ensure event data is written before updating index
+    DMB();
+    
+    // Commit the write
+    queue->header.write_idx = next_write;
+    
+    input_events_posted++;
+    return true;
+}
+
+// Post extended input detection event with extra data (for scale mode) - NEVER BLOCKS!
+bool input_lockfree_post_extended(const input_event_lockfree_t* event) {
+    input_lockfree_queue_t* queue = &g_input_lockfree_queue;
+    
+    // Load current write index
+    uint32_t current_write = queue->header.write_idx;
+    uint32_t next_write = (current_write + 1) & queue->header.mask;
+    
+    // Check if queue has space
+    if (next_write == queue->header.read_idx) {
+        // Queue full - drop event (don't block audio core!)
+        input_events_dropped++;
+        return false;
+    }
+    
+    // Copy full event data (including extra union)
+    queue->events[current_write] = *event;
     
     // Memory barrier - ensure event data is written before updating index
     DMB();
