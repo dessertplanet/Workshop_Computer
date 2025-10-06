@@ -3336,18 +3336,18 @@ int main()
 
 // TinyUSB CDC line state callback - called when DTR/RTS changes (connection state)
 // Must use C linkage for TinyUSB to find it
-extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
-{
-    (void)itf;
-    (void)rts;
+// extern "C" void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
+// {
+//     (void)itf;
+//     (void)rts;
     
-    // When DTR goes high, host has opened the port - send welcome
-    if (dtr) {
-        // Small delay to ensure host is ready to receive
-        sleep_ms(10);
-        tud_cdc_write_str("Blackbird Crow Emulator v0.4\n\r");
-        tud_cdc_write_str("Send ^^v for version, ^^i for identity\n\r");
-        tud_cdc_write_str("Anything without a ^^ prefix is interpreted as lua\n\r");
-        tud_cdc_write_flush();
-    }
-}
+//     // When DTR goes high, host has opened the port - send welcome
+//     if (dtr) {
+//         // Small delay to ensure host is ready to receive
+//         sleep_ms(10);
+//         tud_cdc_write_str("Blackbird Crow Emulator v0.4\n\r");
+//         tud_cdc_write_str("Send ^^v for version, ^^i for identity\n\r");
+//         tud_cdc_write_str("Anything without a ^^ prefix is interpreted as lua\n\r");
+//         tud_cdc_write_flush();
+//     }
+// }
