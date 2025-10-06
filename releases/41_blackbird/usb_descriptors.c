@@ -90,7 +90,7 @@ enum
 char const* string_desc_arr [] =
 {
   (const char[]) { 0x09, 0x04 },  // 0: supported language is English (0x0409)
-  "monome & whimsical raps",      // 1: Manufacturer (MUST MATCH CROW)
+  "Music Thing Modular",          // 1: Manufacturer (customized, not checked by druid)
   "crow: telephone line",         // 2: Product (MUST MATCH CROW - druid searches for this!)
   NULL,                           // 3: Serial number (filled dynamically)
   "VCP Interface",                // 4: CDC Interface

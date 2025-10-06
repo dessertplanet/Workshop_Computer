@@ -946,6 +946,23 @@ public:
         load_lib("timeline.lua", "timeline", timeline, timeline_len);
         load_lib("hotswap.lua", "hotswap", hotswap, hotswap_len);
         
+        // Define delay() function (from l_crowlib.c)
+        // This creates a closure using clock.run and clock.sleep
+        if (luaL_dostring(L, "function delay(action, time, repeats)\n"
+                             "local r = repeats or 0\n"
+                             "return clock.run(function()\n"
+                                     "for i=1,1+r do\n"
+                                         "clock.sleep(time)\n"
+                                         "action(i)\n"
+                                     "end\n"
+                                 "end)\n"
+                         "end\n") != LUA_OK) {
+            printf("  ERROR defining delay() function: %s\n\r", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        } else {
+            printf("  delay() function defined\n\r");
+        }
+        
         printf("Crow ecosystem loaded (6 libraries: sequins, public, clock, quote, timeline, hotswap)!\n\r");
         
         // Print Lua memory usage for diagnostics
