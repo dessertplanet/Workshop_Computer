@@ -45,11 +45,9 @@ extern "C" {
 // Crow ecosystem library headers
 #include "calibrate.h"
 #include "sequins.h"
-// Note: public.h contains 'public' which is a C++ keyword, so we rename it
 #define public public_lua
 #include "public.h"
 #undef public
-// Similarly for clock which might conflict with lib/clock.h
 extern "C" {
 extern const unsigned char clock[];
 extern const unsigned int clock_len;
@@ -77,13 +75,9 @@ extern const unsigned int clock_len;
 #include "test_simple_output.h"
 #endif
 
-// Simplified output state storage - no lock-free complexity needed
 static volatile int32_t g_output_state_mv[4] = {0, 0, 0, 0};
-
-//Simplified input state storage
 static volatile int32_t g_input_state_q12[2] = {0, 0};
 
-// Simple output state access - direct variable access is sufficient
 static void set_output_state_simple(int channel, int32_t value_mv) {
     if (channel >= 0 && channel < 4) {
         g_output_state_mv[channel] = value_mv;
@@ -97,7 +91,6 @@ extern "C" float get_input_state_simple(int channel) {
     return 0.0f;
 }
 
-// Simple input state access - direct variable access is sufficient
 static void set_input_state_simple(int channel, int16_t rawValue) {
     if (channel >= 0 && channel < 2) {
         g_input_state_q12[channel] = rawValue;
@@ -1230,13 +1223,11 @@ static volatile bool g_pulse2_state = false;
 static volatile uint32_t g_pulse2_counter = 0;
 static struct repeating_timer g_pulse2_timer;
 
-// Timer callback for consistent 250Hz PulseOut2 pulse (independent of audio processing load)
 static bool __not_in_flash_func(pulse2_timer_callback)(struct repeating_timer *t) {
     g_pulse2_state = !g_pulse2_state;
-    // Use direct GPIO access since PulseOut2 is protected
-    gpio_put(PULSE_2_RAW_OUT, !g_pulse2_state); // Note: raw output is inverted
+    gpio_put(PULSE_2_RAW_OUT, !g_pulse2_state);
     g_pulse2_counter++;
-    return true; // Continue repeating
+    return true;
 }
 
 // Try to extract script name from first comment line (e.g., "-- Fiirst.lua")
@@ -1305,8 +1296,6 @@ public:
     void hardware_set_output(int channel, float volts) {
         if (channel < 1 || channel > 4) return;
         
-        static int debug_prints_remaining = 32;
-        
         // Clamp voltage to ±6V range
         if (volts > 6.0f) volts = 6.0f;
         if (volts < -6.0f) volts = -6.0f;
@@ -1337,11 +1326,6 @@ public:
                     AudioOut2(dac_value);
                 }
                 break;
-        }
-        
-        if (debug_prints_remaining > 0) {
-           // printf("[hardware] set_output ch%d volts=%.3f dac=%d\n\r", channel, volts, dac_value);
-            debug_prints_remaining--;
         }
     }
     
@@ -1396,8 +1380,6 @@ public:
         
         // Initialize AShaper system for output quantization (pass-through mode)
         AShaper_init(4); // Initialize 4 output channels
-        //printf("AShaper system initialized (pass-through mode)\n");
-        
         
         // Initialize detection system for 2 input channels
         Detect_init(2);
@@ -1419,33 +1401,15 @@ public:
         
         // Initialize clock system for coroutine scheduling (8 max clock threads)
         clock_init(8);
-        //printf("Clock system initialized (8 threads)\n");
         
         // Initialize flash storage system
         FlashStorage::init();
         
-        // Initialize Lua manager (but don't load scripts yet - wait for hardware init)
         lua_manager = new LuaManager();
         
-        // Note: Script loading deferred until after welcome message in MainControlLoop()
-        // This ensures all C-side systems (ASL, slopes, etc.) are fully initialized
-        
-        // Note: New ComputerCard.h API uses sample-by-sample processing only
-        //printf("Sample-by-sample processing (48kHz)\n");
-        
-        // Initialize hardware timer for consistent 250Hz PulseOut2 performance monitoring
         if (!add_repeating_timer_us(-4000, pulse2_timer_callback, NULL, &g_pulse2_timer)) {
             printf("Failed to start PulseOut2 timer\n");
-        } else {
-           // printf("PulseOut2 timer started: 250Hz consistent pulse for performance monitoring\n");
         }
-        
-        // Start slopes processing timer (runs at 1.5kHz via Timer_Process_Block)
-        // This processes all slope channels and outputs the results
-       // printf("Slopes processing will run via Timer_Process_Block at 1.5kHz\n");
-        
-        // Dual-core architecture: Core0=USB/Control, Core1=Audio
-        //printf("Dual-core architecture initialized\n");
     }
     
     // Load boot script from flash (called after hardware init)
@@ -1865,7 +1829,6 @@ public:
                     lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
                     
                     // 7. Clear user globals using Crow's _user table approach
-                    // Note: _user table may not exist if l_bootstrap wasn't called
                     lua_manager->evaluate_safe(
                         "if _user then "
                         "  for k,_ in pairs(_user) do "
@@ -1965,8 +1928,6 @@ public:
                         this->LedOn(3);
                         this->LedOn(4);
                         this->LedOn(5);
-                        
-                        // Note: System continues running with old script until hardware reset
                     } else {
                         tud_cdc_write_str("flash write failed\n\r");
                         tud_cdc_write_flush();
@@ -2059,10 +2020,8 @@ public:
         }
     }
 
-    // Core1 is no longer used - all processing happens on Core0 now
     static void core1()
     {
-        // Core1 unused in current architecture
         while(1) {
             tight_loop_contents();
         }
@@ -2610,19 +2569,8 @@ static void reset_change_callback_state(int channel) {
 
 // Lock-free change callback - posts to queue without blocking ISR
 static void change_callback(int channel, float value) {
-    // For change detection, 'value' is actually the state (0.0 or 1.0), not voltage
     bool state = (value > 0.5f);
     
-    // CRITICAL FIX: Don't suppress duplicates here!
-    // The detect.c layer already handles proper edge detection and only calls us on transitions.
-    // The old duplicate suppression was breaking 'rising'/'falling' modes because:
-    // - rising mode: rise(1) -> fall(silent) -> rise(1) <- second rise was blocked as "duplicate 1"
-    // - falling mode: fall(0) -> rise(silent) -> fall(0) <- second fall was blocked as "duplicate 0"
-    // 
-    // For 'both' mode, detect.c alternates between 0 and 1, so no duplicates occur anyway.
-    // Therefore, this duplicate check was incorrect - remove it entirely.
-    
-    // Update tracking state (for debugging/diagnostics only)
     if (channel >= 0 && channel < 8) {
         g_change_last_reported_state[channel] = (int8_t)state;
     }
@@ -2647,10 +2595,7 @@ static void window_callback(int channel, float value) {
     }
 }
 
-// Scale callback - called when input moves to a new note
 static void scale_callback(int channel, float value) {
-    // For scale mode, we need to pass the scale data (index, octave, note, volts)
-    // Access the detector to get scale information
     Detect_t* detector = Detect_ix_to_p(channel);
     if (!detector) return;
     
@@ -2801,9 +2746,6 @@ extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
                channel, detection_type, value);
     }
     
-    // Execute Lua callback (safe on Core 0)
-    // Note: evaluate_safe already does batch begin/flush, but we're already in batch mode
-    // so it will just accumulate more changes
     lua_mgr->evaluate_safe(lua_call);
     
     // ===============================================
@@ -3138,8 +3080,6 @@ int LuaManager::lua_set_input_none(lua_State* L) {
         
         // Clear flag after mode change is complete
         detector->mode_switching = false;
-        
-        //printf("Input %d: none mode (detection disabled)\n\r", channel);
     }
     return 0;
 }
@@ -3435,9 +3375,6 @@ int LuaManager::lua_tell(lua_State* L) {
         return luaL_error(L, "tell: no event name provided");
     }
     
-    // All arguments are converted to strings for the ^^ message format
-    // Use Caw_printf which now properly sends via TinyUSB CDC
-    // Note: luaL_checkstring() will coerce numbers to strings
     switch(nargs) {
         case 1:
             Caw_printf("^^%s()", luaL_checkstring(L, 1));
