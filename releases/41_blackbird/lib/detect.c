@@ -8,6 +8,13 @@
 
 #define DETECT_DEBUG 0
 
+// ARM CORTEX-M0+ MEMORY BARRIERS FOR CACHE COHERENCY
+// These are ESSENTIAL for reliable multicore communication on RP2040
+// DMB (Data Memory Barrier) ensures all memory operations complete before proceeding
+// DSB (Data Synchronization Barrier) is stronger - waits for all memory operations AND side effects
+#define DMB() __asm volatile ("dmb" ::: "memory")
+#define DSB() __asm volatile ("dsb" ::: "memory")
+
 // Detection system state
 static Detect_t* detectors = NULL;
 static int detector_count = 0;
@@ -141,22 +148,50 @@ int8_t Detect_str_to_dir(const char* str) {
 // Mode configuration functions
 void Detect_none(Detect_t* self) {
     if (!self) return;
+    
+    // Signal ISR to skip this detector during reconfiguration
+    self->mode_switching = true;
+    DMB();  // Ensure ISR sees the flag immediately
+    
     self->modefn = d_none;
     self->action = NULL;
+    
+    // Clear any pending events
+    self->state_changed = false;
+    
+    // Reconfiguration complete
+    DMB();  // Ensure all changes are visible
+    self->mode_switching = false;
 }
 
 void Detect_stream(Detect_t* self, Detect_callback_t cb, float interval) {
     if (!self) return;
+    
+    // Signal ISR to skip this detector
+    self->mode_switching = true;
+    DMB();
+    
     self->modefn = d_stream;
     self->action = cb;
     // Crow semantics: interval (seconds) * (sample_rate / 32)
     self->stream.blocks = (int)(interval * DETECT_BLOCK_RATE);
     if (self->stream.blocks <= 0) self->stream.blocks = 1;
     self->stream.countdown = self->stream.blocks;
+    
+    // Clear any pending events
+    self->state_changed = false;
+    
+    DMB();
+    self->mode_switching = false;
 }
 
 void Detect_change(Detect_t* self, Detect_callback_t cb, float threshold, float hysteresis, int8_t direction) {
     if (!self) return;
+    
+    // Signal ISR to skip this detector
+    self->mode_switching = true;
+    DMB();
+    
     self->modefn = d_change;
     self->action = cb;
     self->change.threshold = threshold;
@@ -188,10 +223,20 @@ void Detect_change(Detect_t* self, Detect_callback_t cb, float threshold, float 
     } else {
         self->state = 0; // Input is currently below threshold (low state)
     }
+    
+    // Clear any pending events
+    self->state_changed = false;
+    
+    DMB();
+    self->mode_switching = false;
 }
 
 void Detect_scale(Detect_t* self, Detect_callback_t cb, float* scale, int sLen, float divs, float scaling) {
     if (!self || !scale || sLen > SCALE_MAX_COUNT) return;
+    
+    // CRITICAL: Signal ISR to skip during reconfiguration
+    self->mode_switching = true;
+    DMB();  // Barrier ensures ISR sees flag before we modify state
     
     self->modefn = d_scale;
     self->action = cb;
@@ -220,12 +265,23 @@ void Detect_scale(Detect_t* self, Detect_callback_t cb, float* scale, int sLen, 
     // For chromatic (83.3mV window), max is win/2 = 41.7mV before windows become unreachable
     s->hyst = 0.040f;  // 40mV fixed hysteresis
     
-    // Set to invalid note initially
+    // Set to invalid note initially (calls scale_bounds with DMB)
     scale_bounds(self, 0, -10);
+    
+    // Clear any pending events from previous mode
+    self->state_changed = false;
+    
+    // All configuration complete, re-enable ISR processing
+    DMB();  // Ensure all writes are visible to Core 1
+    self->mode_switching = false;
 }
 
 void Detect_window(Detect_t* self, Detect_callback_t cb, float* windows, int wLen, float hysteresis) {
     if (!self || !windows || wLen > WINDOW_MAX_COUNT) return;
+    
+    // Signal ISR to skip this detector
+    self->mode_switching = true;
+    DMB();
     
     self->modefn = d_window;
     self->action = cb;
@@ -236,10 +292,21 @@ void Detect_window(Detect_t* self, Detect_callback_t cb, float* windows, int wLe
     for (int i = 0; i < self->win.wLen; i++) {
         self->win.windows[i] = windows[i];
     }
+    
+    // Clear any pending events
+    self->state_changed = false;
+    
+    DMB();
+    self->mode_switching = false;
 }
 
 void Detect_volume(Detect_t* self, Detect_callback_t cb, float interval) {
     if (!self) return;
+    
+    // Signal ISR to skip this detector
+    self->mode_switching = true;
+    DMB();
+    
     self->modefn = d_volume;
     self->action = cb;
 
@@ -253,10 +320,21 @@ void Detect_volume(Detect_t* self, Detect_callback_t cb, float interval) {
     self->volume.blocks = (int)(interval * DETECT_BLOCK_RATE);
     if (self->volume.blocks <= 0) self->volume.blocks = 1;
     self->volume.countdown = self->volume.blocks;
+    
+    // Clear any pending events
+    self->state_changed = false;
+    
+    DMB();
+    self->mode_switching = false;
 }
 
 void Detect_peak(Detect_t* self, Detect_callback_t cb, float threshold, float hysteresis) {
     if (!self) return;
+    
+    // Signal ISR to skip this detector
+    self->mode_switching = true;
+    DMB();
+    
     self->modefn = d_peak;
     self->action = cb;
 
@@ -271,6 +349,12 @@ void Detect_peak(Detect_t* self, Detect_callback_t cb, float threshold, float hy
     self->peak.release = 0.01f;
     self->peak.envelope = 0.0f;
     self->state = 0; // Reset state
+    
+    // Clear any pending events
+    self->state_changed = false;
+    
+    DMB();
+    self->mode_switching = false;
 }
 
 void Detect_freq(Detect_t* self, Detect_callback_t cb, float interval) {
@@ -479,6 +563,10 @@ static void scale_bounds(Detect_t* self, int ix, int oct) {
     static const float VOLTS_TO_ADC = 341.297f;
     s->lower_int = (int16_t)(s->lower * VOLTS_TO_ADC);
     s->upper_int = (int16_t)(s->upper * VOLTS_TO_ADC);
+    
+    // CRITICAL: Memory barrier ensures Core 1 sees the new bounds
+    // Without this, Core 1's cache might have stale values for several milliseconds
+    DMB();
 }
 
 // ========================================================================
@@ -495,6 +583,18 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
     // EARLY EXIT: Skip if detection disabled (~0.5µs)
     // ===============================================
     if (detector->modefn == d_none) {
+        return;
+    }
+    
+    // ===============================================
+    // MODE SWITCHING CHECK: Skip during reconfiguration
+    // ===============================================
+    // CRITICAL: Check mode_switching flag with memory barrier
+    // Prevents ISR from processing during mode reconfiguration
+    DMB();  // Ensure we read the latest flag value
+    if (detector->mode_switching) {
+        // Mode is being reconfigured on Core 0, skip processing
+        detector->last_raw_adc = raw_adc;
         return;
     }
     
@@ -522,6 +622,7 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
                 // Queue event for Core 0
                 detector->state_changed = true;
                 detector->event_raw_value = raw_adc;
+                DMB();  // Ensure Core 0 sees the flag
             }
         }
         detector->last_raw_adc = raw_adc;
@@ -539,6 +640,7 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
                     // Queue event for Core 0
                     detector->state_changed = true;
                     detector->event_raw_value = raw_adc;
+                    DMB();  // Ensure flag write is visible
                 }
             }
         } else { // low to high
@@ -550,6 +652,7 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
                     // Queue event for Core 0
                     detector->state_changed = true;
                     detector->event_raw_value = raw_adc;
+                    DMB();  // Ensure flag write is visible
                 }
             }
         }
@@ -563,6 +666,7 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
             // Queue event for Core 0 (it will do VU meter processing)
             detector->state_changed = true;
             detector->event_raw_value = raw_adc;
+            DMB();  // Ensure flag write is visible
         }
         detector->last_raw_adc = raw_adc;
         return; // EXIT: ~2µs on boundary, ~1µs otherwise
@@ -571,6 +675,9 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
     // WINDOW/SCALE MODE: Integer-only bounds checking in ISR
     // Only signal Core 0 when bounds are crossed (not every sample!)
     if (detector->modefn == d_window || detector->modefn == d_scale) {
+        // CRITICAL: Memory barrier before reading volatile bounds
+        DMB();  // Ensure we see latest bounds from scale_bounds()
+        
         // Convert float bounds to integer for comparison
         // These are updated when scale/window changes, so read-only here
         int16_t upper_int = detector->scale.upper_int;
@@ -581,6 +688,7 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
             // Crossed boundary! Signal Core 0 to do FP math and fire callback
             detector->event_raw_value = raw_adc;
             detector->state_changed = true;
+            DMB();  // Ensure flag write is visible to Core 0
         }
         
         detector->last_raw_adc = raw_adc;
@@ -604,11 +712,15 @@ void Detect_process_events_core0(void) {
     for (int ch = 0; ch < detector_count; ch++) {
         Detect_t* detector = &detectors[ch];
         
+        // CRITICAL: Memory barrier before reading event flag
+        DMB();  // Ensure we see latest state_changed from ISR
+        
         // Check if this channel has a pending event
         if (!detector->state_changed) continue;
         
-        // Clear flag immediately to avoid missing new events
+        // ATOMIC CLEAR: Clear flag immediately to avoid missing new events
         detector->state_changed = false;
+        DMB();  // Ensure ISR sees the cleared flag
         
         // For scale/window modes, use last_raw_adc (always current)
         // For other modes, use event_raw_value (captured at event time)
