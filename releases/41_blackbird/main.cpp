@@ -233,21 +233,6 @@ static bool usb_log_printf(const char* fmt, ...) {
     return true;
 }
 
-static bool parse_output_volts_command(const char* command, int* channel, float* value) {
-    if (!command || !channel || !value) {
-        return false;
-    }
-    int ch = 0;
-    float val = 0.0f;
-    if (sscanf(command, "output[%d].volts = %f", &ch, &val) == 2 ||
-        sscanf(command, "output[%d].volts=%f", &ch, &val) == 2) {
-        *channel = ch;
-        *value = val;
-        return true;
-    }
-    return false;
-}
-
 /*
 
 Blackbird Crow Emulator - Basic Communication Protocol
@@ -264,11 +249,6 @@ Send commands like ^^v and ^^i to test the protocol.
 */
 
 // Command types (from crow's caw.h) - now included via lib/caw.h
-
-// Output userdata structure for metamethods
-typedef struct {
-    int channel;
-} OutputUserData;
 
 // Simple Lua Manager for crow emulation
 class LuaManager {
@@ -973,50 +953,7 @@ public:
         printf("Lua memory usage: %d KB\n\r", lua_mem_kb);
     }
     
-    
-    // Initialize crow-compatible Lua bindings with userdata metamethods
-    void init_crow_bindings() {
-        if (!L) return;
-        
-        // Create the output metatable
-        luaL_newmetatable(L, "Output");
-        
-        // Set __index metamethod
-        lua_pushstring(L, "__index");
-        lua_pushcfunction(L, output_index);
-        lua_settable(L, -3);
-        
-        // Set __newindex metamethod
-        lua_pushstring(L, "__newindex");
-        lua_pushcfunction(L, output_newindex);
-        lua_settable(L, -3);
-        
-        // Pop the metatable
-        lua_pop(L, 1);
-        
-        // Create output table
-        lua_newtable(L);
-        
-        // Create output[1] through output[4] userdata objects
-        for (int i = 1; i <= 4; i++) {
-            // Create userdata for this output
-            OutputUserData* output_data = (OutputUserData*)lua_newuserdata(L, sizeof(OutputUserData));
-            output_data->channel = i;
-            
-            // Set the metatable
-            luaL_getmetatable(L, "Output");
-            lua_setmetatable(L, -2);
-            
-            // Set output[i] = this userdata
-            lua_seti(L, -2, i);
-        }
-        
-        lua_setglobal(L, "output");
-    }
-    
-    // Metamethod functions for output objects
-    static int output_index(lua_State* L);
-    static int output_newindex(lua_State* L);
+
     
     // CASL bridge functions
     static int lua_casl_describe(lua_State* L);
@@ -1048,12 +985,6 @@ public:
     static int lua_set_input_freq(lua_State* L);
     static int lua_set_input_clock(lua_State* L);
     static int lua_set_input_none(lua_State* L);
-    
-    // Essential crow library functions that scripts expect
-    static int lua_nop_fn(lua_State* L);          // function() end
-    static int lua_get_out(lua_State* L);         // get_out(channel) -> voltage
-    static int lua_get_cv(lua_State* L);          // get_cv(channel) -> voltage  
-    static int lua_math_random_enhanced(lua_State* L); // Enhanced random with true randomness
     
     // Metro system Lua bindings
     static int lua_metro_start(lua_State* L);
@@ -1140,7 +1071,6 @@ public:
     }
 };
 
-// Static instance pointer
 LuaManager* LuaManager::instance = nullptr;
 
 // Global USB buffer to ensure proper initialization across cores
@@ -2020,13 +1950,6 @@ public:
         }
     }
 
-    static void core1()
-    {
-        while(1) {
-            tight_loop_contents();
-        }
-    }
-
     // Parse command from buffer
     C_cmd_t parse_command(const char* buffer, int length)
     {
@@ -2052,104 +1975,7 @@ public:
         return C_none;
     }
     
-    // Check if we have a complete packet (ends with newline or carriage return)
-    bool is_packet_complete(const char* buffer, int length)
-    {
-        if (length == 0) return false;
-        char last_char = buffer[length - 1];
-        return (last_char == '\n' || last_char == '\r' || last_char == '\0');
-    }
 
-    // Core 1: Simplified USB-only processing
-    void USBProcessingCore()
-    {
-        printf("Blackbird Crow Emulator v0.2 (Simplified Dual-Core)\n");
-        printf("Send ^^v for version, ^^i for identity\n");
-        
-        // Initialize mailbox communication
-        mailbox_init();
-        
-        // CRITICAL: Ensure buffer is properly initialized
-        g_rx_buffer_pos = 0;
-        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-        
-        while (1) {
-            // Read available characters
-            int c = getchar_timeout_us(1000); // 1ms timeout
-            
-            if (c != PICO_ERROR_TIMEOUT) {
-                // Safety check - ensure buffer position is sane
-                if (g_rx_buffer_pos < 0 || g_rx_buffer_pos >= USB_RX_BUFFER_SIZE) {
-                    printf("ERROR: Buffer corruption detected! Resetting...\r\n");
-                    g_rx_buffer_pos = 0;
-                    memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-                }
-                
-                // Check for buffer overflow BEFORE adding character
-                if (g_rx_buffer_pos >= USB_RX_BUFFER_SIZE - 1) {
-                    // Buffer full - clear and start over
-                    g_rx_buffer_pos = 0;
-                    memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-                }
-                
-                // Add character to buffer
-                g_rx_buffer[g_rx_buffer_pos] = (char)c;
-                g_rx_buffer_pos++;
-                g_rx_buffer[g_rx_buffer_pos] = '\0';
-                
-                // Check if we have a complete packet
-                if (is_packet_complete(g_rx_buffer, g_rx_buffer_pos)) {
-                    // Strip trailing whitespace
-                    int clean_length = g_rx_buffer_pos;
-                    while (clean_length > 0 && 
-                           (g_rx_buffer[clean_length-1] == '\n' || 
-                            g_rx_buffer[clean_length-1] == '\r' || 
-                            g_rx_buffer[clean_length-1] == ' ' || 
-                            g_rx_buffer[clean_length-1] == '\t')) {
-                        clean_length--;
-                    }
-                    g_rx_buffer[clean_length] = '\0';
-                    
-                    // Skip empty commands
-                    if (clean_length == 0) {
-                        g_rx_buffer_pos = 0;
-                        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-                        continue;
-                    }
-                    
-                    // Send command to Core0 via mailbox
-                    if (!mailbox_send_command(g_rx_buffer)) {
-                        // Mailbox full - inform user (rate limited)
-                        static uint32_t last_full_msg = 0;
-                        uint32_t now = to_ms_since_boot(get_absolute_time());
-                        if (now - last_full_msg > 1000) {
-                            printf("Command queue full, try again\r\n");
-                            last_full_msg = now;
-                        }
-                    }
-                    
-                    // Clear buffer after processing
-                    g_rx_buffer_pos = 0;
-                    memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-                }
-            }
-            
-            // Check for responses from Core0 and send them
-            char response[256];
-            if (mailbox_get_response(response, sizeof(response))) {
-                printf("%s", response);
-                // Check for crow-style line endings
-                if (strstr(response, "\n\r") == NULL && strstr(response, "\r\n") == NULL) {
-                    printf("\r\n"); // Add line ending if not present
-                }
-                fflush(stdout);
-                mailbox_mark_response_sent();
-            }
-            
-            // Minimal CPU usage when idle
-            tight_loop_contents();
-        }
-    }
     
     // ULTRA-LIGHTWEIGHT audio callback - ONLY READ INPUTS!
     // NO output processing in ISR - prevents multiplexer misalignment
@@ -2178,56 +2004,6 @@ public:
         // ISR time: ~5us vs. previous 500+us
     }
 };
-
-// Implementation of metamethod functions (now that BlackbirdCrow is fully defined)
-
-// __index metamethod: handles property reading (output[1].volts)
-int LuaManager::output_index(lua_State* L) {
-    // Get the userdata (output object)
-    OutputUserData* output_data = (OutputUserData*)luaL_checkudata(L, 1, "Output");
-    const char* key = luaL_checkstring(L, 2);
-    
-    if (strcmp(key, "volts") == 0) {
-        // Return current voltage from slopes system
-        float volts = S_get_state(output_data->channel - 1); // Convert to 0-based indexing
-        lua_pushnumber(L, volts);
-        return 1;
-    }
-    
-    // Property not found, return nil
-    lua_pushnil(L);
-    return 1;
-}
-
-// __newindex metamethod: handles property assignment (output[1].volts = 3.5)
-int LuaManager::output_newindex(lua_State* L) {
-    // Get the userdata (output object)
-    OutputUserData* output_data = (OutputUserData*)luaL_checkudata(L, 1, "Output");
-    const char* key = luaL_checkstring(L, 2);
-    
-    if (strcmp(key, "volts") == 0) {
-        // Set voltage - use slopes system for smooth transitions
-        float volts = (float)luaL_checknumber(L, 3);
-
-        // ===============================================
-        // OPTIMIZATION 2: Queue output changes during batch mode
-        // ===============================================
-        if (output_is_batching()) {
-            // Queue for later execution (avoids redundant calibration)
-            output_batch_queue(output_data->channel, volts);
-        } else {
-            // Execute immediately (for interactive commands)
-            printf("[lua] output[%d].volts=%.3f -> executing\n\r", output_data->channel, volts);
-            hardware_output_set_voltage(output_data->channel, volts);
-        }
-        
-        return 0;
-    }
-    
-    // Unknown property - could either silently ignore or error
-    // For crow compatibility, we'll silently ignore unknown properties
-    return 0;
-}
 
 // CASL bridge functions
 int LuaManager::lua_casl_describe(lua_State* L) {
