@@ -1499,7 +1499,7 @@ public:
                 char card_id_str[48];
                 
                 tud_cdc_write_str("\n\r");
-                tud_cdc_write_str(" Blackbird-v0.4\n\r");
+                tud_cdc_write_str(" Blackbird-v0.5\n\r");
                 tud_cdc_write_str(" Music Thing Modular Workshop Computer\n\r");
                 tud_cdc_write_flush();
                 snprintf(card_id_str, sizeof(card_id_str), " Program Card ID: 0x%08X%08X\n\r", 
@@ -1745,7 +1745,7 @@ public:
         switch (cmd) {
             case C_version: {
                 // Embed build date/time and debug format so a late serial connection can verify firmware
-                tud_cdc_write_str("^^version('blackbird-0.4')\n\r");
+                tud_cdc_write_str("^^version('blackbird-0.5')\n\r");
                 tud_cdc_write_flush();
                 break; }
                 
