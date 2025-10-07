@@ -1340,15 +1340,17 @@ public:
     
     // Public LED control functions for debugging
     void debug_led_on(int index) {
-        if (index >= 0 && index <= 5) {
-            LedOn(index, true);
-        }
+        // if (index >= 0 && index <= 5) {
+        //     //noop
+        //     //LedOn(index, true);
+        // }
     }
     
     void debug_led_off(int index) {
-        if (index >= 0 && index <= 5) {
-            LedOn(index, false);
-        }
+        // if (index >= 0 && index <= 5) {
+        //    //noop
+        //     // LedOn(index, false);
+        // }
     }
     
     BlackbirdCrow()
@@ -2109,10 +2111,10 @@ public:
             led_update_counter = 0;
             
             // Get output voltages in mV, convert to absolute values
-            int32_t audio1_abs = (g_output_state_mv[2] < 0) ? -g_output_state_mv[2] : g_output_state_mv[2];
-            int32_t audio2_abs = (g_output_state_mv[3] < 0) ? -g_output_state_mv[3] : g_output_state_mv[3];
-            int32_t cv1_abs = (g_output_state_mv[0] < 0) ? -g_output_state_mv[0] : g_output_state_mv[0];
-            int32_t cv2_abs = (g_output_state_mv[1] < 0) ? -g_output_state_mv[1] : g_output_state_mv[1];
+            int32_t audio1_abs = (g_output_state_mv[2] < 0) ? 0 : g_output_state_mv[2];
+            int32_t audio2_abs = (g_output_state_mv[3] < 0) ? 0 : g_output_state_mv[3];
+            int32_t cv1_abs = (g_output_state_mv[0] < 0) ? 0 : g_output_state_mv[0];
+            int32_t cv2_abs = (g_output_state_mv[1] < 0) ? 0 : g_output_state_mv[1];
             
             // Convert mV to LED brightness (0-4095)
             // Assume ±6V range (6000mV), normalize to 0-4095
