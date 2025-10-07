@@ -1838,8 +1838,46 @@ public:
                 if (g_repl_mode == REPL_discard) {
                     tud_cdc_write_str("upload failed, returning to normal mode\n\r");
                 } else if (g_new_script_len > 0 && lua_manager) {
+                    // Perform aggressive reset before loading new script (matches ^^k behavior)
+                    // This ensures a clean slate with no lingering state from previous script
+                    
+                    // 1. Stop all metros
+                    Metro_stop_all();
+                    
+                    // 2. Clear input detectors
+                    for (int i = 0; i < 2; i++) {
+                        Detect_none(Detect_ix_to_p(i));
+                    }
+                    
+                    // 3. Stop all output slopes
+                    for (int i = 0; i < 4; i++) {
+                        S_toward(i, 0.0, 0.0, SHAPE_Linear, NULL);
+                    }
+                    
+                    // 4. Clear event queue
+                    events_clear();
+                    
+                    // 5. Cancel all clock coroutines
+                    clock_cancel_coro_all();
+                    
                     // Run script in RAM (temporary) - matches crow's REPL_upload(0)
                     if (lua_manager->evaluate_safe(g_new_script)) {
+                        // 6. Reset crow modules to defaults (calls crow.reset() in Lua)
+                        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                        
+                        // 7. Clear user globals using Crow's _user table approach
+                        lua_manager->evaluate_safe(
+                            "if _user then "
+                            "  for k,_ in pairs(_user) do "
+                            "    _G[k] = nil "
+                            "  end "
+                            "end "
+                            "_G._user = {}"
+                        );
+                        
+                        // 8. Garbage collect for cleanup
+                        lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
+                        
                         // Script loaded successfully - now call init() to start it (like Lua_crowbegin)
                         lua_manager->evaluate_safe("if init then init() end");
                         tud_cdc_write_str("^^ready()\n\r"); // Inform host that script is running
