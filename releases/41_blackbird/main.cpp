@@ -576,6 +576,14 @@ public:
     }
     lua_getglobal(L, "tell");       // Get the global tell function
     lua_setfield(L, -2, "tell");    // Set crow.tell = tell
+    
+    // Also set up crow.reset() and crow.init() from l_crowlib
+    extern int l_crowlib_crow_reset(lua_State* L);
+    lua_pushcfunction(L, l_crowlib_crow_reset);
+    lua_setfield(L, -2, "reset");   // Set crow.reset
+    lua_pushcfunction(L, l_crowlib_crow_reset);
+    lua_setfield(L, -2, "init");    // Set crow.init
+    
     lua_pop(L, 1);                  // Pop crow table
     
     // Also create _c alias for crow (for compatibility with input.lua which uses _c.tell)

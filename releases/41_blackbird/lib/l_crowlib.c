@@ -70,22 +70,12 @@ void l_crowlib_init(lua_State* L){
 	_load_lib(L, "hotswap", "hotswap");
 
 
-	//////// crow.reset
+	//////// crow.reset & crow.init
     lua_getglobal(L, "crow"); // @1
-    lua_pushcfunction(L, l_crowlib_crow_reset);
-    lua_setfield(L, 1, "reset");
-    lua_settop(L, 0);
-
-    lua_getglobal(L, "crow");
-    if (lua_isnil(L, -1)) {
-        lua_pop(L, 1);
-        lua_newtable(L);
-        lua_setglobal(L, "crow");
-        lua_getglobal(L, "crow");
-    }
-
-    lua_pushcfunction(L, l_crowlib_crow_reset);
-    lua_setfield(L, -2, "init");
+    lua_pushcfunction(L, l_crowlib_crow_reset); // @2
+    lua_setfield(L, 1, "reset"); // crow[1].reset = func[2], pops func
+    lua_pushcfunction(L, l_crowlib_crow_reset); // @2
+    lua_setfield(L, 1, "init"); // crow[1].init = func[2], pops func
     lua_settop(L, 0);
 
 
@@ -157,22 +147,6 @@ void l_crowlib_init(lua_State* L){
     lua_getglobal(L, "get_state");
     lua_setglobal(L, "LL_get_state");
 	lua_settop(L, 0);
-
-
-	//////// ii follower default actions
-
-	// install the reset function
-	lua_pushcfunction(L, _ii_follow_reset);
-	lua_setglobal(L, "ii_follow_reset");
-
-	// call it to reset immediately
-	lua_getglobal(L, "ii_follow_reset");
-	lua_call(L, 0, 0);
-	lua_settop(L, 0);
-
-
-	//////// ii.pullup(true)
-	ii_set_pullups(1);
 
 
 	//////// RANDOM
@@ -269,22 +243,32 @@ lua_gettable(L, 1); // replace @2 with: input[n]
 	}
 	lua_settop(L, 0);
 
-    // ii.reset_events(ii.self)
+    // ii.reset_events(ii.self) - only if ii exists
     lua_getglobal(L, "ii"); // @1
-    lua_getfield(L, 1, "reset_events"); // @2
-    lua_getfield(L, 1, "self"); // @3
-    lua_call(L, 1, 0);
+    if (!lua_isnil(L, 1)) {
+        lua_getfield(L, 1, "reset_events"); // @2
+        if (!lua_isnil(L, 2)) {
+            lua_getfield(L, 1, "self"); // @3
+            lua_call(L, 1, 0);
+        }
+    }
     lua_settop(L, 0);
 
-    // ii_follow_reset() -- resets forwarding to output libs
+    // ii_follow_reset() -- resets forwarding to output libs, only if it exists
     lua_getglobal(L, "ii_follow_reset");
-    lua_call(L, 0, 0);
+    if (!lua_isnil(L, -1)) {
+        lua_call(L, 0, 0);
+    }
     lua_settop(L, 0);
 
-    // metro.free_all()
+    // metro.free_all() - only if metro exists
     lua_getglobal(L, "metro"); // @1
-    lua_getfield(L, 1, "free_all");
-    lua_call(L, 0, 0);
+    if (!lua_isnil(L, 1)) {
+        lua_getfield(L, 1, "free_all");
+        if (!lua_isnil(L, 2)) {
+            lua_call(L, 0, 0);
+        }
+    }
     lua_settop(L, 0);
 
     // if public then public.clear() end
