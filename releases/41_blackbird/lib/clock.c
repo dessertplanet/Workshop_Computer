@@ -10,6 +10,13 @@
 #include "clock_ll.h" // linked list for clocks
 #include "l_crowlib.h" // L_queue_clock_* functions
 
+// External function to control pulse outputs
+extern void hardware_pulse_output_set(int channel, bool state);
+
+// Pulse output state tracking
+static uint32_t pulse1_end_time = 0;
+static bool pulse1_active = false;
+
 // Enhanced RP2040 timing - use sample-accurate timing instead of milliseconds
 static uint64_t sample_counter = 0; // Global sample counter for precise timing
 static uint32_t HAL_GetTick(void) {
@@ -285,6 +292,23 @@ static void clock_internal_run(uint32_t ms)
                 internal.wakeup -= (double)1.0;
                 error--;
             }
+            
+            // Trigger pulse output 1 on beat (10ms pulse)
+            hardware_pulse_output_set(1, true);
+            pulse1_active = true;
+            pulse1_end_time = ms + 10; // 10ms pulse duration
+        }
+        
+        // Handle pulse output timing
+        if(pulse1_active && time_now >= pulse1_end_time) {
+            hardware_pulse_output_set(1, false);
+            pulse1_active = false;
+        }
+    } else {
+        // When clock stops, ensure pulse output is off
+        if(pulse1_active) {
+            hardware_pulse_output_set(1, false);
+            pulse1_active = false;
         }
     }
 }

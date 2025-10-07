@@ -78,6 +78,9 @@ extern const unsigned int clock_len;
 static volatile int32_t g_output_state_mv[4] = {0, 0, 0, 0};
 static volatile int32_t g_input_state_q12[2] = {0, 0};
 
+// Pulse output state tracking (set from Lua layer)
+static volatile bool g_pulse_out_state[2] = {false, false};
+
 static void set_output_state_simple(int channel, int32_t value_mv) {
     if (channel >= 0 && channel < 4) {
         g_output_state_mv[channel] = value_mv;
@@ -133,6 +136,7 @@ void core1_entry(); // defined after BlackbirdCrow - non-static so flash_storage
 
 // Forward declaration of C interface function (implemented after BlackbirdCrow class)
 extern "C" void hardware_output_set_voltage(int channel, float voltage);
+extern "C" void hardware_pulse_output_set(int channel, bool state);
 
 // Forward declaration of safe event handlers
 extern "C" void L_handle_change_safe(event_t* e);
@@ -295,6 +299,7 @@ private:
     static int lua_pub_view_in(lua_State* L);
     static int lua_pub_view_out(lua_State* L);
     static int lua_tell(lua_State* L);
+    static int lua_hardware_pulse(lua_State* L);
     
     // Conditional test function implementations - only compiled when tests are embedded
 #ifdef EMBED_ALL_TESTS
@@ -682,6 +687,9 @@ public:
     
     // Add tell function for ^^event messages (critical for input.stream/change)
     lua_register(L, "tell", lua_tell);
+    
+    // Add hardware pulse output control
+    lua_register(L, "hardware_pulse", lua_hardware_pulse);
     
     // Register test functions - conditional compilation
 #ifdef EMBED_ALL_TESTS
@@ -1295,6 +1303,17 @@ public:
                     AudioOut2(dac_value);
                 }
                 break;
+        }
+    }
+    
+    // Hardware abstraction function for pulse outputs
+    void hardware_set_pulse(int channel, bool state) {
+        if (channel == 1) {
+            PulseOut1(state);
+            g_pulse_out_state[0] = state;
+        } else if (channel == 2) {
+            PulseOut2(state);
+            g_pulse_out_state[1] = state;
         }
     }
     
@@ -2076,6 +2095,45 @@ public:
         // Process detection sample-by-sample for edge accuracy
         Detect_process_sample(0, cv1);
         Detect_process_sample(1, cv2);
+        
+        // === PULSE OUTPUT 2: High when switch is down ===
+        // (Pulse1 is controlled by internal clock in clock.c)
+        bool switch_down = (SwitchVal() == Switch::Down);
+        g_pulse_out_state[1] = switch_down;
+        PulseOut2(switch_down);
+        
+        // === LED OUTPUT VISUALIZATION ===
+        // Update LEDs every 480 samples (~100Hz at 48kHz)
+        static int led_update_counter = 0;
+        if (++led_update_counter >= 480) {
+            led_update_counter = 0;
+            
+            // Get output voltages in mV, convert to absolute values
+            int32_t audio1_abs = (g_output_state_mv[2] < 0) ? -g_output_state_mv[2] : g_output_state_mv[2];
+            int32_t audio2_abs = (g_output_state_mv[3] < 0) ? -g_output_state_mv[3] : g_output_state_mv[3];
+            int32_t cv1_abs = (g_output_state_mv[0] < 0) ? -g_output_state_mv[0] : g_output_state_mv[0];
+            int32_t cv2_abs = (g_output_state_mv[1] < 0) ? -g_output_state_mv[1] : g_output_state_mv[1];
+            
+            // Convert mV to LED brightness (0-4095)
+            // Assume ±6V range (6000mV), normalize to 0-4095
+            // brightness = (abs_mv * 4095) / 6000
+            // Using shift for efficiency: (abs_mv * 4095) >> 12 approximates /4096 ≈ /6000 with scaling
+            // Better: (abs_mv * 682) >> 10 gives close to /6000 mapping (682/1024 ≈ 2/3, 4095*2/3/1024 ≈ /6000)
+            uint16_t led0_brightness = (audio1_abs > 6000) ? 4095 : (uint16_t)((audio1_abs * 682) >> 10);
+            uint16_t led1_brightness = (audio2_abs > 6000) ? 4095 : (uint16_t)((audio2_abs * 682) >> 10);
+            uint16_t led2_brightness = (cv1_abs > 6000) ? 4095 : (uint16_t)((cv1_abs * 682) >> 10);
+            uint16_t led3_brightness = (cv2_abs > 6000) ? 4095 : (uint16_t)((cv2_abs * 682) >> 10);
+            
+            // Set analog output LEDs with brightness (0-3)
+            LedBrightness(0, led0_brightness);  // LED 0 - Audio1 amplitude
+            LedBrightness(1, led1_brightness);  // LED 1 - Audio2 amplitude
+            LedBrightness(2, led2_brightness);  // LED 2 - CV1 amplitude
+            LedBrightness(3, led3_brightness);  // LED 3 - CV2 amplitude
+            
+            // Set pulse output LEDs on/off (4-5)
+            LedOn(4, g_pulse_out_state[0]); // LED 4 - Pulse1
+            LedOn(5, g_pulse_out_state[1]); // LED 5 - Pulse2
+        }
         
         // That's it! Output processing moved to MainControlLoop()
         // ISR time: ~5us vs. previous 500+us
@@ -3263,6 +3321,21 @@ int LuaManager::lua_tell(lua_State* L) {
     return 0;
 }
 
+// hardware_pulse(channel, state) - Set pulse output state
+// channel: 1 or 2
+// state: boolean (true = high, false = low)
+int LuaManager::lua_hardware_pulse(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    bool state = lua_toboolean(L, 2);
+    
+    if (channel < 1 || channel > 2) {
+        return luaL_error(L, "hardware_pulse: channel must be 1 or 2");
+    }
+    
+    hardware_pulse_output_set(channel, state);
+    return 0;
+}
+
 // Implementation of lua_memstats (memory statistics and debugging)
 int LuaManager::lua_memstats(lua_State* L) {
     if (!tud_cdc_connected()) return 0;
@@ -3301,6 +3374,13 @@ int LuaManager::lua_memstats(lua_State* L) {
 extern "C" void hardware_output_set_voltage(int channel, float voltage) {
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, voltage);
+    }
+}
+
+// C interface functions for pulse outputs (called from Lua)
+extern "C" void hardware_pulse_output_set(int channel, bool state) {
+    if (g_blackbird_instance) {
+        ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_pulse(channel, state);
     }
 }
 

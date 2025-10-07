@@ -1,1 +1,17 @@
-2025-10-07 07:58:59,079 druid.crow      INFO    MainProcess connected to crow on /dev/cu.usbmodem112201
+2025-10-07 09:10:29,534 druid.crow      INFO    MainProcess connected to crow on /dev/cu.usbmodem112201
+2025-10-07 09:13:03,854 druid.crow      ERROR   MainProcess lost connection: read failed: [Errno 6] Device not configured
+2025-10-07 09:13:05,700 druid.crow      INFO    MainProcess connected to crow on /dev/cu.usbmodem112201
+2025-10-07 09:13:07,494 druid.crow      ERROR   MainProcess lost connection: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2025-10-07 09:13:07,511 druid.crow      INFO    MainProcess connected to crow on /dev/cu.usbmodem112201
+2025-10-07 09:13:19,989 druid.crow      ERROR   MainProcess lost connection: read failed: [Errno 6] Device not configured
+2025-10-07 09:13:21,829 druid.crow      INFO    MainProcess connected to crow on /dev/cu.usbmodem112201
+2025-10-07 09:13:23,237 druid.crow      ERROR   MainProcess lost connection: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2025-10-07 09:13:23,413 druid.crow      INFO    MainProcess connected to crow on /dev/cu.usbmodem112201
+2025-10-07 09:20:19,820 druid.crow      ERROR   MainProcess lost connection: read failed: [Errno 6] Device not configured
+2025-10-07 09:20:21,668 druid.crow      INFO    MainProcess connected to crow on /dev/cu.usbmodem112201
+2025-10-07 09:20:23,074 druid.crow      ERROR   MainProcess lost connection: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2025-10-07 09:20:23,249 druid.crow      INFO    MainProcess connected to crow on /dev/cu.usbmodem112201
+red
+2025-10-07 09:13:21,829 druid.crow      INFO    MainProcess connected to crow on /dev/cu.usbmodem112201
+2025-10-07 09:20:19,823 druid.crow      ERROR   MainProcess lost connection: read failed: [Errno 6] Device not configured
+2025-10-07 09:20:21,668 druid.crow      INFO    MainProcess connected to crow on /dev/cu.usbmodem112201
