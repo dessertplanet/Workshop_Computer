@@ -697,6 +697,19 @@ public:
             }
         }
         
+        // Set up crow.output and crow.input references for norns script compatibility
+        if (luaL_dostring(L, R"(
+            -- Make output/input accessible from crow table (for norns compatibility)
+            crow = crow or {}
+            crow.output = output
+            crow.input = input
+            print("crow.output and crow.input references created!")
+        )") != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error setting up crow references: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        }
+        
         // Load Metro.lua class from embedded bytecode (CRITICAL for First.lua)
         printf("Loading embedded Metro.lua class...\n\r");
         if (luaL_loadbuffer(L, (const char*)metro, metro_len, "metro.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
