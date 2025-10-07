@@ -433,69 +433,91 @@ private:
     
     // Lua tab.print function - pretty print tables
     static int lua_tab_print(lua_State* L) {
+        if (!tud_cdc_connected()) return 0;  // Add CDC connection check
+        
         if (lua_gettop(L) != 1) {
             lua_pushstring(L, "tab.print expects exactly one argument");
             lua_error(L);
         }
         
         print_table_recursive(L, 1, 0);
-    printf("\r\n");
-        fflush(stdout);
+        tud_cdc_write_str("\r\n");  // Use CDC write instead of printf
+        tud_cdc_write_flush();       // Flush the CDC buffer
         return 0;
     }
     
-    // Helper function to recursively print table contents
-    static void print_table_recursive(lua_State* L, int index, int depth) {
-        if (!lua_istable(L, index)) {
-            // Not a table, just print the value
-            lua_getglobal(L, "tostring");
-            lua_pushvalue(L, index);
-            lua_call(L, 1, 1);
-            const char* s = lua_tostring(L, -1);
-            if (s) printf("%s", s);
-            lua_pop(L, 1);
-            return;
+// Helper to flush CDC buffer if it's getting full
+// Flush when less than 64 bytes available (keep a safety margin)
+static inline void flush_if_needed() {
+    if (tud_cdc_write_available() < 64) {
+        tud_cdc_write_flush();
+        // Give USB stack time to transmit - wait until buffer has space
+        uint32_t timeout = 0;
+        while (tud_cdc_write_available() < 128 && timeout < 10000) {
+            sleep_us(10);
+            tud_task();  // Process USB tasks to transmit data
+            timeout++;
         }
-        
-        printf("{\n");
-        
-        // Iterate through table
-        lua_pushnil(L);  // first key
-        while (lua_next(L, index) != 0) {
-            // Print indentation
-            for (int i = 0; i < depth + 1; i++) printf("  ");
-            
-            // Print key
-            if (lua_type(L, -2) == LUA_TSTRING) {
-                printf("%s = ", lua_tostring(L, -2));
-            } else if (lua_type(L, -2) == LUA_TNUMBER) {
-                printf("[%.0f] = ", lua_tonumber(L, -2));
-            } else {
-                printf("[?] = ");
-            }
-            
-            // Print value
-            if (lua_istable(L, -1) && depth < 3) {  // Limit recursion depth
-                print_table_recursive(L, lua_gettop(L), depth + 1);
-            } else {
-                lua_getglobal(L, "tostring");
-                lua_pushvalue(L, -2);  // the value
-                lua_call(L, 1, 1);
-                const char* s = lua_tostring(L, -1);
-                if (s) printf("%s", s);
-                lua_pop(L, 1);
-            }
-            
-            printf(",\n");
-            lua_pop(L, 1);  // remove value, keep key for next iteration
-        }
-        
-        // Print closing brace with proper indentation
-        for (int i = 0; i < depth; i++) printf("  ");
-        printf("}");
+    }
+}
+
+// Helper function to recursively print table contents
+static void print_table_recursive(lua_State* L, int index, int depth) {
+    if (!lua_istable(L, index)) {
+        // Not a table, just print the value
+        lua_getglobal(L, "tostring");
+        lua_pushvalue(L, index);
+        lua_call(L, 1, 1);
+        const char* s = lua_tostring(L, -1);
+        if (s) tud_cdc_write_str(s);  // Use CDC write instead of printf
+        lua_pop(L, 1);
+        flush_if_needed();  // Check buffer after writing value
+        return;
     }
     
-    // Lua panic handler - called when Lua encounters an unrecoverable error
+    tud_cdc_write_str("{\r\n");  // Use CDC write and proper line endings
+    flush_if_needed();  // Check buffer after opening brace
+    
+    // Iterate through table
+    lua_pushnil(L);  // first key
+    while (lua_next(L, index) != 0) {
+        // Print indentation
+        for (int i = 0; i < depth + 1; i++) tud_cdc_write_str("  ");
+        
+        // Print key
+        if (lua_type(L, -2) == LUA_TSTRING) {
+            tud_cdc_write_str(lua_tostring(L, -2));
+            tud_cdc_write_str(" = ");
+        } else if (lua_type(L, -2) == LUA_TNUMBER) {
+            char buffer[32];
+            snprintf(buffer, sizeof(buffer), "[%.0f] = ", lua_tonumber(L, -2));
+            tud_cdc_write_str(buffer);
+        } else {
+            tud_cdc_write_str("[?] = ");
+        }
+        
+        // Print value
+        if (lua_istable(L, -1) && depth < 3) {  // Limit recursion depth
+            print_table_recursive(L, lua_gettop(L), depth + 1);
+        } else {
+            lua_getglobal(L, "tostring");
+            lua_pushvalue(L, -2);  // the value (fix: was -2, should be -2 to get value below tostring)
+            lua_call(L, 1, 1);
+            const char* s = lua_tostring(L, -1);
+            if (s) tud_cdc_write_str(s);
+            lua_pop(L, 1);
+        }
+        
+        tud_cdc_write_str(",\r\n");  // Use proper line endings
+        flush_if_needed();  // Check buffer after each entry
+        lua_pop(L, 1);  // remove value, keep key for next iteration
+    }
+    
+    // Print closing brace with proper indentation
+    for (int i = 0; i < depth; i++) tud_cdc_write_str("  ");
+    tud_cdc_write_str("}");
+    flush_if_needed();  // Check buffer after closing brace
+}    // Lua panic handler - called when Lua encounters an unrecoverable error
     static int lua_panic_handler(lua_State* L) {
         const char* msg = lua_tostring(L, -1);
         char buffer[256];
