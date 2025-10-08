@@ -81,6 +81,35 @@ static volatile int32_t g_input_state_q12[2] = {0, 0};
 // Pulse output state tracking (set from Lua layer)
 static volatile bool g_pulse_out_state[2] = {false, false};
 
+// ========================================================================
+// AUDIO-RATE NOISE GENERATOR (48kHz) - INTEGER MATH ONLY
+// ========================================================================
+// Noise generator state for audio-rate output
+static volatile bool g_noise_active[4] = {false, false, false, false};
+static volatile int32_t g_noise_gain[4] = {0, 0, 0, 0};  // Gain in fixed-point (0-6000 mV)
+static volatile uint32_t g_noise_lock_counter[4] = {0, 0, 0, 0};  // Prevent clearing noise for a few calls
+
+// Fast xorshift32 PRNG state for audio-rate noise
+static uint32_t g_noise_state = 0xDEADBEEF;
+
+// Fast audio-rate noise generation in ISR - NO FLOATING POINT
+// Returns noise value in millivolts (-6000 to +6000)
+static inline int32_t generate_audio_noise_mv(int32_t gain_mv) {
+    // xorshift32 algorithm - very fast PRNG (only shifts and XORs)
+    g_noise_state ^= g_noise_state << 13;
+    g_noise_state ^= g_noise_state >> 17;
+    g_noise_state ^= g_noise_state << 5;
+    
+    // Extract 16-bit signed value from upper bits
+    int16_t noise_16 = (int16_t)(g_noise_state >> 16);
+    
+    // Scale by gain using integer math: (noise_16 * gain_mv) / 32768
+    // noise_16 is in range [-32768, 32767]
+    // gain_mv is in range [0, 6000]
+    // Result is in range [-6000, +6000] mV
+    return ((int32_t)noise_16 * gain_mv) >> 15;  // Divide by 32768 using shift
+}
+
 static void set_output_state_simple(int channel, int32_t value_mv) {
     if (channel >= 0 && channel < 4) {
         g_output_state_mv[channel] = value_mv;
@@ -736,6 +765,10 @@ public:
     lua_register(L, "set_output_scale", lua_set_output_scale);
     lua_register(L, "soutput_handler", lua_soutput_handler);
     
+    // Register audio-rate noise functions
+    lua_register(L, "LL_set_noise", lua_LL_set_noise);
+    lua_register(L, "LL_clear_noise", lua_LL_clear_noise);
+    
     // Register Just Intonation functions
     lua_register(L, "justvolts", lua_justvolts);
     lua_register(L, "just12", lua_just12);
@@ -1015,6 +1048,10 @@ public:
     static int lua_set_output_scale(lua_State* L);
     static int lua_c_tell(lua_State* L);
     static int lua_soutput_handler(lua_State* L);
+    
+    // Audio-rate noise functions
+    static int lua_LL_set_noise(lua_State* L);
+    static int lua_LL_clear_noise(lua_State* L);
     
     // Just Intonation functions
     static int lua_justvolts(lua_State* L);
@@ -2098,6 +2135,38 @@ public:
         Detect_process_sample(0, cv1);
         Detect_process_sample(1, cv2);
         
+        // === AUDIO-RATE NOISE GENERATION (48kHz) - INTEGER MATH ONLY ===
+        // Generate and output noise for any active channels
+        for (int ch = 0; ch < 4; ch++) {
+            if (g_noise_active[ch]) {
+                // Generate noise in millivolts (-6000 to +6000) using integer math only
+                int32_t noise_mv = generate_audio_noise_mv(g_noise_gain[ch]);
+                
+                // Update state for queries
+                g_output_state_mv[ch] = noise_mv;
+                
+                // Output directly to hardware (all integer math)
+                switch (ch) {
+                    case 0: CVOut1Millivolts(noise_mv); break;
+                    case 1: CVOut2Millivolts(noise_mv); break;
+                    case 2: {
+                        // Convert mV to 12-bit DAC value: (noise_mv * 2048) / 6000
+                        // Optimize: (noise_mv * 2048) / 6000 ≈ (noise_mv * 341) >> 10
+                        // Exact: multiply by 2048/6000 = 0.34133... ≈ 349/1024
+                        int16_t dac_value = (int16_t)((noise_mv * 349) >> 10);
+                        AudioOut1(dac_value);
+                        break;
+                    }
+                    case 3: {
+                        // Same calculation for audio output 2
+                        int16_t dac_value = (int16_t)((noise_mv * 349) >> 10);
+                        AudioOut2(dac_value);
+                        break;
+                    }
+                }
+            }
+        }
+        
         // === PULSE OUTPUT 2: High when switch is down ===
         // (Pulse1 is controlled by internal clock in clock.c)
         bool switch_down = (SwitchVal() == Switch::Down);
@@ -2147,6 +2216,10 @@ int LuaManager::lua_casl_describe(lua_State* L) {
     int raw = luaL_checkinteger(L, 1);
     int internal = raw - 1;
     //printf("[DBG] lua_casl_describe raw=%d internal=%d\n\r", raw, internal);
+    
+    // DON'T clear noise here - it needs to be cleared when the action actually RUNS
+    // The noise() action will set it, and other actions should clear it when they start
+    
     casl_describe(internal, L); // C is zero-based
     lua_pop(L, 2);
     return 0;
@@ -2157,6 +2230,17 @@ int LuaManager::lua_casl_action(lua_State* L) {
     int act = luaL_checkinteger(L, 2);
     int internal = raw - 1;
    // printf("[DBG] lua_casl_action raw=%d internal=%d action=%d\n\r", raw, internal, act);
+    
+    // Clear the noise lock counter when an action is explicitly triggered
+    // BUT only if noise isn't currently locked (lock > 5 means just set)
+    // This allows .volts and other actions to stop noise, but doesn't interfere
+    // with noise() that was just called
+    if (internal >= 0 && internal < 4 && act == 1) {
+        if (g_noise_lock_counter[internal] < 5) {
+            g_noise_lock_counter[internal] = 0;
+        }
+    }
+    
     casl_action(internal, act); // C is zero-based
     lua_pop(L, 2);
     return 0;
@@ -2199,6 +2283,47 @@ int LuaManager::lua_LL_get_state(lua_State* L) {
     float volts = S_get_state(channel - 1);  // Convert to 0-based for C
     lua_pushnumber(L, volts);
     return 1;
+}
+
+// LL_set_noise(channel, gain) - Enable audio-rate noise output
+int LuaManager::lua_LL_set_noise(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);  // 1-based channel from Lua
+    float gain = luaL_checknumber(L, 2);    // Gain multiplier (0.0-1.0)
+    
+    // Validate channel
+    if (channel < 1 || channel > 4) {
+        return luaL_error(L, "Invalid channel: %d (must be 1-4)", channel);
+    }
+    
+    // Clamp gain to valid range
+    if (gain < 0.0f) gain = 0.0f;
+    if (gain > 1.0f) gain = 1.0f;
+    
+    int ch_idx = channel - 1;
+    g_noise_active[ch_idx] = true;
+    // Convert gain to millivolts (0-6000 mV) as integer
+    g_noise_gain[ch_idx] = (int32_t)(gain * 6000.0f);
+    // Set lock counter to prevent immediate clearing (ignore next few hardware_output_set_voltage calls)
+    g_noise_lock_counter[ch_idx] = 10;  // Ignore next 10 calls
+    
+    return 0;
+}
+
+// LL_clear_noise(channel) - Disable noise output
+int LuaManager::lua_LL_clear_noise(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);  // 1-based channel from Lua
+    
+    // Validate channel
+    if (channel < 1 || channel > 4) {
+        return luaL_error(L, "Invalid channel: %d (must be 1-4)", channel);
+    }
+    
+    int ch_idx = channel - 1;
+    g_noise_active[ch_idx] = false;
+    g_noise_gain[ch_idx] = 0;  // Clear integer gain
+    g_noise_lock_counter[ch_idx] = 0;  // Clear lock
+    
+    return 0;
 }
 
 // set_output_scale(channel, scale_table, [modulo], [scaling]) - Set output quantization
@@ -3374,6 +3499,26 @@ int LuaManager::lua_memstats(lua_State* L) {
 
 // Implementation of C interface function (after BlackbirdCrow class is fully defined)
 extern "C" void hardware_output_set_voltage(int channel, float voltage) {
+    int ch_idx = channel - 1;  // channel is 1-based
+    
+    // If noise is currently active and locked, decrement the lock counter
+    // This prevents clearing noise immediately after it's set
+    if (ch_idx >= 0 && ch_idx < 4) {
+        if (g_noise_active[ch_idx] && g_noise_lock_counter[ch_idx] > 0) {
+            // Noise was just set - ignore this call
+            g_noise_lock_counter[ch_idx]--;
+            return;
+        }
+        
+        // If noise is active but not locked, a new action is trying to output
+        // Clear noise and let the new action take control
+        if (g_noise_active[ch_idx]) {
+            g_noise_active[ch_idx] = false;
+            g_noise_gain[ch_idx] = 0;
+            g_noise_lock_counter[ch_idx] = 0;
+        }
+    }
+    
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, voltage);
     }

@@ -166,4 +166,13 @@ function Asl._while(pred, t) return loop( Asl._if(pred, t)) end
 
 function times(n, t) return Asl._while( mutable(n+1)-1, t) end -- n+1 adds before mutation for exactly n repeats
 
+-- Noise generator for audio-rate white noise output
+function Asl._noise(gain)
+    return function(self, arg)
+        -- Call C function to enable noise on this channel
+        LL_set_noise(self.id, gain or 1.0)
+        return {} -- return empty table (no ASL stages needed)
+    end
+end
+
 return Asl
