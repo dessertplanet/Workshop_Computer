@@ -3100,13 +3100,13 @@ int LuaManager::lua_set_input_stream(lua_State* L) {
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         Detect_stream(detector, stream_callback, time);
-        // Use TinyUSB CDC for output
-        if (tud_cdc_connected()) {
-            char msg[64];
-            snprintf(msg, sizeof(msg), "Input %d: stream mode, interval %.3fs\r\n", channel, time);
-            tud_cdc_write_str(msg);
-            tud_cdc_write_flush();
-        }
+        // // Use TinyUSB CDC for output
+        // if (tud_cdc_connected()) {
+        //     char msg[64];
+        //     snprintf(msg, sizeof(msg), "Input %d: stream mode, interval %.3fs\r\n", channel, time);
+        //     tud_cdc_write_str(msg);
+        //     tud_cdc_write_flush();
+        // }
     }
     return 0;
 }
