@@ -1141,6 +1141,22 @@ public:
         // Set ws as global
         lua_setglobal(L, "bb");  // _G.ws = ws table
         
+        // Add noise function to bb table
+        const char* add_noise = R"(
+            bb.noise = function(gain)
+                gain = gain or 1.0
+                -- Clamp gain to 0.0-1.0 range
+                if gain < 0.0 then gain = 0.0 end
+                if gain > 1.0 then gain = 1.0 end
+                return { asl._noise(gain) }
+            end
+        )";
+        if (luaL_dostring(L, add_noise) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error adding bb.noise: %s\r\n", error ? error : "unknown error");
+            lua_pop(L, 1);
+        }
+        
         //printf("bb table created (ws.knob.main, ws.knob.x, ws.knob.y, ws.switch.position, ws.switch.change)\n\r");
     }
     

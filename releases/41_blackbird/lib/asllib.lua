@@ -73,13 +73,4 @@ function adsr(a, d, s, r, shape)
           }
 end
 
-function noise(gain)
-    gain = gain or 1.0
-    -- Clamp gain to 0.0-1.0 range
-    if gain < 0.0 then gain = 0.0 end
-    if gain > 1.0 then gain = 1.0 end
-    
-    return { asl._noise(gain) }
-end
-
 return Asllib
