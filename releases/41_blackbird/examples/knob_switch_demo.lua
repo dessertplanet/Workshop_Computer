@@ -11,7 +11,7 @@ function init()
     print("")
     
     -- Set up switch change handler
-    switch.change = function(position)
+    ws.switch.change = function(position)
         print("Switch: " .. position)
         
         -- Change output shape based on switch position
@@ -30,13 +30,13 @@ function init()
     -- Set up a metro to read knobs and update outputs
     metro[1].event = function()
         -- Main knob directly controls output 1 voltage (0-6V)
-        output[1].volts = knob.main * 6
+        output[1].volts = ws.knob.main * 6
         
         -- X knob controls output 2 slew (0.01-2 seconds)
-        output[2].slew = knob.x * 2 + 0.01
+        output[2].slew = ws.knob.x * 2 + 0.01
         
         -- Y knob controls LFO frequency (0.1-5 Hz)
-        local freq = knob.y * 4.9 + 0.1
+        local freq = ws.knob.y * 4.9 + 0.1
         metro[2].time = 1 / freq
     end
     metro[1].time = 0.05  -- Check knobs at 20Hz

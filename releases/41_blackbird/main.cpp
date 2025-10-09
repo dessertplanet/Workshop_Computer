@@ -1034,9 +1034,8 @@ public:
         
         printf("Crow ecosystem loaded (6 libraries: sequins, public, clock, quote, timeline, hotswap)!\n\r");
         
-        // Create knob and switch tables for Workshop Computer hardware access
-        create_knob_table(L);
-        create_switch_table(L);
+        // Create Workshop Computer namespace table with knob and switch
+        create_ws_table(L);
         
         // Print Lua memory usage for diagnostics
         int lua_mem_kb = lua_gc(L, LUA_GCCOUNT, 0);
@@ -1074,9 +1073,9 @@ public:
         lua_setfield(L, -2, "__newindex");
         
         lua_setmetatable(L, -2);  // setmetatable(knob, metatable)
-        lua_setglobal(L, "knob");  // _G.knob = knob table
         
-        printf("knob table created (knob.main, knob.x, knob.y)\n\r");
+        // Don't set as global - will be set as ws.knob by caller
+        // Leave knob table on stack for caller
     }
     
     // Create switch table with change callback support
@@ -1116,13 +1115,33 @@ public:
         lua_setfield(L, -2, "__newindex");
         
         lua_setmetatable(L, -2);
-        lua_setglobal(L, "switch");
+        
+        // Don't set as global - will be set as ws.switch by caller
         
         // Initialize with nop callback
         lua_pushcfunction(L, [](lua_State* L) -> int { return 0; });
         lua_setglobal(L, "_switch_change_callback");
         
-        printf("switch table created (switch.position, switch.change)\n\r");
+        // Leave switch table on stack for caller
+    }
+    
+    // Create Workshop Computer namespace table
+    void create_ws_table(lua_State* L) {
+        // Create ws table
+        lua_newtable(L);  // ws table @1
+        
+        // Create and add knob table
+        create_knob_table(L);  // knob table @2
+        lua_setfield(L, -2, "knob");  // ws.knob = knob table, pops @2
+        
+        // Create and add switch table
+        create_switch_table(L);  // switch table @2
+        lua_setfield(L, -2, "switch");  // ws.switch = switch table, pops @2
+        
+        // Set ws as global
+        lua_setglobal(L, "ws");  // _G.ws = ws table
+        
+        printf("ws table created (ws.knob.main, ws.knob.x, ws.knob.y, ws.switch.position, ws.switch.change)\n\r");
     }
     
 
