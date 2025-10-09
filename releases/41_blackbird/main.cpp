@@ -3620,7 +3620,13 @@ int LuaManager::lua_get_knob_main(lua_State* L) {
     if (g_blackbird_instance) {
         BlackbirdCrow* crow = (BlackbirdCrow*)g_blackbird_instance;
         int value = crow->GetKnobValue(ComputerCard::Knob::Main);
-        lua_pushnumber(L, value / 4095.0);  // Convert to 0.0-1.0
+        float value_f = value / 4095.0; // Convert to 0.0-1.0
+       if (value_f < 0.01) {
+            value_f = 0.0;
+        } else if (value_f > 0.99) {
+            value_f = 1.0; 
+        }
+        lua_pushnumber(L, value_f);  
         return 1;
     }
     lua_pushnumber(L, 0.0);
@@ -3631,7 +3637,13 @@ int LuaManager::lua_get_knob_x(lua_State* L) {
     if (g_blackbird_instance) {
         BlackbirdCrow* crow = (BlackbirdCrow*)g_blackbird_instance;
         int value = crow->GetKnobValue(ComputerCard::Knob::X);
-        lua_pushnumber(L, value / 4095.0);  // Convert to 0.0-1.0
+        float value_f = value / 4095.0; // Convert to 0.0-1.0
+       if (value_f < 0.01) {
+            value_f = 0.0;
+        } else if (value_f > 0.99) {
+            value_f = 1.0; 
+        }
+        lua_pushnumber(L, value_f);  
         return 1;
     }
     lua_pushnumber(L, 0.0);
@@ -3642,7 +3654,13 @@ int LuaManager::lua_get_knob_y(lua_State* L) {
     if (g_blackbird_instance) {
         BlackbirdCrow* crow = (BlackbirdCrow*)g_blackbird_instance;
         int value = crow->GetKnobValue(ComputerCard::Knob::Y);
-        lua_pushnumber(L, value / 4095.0);  // Convert to 0.0-1.0
+       float value_f = value / 4095.0; // Convert to 0.0-1.0
+       if (value_f < 0.01) {
+            value_f = 0.0;
+        } else if (value_f > 0.99) {
+            value_f = 1.0; 
+        }
+        lua_pushnumber(L, value_f);  
         return 1;
     }
     lua_pushnumber(L, 0.0);
