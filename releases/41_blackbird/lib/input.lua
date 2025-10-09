@@ -6,12 +6,14 @@ Input.__index = Input
 
 Input.inputs = {1,2}
 
+-- default hysteresis has been updated here for the Workshop Computer
+
 function Input.new( chan )
     local i = { channel    = chan
               , _mode      = 'none'
               , time       = 0.1
               , threshold  = 1.0
-              , hysteresis = 0.1
+              , hysteresis = 0.5
               , direction  = 'both'
               , windows    = {}
               , notes      = {}
