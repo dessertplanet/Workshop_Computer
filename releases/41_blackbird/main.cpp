@@ -1035,7 +1035,7 @@ public:
         printf("Crow ecosystem loaded (6 libraries: sequins, public, clock, quote, timeline, hotswap)!\n\r");
         
         // Create Workshop Computer namespace table with knob and switch
-        create_ws_table(L);
+        create_bb_table(L);
         
         // Print Lua memory usage for diagnostics
         int lua_mem_kb = lua_gc(L, LUA_GCCOUNT, 0);
@@ -1126,7 +1126,7 @@ public:
     }
     
     // Create Workshop Computer namespace table
-    void create_ws_table(lua_State* L) {
+    void create_bb_table(lua_State* L) {
         // Create ws table
         lua_newtable(L);  // ws table @1
         
@@ -1139,9 +1139,9 @@ public:
         lua_setfield(L, -2, "switch");  // ws.switch = switch table, pops @2
         
         // Set ws as global
-        lua_setglobal(L, "ws");  // _G.ws = ws table
+        lua_setglobal(L, "bb");  // _G.ws = ws table
         
-        printf("ws table created (ws.knob.main, ws.knob.x, ws.knob.y, ws.switch.position, ws.switch.change)\n\r");
+        //printf("bb table created (ws.knob.main, ws.knob.x, ws.knob.y, ws.switch.position, ws.switch.change)\n\r");
     }
     
 
