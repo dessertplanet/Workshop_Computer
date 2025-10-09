@@ -16,7 +16,7 @@ function init()
     }
     
     -- Set up switch to change shape
-    ws.switch.change = function(pos)
+    bb.switch.change = function(pos)
         if pos == 'down' then
             output[1].shape = 'sine'
             print("Shape: sine")
@@ -30,13 +30,13 @@ function init()
     end
     
     -- Set initial shape
-    ws.switch.change(ws.switch.position)
+    bb.switch.change(bb.switch.position)
     
     -- Update dynamic values from knobs, then retrigger action
     metro[1].event = function()
         -- Set dynamic values based on current knob positions
-        output[1].dyn.rate = ws.knob.main * 2 + 0.1   -- 0.1-2.1 seconds
-        output[1].dyn.depth = ws.knob.x * 6            -- 0-6V
+        output[1].dyn.rate = bb.knob.main * 2 + 0.1   -- 0.1-2.1 seconds
+        output[1].dyn.depth = bb.knob.x * 6            -- 0-6V
         
         -- Retrigger the action with updated dynamics
         output[1]:action()

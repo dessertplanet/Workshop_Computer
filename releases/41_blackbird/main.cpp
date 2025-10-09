@@ -1074,7 +1074,7 @@ public:
         
         lua_setmetatable(L, -2);  // setmetatable(knob, metatable)
         
-        // Don't set as global - will be set as ws.knob by caller
+        // Don't set as global - will be set as bb.knob by caller
         // Leave knob table on stack for caller
     }
     
@@ -1116,7 +1116,7 @@ public:
         
         lua_setmetatable(L, -2);
         
-        // Don't set as global - will be set as ws.switch by caller
+        // Don't set as global - will be set as bb.switch by caller
         
         // Initialize with nop callback
         lua_pushcfunction(L, [](lua_State* L) -> int { return 0; });
@@ -1127,19 +1127,19 @@ public:
     
     // Create Workshop Computer namespace table
     void create_bb_table(lua_State* L) {
-        // Create ws table
-        lua_newtable(L);  // ws table @1
+        // Create bb table
+        lua_newtable(L);  // bb table @1
         
         // Create and add knob table
         create_knob_table(L);  // knob table @2
-        lua_setfield(L, -2, "knob");  // ws.knob = knob table, pops @2
+        lua_setfield(L, -2, "knob");  // bb.knob = knob table, pops @2
         
         // Create and add switch table
         create_switch_table(L);  // switch table @2
-        lua_setfield(L, -2, "switch");  // ws.switch = switch table, pops @2
+        lua_setfield(L, -2, "switch");  // bb.switch = switch table, pops @2
         
-        // Set ws as global
-        lua_setglobal(L, "bb");  // _G.ws = ws table
+        // Set bb as global
+        lua_setglobal(L, "bb");  // _G.bb = bb table
         
         // Add noise function to bb table
         const char* add_noise = R"(
@@ -1157,7 +1157,7 @@ public:
             lua_pop(L, 1);
         }
         
-        //printf("bb table created (ws.knob.main, ws.knob.x, ws.knob.y, ws.switch.position, ws.switch.change)\n\r");
+        //printf("bb table created (bb.knob.main, bb.knob.x, bb.knob.y, bb.switch.position, bb.switch.change, bb.noise)\n\r");
     }
     
 

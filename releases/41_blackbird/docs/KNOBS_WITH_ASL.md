@@ -1,6 +1,6 @@
 # Using Workshop Computer Knobs with ASL Dynamics
 
-This guide shows how to use the Workshop Computer's knobs (`ws.knob.main`, `ws.knob.x`, `ws.knob.y`) with crow's ASL (Action Slope Language) dynamic variable system.
+This guide shows how to use the Workshop Computer's knobs (`bb.knob.main`, `bb.knob.x`, `bb.knob.y`) with crow's ASL (Action Slope Language) dynamic variable system.
 
 ## Understanding ASL Dynamics
 
@@ -13,8 +13,8 @@ ASL's **dynamic variables** (`dyn`) allow you to map knobs to any ASL parameter.
 output[1]{ to(dyn{level=3}, dyn{time=0.5}) }
 
 -- 2. Update dynamic values from knobs
-output[1].dyn.level = ws.knob.main * 6  -- Set to current knob value
-output[1].dyn.time = ws.knob.x * 2
+output[1].dyn.level = bb.knob.main * 6  -- Set to current knob value
+output[1].dyn.time = bb.knob.x * 2
 
 -- 3. Retrigger the action with updated values
 output[1]:action()
@@ -31,7 +31,7 @@ function init()
     input[1].change = function(state)
         if state then
             -- Update dynamic from knob, then trigger
-            output[1].dyn.rate = ws.knob.main * 2 + 0.1  -- 0.1-2.1 seconds
+            output[1].dyn.rate = bb.knob.main * 2 + 0.1  -- 0.1-2.1 seconds
             output[1]{ to(5, dyn{rate=1}), to(0, dyn{rate=1}) }
         end
     end
@@ -44,7 +44,7 @@ function init()
     input[1].change = function(state)
         if state then
             -- Knob sets the peak voltage
-            output[1].dyn.level = ws.knob.main * 6  -- 0-6V
+            output[1].dyn.level = bb.knob.main * 6  -- 0-6V
             output[1]{ to(dyn{level=3}, 0.1), to(0, 0.5) }
         end
     end
@@ -62,8 +62,8 @@ function init()
     
     -- Update dynamics and retrigger continuously
     metro[1].event = function()
-        output[1].dyn.rate = ws.knob.main * 2 + 0.1   -- 0.1-2.1s
-        output[1].dyn.depth = ws.knob.x * 6            -- 0-6V
+        output[1].dyn.rate = bb.knob.main * 2 + 0.1   -- 0.1-2.1s
+        output[1].dyn.depth = bb.knob.x * 6            -- 0-6V
         output[1]:action()  -- Retrigger with new values
     end
     metro[1].time = 0.5
@@ -85,9 +85,9 @@ function init()
     
     -- Update all dynamics from knobs and retrigger
     metro[1].event = function()
-        output[1].dyn.rate = ws.knob.main * 2 + 0.1
-        output[1].dyn.depth = ws.knob.x * 6
-        output[1].dyn.offset = ws.knob.y * 6
+        output[1].dyn.rate = bb.knob.main * 2 + 0.1
+        output[1].dyn.depth = bb.knob.x * 6
+        output[1].dyn.offset = bb.knob.y * 6
         output[1]:action()
     end
     metro[1].time = 0.5
@@ -105,7 +105,7 @@ function init()
         if state then
             -- Knob selects from preset values
             local notes = {0, 2, 4, 7, 9, 12}  -- Major scale (semitones)
-            local index = math.floor(ws.knob.main * (#notes - 0.01)) + 1
+            local index = math.floor(bb.knob.main * (#notes - 0.01)) + 1
             output[1].dyn.note = notes[index] / 12  -- Convert to volts
             
             -- Jump to quantized note
@@ -135,8 +135,8 @@ function init()
     input[1].change = function(state)
         if state then
             -- Update dynamics from knobs
-            output[1].dyn.time = ws.knob.main * 2 + 0.05
-            output[1].dyn.level = ws.knob.x * 6
+            output[1].dyn.time = bb.knob.main * 2 + 0.05
+            output[1].dyn.level = bb.knob.x * 6
             
             -- Trigger envelope (uses shape set by switch)
             output[1]{ 
@@ -162,9 +162,9 @@ function init()
     
     -- Continuously update dynamics from knobs and retrigger
     metro[1].event = function()
-        local freq = ws.knob.main * 10 + 0.1  -- 0.1-10.1 Hz
+        local freq = bb.knob.main * 10 + 0.1  -- 0.1-10.1 Hz
         output[1].dyn.half_period = 1 / (freq * 2)
-        output[1].dyn.depth = ws.knob.x * 5
+        output[1].dyn.depth = bb.knob.x * 5
         output[1]:action()  -- Retrigger with new values
     end
     metro[1].time = 0.1  -- Check knobs at 10Hz
@@ -203,7 +203,7 @@ dyn{a=0} + dyn{b=0}                -- Add dynamics
 dyn{a=1} * 2                       -- Scale dynamic
 
 -- Workflow
-output[1].dyn.rate = ws.knob.main * 2 -- Set value
+output[1].dyn.rate = bb.knob.main * 2 -- Set value
 output[1]:action()                     -- Retrigger action with new value
 ```
 
