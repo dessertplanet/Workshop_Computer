@@ -720,6 +720,12 @@ public:
     // Add hardware pulse output control
     lua_register(L, "hardware_pulse", lua_hardware_pulse);
     
+    // Add hardware knob and switch access functions
+    lua_register(L, "get_knob_main", lua_get_knob_main);
+    lua_register(L, "get_knob_x", lua_get_knob_x);
+    lua_register(L, "get_knob_y", lua_get_knob_y);
+    lua_register(L, "get_switch_position", lua_get_switch_position);
+    
     // Register test functions - conditional compilation
 #ifdef EMBED_ALL_TESTS
     lua_register(L, "test_enhanced_multicore_safety", lua_test_enhanced_multicore_safety);
@@ -1028,9 +1034,95 @@ public:
         
         printf("Crow ecosystem loaded (6 libraries: sequins, public, clock, quote, timeline, hotswap)!\n\r");
         
+        // Create knob and switch tables for Workshop Computer hardware access
+        create_knob_table(L);
+        create_switch_table(L);
+        
         // Print Lua memory usage for diagnostics
         int lua_mem_kb = lua_gc(L, LUA_GCCOUNT, 0);
         printf("Lua memory usage: %d KB\n\r", lua_mem_kb);
+    }
+    
+    // Create knob table with __index metamethod for dynamic reads (returns 0.0-1.0)
+    void create_knob_table(lua_State* L) {
+        // Create knob table
+        lua_newtable(L);  // knob table @1
+        
+        // Create metatable for dynamic property access
+        lua_newtable(L);  // metatable @2
+        
+        // __index function for property access
+        lua_pushcfunction(L, [](lua_State* L) -> int {
+            const char* key = lua_tostring(L, 2);
+            if (strcmp(key, "main") == 0) {
+                return lua_get_knob_main(L);
+            } else if (strcmp(key, "x") == 0) {
+                return lua_get_knob_x(L);
+            } else if (strcmp(key, "y") == 0) {
+                return lua_get_knob_y(L);
+            }
+            lua_pushnil(L);
+            return 1;
+        });
+        lua_setfield(L, -2, "__index");  // metatable.__index = func
+        
+        // Make table read-only
+        lua_pushcfunction(L, [](lua_State* L) -> int {
+            luaL_error(L, "knob table is read-only");
+            return 0;
+        });
+        lua_setfield(L, -2, "__newindex");
+        
+        lua_setmetatable(L, -2);  // setmetatable(knob, metatable)
+        lua_setglobal(L, "knob");  // _G.knob = knob table
+        
+        printf("knob table created (knob.main, knob.x, knob.y)\n\r");
+    }
+    
+    // Create switch table with change callback support
+    void create_switch_table(lua_State* L) {
+        lua_newtable(L);  // switch table
+        
+        // Create metatable for property access
+        lua_newtable(L);  // metatable
+        
+        lua_pushcfunction(L, [](lua_State* L) -> int {
+            const char* key = lua_tostring(L, 2);
+            if (strcmp(key, "position") == 0) {
+                return lua_get_switch_position(L);
+            } else if (strcmp(key, "change") == 0) {
+                // Return the stored change callback
+                lua_getglobal(L, "_switch_change_callback");
+                return 1;
+            }
+            lua_pushnil(L);
+            return 1;
+        });
+        lua_setfield(L, -2, "__index");
+        
+        lua_pushcfunction(L, [](lua_State* L) -> int {
+            const char* key = lua_tostring(L, 2);
+            if (strcmp(key, "change") == 0) {
+                // Store the callback
+                lua_pushvalue(L, 3);  // Copy callback function
+                lua_setglobal(L, "_switch_change_callback");
+                return 0;
+            } else if (strcmp(key, "position") == 0) {
+                luaL_error(L, "switch.position is read-only");
+                return 0;
+            }
+            return 0;
+        });
+        lua_setfield(L, -2, "__newindex");
+        
+        lua_setmetatable(L, -2);
+        lua_setglobal(L, "switch");
+        
+        // Initialize with nop callback
+        lua_pushcfunction(L, [](lua_State* L) -> int { return 0; });
+        lua_setglobal(L, "_switch_change_callback");
+        
+        printf("switch table created (switch.position, switch.change)\n\r");
     }
     
 
@@ -1087,6 +1179,12 @@ public:
     static int lua_clock_internal_set_tempo(lua_State* L);
     static int lua_clock_internal_start(lua_State* L);
     static int lua_clock_internal_stop(lua_State* L);
+    
+    // Hardware knob and switch access
+    static int lua_get_knob_main(lua_State* L);
+    static int lua_get_knob_x(lua_State* L);
+    static int lua_get_knob_y(lua_State* L);
+    static int lua_get_switch_position(lua_State* L);
     
     // Evaluate Lua code and return result
     bool evaluate(const char* code) {
@@ -1306,6 +1404,12 @@ public:
     uint64_t cached_unique_id;
 
     uint16_t inputs[4];
+    
+    // Public wrappers for hardware knob and switch access (for Lua bindings)
+    int32_t GetKnobValue(ComputerCard::Knob ind) { return KnobVal(ind); }
+    ComputerCard::Switch GetSwitchValue() { return SwitchVal(); }
+    bool GetSwitchChanged() { return SwitchChanged(); }
+    
     // Hardware abstraction functions for output
     void hardware_set_output(int channel, float volts) {
         if (channel < 1 || channel > 4) return;
@@ -1591,9 +1695,37 @@ public:
             // Process regular events (lower priority - system events, etc.)
             event_next();
             
+            // Check for switch changes and fire callback
+            static ComputerCard::Switch last_switch = ComputerCard::Switch::Middle;
+            static bool first_switch_check = true;
+            static uint32_t last_switch_check_time = 0;
+            uint32_t now = to_ms_since_boot(get_absolute_time());
+            
+            // Check switch every ~50ms to avoid excessive polling
+            if (now - last_switch_check_time >= 50) {
+                last_switch_check_time = now;
+                ComputerCard::Switch current_switch = GetSwitchValue();
+                
+                // Only fire callback after first read (avoid firing on startup)
+                if (!first_switch_check && current_switch != last_switch) {
+                    const char* pos_str = (current_switch == ComputerCard::Switch::Down) ? "down" :
+                                         (current_switch == ComputerCard::Switch::Middle) ? "middle" : "up";
+                    
+                    // Call Lua switch.change callback
+                    char lua_call[128];
+                    snprintf(lua_call, sizeof(lua_call),
+                        "if _switch_change_callback then _switch_change_callback('%s') end",
+                        pos_str);
+                    
+                    lua_manager->evaluate_safe(lua_call);
+                }
+                
+                last_switch = current_switch;
+                first_switch_check = false;
+            }
+            
             // Update public view monitoring (~15fps)
             static uint32_t last_pubview_time = 0;
-            uint32_t now = to_ms_since_boot(get_absolute_time());
             if (now - last_pubview_time >= 66) { // ~15fps (66ms = 1000/15)
                 last_pubview_time = now;
                 public_update();
@@ -3461,6 +3593,55 @@ int LuaManager::lua_hardware_pulse(lua_State* L) {
     
     hardware_pulse_output_set(channel, state);
     return 0;
+}
+
+// Hardware knob access functions - return normalized 0.0-1.0 values
+// (Integer to float conversion happens here, outside ISR)
+int LuaManager::lua_get_knob_main(lua_State* L) {
+    if (g_blackbird_instance) {
+        BlackbirdCrow* crow = (BlackbirdCrow*)g_blackbird_instance;
+        int value = crow->GetKnobValue(ComputerCard::Knob::Main);
+        lua_pushnumber(L, value / 4095.0);  // Convert to 0.0-1.0
+        return 1;
+    }
+    lua_pushnumber(L, 0.0);
+    return 1;
+}
+
+int LuaManager::lua_get_knob_x(lua_State* L) {
+    if (g_blackbird_instance) {
+        BlackbirdCrow* crow = (BlackbirdCrow*)g_blackbird_instance;
+        int value = crow->GetKnobValue(ComputerCard::Knob::X);
+        lua_pushnumber(L, value / 4095.0);  // Convert to 0.0-1.0
+        return 1;
+    }
+    lua_pushnumber(L, 0.0);
+    return 1;
+}
+
+int LuaManager::lua_get_knob_y(lua_State* L) {
+    if (g_blackbird_instance) {
+        BlackbirdCrow* crow = (BlackbirdCrow*)g_blackbird_instance;
+        int value = crow->GetKnobValue(ComputerCard::Knob::Y);
+        lua_pushnumber(L, value / 4095.0);  // Convert to 0.0-1.0
+        return 1;
+    }
+    lua_pushnumber(L, 0.0);
+    return 1;
+}
+
+// Hardware switch position query - returns 'down', 'middle', or 'up'
+int LuaManager::lua_get_switch_position(lua_State* L) {
+    if (g_blackbird_instance) {
+        BlackbirdCrow* crow = (BlackbirdCrow*)g_blackbird_instance;
+        ComputerCard::Switch pos = crow->GetSwitchValue();
+        const char* pos_str = (pos == ComputerCard::Switch::Down) ? "down" :
+                              (pos == ComputerCard::Switch::Middle) ? "middle" : "up";
+        lua_pushstring(L, pos_str);
+        return 1;
+    }
+    lua_pushstring(L, "middle");
+    return 1;
 }
 
 // Implementation of lua_memstats (memory statistics and debugging)
