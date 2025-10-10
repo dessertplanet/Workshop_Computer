@@ -81,6 +81,19 @@ static volatile int32_t g_input_state_q12[2] = {0, 0};
 // Pulse output state tracking (set from Lua layer)
 static volatile bool g_pulse_out_state[2] = {false, false};
 
+// Pulse input detection mode: 0='none', 1='change'
+static volatile int8_t g_pulsein_mode[2] = {0, 0};
+
+// Pulse input direction filter: 0='both', 1='rising', -1='falling'
+static volatile int8_t g_pulsein_direction[2] = {0, 0};
+
+// Pulse input state tracking (read from hardware, cached for Lua access)
+static volatile bool g_pulsein_state[2] = {false, false};
+
+// Pulse input edge detection flags (set at 48kHz, cleared in main loop)
+static volatile bool g_pulsein_edge_detected[2] = {false, false};
+static volatile bool g_pulsein_edge_state[2] = {false, false};
+
 // ========================================================================
 // AUDIO-RATE NOISE GENERATOR (48kHz) - INTEGER MATH ONLY
 // ========================================================================
@@ -282,6 +295,140 @@ Send commands like ^^v and ^^i to test the protocol.
 */
 
 // Command types (from crow's caw.h) - now included via lib/caw.h
+
+// Pulse input Lua C functions (must be at file scope, not in class)
+// NO UPVALUES - get index from table's _idx field to avoid closure memory issues
+static int pulsein_index(lua_State* L) {
+    // Get the index from the table itself
+    lua_getfield(L, 1, "_idx");
+    int idx = (int)lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    
+    const char* key = lua_tostring(L, 2);
+    
+    // First check real fields (but skip _idx)
+    if (strcmp(key, "_idx") != 0) {
+        lua_pushvalue(L, 2);
+        lua_rawget(L, 1);
+        if (!lua_isnil(L, -1)) {
+            return 1;
+        }
+        lua_pop(L, 1);
+    }
+    
+    // Synthesize dynamic properties
+    if (strcmp(key, "state") == 0) {
+        lua_pushboolean(L, g_pulsein_state[idx]);
+        return 1;
+    } else if (strcmp(key, "direction") == 0) {
+        const char* dir = (g_pulsein_direction[idx] == 1) ? "rising" :
+                          (g_pulsein_direction[idx] == -1) ? "falling" : "both";
+        lua_pushstring(L, dir);
+        return 1;
+    } else if (strcmp(key, "change") == 0) {
+        char callback_name[32];
+        snprintf(callback_name, sizeof(callback_name), "_pulsein%d_change_callback", idx + 1);
+        lua_getglobal(L, callback_name);
+        return 1;
+    } else if (strcmp(key, "mode") == 0) {
+        const char* mode_str = (g_pulsein_mode[idx] == 1) ? "change" : "none";
+        lua_pushstring(L, mode_str);
+        return 1;
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+static int pulsein_newindex(lua_State* L) {
+    lua_getfield(L, 1, "_idx");
+    int idx = (int)lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    
+    const char* key = lua_tostring(L, 2);
+    
+    if (strcmp(key, "change") == 0) {
+        if (lua_isfunction(L, 3) || lua_isnil(L, 3)) {
+            char callback_name[32];
+            snprintf(callback_name, sizeof(callback_name), "_pulsein%d_change_callback", idx + 1);
+            lua_pushvalue(L, 3);
+            lua_setglobal(L, callback_name);
+        } else {
+            return luaL_error(L, "pulsein.change must be a function or nil");
+        }
+        return 0;
+    } else if (strcmp(key, "mode") == 0) {
+        const char* mode = lua_tostring(L, 3);
+        if (!mode) return luaL_error(L, "pulsein.mode must be a string");
+        if (strcmp(mode, "none") == 0) {
+            g_pulsein_mode[idx] = 0;
+        } else if (strcmp(mode, "change") == 0) {
+            g_pulsein_mode[idx] = 1;
+        } else {
+            return luaL_error(L, "pulsein.mode must be 'none' or 'change'");
+        }
+        return 0;
+    } else if (strcmp(key, "direction") == 0) {
+        const char* dir = lua_tostring(L, 3);
+        if (!dir) return luaL_error(L, "pulsein.direction must be a string");
+        if (strcmp(dir, "both") == 0) {
+            g_pulsein_direction[idx] = 0;
+        } else if (strcmp(dir, "rising") == 0) {
+            g_pulsein_direction[idx] = 1;
+        } else if (strcmp(dir, "falling") == 0) {
+            g_pulsein_direction[idx] = -1;
+        } else {
+            return luaL_error(L, "pulsein.direction must be 'both', 'rising', or 'falling'");
+        }
+        return 0;
+    } else if (strcmp(key, "state") == 0) {
+        return luaL_error(L, "pulsein.state is read-only");
+    }
+    return 0;
+}
+
+// __call metamethod for bb.pulsein[n]{mode='change', direction='rising'}
+static int pulsein_call(lua_State* L) {
+    lua_getfield(L, 1, "_idx");
+    int idx = (int)lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    
+    // Argument should be a table
+    if (!lua_istable(L, 2)) {
+        return luaL_error(L, "pulsein() expects a table argument");
+    }
+    
+    // Process mode field
+    lua_getfield(L, 2, "mode");
+    if (lua_isstring(L, -1)) {
+        const char* mode = lua_tostring(L, -1);
+        if (strcmp(mode, "none") == 0) {
+            g_pulsein_mode[idx] = 0;
+        } else if (strcmp(mode, "change") == 0) {
+            g_pulsein_mode[idx] = 1;
+        } else {
+            return luaL_error(L, "pulsein mode must be 'none' or 'change'");
+        }
+    }
+    lua_pop(L, 1);
+    
+    // Process direction field
+    lua_getfield(L, 2, "direction");
+    if (lua_isstring(L, -1)) {
+        const char* dir = lua_tostring(L, -1);
+        if (strcmp(dir, "both") == 0) {
+            g_pulsein_direction[idx] = 0;
+        } else if (strcmp(dir, "rising") == 0) {
+            g_pulsein_direction[idx] = 1;
+        } else if (strcmp(dir, "falling") == 0) {
+            g_pulsein_direction[idx] = -1;
+        } else {
+            return luaL_error(L, "pulsein direction must be 'both', 'rising', or 'falling'");
+        }
+    }
+    lua_pop(L, 1);
+    
+    return 0;
+}
 
 // Simple Lua Manager for crow emulation
 class LuaManager {
@@ -1077,7 +1224,6 @@ public:
         // Don't set as global - will be set as bb.knob by caller
         // Leave knob table on stack for caller
     }
-    
     // Create switch table with change callback support
     void create_switch_table(lua_State* L) {
         lua_newtable(L);  // switch table
@@ -1137,6 +1283,49 @@ public:
         // Create and add switch table
         create_switch_table(L);  // switch table @2
         lua_setfield(L, -2, "switch");  // bb.switch = switch table, pops @2
+        
+        // Create and add pulsein array table - simplified approach without closures
+        lua_newtable(L);  // pulsein array table @2
+        
+        // Create pulsein[1] with simple metatable (no upvalues)
+        lua_pushinteger(L, 1);
+        lua_newtable(L);  // pulsein[1] table
+        
+        // Store the index directly in the table
+        lua_pushinteger(L, 0);  // index 0 for pulsein[1]
+        lua_setfield(L, -2, "_idx");
+        
+        // Add simple metatable
+        lua_newtable(L);  // metatable
+        lua_pushcfunction(L, pulsein_index);
+        lua_setfield(L, -2, "__index");
+        lua_pushcfunction(L, pulsein_newindex);
+        lua_setfield(L, -2, "__newindex");
+        lua_pushcfunction(L, pulsein_call);
+        lua_setfield(L, -2, "__call");
+        lua_setmetatable(L, -2);
+        
+        lua_settable(L, -3);  // pulsein[1] = table
+        
+        // Create pulsein[2]
+        lua_pushinteger(L, 2);
+        lua_newtable(L);  // pulsein[2] table
+        
+        lua_pushinteger(L, 1);  // index 1 for pulsein[2]
+        lua_setfield(L, -2, "_idx");
+        
+        lua_newtable(L);  // metatable
+        lua_pushcfunction(L, pulsein_index);
+        lua_setfield(L, -2, "__index");
+        lua_pushcfunction(L, pulsein_newindex);
+        lua_setfield(L, -2, "__newindex");
+        lua_pushcfunction(L, pulsein_call);
+        lua_setfield(L, -2, "__call");
+        lua_setmetatable(L, -2);
+        
+        lua_settable(L, -3);  // pulsein[2] = table
+        
+        lua_setfield(L, -2, "pulsein");  // bb.pulsein = pulsein array, pops @2
         
         // Set bb as global
         lua_setglobal(L, "bb");  // _G.bb = bb table
@@ -1444,6 +1633,10 @@ public:
     int32_t GetKnobValue(ComputerCard::Knob ind) { return KnobVal(ind); }
     ComputerCard::Switch GetSwitchValue() { return SwitchVal(); }
     bool GetSwitchChanged() { return SwitchChanged(); }
+    
+    // Public wrappers for pulse input access (for Lua bindings)
+    bool GetPulseIn1() { return PulseIn1(); }
+    bool GetPulseIn2() { return PulseIn2(); }
     
     // Hardware abstraction functions for output
     void hardware_set_output(int channel, float volts) {
@@ -1757,6 +1950,23 @@ public:
                 
                 last_switch = current_switch;
                 first_switch_check = false;
+            }
+            
+            // Check for pulse input changes and fire callbacks
+            // Edge detection happens at 48kHz in ProcessSample(), we just check flags here
+            for (int i = 0; i < 2; i++) {
+                if (g_pulsein_edge_detected[i]) {
+                    // Edge was detected at audio rate - fire callback
+                    char lua_call[128];
+                    snprintf(lua_call, sizeof(lua_call),
+                        "if _pulsein%d_change_callback then _pulsein%d_change_callback(%s) end",
+                        i + 1, i + 1, g_pulsein_edge_state[i] ? "true" : "false");
+                    
+                    lua_manager->evaluate_safe(lua_call);
+                    
+                    // Clear the edge flag
+                    g_pulsein_edge_detected[i] = false;
+                }
             }
             
             // Update public view monitoring (~15fps)
@@ -2301,6 +2511,32 @@ public:
         // Process detection sample-by-sample for edge accuracy
         Detect_process_sample(0, cv1);
         Detect_process_sample(1, cv2);
+        
+        // Pulse input edge detection (48kHz) - catches even very short pulses
+        // Check for edges when change mode is enabled, respecting direction filter
+        // mode: 0=none, 1=change
+        if (g_pulsein_mode[0] == 1) {
+            bool rising = PulseIn1RisingEdge();
+            bool falling = PulseIn1FallingEdge();
+            // direction: 0=both, 1=rising only, -1=falling only
+            if ((rising && g_pulsein_direction[0] != -1) || (falling && g_pulsein_direction[0] != 1)) {
+                g_pulsein_edge_detected[0] = true;
+                g_pulsein_edge_state[0] = PulseIn1();
+            }
+        }
+        if (g_pulsein_mode[1] == 1) {
+            bool rising = PulseIn2RisingEdge();
+            bool falling = PulseIn2FallingEdge();
+            // direction: 0=both, 1=rising only, -1=falling only
+            if ((rising && g_pulsein_direction[1] != -1) || (falling && g_pulsein_direction[1] != 1)) {
+                g_pulsein_edge_detected[1] = true;
+                g_pulsein_edge_state[1] = PulseIn2();
+            }
+        }
+        
+        // Update current pulse state cache (for .state queries)
+        g_pulsein_state[0] = PulseIn1();
+        g_pulsein_state[1] = PulseIn2();
         
         // === AUDIO-RATE NOISE GENERATION (48kHz) - INTEGER MATH ONLY ===
         // Generate and output noise for any active channels
