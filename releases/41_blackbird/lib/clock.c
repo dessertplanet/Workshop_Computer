@@ -283,10 +283,16 @@ static void clock_internal_run(uint32_t ms)
         double time_now = ms;
         if( internal.wakeup < time_now ){ // TODO can this be <= for 1ms less latency?
             internal_beat += 1;
+            
+            // Use reference tempo if clock source is external, otherwise use internal tempo
+            double beat_interval = (clock_source == CLOCK_SOURCE_CROW) 
+                                 ? reference.beat_duration 
+                                 : internal_interval_seconds;
+            
             clock_update_reference_from( internal_beat
-                                       , internal_interval_seconds
+                                       , beat_interval
                                        , CLOCK_SOURCE_INTERNAL );
-            internal.wakeup = time_now + internal_interval_seconds * (double)1000.0;
+            internal.wakeup = time_now + beat_interval * (double)1000.0;
             error += 1+ floor(internal.wakeup) - internal.wakeup;
             if(error > (double)0.0){
                 internal.wakeup -= (double)1.0;

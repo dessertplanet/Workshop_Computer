@@ -81,11 +81,17 @@ static volatile int32_t g_input_state_q12[2] = {0, 0};
 // Pulse output state tracking (set from Lua layer)
 static volatile bool g_pulse_out_state[2] = {false, false};
 
-// Pulse input detection mode: 0='none', 1='change'
+// Pulse input detection mode: 0='none', 1='change', 2='clock'
 static volatile int8_t g_pulsein_mode[2] = {0, 0};
 
 // Pulse input direction filter: 0='both', 1='rising', -1='falling'
 static volatile int8_t g_pulsein_direction[2] = {0, 0};
+
+// Pulse input clock division (for clock mode)
+static volatile float g_pulsein_clock_div[2] = {1.0f, 1.0f};
+
+// LED pulse stretching counters (to make 10ms pulses visible at 100Hz update rate)
+static volatile uint16_t g_pulse_led_stretch[2] = {0, 0};
 
 // Pulse input state tracking (read from hardware, cached for Lua access)
 static volatile bool g_pulsein_state[2] = {false, false};
@@ -331,8 +337,12 @@ static int pulsein_index(lua_State* L) {
         lua_getglobal(L, callback_name);
         return 1;
     } else if (strcmp(key, "mode") == 0) {
-        const char* mode_str = (g_pulsein_mode[idx] == 1) ? "change" : "none";
+        const char* mode_str = (g_pulsein_mode[idx] == 2) ? "clock" :
+                               (g_pulsein_mode[idx] == 1) ? "change" : "none";
         lua_pushstring(L, mode_str);
+        return 1;
+    } else if (strcmp(key, "division") == 0) {
+        lua_pushnumber(L, g_pulsein_clock_div[idx]);
         return 1;
     }
     lua_pushnil(L);
@@ -363,8 +373,24 @@ static int pulsein_newindex(lua_State* L) {
             g_pulsein_mode[idx] = 0;
         } else if (strcmp(mode, "change") == 0) {
             g_pulsein_mode[idx] = 1;
+        } else if (strcmp(mode, "clock") == 0) {
+            g_pulsein_mode[idx] = 2;
+            // Clock mode only detects rising edges
+            g_pulsein_direction[idx] = 1;
+            // Set clock source to external (crow input)
+            clock_set_source(CLOCK_SOURCE_CROW);
+            clock_crow_in_div(g_pulsein_clock_div[idx]);
         } else {
-            return luaL_error(L, "pulsein.mode must be 'none' or 'change'");
+            return luaL_error(L, "pulsein.mode must be 'none', 'change', or 'clock'");
+        }
+        return 0;
+    } else if (strcmp(key, "division") == 0) {
+        float div = (float)lua_tonumber(L, 3);
+        if (div <= 0) return luaL_error(L, "pulsein.division must be positive");
+        g_pulsein_clock_div[idx] = div;
+        // Update if currently in clock mode
+        if (g_pulsein_mode[idx] == 2) {
+            clock_crow_in_div(div);
         }
         return 0;
     } else if (strcmp(key, "direction") == 0) {
@@ -405,8 +431,26 @@ static int pulsein_call(lua_State* L) {
             g_pulsein_mode[idx] = 0;
         } else if (strcmp(mode, "change") == 0) {
             g_pulsein_mode[idx] = 1;
+        } else if (strcmp(mode, "clock") == 0) {
+            g_pulsein_mode[idx] = 2;
+            g_pulsein_direction[idx] = 1;  // Clock always uses rising edges
+            clock_set_source(CLOCK_SOURCE_CROW);
+            clock_crow_in_div(g_pulsein_clock_div[idx]);
         } else {
-            return luaL_error(L, "pulsein mode must be 'none' or 'change'");
+            return luaL_error(L, "pulsein mode must be 'none', 'change', or 'clock'");
+        }
+    }
+    lua_pop(L, 1);
+    
+    // Process division field (for clock mode)
+    lua_getfield(L, 2, "division");
+    if (lua_isnumber(L, -1)) {
+        float div = (float)lua_tonumber(L, -1);
+        if (div > 0) {
+            g_pulsein_clock_div[idx] = div;
+            if (g_pulsein_mode[idx] == 2) {
+                clock_crow_in_div(div);
+            }
         }
     }
     lua_pop(L, 1);
@@ -2513,8 +2557,8 @@ public:
         Detect_process_sample(1, cv2);
         
         // Pulse input edge detection (48kHz) - catches even very short pulses
-        // Check for edges when change mode is enabled, respecting direction filter
-        // mode: 0=none, 1=change
+        // Check for edges when change or clock mode is enabled, respecting direction filter
+        // mode: 0=none, 1=change, 2=clock
         if (g_pulsein_mode[0] == 1) {
             bool rising = PulseIn1RisingEdge();
             bool falling = PulseIn1FallingEdge();
@@ -2522,6 +2566,11 @@ public:
             if ((rising && g_pulsein_direction[0] != -1) || (falling && g_pulsein_direction[0] != 1)) {
                 g_pulsein_edge_detected[0] = true;
                 g_pulsein_edge_state[0] = PulseIn1();
+            }
+        } else if (g_pulsein_mode[0] == 2) {
+            // Clock mode - only rising edges
+            if (PulseIn1RisingEdge()) {
+                clock_crow_handle_clock();
             }
         }
         if (g_pulsein_mode[1] == 1) {
@@ -2531,6 +2580,11 @@ public:
             if ((rising && g_pulsein_direction[1] != -1) || (falling && g_pulsein_direction[1] != 1)) {
                 g_pulsein_edge_detected[1] = true;
                 g_pulsein_edge_state[1] = PulseIn2();
+            }
+        } else if (g_pulsein_mode[1] == 2) {
+            // Clock mode - only rising edges
+            if (PulseIn2RisingEdge()) {
+                clock_crow_handle_clock();
             }
         }
         
