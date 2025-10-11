@@ -2,100 +2,106 @@
 -- 1-bit digital outputs (on/off only, no voltage control)
 
 -- ============================================
--- BASIC USAGE
+-- CLOCK-SYNCED PULSES (Recommended)
 -- ============================================
 
--- Set fixed pulse duration
-bb.pulseout[1].action = pulse(0.020)  -- 20ms pulse
+-- Start clocked pulses
+bb.pulseout[1]:clock(1)      -- Every beat (default: 10ms pulses)
+bb.pulseout[1]:clock(2)      -- Every 2 beats
+bb.pulseout[1]:clock(0.5)    -- Twice per beat
+bb.pulseout[1]:clock(1/3)    -- Three times per beat
 
--- Set very short trigger
-bb.pulseout[2].action = pulse(0.001)  -- 1ms trigger
+-- Change pulse width
+bb.pulseout[1].action = pulse(0.020)   -- 20ms pulses
+bb.pulseout[1].action = pulse(0.001)   -- 1ms trigger
+bb.pulseout[1].action = pulse(0.100)   -- 100ms gate
+
+-- Stop clock
+bb.pulseout[1]:clock('off')
+
+-- ============================================
+-- MANUAL CONTROL
+-- ============================================
+
+bb.pulseout[1]:high()        -- Set high indefinitely
+bb.pulseout[1]:low()         -- Set low indefinitely
+
+-- ============================================
+-- IMMEDIATE PULSE (No clock)
+-- ============================================
+
+bb.pulseout[1](pulse(0.050))         -- Single 50ms pulse right now
+bb.pulseout[2](pulse(0.010))         -- Single 10ms pulse on output 2
 
 -- ============================================
 -- DYNAMIC PULSE WIDTH
 -- ============================================
 
--- Pulse width controlled by knob
+-- Variable pulse width based on knob
+bb.pulseout[1]:clock(1)
 bb.pulseout[1].action = function()
-    local pw = 0.005 + (bb.knob.main * 0.095)  -- 5-100ms
-    hardware_pulse(1, true)
-    clock.run(function()
-        clock.sleep(pw)
-        hardware_pulse(1, false)
-    end)
+    local pw = 0.001 + (bb.knob.main * 0.099)  -- 1-100ms
+    _c.tell('output', 3, pulse(pw))
 end
 
 -- ============================================
--- CLOCK PATTERNS
+-- PATTERNS WITH SEQUINS
 -- ============================================
-
--- Every Nth beat
-local counter = 0
-bb.pulseout[1].action = function()
-    counter = counter + 1
-    if counter % 4 == 0 then  -- Every 4th beat
-        hardware_pulse(1, true)
-        clock.run(function()
-            clock.sleep(0.010)
-            hardware_pulse(1, false)
-        end)
-    end
-end
 
 -- Euclidean rhythm
 local pattern = sequins{1, 0, 1, 0, 1, 0, 0, 0}
+bb.pulseout[1]:clock(1)
 bb.pulseout[1].action = function()
     if pattern() == 1 then
-        hardware_pulse(1, true)
-        clock.run(function()
-            clock.sleep(0.010)
-            hardware_pulse(1, false)
-        end)
+        _c.tell('output', 3, pulse(0.010))
     end
 end
 
 -- ============================================
--- SWITCH TRIGGERED
+-- SWITCH INTEGRATION
 -- ============================================
 
+-- Trigger pulse on switch down
 bb.switch.change = function(state)
     if state == 'down' then
-        hardware_pulse(2, true)
-        clock.run(function()
-            clock.sleep(0.050)
-            hardware_pulse(2, false)
-        end)
+        bb.pulseout[2](pulse(0.100))  -- Single 100ms pulse
+    end
+end
+
+-- Gate follows switch (like default pulseout[2])
+bb.pulseout[2]:clock(1)
+bb.pulseout[2].action = function()
+    if bb.switch() == 'down' then
+        _c.tell('output', 5, pulse(999))  -- Long pulse = gate
+    else
+        _c.tell('output', 5, pulse(0))    -- 0 duration = off
     end
 end
 
 -- ============================================
--- CLEAR ACTION (disable output)
+-- CLEANUP
 -- ============================================
 
--- Property syntax
-bb.pulseout[1].action = 'none'  -- No pulses generated
-bb.pulseout[2].action = 'none'  -- Output stays low
-
--- Call syntax (crow-style)
-bb.pulseout[1]('none')  -- Same as above
-bb.pulseout[2]('none')  -- Same as above
+clock.cleanup()              -- Stops all pulse output clocks
+bb.pulseout[1]:clock('off')  -- Stop just pulse 1 clock
+bb.pulseout[1].action = 'none'  -- Clear action
 
 -- ============================================
--- RESET TO DEFAULTS
+-- CHECK STATE
 -- ============================================
 
-bb.pulseout[1].action = pulse(0.010)    -- 10ms default
-bb.pulseout[2].action = function() end  -- Switch following
+print(bb.pulseout[1].state)  -- true if high, false if low
 
 -- ============================================
--- WHAT DOESN'T WORK (1-bit outputs)
+-- NOTES
 -- ============================================
-
--- ❌ Voltage ramping
--- bb.pulseout[1].action = {to(5, 0.1), to(0, 0.1)}  -- NO!
-
--- ❌ Variable voltage levels
--- bb.pulseout[1].action = pulse(0.010, 3.3, 1)  -- voltage ignored
+-- - Pulse outputs are 1-bit digital (5V high, 0V low)
+-- - Output 1 = channel 3 in _c.tell()
+-- - Output 2 = channel 5 in _c.tell()
+-- - Only pulse() timing works, no voltage control
+-- - Use :clock() for rhythmic patterns
+-- - Use :high()/:low() for gates
+-- - clock.cleanup() stops all pulse clocks automatically
 
 -- ❌ Complex ASL sequences
 -- bb.pulseout[1].action = {loop{to(5), to(0)}}  -- NO!

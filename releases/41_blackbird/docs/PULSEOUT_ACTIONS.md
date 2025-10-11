@@ -1,38 +1,91 @@
 # Pulse Output Actions API
 
-The Blackbird hardware has two pulse outputs that can be controlled via Lua. This document describes how to use the `bb.pulseout[1]` and `bb.pulseout[2]` API to control these outputs with custom actions.
+The Blackbird hardware has two pulse outputs that can be controlled via Lua. This document describes how to use the `bb.pulseout[1]` and `bb.pulseout[2]` API to control these outputs with crow-style methods and custom actions.
 
 ## Overview
 
-- **`bb.pulseout[1]`** - First pulse output (internally connected to clock)
-- **`bb.pulseout[2]`** - Second pulse output (connected to switch by default)
+- **`bb.pulseout[1]`** - First pulse output
+- **`bb.pulseout[2]`** - Second pulse output
 
-**Important:** Pulse outputs are **1-bit digital outputs** (on/off only). They only support `pulse()` actions and clock-synced timing. Voltage ramps, levels, and other complex ASL actions are not supported since these outputs cannot produce variable voltages.
+**Important:** Pulse outputs are **1-bit digital outputs** (on/off only). They support `pulse()` actions, clock-synced timing, and manual high/low control. Voltage ramps, levels, and other complex ASL actions are not supported since these outputs cannot produce variable voltages.
 
 ## Default Behavior
 
 ### Pulse Output 1
-By default, `bb.pulseout[1]` generates a **10ms pulse at 5V** triggered by the internal clock on each beat.
+By default, `bb.pulseout[1]` generates a **10ms pulse** on every beat of the internal clock (equivalent to `:clock(1)`).
 
 ```lua
--- Default action (set automatically)
-bb.pulseout[1].action = pulse(0.010, 5, 1)
+-- Default setup (done automatically on startup)
+bb.pulseout[1]:clock(1)
 ```
 
 ### Pulse Output 2
-By default, `bb.pulseout[2]` **follows the switch position** - it's high when the switch is in the down position, low otherwise. This behavior is handled in the C code until you override it with a custom action.
+By default, `bb.pulseout[2]` **follows the switch position** - it's high when the switch is in the down position, low otherwise. This is implemented as a clock coroutine that checks the switch state on every beat.
+
+## Quick Reference
+
+```lua
+-- Clock-synced pulses (crow-style)
+bb.pulseout[1]:clock(1)           -- 10ms pulse every beat
+bb.pulseout[1]:clock(4)           -- 10ms pulse every 4 beats
+bb.pulseout[1]:clock('off')       -- Stop clocked pulses
+
+-- Manual control
+bb.pulseout[1]:high()             -- Set high indefinitely
+bb.pulseout[1]:low()              -- Set low indefinitely
+
+-- Custom actions
+bb.pulseout[1].action = pulse(0.050)         -- Set custom pulse width
+bb.pulseout[1](pulse(0.100))                 -- Execute action immediately
+bb.pulseout[1].action = function() ... end   -- Lua function action
+
+-- Check state
+local is_high = bb.pulseout[1].state
+```
+
+## Methods
+
+### `:clock(division)`
+Start a clock coroutine that triggers pulses on beat divisions. This is the recommended way to create rhythmic pulse patterns.
+
+```lua
+bb.pulseout[1]:clock(1)    -- Pulse on every beat
+bb.pulseout[2]:clock(2)    -- Pulse every 2 beats
+bb.pulseout[1]:clock(0.5)  -- Pulse twice per beat
+bb.pulseout[1]:clock('off') -- Stop the clock
+```
+
+**How it works:**
+- Creates a Lua coroutine that syncs to the internal clock
+- Executes the action (default: `pulse(0.010)`) on each trigger
+- Can be stopped with `:clock('off')` or `clock.cleanup()`
+- Calling `:clock(div)` again replaces the previous clock coroutine
+
+### `:high()`
+Set the output high (5V) indefinitely and stop any running clock coroutine.
+
+```lua
+bb.pulseout[1]:high()  -- Stay high until changed
+```
+
+### `:low()`
+Set the output low (0V) indefinitely and stop any running clock coroutine.
+
+```lua
+bb.pulseout[1]:low()   -- Stay low until changed
+```
 
 ## Properties
 
 ### `.action`
-Get or set the action for the pulse output.
+Get or set the action for the pulse output. When using `:clock()`, this is the action that gets executed on each beat.
 
 ```lua
 -- Get current action
 local current = bb.pulseout[1].action
 
--- Set a new action
-bb.pulseout[1].action = pulse(0.050, 5, 1)  -- 50ms pulses
+-- Set a new action (used by :clock() or manual execution)
+bb.pulseout[1].action = pulse(0.050)  -- 50ms pulses
 ```
 
 ### `.state`
@@ -42,192 +95,179 @@ Read-only. Returns the current state of the pulse output (true = high, false = l
 local is_high = bb.pulseout[1].state
 ```
 
-## Setting Custom Actions
+## Common Patterns
 
-### Using pulse() Function
-
-Since pulse outputs are 1-bit digital outputs, use the `pulse()` function to define pulse duration. You can use either property assignment or call syntax:
+### Clock-Synced Pulses
+The recommended way to create rhythmic pulses:
 
 ```lua
--- Property syntax
-bb.pulseout[1].action = pulse(duration)
+-- Short trigger pulses on every beat
+bb.pulseout[1]:clock(1)
+bb.pulseout[1].action = pulse(0.001)  -- 1ms trigger
 
--- Call syntax (crow-style)
-bb.pulseout[1](pulse(duration))
+-- Longer gates on every 2 beats
+bb.pulseout[2]:clock(2)
+bb.pulseout[2].action = pulse(0.050)  -- 50ms gate
+
+-- Half-time pulses
+bb.pulseout[1]:clock(0.5)  -- Twice per beat
+
+-- Stop the clock
+bb.pulseout[1]:clock('off')
 ```
 
-Parameters:
-- `duration` - Pulse duration in seconds (how long the output stays high)
+### Manual Gate Control
+
+```lua
+-- Open gate
+bb.pulseout[1]:high()
+
+-- Close gate
+bb.pulseout[1]:low()
+
+-- Toggle based on condition
+if bb.switch() == 'down' then
+    bb.pulseout[2]:high()
+else
+    bb.pulseout[2]:low()
+end
+```
+
+### Custom Pulse Durations
+
+Use the `pulse()` function to define pulse duration:
+
+```lua
+-- Set custom pulse width with :clock()
+bb.pulseout[1]:clock(1)
+bb.pulseout[1].action = pulse(0.020)  -- 20ms pulses
+
+-- Or execute immediately
+bb.pulseout[1](pulse(0.100))  -- Single 100ms pulse
+
+-- Variable duration based on knob
+bb.pulseout[1].action = pulse(0.001 + bb.knob.main * 0.099)  -- 1-100ms
+```
 
 **Note:** The `level` and `polarity` parameters from crow's `pulse()` are ignored for these digital outputs - they only go high/low.
 
-Examples:
-```lua
--- 20ms pulses
-bb.pulseout[1].action = pulse(0.020)
+### Euclidean Rhythms with Sequins
 
--- 5ms pulses
-bb.pulseout[2].action = pulse(0.005)
-
--- 100ms pulses (for triggering external gear)
-bb.pulseout[1].action = pulse(0.100)
-
--- Very short 1ms trigger pulses
-bb.pulseout[2].action = pulse(0.001)
-```
-
-### Using Lua Functions
-
-For dynamic pulse durations or complex logic, use a Lua function:
-
-```lua
-bb.pulseout[1].action = function()
-    -- Variable duration based on knob position
-    local duration = 0.005 + (bb.knob.main * 0.095)  -- 5-100ms
-    
-    hardware_pulse(1, true)  -- Set pulse high
-    clock.run(function()
-        clock.sleep(duration)
-        hardware_pulse(1, false)  -- Set pulse low
-    end)
-end
-```
-
-**Note:** Since these are 1-bit outputs, only use `hardware_pulse(channel, true/false)` for on/off control. Variable voltage commands won't work.
-
-## Advanced Examples
-
-### Variable Pulse Width Based on Control
-```lua
--- Pulse duration controlled by main knob (1-100ms)
-bb.pulseout[1].action = function()
-    local pw = 0.001 + (bb.knob.main * 0.099)
-    hardware_pulse(1, true)
-    clock.run(function()
-        clock.sleep(pw)
-        hardware_pulse(1, false)
-    end)
-end
-```
-
-### Pulse on Switch Changes
-```lua
--- Trigger pulse 2 when switch moves to down position
-bb.switch.change = function(state)
-    if state == 'down' then
-        -- Trigger a 50ms pulse
-        hardware_pulse(2, true)
-        clock.run(function()
-            clock.sleep(0.050)
-            hardware_pulse(2, false)
-        end)
-    end
-end
-```
-
-### Euclidean Rhythm Pulses
 ```lua
 -- Use sequins for euclidean patterns
 local pattern = sequins{1, 0, 0, 1, 0, 1, 0, 0}
 
+bb.pulseout[1]:clock(1)
 bb.pulseout[1].action = function()
     if pattern() == 1 then
-        hardware_pulse(1, true)
-        clock.run(function()
-            clock.sleep(0.010)
-            hardware_pulse(1, false)
-        end)
+        _c.tell('output', 3, pulse(0.010))
     end
     -- If pattern returns 0, no pulse is generated
 end
 ```
 
-### Clock Division/Multiplication
-```lua
--- Generate pulses at different clock divisions
-local counter = 0
+### Switch-Triggered Pulses
 
+```lua
+-- Trigger a pulse when switch moves to down position
+bb.switch.change = function(state)
+    if state == 'down' then
+        bb.pulseout[2](pulse(0.050))  -- 50ms pulse
+    end
+end
+```
+
+### Dynamic Pulse Width
+
+```lua
+-- Pulse duration controlled by main knob (1-100ms)
+bb.pulseout[1]:clock(1)
 bb.pulseout[1].action = function()
-    counter = counter + 1
-    if counter % 4 == 0 then  -- Every 4th beat
-        hardware_pulse(1, true)
-        clock.run(function()
-            clock.sleep(0.020)
-            hardware_pulse(1, false)
-        end)
+    local pw = 0.001 + (bb.knob.main * 0.099)
+    _c.tell('output', 3, pulse(pw))
+end
+```
+
+### Using Lua Functions for Complex Logic
+
+For advanced control, use a Lua function as the action:
+
+```lua
+bb.pulseout[1]:clock(1)
+bb.pulseout[1].action = function()
+    -- Custom logic here
+    if some_condition then
+        _c.tell('output', 3, pulse(0.020))
     end
 end
 ```
 
 ## Integration with Clock System
 
-Pulse output 1 is triggered automatically by the internal clock system. When you set a custom action:
+All pulse output timing is controlled via Lua coroutines using the `:clock()` method. This integrates seamlessly with crow's clock system:
 
 ```lua
-bb.pulseout[1].action = pulse(0.020, 5, 1)
+-- Start clock-synced pulses
+bb.pulseout[1]:clock(1)
+
+-- Change the action that gets executed
+bb.pulseout[1].action = pulse(0.020)
+
+-- Stop when cleaning up
+clock.cleanup()  -- Automatically stops all pulse output clocks
 ```
 
-The clock system will execute this action on each beat. The action is called at the clock rate, so you can create rhythmic patterns that sync with your clock.
+The `:clock()` method creates a coroutine that:
+1. Syncs to the internal clock using `clock.sync(division)`
+2. Executes the current action on each beat
+3. Runs until stopped with `:clock('off')` or `clock.cleanup()`
 
-## Clearing and Resetting Actions
+## Stopping and Clearing
 
-### Clear Action (disable output)
-
-To completely disable a pulse output, you can use either syntax:
+### Stop Clock Coroutine
 
 ```lua
--- Property syntax
-bb.pulseout[1].action = 'none'
-bb.pulseout[2].action = 'none'
-
--- Call syntax (crow-style)
-bb.pulseout[1]('none')
-bb.pulseout[2]('none')
+bb.pulseout[1]:clock('off')  -- Stop clocked pulses, leave output low
 ```
 
-When set to `'none'`, the output will be forced low and no pulses will be generated (even clock-triggered pulses on output 1).
-
-### Reset to Defaults
-
-To restore default behavior:
+### Set Output State
 
 ```lua
--- Reset pulse 1 to default 10ms pulses
-bb.pulseout[1].action = pulse(0.010)
-
--- Reset pulse 2 to default (switch following)
-bb.pulseout[2].action = function() end
+bb.pulseout[1]:high()  -- Set high, stop any clock
+bb.pulseout[1]:low()   -- Set low, stop any clock
 ```
 
-Note: For pulse 2, an empty function disables the custom action and the hardware will resume following the switch position.
-
-## Hardware Functions
-
-When using Lua function actions, you can directly control the pulse outputs:
+### Clear Action
 
 ```lua
-hardware_pulse(channel, state)
+bb.pulseout[1].action = 'none'  -- Clear the action
+bb.pulseout[1]('none')          -- Crow-style syntax
 ```
 
-- `channel` - 1 or 2 for pulse output 1 or 2
-- `state` - true for high (5V), false for low (0V)
+### Clean Up All Clocks
 
-Example:
+The `clock.cleanup()` function automatically stops all pulse output clocks:
+
 ```lua
-bb.pulseout[1].action = function()
-    hardware_pulse(1, true)   -- Set high
-    clock.sleep(0.025)        -- Wait 25ms
-    hardware_pulse(1, false)  -- Set low
-end
+clock.cleanup()  -- Stops all clock coroutines including pulse outputs
 ```
+
+## Implementation Details
+
+- All pulse triggering is done via Lua coroutines (no C code interference)
+- The `:clock()` method creates a `clock.run()` coroutine that executes actions on beat divisions
+- Actions are executed by calling `_c.tell('output', channel, action)` which routes to the hardware
+- Pulse width is extracted from ASL tables at `action[1][3][3]` (accounting for `_if` wrapper)
+- The hardware sets output HIGH, then schedules a `clock.run()` to set it LOW after the duration
 
 ## Limitations
 
 Since pulse outputs are **1-bit digital outputs**, they have the following limitations:
 
 - ✅ **Supported:** `pulse(duration)` for timed pulses
-- ✅ **Supported:** Clock-synced triggering
-- ✅ **Supported:** Lua functions with `hardware_pulse(channel, true/false)`
+- ✅ **Supported:** `:clock(division)` for rhythmic patterns
+- ✅ **Supported:** `:high()` and `:low()` for manual control
+- ✅ **Supported:** Lua function actions with `_c.tell()`
 - ❌ **Not Supported:** Voltage ramping (e.g., `to(5, 0.1)`)
 - ❌ **Not Supported:** Variable voltage levels
 - ❌ **Not Supported:** Complex ASL sequences with multiple voltage targets
@@ -238,13 +278,12 @@ These outputs are purely on/off - perfect for gates, triggers, and clock signals
 ## Notes
 
 - Pulse outputs are **5V digital outputs** (high = 5V, low = 0V)
-- Only `pulse()` and clock-based timing work with these outputs
-- Custom actions override the default C-level behavior
+- All timing is controlled via Lua coroutines, not C code
+- Default behavior is set up on startup and can be fully overridden
 - You can check the current state with `.state` property
-- The `g_pulse_out_custom_action` flag tracks whether a custom action is set
+- `clock.cleanup()` automatically stops all pulse output clocks
 
 ## See Also
 
 - `examples/pulseout_demo.lua` - Working examples
-- `KNOBS_WITH_ASL.md` - ASL examples (note: voltage features don't apply to pulse outputs)
-- crow documentation - Action system reference (note: only pulse/clock features apply)
+- crow documentation - Clock system and action reference

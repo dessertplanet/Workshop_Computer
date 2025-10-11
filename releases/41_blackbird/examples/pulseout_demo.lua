@@ -1,73 +1,77 @@
 -- bb.pulseout Demo
--- Demonstrates how to use pulse output actions on Blackbird
+-- Demonstrates pulse output control on Blackbird
 --
 -- IMPORTANT: Pulse outputs are 1-bit digital outputs (on/off only)
--- They only support pulse() for timing - no voltage control
+-- They support pulse() timing and clock-synced patterns
 --
 -- Default behavior:
--- - bb.pulseout[1]: 10ms pulse triggered by internal clock
--- - bb.pulseout[2]: follows switch position (high when switch is down)
---
--- This demo shows how to override these defaults with custom actions
+-- - bb.pulseout[1]: 10ms pulse on every beat (:clock(1))
+-- - bb.pulseout[2]: follows switch position (high when down)
 
--- Example 1: Change pulse 1 to longer pulses
-bb.pulseout[1].action = pulse(0.050)  -- 50ms pulses
+print("=== Pulseout Demo ===")
+print("")
 
--- Example 2: Make pulse 2 produce 20ms pulses instead of following switch
-bb.pulseout[2].action = pulse(0.020)  -- 20ms pulses
+-- Example 1: Clock-synced pulses (crow-style API)
+print("Example 1: Clock-synced pulses")
+bb.pulseout[1]:clock(1)                    -- Every beat
+bb.pulseout[1].action = pulse(0.050)       -- 50ms pulses
+print("  Pulse 1: 50ms pulses on every beat")
 
--- Example 3: Custom function for pulse 2
--- Trigger a pulse when switch changes to down
+-- Example 2: Clock division
+print("Example 2: Clock division")
+bb.pulseout[2]:clock(4)                    -- Every 4 beats
+bb.pulseout[2].action = pulse(0.020)       -- 20ms pulses
+print("  Pulse 2: 20ms pulses every 4 beats")
+
+-- Example 3: Manual gate control
+print("Example 3: Manual control")
+print("  Try these commands:")
+print("    bb.pulseout[1]:high()  -- Set high indefinitely")
+print("    bb.pulseout[1]:low()   -- Set low indefinitely")
+
+-- Example 4: Execute pulse immediately (no clock)
+print("Example 4: Immediate pulse")
+print("  bb.pulseout[1](pulse(0.100))  -- Single 100ms pulse")
+
+-- Example 5: Variable pulse width based on knob
+print("Example 5: Dynamic pulse width")
+print("  (Uncomment to try)")
+--[[
+bb.pulseout[1]:clock(1)
+bb.pulseout[1].action = function()
+    local pw = 0.001 + (bb.knob.main * 0.099)  -- 1-100ms based on knob
+    _c.tell('output', 3, pulse(pw))
+end
+--]]
+
+-- Example 6: Euclidean rhythm with sequins
+print("Example 6: Euclidean pattern")
+print("  (Uncomment to try)")
+--[[
+local pattern = sequins{1, 0, 0, 1, 0, 1, 0, 0}
+bb.pulseout[1]:clock(1)
+bb.pulseout[1].action = function()
+    if pattern() == 1 then
+        _c.tell('output', 3, pulse(0.010))
+    end
+end
+--]]
+
+-- Example 7: Switch-triggered pulses
+print("Example 7: Switch trigger")
 bb.switch.change = function(state)
     if state == 'down' then
-        -- Set pulse 2 high for 100ms
-        hardware_pulse(2, true)
-        clock.run(function()
-            clock.sleep(0.100)
-            hardware_pulse(2, false)
-        end)
+        bb.pulseout[2](pulse(0.100))  -- 100ms pulse on switch down
+        print("  Switch down - pulse triggered!")
     end
 end
 
--- Example 4: Variable pulse width based on knob position
--- (commented out - uncomment to try)
---[[
-bb.pulseout[1].action = function()
-    local duration = 0.005 + (bb.knob.main * 0.095)  -- 5ms to 100ms based on knob
-    hardware_pulse(1, true)
-    clock.run(function()
-        clock.sleep(duration)
-        hardware_pulse(1, false)
-    end)
-end
---]]
-
--- Example 5: Clock division - trigger every 4th beat
--- (commented out - uncomment to try)
---[[
-local counter = 0
-bb.pulseout[1].action = function()
-    counter = counter + 1
-    if counter % 4 == 0 then
-        hardware_pulse(1, true)
-        clock.run(function()
-            clock.sleep(0.020)
-            hardware_pulse(1, false)
-        end)
-    end
-end
---]]
-
--- To clear output entirely (no pulses):
--- bb.pulseout[1].action = 'none'
--- bb.pulseout[2].action = 'none'
-
--- To reset to default behavior:
--- bb.pulseout[1].action = pulse(0.010)
--- bb.pulseout[2].action = function() end  -- or remove custom switch.change function
-
-print("Pulseout demo loaded!")
-print("Pulse 1: Custom 50ms pulses")
-print("Pulse 2: Custom 20ms pulses")
-print("Remember: Pulse outputs are 1-bit (on/off only)")
-print("Set action = 'none' to disable output")
+-- Stopping and cleanup
+print("")
+print("=== Control Commands ===")
+print("  bb.pulseout[1]:clock('off')  -- Stop clock")
+print("  bb.pulseout[1]:high()        -- Manual high")
+print("  bb.pulseout[1]:low()         -- Manual low")
+print("  clock.cleanup()              -- Stop all clocks")
+print("")
+print("Demo loaded! Pulse outputs active.")
