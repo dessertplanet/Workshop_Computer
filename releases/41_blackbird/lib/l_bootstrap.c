@@ -45,6 +45,18 @@ int l_bootstrap_c_tell(lua_State* L) {
         if (strcmp(event_type, "output") == 0 && nargs >= 3) {
             float voltage = (float)luaL_checknumber(L, 3);
             printf("[bootstrap] tell output[%d] %.3f\n", channel, voltage);
+            
+            // User explicitly setting output.volts should always disable noise
+            extern volatile bool g_noise_active[4];
+            extern volatile int32_t g_noise_gain[4];
+            extern volatile uint32_t g_noise_lock_counter[4];
+            int ch_idx = channel - 1;
+            if (ch_idx >= 0 && ch_idx < 4 && g_noise_active[ch_idx]) {
+                g_noise_active[ch_idx] = false;
+                g_noise_gain[ch_idx] = 0;
+                g_noise_lock_counter[ch_idx] = 0;
+            }
+            
             extern void hardware_output_set_voltage(int channel, float voltage);
             hardware_output_set_voltage(channel, voltage);
             return 0;

@@ -2261,8 +2261,15 @@ public:
                     for (int i = 0; i < 2; i++) {
                         Detect_none(Detect_ix_to_p(i));
                     }
+
+                    // 3a. Stop all noise modes
+                    for (int i = 0; i < 4; i++) {
+                        g_noise_active[i] = false;
+                        g_noise_gain[i] = 0;
+                        g_noise_lock_counter[i] = 0;
+                    }
                     
-                    // 3. Stop all output slopes
+                    // 3b. Stop all output slopes
                     for (int i = 0; i < 4; i++) {
                         S_toward(i, 0.0, 0.0, SHAPE_Linear, NULL);
                     }
@@ -2331,6 +2338,13 @@ public:
                     // 3. Stop all output slopes
                     for (int i = 0; i < 4; i++) {
                         S_toward(i, 0.0, 0.0, SHAPE_Linear, NULL);
+                    }
+                    
+                    // 3b. Stop all noise modes
+                    for (int i = 0; i < 4; i++) {
+                        g_noise_active[i] = false;
+                        g_noise_gain[i] = 0;
+                        g_noise_lock_counter[i] = 0;
                     }
                     
                     // 4. Clear event queue
@@ -2688,17 +2702,29 @@ int LuaManager::lua_casl_action(lua_State* L) {
     int internal = raw - 1;
    // printf("[DBG] lua_casl_action raw=%d internal=%d action=%d\n\r", raw, internal, act);
     
-    // Clear the noise lock counter when an action is explicitly triggered
-    // BUT only if noise isn't currently locked (lock > 5 means just set)
-    // This allows .volts and other actions to stop noise, but doesn't interfere
-    // with noise() that was just called
-    if (internal >= 0 && internal < 4 && act == 1) {
-        if (g_noise_lock_counter[internal] < 5) {
+    // When an action is explicitly triggered (act == 1), clear any existing noise
+    // UNLESS noise was just set in the describe phase (lock counter == 10).
+    // This handles output[n].volts = x, output[n](lfo()), etc. clearing old noise,
+    // while allowing output[n](bb.noise()) to work correctly.
+    if (internal >= 0 && internal < 4 && act == 1 && g_noise_active[internal]) {
+        // If lock counter is 10, noise was just set in describe phase, don't clear
+        if (g_noise_lock_counter[internal] != 10) {
+            g_noise_active[internal] = false;
+            g_noise_gain[internal] = 0;
             g_noise_lock_counter[internal] = 0;
         }
     }
     
     casl_action(internal, act); // C is zero-based
+    
+    // After action completes, if noise is active and lock counter is still 10,
+    // reduce it to 2 so that the next user action will clear the noise.
+    // This allows noise to persist through immediate automatic calls but be
+    // cleared by the next explicit user action.
+    if (internal >= 0 && internal < 4 && g_noise_active[internal] && g_noise_lock_counter[internal] == 10) {
+        g_noise_lock_counter[internal] = 2;
+    }
+    
     lua_pop(L, 2);
     return 0;
 }
@@ -2757,6 +2783,11 @@ int LuaManager::lua_LL_set_noise(lua_State* L) {
     if (gain > 1.0f) gain = 1.0f;
     
     int ch_idx = channel - 1;
+    
+    // Stop any ongoing slopes/actions on this channel before enabling noise
+    // This prevents LFOs or other actions from interfering with noise
+    S_toward(ch_idx, 0.0, 0.0, SHAPE_Linear, NULL);
+    
     g_noise_active[ch_idx] = true;
     // Convert gain to millivolts (0-6000 mV) as integer
     g_noise_gain[ch_idx] = (int32_t)(gain * 6000.0f);
@@ -2968,6 +2999,15 @@ int LuaManager::lua_c_tell(lua_State* L) {
                 usb_log_printf("log: output[%d].volts -> %.3f", channel, value);
                 output_tell_debug_count++;
             }
+            
+            // User explicitly setting output.volts should always disable noise
+            int ch_idx = channel - 1;
+            if (ch_idx >= 0 && ch_idx < 4 && g_noise_active[ch_idx]) {
+                g_noise_active[ch_idx] = false;
+                g_noise_gain[ch_idx] = 0;
+                g_noise_lock_counter[ch_idx] = 0;
+            }
+            
             hardware_output_set_voltage(channel, value);
     } else if (strcmp(module, "change") == 0) {
         // Handle default change callback from Input.lua - just ignore for now
@@ -4025,12 +4065,13 @@ int LuaManager::lua_memstats(lua_State* L) {
 extern "C" void hardware_output_set_voltage(int channel, float voltage) {
     int ch_idx = channel - 1;  // channel is 1-based
     
-    // If noise is currently active and locked, decrement the lock counter
-    // This prevents clearing noise immediately after it's set
+    // If noise is currently active and locked, ignore this call completely
+    // The lock counter protects noise from automatic hardware_output_set_voltage calls
+    // (from slopes, LFOs, etc.) but explicit user actions via casl_action will clear noise
     if (ch_idx >= 0 && ch_idx < 4) {
         if (g_noise_active[ch_idx] && g_noise_lock_counter[ch_idx] > 0) {
-            // Noise was just set - ignore this call
-            g_noise_lock_counter[ch_idx]--;
+            // Noise is active and protected - ignore this automatic call
+            // Do NOT decrement counter - keep noise protected indefinitely
             return;
         }
         
