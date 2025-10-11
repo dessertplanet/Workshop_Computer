@@ -185,6 +185,8 @@ void core1_entry(); // defined after BlackbirdCrow - non-static so flash_storage
 // Forward declaration of C interface function (implemented after BlackbirdCrow class)
 extern "C" void hardware_output_set_voltage(int channel, float voltage);
 extern "C" void hardware_pulse_output_set(int channel, bool state);
+extern "C" bool pulseout_has_custom_action(int channel);
+extern "C" void pulseout_execute_action(int channel);
 
 // Forward declaration of safe event handlers
 extern "C" void L_handle_change_safe(event_t* e);
@@ -471,6 +473,185 @@ static int pulsein_call(lua_State* L) {
     }
     lua_pop(L, 1);
     
+    return 0;
+}
+
+// ========================================================================
+// PULSE OUTPUT LUA C FUNCTIONS (bb.pulseout[1] and bb.pulseout[2])
+// ========================================================================
+
+// __index metamethod for bb.pulseout[n].action, bb.pulseout[n].state, bb.pulseout[n].clock
+static int pulseout_index(lua_State* L) {
+    lua_getfield(L, 1, "_idx");
+    int idx = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    
+    const char* key = luaL_checkstring(L, 2);
+    
+    if (strcmp(key, "action") == 0) {
+        // Return the stored action
+        lua_getfield(L, 1, "_action");
+        return 1;
+    } else if (strcmp(key, "state") == 0) {
+        // Return current pulse output state
+        lua_pushboolean(L, g_pulse_out_state[idx]);
+        return 1;
+    } else if (strcmp(key, "_idx") == 0) {
+        lua_pushinteger(L, idx);
+        return 1;
+    }
+    
+    // For other keys (like "clock"), check if there's a method in the metatable
+    if (lua_getmetatable(L, 1)) {  // Get metatable
+        lua_pushvalue(L, 2);  // Push the key
+        lua_rawget(L, -2);  // Get metatable[key]
+        if (!lua_isnil(L, -1)) {
+            lua_remove(L, -2);  // Remove metatable, keep value
+            return 1;
+        }
+        lua_pop(L, 2);  // Pop nil and metatable
+    }
+    
+    lua_pushnil(L);
+    return 1;
+}
+
+// __newindex metamethod for bb.pulseout[n].action = ...
+static int pulseout_newindex(lua_State* L) {
+    lua_getfield(L, 1, "_idx");
+    int idx = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    
+    const char* key = luaL_checkstring(L, 2);
+    
+    if (strcmp(key, "action") == 0) {
+        // Check if user is clearing the action with 'none'
+        if (lua_isstring(L, 3)) {
+            const char* str = lua_tostring(L, 3);
+            if (strcmp(str, "none") == 0) {
+                // Clear the action
+                lua_pushstring(L, "_action");
+                lua_pushnil(L);
+                lua_rawset(L, 1);  // Use rawset to bypass metamethod
+                // Also ensure output is low
+                g_pulse_out_state[idx] = false;
+                hardware_pulse_output_set(idx + 1, false);  // Use 1-based channel numbering
+                return 0;
+            }
+        }
+        
+        // User is setting a custom action
+        // Store the action in the table using rawset to bypass metamethod
+        lua_pushstring(L, "_action");
+        lua_pushvalue(L, 3);
+        lua_rawset(L, 1);
+        return 0;
+    } else if (strcmp(key, "clock_div") == 0 || strcmp(key, "ckcoro") == 0) {
+        // Allow setting clock-related fields (used by :clock() method)
+        lua_pushvalue(L, 2);
+        lua_pushvalue(L, 3);
+        lua_rawset(L, 1);
+        return 0;
+    }
+    
+    return luaL_error(L, "pulseout: cannot set field '%s'", key);
+}
+
+// __call metamethod for bb.pulseout[n]() or bb.pulseout[n]('none') or bb.pulseout[n](action)
+static int pulseout_call(lua_State* L) {
+    lua_getfield(L, 1, "_idx");
+    int idx = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    
+    // If an argument is provided, set it as the action (like bb.pulseout[1]('none'))
+    if (lua_gettop(L) >= 2) {
+        // Check if it's 'none' string
+        if (lua_isstring(L, 2)) {
+            const char* str = lua_tostring(L, 2);
+            if (strcmp(str, "none") == 0) {
+                // Clear the action
+                lua_pushstring(L, "_action");
+                lua_pushnil(L);
+                lua_rawset(L, 1);
+                // Set output low
+                g_pulse_out_state[idx] = false;
+                hardware_pulse_output_set(idx + 1, false);
+                return 0;
+            }
+        }
+        
+        // Otherwise, set the provided value as the action AND execute it immediately
+        lua_pushstring(L, "_action");
+        lua_pushvalue(L, 2);
+        lua_rawset(L, 1);
+        
+        // Now execute the action we just stored
+        // Execute via _c.tell to route through proper pulse output handling
+        lua_getglobal(L, "_c");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "tell");
+            if (lua_isfunction(L, -1)) {
+                lua_pushstring(L, "output");
+                lua_pushinteger(L, idx + 3);  // Pulse outputs are logical channels 3 & 4
+                lua_pushvalue(L, 2);  // Push the action argument
+                if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
+                    const char* error = lua_tostring(L, -1);
+                    if (tud_cdc_connected() && error) {
+                        tud_cdc_write_str("pulseout error: ");
+                        tud_cdc_write_str(error);
+                        tud_cdc_write_str("\r\n");
+                        tud_cdc_write_flush();
+                    }
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);  // pop non-function
+            }
+            lua_pop(L, 1);  // pop _c
+        } else {
+            lua_pop(L, 1);  // pop non-table
+        }
+        
+        return 0;
+    }
+    
+    // No argument - execute the current action
+    lua_getfield(L, 1, "_action");
+    if (lua_istable(L, -1)) {
+        // It's an ASL action table - execute via _c.tell
+        lua_getglobal(L, "_c");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "tell");
+            if (lua_isfunction(L, -1)) {
+                lua_pushstring(L, "output");
+                lua_pushinteger(L, idx + 3);  // Pulse outputs are logical channels 3 & 4
+                lua_pushvalue(L, -5);  // Push the action table
+                if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
+                    const char* error = lua_tostring(L, -1);
+                    if (tud_cdc_connected() && error) {
+                        tud_cdc_write_str("pulseout error: ");
+                        tud_cdc_write_str(error);
+                        tud_cdc_write_str("\r\n");
+                        tud_cdc_write_flush();
+                    }
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);  // pop non-function
+            }
+            lua_pop(L, 1);  // pop _c
+        } else {
+            lua_pop(L, 1);  // pop non-table
+        }
+        lua_pop(L, 1);  // pop _action
+        return 0;
+    } else if (lua_isfunction(L, -1)) {
+        // It's a function - call it directly
+        lua_call(L, 0, 0);
+        return 0;
+    }
+    
+    lua_pop(L, 1);
     return 0;
 }
 
@@ -1001,7 +1182,7 @@ public:
     lua_register(L, "clock_internal_start", lua_clock_internal_start);
     lua_register(L, "clock_internal_stop", lua_clock_internal_stop);
     
-    // Set up crow.tell to point to the global tell() function
+    // Set up crow.tell to point to the global tell() function (for sending to druid)
     // This is what l_crowlib_init() does, but we do it manually to avoid loading all libraries
     lua_getglobal(L, "crow");       // Get crow table (should exist from crowlib.lua)
     if (lua_isnil(L, -1)) {
@@ -1014,9 +1195,12 @@ public:
     lua_setfield(L, -2, "tell");    // Set crow.tell = tell
     lua_pop(L, 1);                  // Pop crow table
     
-    // Also create _c alias for crow (for compatibility with input.lua which uses _c.tell)
-    lua_getglobal(L, "crow");
-    lua_setglobal(L, "_c");
+    // Create _c table for internal backend communication (output.lua, input.lua)
+    // _c.tell is DIFFERENT from crow.tell - it routes to hardware, not to druid
+    lua_newtable(L);                // Create _c table
+    lua_pushcfunction(L, lua_c_tell);  // Push the c_tell function
+    lua_setfield(L, -2, "tell");    // Set _c.tell = lua_c_tell
+    lua_setglobal(L, "_c");         // Set _c as global
     
     // Initialize CASL instances for all 4 outputs
     for (int i = 0; i < 4; i++) {
@@ -1371,6 +1555,39 @@ public:
         
         lua_setfield(L, -2, "pulsein");  // bb.pulsein = pulsein array, pops @2
         
+        // Create pulseout array [1] and [2] - for controlling pulse outputs
+        lua_newtable(L);  // pulseout array @2
+        
+        // Create shared metatable with methods
+        lua_newtable(L);  // metatable @3
+        lua_pushcfunction(L, pulseout_index);
+        lua_setfield(L, -2, "__index");
+        lua_pushcfunction(L, pulseout_newindex);
+        lua_setfield(L, -2, "__newindex");
+        lua_pushcfunction(L, pulseout_call);
+        lua_setfield(L, -2, "__call");
+        // Store metatable in registry for reuse
+        lua_pushvalue(L, -1);
+        lua_setfield(L, LUA_REGISTRYINDEX, "pulseout_metatable");
+        
+        for (int i = 1; i <= 2; i++) {
+            lua_pushinteger(L, i);
+            lua_newtable(L);  // pulseout[i] table @4
+            
+            lua_pushinteger(L, i - 1);  // 0-indexed for C (0 = pulse1, 1 = pulse2)
+            lua_setfield(L, -2, "_idx");
+            
+            // Set the shared metatable
+            lua_pushvalue(L, -3);  // push metatable
+            lua_setmetatable(L, -2);
+            
+            lua_settable(L, -4);  // pulseout[i] = table
+        }
+        
+        lua_pop(L, 1);  // pop metatable
+        
+        lua_setfield(L, -2, "pulseout");  // bb.pulseout = array
+        
         // Set bb as global
         lua_setglobal(L, "bb");  // _G.bb = bb table
         
@@ -1388,6 +1605,111 @@ public:
             const char* error = lua_tostring(L, -1);
             printf("Error adding bb.noise: %s\r\n", error ? error : "unknown error");
             lua_pop(L, 1);
+        }
+        
+        // Set up default pulse output actions
+        const char* setup_pulseout_defaults = R"(
+            -- Add clock() method to the shared metatable (crow-style API)
+            local mt1 = getmetatable(bb.pulseout[1])
+            local mt2 = getmetatable(bb.pulseout[2])
+            
+            if mt1 and mt2 and mt1 == mt2 then
+                -- They share the same metatable, set clock on it
+                rawset(mt1, 'clock', function(self, div)
+                    if type(div) == 'string' and (div == 'none' or div == 'off') then
+                        -- Turn off clocked output
+                        if self.ckcoro then 
+                            clock.cancel(self.ckcoro)
+                            self.ckcoro = nil
+                        end
+                        -- Clear the action
+                        rawset(self, '_action', nil)
+                        return
+                    end
+                    
+                    -- Set default pulse action
+                    self.clock_div = div or 1
+                    rawset(self, '_action', pulse(0.010))  -- 10ms default pulse width
+                    
+                    -- Cancel existing clock coroutine if any
+                    if self.ckcoro then 
+                        clock.cancel(self.ckcoro)
+                    end
+                    
+                    -- Start new clock coroutine
+                    self.ckcoro = clock.run(function()
+                        while true do
+                            clock.sync(self.clock_div)
+                            -- Execute the action if still set
+                            if self._action then
+                                if type(self._action) == 'table' then
+                                    _c.tell('output', self._idx + 3, self._action)
+                                elseif type(self._action) == 'function' then
+                                    self._action()
+                                end
+                            end
+                        end
+                    end)
+                end)
+                
+                -- Add high() and low() methods for manual control
+                rawset(mt1, 'high', function(self)
+                    -- Stop any clock coroutine
+                    if self.ckcoro then 
+                        clock.cancel(self.ckcoro)
+                        self.ckcoro = nil
+                    end
+                    rawset(self, '_action', nil)
+                    -- Set output high indefinitely via C
+                    _c.tell('output', self._idx + 3, pulse(999999))
+                end)
+                
+                rawset(mt1, 'low', function(self)
+                    -- Stop any clock coroutine
+                    if self.ckcoro then 
+                        clock.cancel(self.ckcoro)
+                        self.ckcoro = nil
+                    end
+                    rawset(self, '_action', nil)
+                    -- Set output low via C
+                    _c.tell('output', self._idx + 3, pulse(0))
+                end)
+            end
+            
+            -- Set up default: pulseout[1] generates 10ms pulses on beat
+            bb.pulseout[1]:clock(1)
+            
+            -- Hook into clock.cleanup to stop pulseout clocks
+            local original_cleanup = clock.cleanup
+            clock.cleanup = function()
+                -- Stop pulseout clocks by calling :clock('off') on each
+                for i = 1, 2 do
+                    if bb.pulseout[i].ckcoro then
+                        bb.pulseout[i]:clock('off')
+                    end
+                end
+                -- Call original cleanup
+                if original_cleanup then
+                    original_cleanup()
+                end
+            end
+        )";
+        
+        if (luaL_dostring(L, setup_pulseout_defaults) != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            if (tud_cdc_connected()) {
+                tud_cdc_write_str("ERROR setting up pulseout: ");
+                tud_cdc_write_str(error ? error : "unknown error");
+                tud_cdc_write_str("\n\r");
+                tud_cdc_write_flush();
+            }
+            printf("Error setting up pulseout defaults: %s\r\n", error ? error : "unknown error");
+            lua_pop(L, 1);
+        } else {
+            if (tud_cdc_connected()) {
+                tud_cdc_write_str("Pulseout setup completed\n\r");
+                tud_cdc_write_flush();
+            }
         }
         
         //printf("bb table created (bb.knob.main, bb.knob.x, bb.knob.y, bb.switch.position, bb.switch.change, bb.noise)\n\r");
@@ -2638,11 +2960,9 @@ public:
             }
         }
         
-        // === PULSE OUTPUT 2: High when switch is down ===
-        // (Pulse1 is controlled by internal clock in clock.c)
-        bool switch_down = (SwitchVal() == Switch::Down);
-        g_pulse_out_state[1] = switch_down;
-        PulseOut2(switch_down);
+        // === PULSE OUTPUT 2: Controlled by Lua (default: follows switch) ===
+        // Default behavior is set up in Lua on startup
+        // Users can change by calling bb.pulseout[2]:clock() or setting bb.pulseout[2].action
         
         // === LED OUTPUT VISUALIZATION ===
         // Update LEDs every 480 samples (~100Hz at 48kHz)
@@ -2992,23 +3312,117 @@ int LuaManager::lua_c_tell(lua_State* L) {
     int channel = luaL_checkinteger(L, 2);
     
         if (strcmp(module, "output") == 0) {
-            static int output_tell_debug_count = 0;
-            float value = (float)luaL_checknumber(L, 3);
-            printf("[core0] _c.tell output[%d] %.3f\n\r", channel, value);
-            if (output_tell_debug_count < 32) {
-                usb_log_printf("log: output[%d].volts -> %.3f", channel, value);
-                output_tell_debug_count++;
+            // Check if this is a pulse output (channels 3 & 4 are pulse outputs in logical mapping)
+            if (channel == 3 || channel == 4) {
+                // Pulse outputs - special handling for 1-bit digital outputs
+                int pulse_idx = channel - 3;  // 0-based pulse output index (0 = pulse1, 1 = pulse2)
+                
+                // Check if arg 3 is a table (ASL action like pulse())
+                if (lua_istable(L, 3)) {
+                    // For pulse outputs, we need to extract timing from ASL action
+                    // pulse(time) creates: {asl._if(polarity, {to(level,0,'now'), to(level,time), to(0,0,'now')}), ...}
+                    // We need to extract the 'time' parameter and create a clock-based pulse
+                    
+                    // Extract pulse width from the ASL table structure
+                    float pulse_time = 0.010;  // default 10ms
+                    
+                    // Navigate the pulse() ASL structure
+                    // asl._if(pred, t) inserts {'IF', pred} at start of t and returns it
+                    // So pulse(2) structure is: [1] = { {'IF',1}, to(5,0,'now'), to(5,2), to(0,0,'now') }
+                    // [1][1] = {'IF', 1}
+                    // [1][2] = to(5, 0, 'now')  - first jump
+                    // [1][3] = to(5, 2)         - hold for TIME (this is what we want!)
+                    // [1][4] = to(0, 0, 'now')  - return to zero
+                    
+                    lua_pushvalue(L, 3);  // push the action table
+                    if (lua_istable(L, -1)) {
+                        lua_geti(L, -1, 1);  // get first element (the asl._if branch for polarity=1)
+                        if (lua_istable(L, -1)) {
+                            lua_geti(L, -1, 2);  // get [1][2]
+                            if (lua_istable(L, -1)) {
+                                lua_pop(L, 1);  // pop [1][2], we don't need it
+                                
+                                // Get [1][3] which is the second 'to' with the pulse duration
+                                lua_geti(L, -1, 3);
+                                if (lua_istable(L, -1)) {
+                                    // [1][3] = {'to', level, time, ...}
+                                    // time is at index 3
+                                    lua_geti(L, -1, 3);
+                                    if (lua_isnumber(L, -1)) {
+                                        pulse_time = lua_tonumber(L, -1);
+                                    }
+                                    lua_pop(L, 1);  // pop [1][3][3]
+                                    lua_pop(L, 1);  // pop [1][3]
+                                } else {
+                                    lua_pop(L, 1);  // pop non-table
+                                }
+                            } else {
+                                lua_pop(L, 1);  // pop [1][2]
+                            }
+                            lua_pop(L, 1);  // pop [1]
+                        } else {
+                            lua_pop(L, 1);  // pop [1]
+                        }
+                    }
+                    lua_pop(L, 1);  // pop action table copy
+                    
+                    // Now generate the pulse using clock.run
+                    // Set output high immediately
+                    g_pulse_out_state[pulse_idx] = true;
+                    hardware_pulse_output_set(pulse_idx + 1, true);
+                    
+                    // Schedule the pulse to go low after pulse_time
+                    // Create a Lua coroutine to handle timing
+                    lua_getglobal(L, "clock");
+                    if (lua_istable(L, -1)) {
+                        lua_getfield(L, -1, "run");
+                        if (lua_isfunction(L, -1)) {
+                            // Create the function to run: clock.run(function() clock.sleep(time); hardware_pulse(idx, false) end)
+                            const char* pulse_code_fmt = 
+                                "return function() "
+                                "  clock.sleep(%.6f) "
+                                "  hardware_pulse(%d, false) "
+                                "end";
+                            char pulse_code[256];
+                            snprintf(pulse_code, sizeof(pulse_code), pulse_code_fmt, pulse_time, pulse_idx + 1);
+                            
+                            if (luaL_dostring(L, pulse_code) == LUA_OK) {
+                                // Stack: clock, run_func, generated_func
+                                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                                    lua_pop(L, 1);  // pop error (silent fail)
+                                }
+                            } else {
+                                lua_pop(L, 1);  // pop error (silent fail)
+                            }
+                        } else {
+                            lua_pop(L, 1);  // pop non-function
+                        }
+                        lua_pop(L, 1);  // pop clock table
+                    } else {
+                        lua_pop(L, 1);  // pop non-table
+                    }
+                } else {
+                    // Not a table - could be a direct voltage value
+                    float value = (float)luaL_checknumber(L, 3);
+                    // Set pulse output based on voltage threshold
+                    bool state = (value > 2.5f);  // Consider >2.5V as "high"
+                    g_pulse_out_state[pulse_idx] = state;
+                    hardware_pulse_output_set(pulse_idx + 1, state);
+                }
+            } else {
+                // Regular CV outputs (channels 1-4)
+                float value = (float)luaL_checknumber(L, 3);
+                
+                // User explicitly setting output.volts should always disable noise
+                int ch_idx = channel - 1;
+                if (ch_idx >= 0 && ch_idx < 4 && g_noise_active[ch_idx]) {
+                    g_noise_active[ch_idx] = false;
+                    g_noise_gain[ch_idx] = 0;
+                    g_noise_lock_counter[ch_idx] = 0;
+                }
+                
+                hardware_output_set_voltage(channel, value);
             }
-            
-            // User explicitly setting output.volts should always disable noise
-            int ch_idx = channel - 1;
-            if (ch_idx >= 0 && ch_idx < 4 && g_noise_active[ch_idx]) {
-                g_noise_active[ch_idx] = false;
-                g_noise_gain[ch_idx] = 0;
-                g_noise_lock_counter[ch_idx] = 0;
-            }
-            
-            hardware_output_set_voltage(channel, value);
     } else if (strcmp(module, "change") == 0) {
         // Handle default change callback from Input.lua - just ignore for now
         // This prevents crashes when detection triggers before user defines custom callback
@@ -4095,6 +4509,9 @@ extern "C" void hardware_pulse_output_set(int channel, bool state) {
         ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_pulse(channel, state);
     }
 }
+
+// NOTE: pulseout_has_custom_action() and pulseout_execute_action() are no longer needed
+// Pulse outputs are now controlled entirely via Lua :clock() coroutines
 
 // Bridge function called from slopes.c to trigger Lua soutput_handler
 extern "C" void trigger_soutput_handler(int channel, float voltage) {
