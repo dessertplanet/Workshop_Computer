@@ -77,6 +77,7 @@ extern const unsigned int clock_len;
 
 static volatile int32_t g_output_state_mv[4] = {0, 0, 0, 0};
 static volatile int32_t g_input_state_q12[2] = {0, 0};
+static volatile int16_t g_audioin_raw[2] = {0, 0};
 
 // Pulse output state tracking (set from Lua layer)
 static volatile bool g_pulse_out_state[2] = {false, false};
@@ -146,6 +147,22 @@ static void set_input_state_simple(int channel, int16_t rawValue) {
     if (channel >= 0 && channel < 2) {
         g_input_state_q12[channel] = rawValue;
     }
+}
+
+// Store raw ADC value in ISR (no floating point)
+static void set_audioin_raw(int channel, int16_t rawValue) {
+    if (channel >= 0 && channel < 2) {
+        g_audioin_raw[channel] = rawValue;
+    }
+}
+
+// Convert to volts when accessed from Lua (outside ISR)
+extern "C" float get_audioin_volts(int channel) {
+    if (channel >= 0 && channel < 2) {
+        // Convert 12-bit signed value to volts: -2048 to +2047 -> -6V to +6V
+        return (float) g_audioin_raw[channel] * (6.0f / 2047.0f);
+    }
+    return 0.0f;
 }
 
 static int32_t get_output_state_simple(int channel) {
@@ -303,6 +320,30 @@ Send commands like ^^v and ^^i to test the protocol.
 */
 
 // Command types (from crow's caw.h) - now included via lib/caw.h
+
+// Audio input Lua C functions - similar to pulsein but simpler (read-only volts)
+static int audioin_index(lua_State* L) {
+    // Get the index from the table itself
+    lua_getfield(L, 1, "_idx");
+    int idx = (int)lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    
+    const char* key = lua_tostring(L, 2);
+    
+    // Only support .volts property
+    if (strcmp(key, "volts") == 0) {
+        // Floating point conversion happens here, not in ISR
+        float volts = get_audioin_volts(idx);
+        lua_pushnumber(L, volts);
+        return 1;
+    } else if (strcmp(key, "_idx") == 0) {
+        lua_pushinteger(L, idx);
+        return 1;
+    }
+    
+    lua_pushnil(L);
+    return 1;
+}
 
 // Pulse input Lua C functions (must be at file scope, not in class)
 // NO UPVALUES - get index from table's _idx field to avoid closure memory issues
@@ -1587,6 +1628,32 @@ public:
         lua_pop(L, 1);  // pop metatable
         
         lua_setfield(L, -2, "pulseout");  // bb.pulseout = array
+        
+        // Create audioin array [1] and [2] - for reading audio input voltages
+        lua_newtable(L);  // audioin array @2
+        
+        // Create shared metatable
+        lua_newtable(L);  // metatable @3
+        lua_pushcfunction(L, audioin_index);
+        lua_setfield(L, -2, "__index");
+        
+        for (int i = 1; i <= 2; i++) {
+            lua_pushinteger(L, i);
+            lua_newtable(L);  // audioin[i] table @4
+            
+            lua_pushinteger(L, i - 1);  // 0-indexed for C (0 = audioin1, 1 = audioin2)
+            lua_setfield(L, -2, "_idx");
+            
+            // Set the shared metatable
+            lua_pushvalue(L, -3);  // push metatable
+            lua_setmetatable(L, -2);
+            
+            lua_settable(L, -4);  // audioin[i] = table
+        }
+        
+        lua_pop(L, 1);  // pop metatable
+        
+        lua_setfield(L, -2, "audioin");  // bb.audioin = array
         
         // Set bb as global
         lua_setglobal(L, "bb");  // _G.bb = bb table
@@ -2887,6 +2954,10 @@ public:
         // Update input state for .volts queries
         set_input_state_simple(0, cv1);
         set_input_state_simple(1, cv2);
+        
+        // Read audio inputs and store raw values (NO floating point in ISR)
+        set_audioin_raw(0, AudioIn1());
+        set_audioin_raw(1, AudioIn2());
         
         // Process detection sample-by-sample for edge accuracy
         Detect_process_sample(0, cv1);
