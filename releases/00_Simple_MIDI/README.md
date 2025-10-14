@@ -4,7 +4,7 @@
 ## Simple Midi Card with Calibration v0.5 
 
 Written by Tom Whitwell
-In Herne Hill, London, October 2024 
+In Herne Hill, London, October 2024 - October 2025
 
 ### How to Calibrate 
 - Hold down the momentary toggle switch on startup 
@@ -80,3 +80,26 @@ USB Stack: Adafruit TinyUSB
 - Drag simplemidi.uf2 into that folder 
 - The system should reboot and the folder disappear 
 - Now check your DAW for midi interfaces - you should find one called Music Thing Workshop System MIDI or something similar to that 
+
+### Changes 
+
+
+#### v0.6.0
+- Update Arduino Phillhower Pico core from 3.9.2 to 5.3.0 = updates TinyUSB and includes multiple [bugfixes](https://github.com/hathach/tinyusb/pull/2492) 
+- Increases buffer sizes (if editing and recompiling, before building, edit the file `tusb_config_rp2040.h` file to increase buffer sizes from 64 to 512 (targeting Windows stability)) 
+- Change the `SWITCH_DOWN` value from 500 to 340 - 500 was missed on some boards making it impossible to enter calibration 
+- Change `CableName` from 1 to 0 (targeting Windows stability)
+- Add `TinyUSBDevice.task();` to all loops  to make sure USB system is kept alive 
+- Set pitch CV outputs to 0v before any MIDI notes are received, to avoid 'jump' after calibration completion. 
+- Change midi output notes from knobs and CV to correct values, [matching documentation](https://www.musicthing.co.uk/Computer_Program_Cards/#00-simple-midi) 
+- Reduce extraneous MIDI output by only sending notes when MIDI changes, rather than underlying analog reads. 
+- Turned off MIDI thru, so Midi notes are not sent back out from the Workshop System 
+
+#### v0.5.0
+- Fixed issue on 0.3.0 where calibration mode could not be entered without a serial connection 
+
+#### v0.3.0
+- First upload with calibration etc 
+
+
+
