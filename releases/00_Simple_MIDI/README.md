@@ -1,7 +1,7 @@
 ## Music Thing Modular 
 ## Workshop System 
 
-## Simple Midi Card with Calibration v0.5 
+## Simple Midi Card  v0.6.0 
 
 Written by Tom Whitwell
 In Herne Hill, London, October 2024 - October 2025
