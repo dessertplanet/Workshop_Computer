@@ -96,10 +96,12 @@ void l_crowlib_init(lua_State* L){
 
 	//////// tell
 	// C.tell = tell
-    lua_getglobal(L, "crow"); // @1
-    lua_getglobal(L, "tell"); // @2
-    lua_setfield(L, 1, "tell");
-    lua_settop(L, 0);
+    // NOTE: We set up _c.tell (crow.tell) in l_bootstrap.c, not here
+    // Commenting out this code that tries to use a non-existent global 'tell' function
+    // lua_getglobal(L, "crow"); // @1
+    // lua_getglobal(L, "tell"); // @2
+    // lua_setfield(L, 1, "tell");
+    // lua_settop(L, 0);
 
 
 	//////// get_out & get_cv

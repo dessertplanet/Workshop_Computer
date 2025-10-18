@@ -2,8 +2,13 @@
 
 #include <string.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #include "l_crowlib.h"
+#include "lib/caw.h"  // For Caw_printf to send crow-style messages
+
+// TinyUSB CDC for direct debug output
+#include "tusb.h"
 
 // Lua libs wrapped in C-headers
 #include "build/crowlib.h"
@@ -32,48 +37,75 @@ struct lua_lib_locator{
 };
 
 static int _open_lib( lua_State *L, const struct lua_lib_locator* lib, const char* name );
+// Forward declaration of lua_c_tell from main.cpp for hardware commands
+extern int LuaManager_lua_c_tell(lua_State* L);
+
 static void lua_full_gc(lua_State* L);
 
 // _c.tell function for detection callbacks and output commands
+// This implements crow's tell() function which sends formatted messages over USB
 int l_bootstrap_c_tell(lua_State* L) {
     int nargs = lua_gettop(L);
-    if (nargs >= 2) {
-        const char* event_type = luaL_checkstring(L, 1);
-        int channel = luaL_checkinteger(L, 2);
-        
-        // Handle output commands - this is the critical missing piece!
-        if (strcmp(event_type, "output") == 0 && nargs >= 3) {
-            float voltage = (float)luaL_checknumber(L, 3);
-            printf("[bootstrap] tell output[%d] %.3f\n", channel, voltage);
-            
-            // User explicitly setting output.volts should always disable noise
-            extern volatile bool g_noise_active[4];
-            extern volatile int32_t g_noise_gain[4];
-            extern volatile uint32_t g_noise_lock_counter[4];
-            int ch_idx = channel - 1;
-            if (ch_idx >= 0 && ch_idx < 4 && g_noise_active[ch_idx]) {
-                g_noise_active[ch_idx] = false;
-                g_noise_gain[ch_idx] = 0;
-                g_noise_lock_counter[ch_idx] = 0;
-            }
-            
-            extern void hardware_output_set_voltage(int channel, float voltage);
-            hardware_output_set_voltage(channel, voltage);
-            return 0;
-        }
-        
-        // Handle input detection events (your existing code)
-        if (nargs >= 3) {
-            if (lua_isnumber(L, 3)) {
-                double value = lua_tonumber(L, 3);
-                printf("Detection: %s on input %d = %.3f\n", event_type, channel, value);
-            } else {
-                const char* str_value = luaL_checkstring(L, 3);
-                printf("Detection: %s on input %d = %s\n", event_type, channel, str_value);
-            }
-        } else {
-            printf("Detection: %s on input %d\n", event_type, channel);
-        }
+    
+    if (nargs < 1) {
+        lua_settop(L, 0);
+        return 0;
+    }
+    
+    const char* event_type = luaL_checkstring(L, 1);
+    
+    // Handle hardware commands (output, stream, change, etc) with integer channel
+    // These need special handling from lua_c_tell in main.cpp
+    if (nargs >= 2 && lua_isnumber(L, 2) && 
+        (strcmp(event_type, "output") == 0 ||
+         strcmp(event_type, "stream") == 0 ||
+         strcmp(event_type, "change") == 0 ||
+         strcmp(event_type, "window") == 0 ||
+         strcmp(event_type, "scale") == 0 ||
+         strcmp(event_type, "volume") == 0 ||
+         strcmp(event_type, "peak") == 0 ||
+         strcmp(event_type, "freq") == 0)) {
+        // Delegate to the hardware handler
+        return LuaManager_lua_c_tell(L);
+    }
+    
+    // Handle crow-style ^^ messages (pupdate, pub, etc)
+    // These are sent to the host computer over USB
+    // Format: ^^event_type(arg1,arg2,...)
+    // All arguments are coerced to strings (like real crow's _print_tell)
+    switch(nargs) {
+        case 1:
+            Caw_printf("^^%s()", event_type);
+            break;
+        case 2:
+            Caw_printf("^^%s(%s)", event_type, luaL_checkstring(L, 2));
+            break;
+        case 3:
+            Caw_printf("^^%s(%s,%s)", event_type, 
+                       luaL_checkstring(L, 2),
+                       luaL_checkstring(L, 3));
+            break;
+        case 4:
+            Caw_printf("^^%s(%s,%s,%s)", event_type,
+                       luaL_checkstring(L, 2),
+                       luaL_checkstring(L, 3),
+                       luaL_checkstring(L, 4));
+            break;
+        case 5:
+            Caw_printf("^^%s(%s,%s,%s,%s)", event_type,
+                       luaL_checkstring(L, 2),
+                       luaL_checkstring(L, 3),
+                       luaL_checkstring(L, 4),
+                       luaL_checkstring(L, 5));
+            break;
+        default:
+            // More than 5 args - just send first 5
+            Caw_printf("^^%s(%s,%s,%s,%s,...)", event_type,
+                       luaL_checkstring(L, 2),
+                       luaL_checkstring(L, 3),
+                       luaL_checkstring(L, 4),
+                       luaL_checkstring(L, 5));
+            break;
     }
     
     lua_settop(L, 0);

@@ -1223,6 +1223,19 @@ public:
     lua_register(L, "clock_internal_start", lua_clock_internal_start);
     lua_register(L, "clock_internal_stop", lua_clock_internal_stop);
     
+    // Create _c table manually (minimal bootstrap without l_bootstrap_init)
+    // We can't use l_bootstrap_init because it loads all libraries again via l_crowlib_init
+    printf("Creating _c table...\n\r");
+    lua_newtable(L);
+    lua_pushcfunction(L, l_bootstrap_c_tell);
+    lua_setfield(L, -2, "tell");
+    lua_setglobal(L, "_c");
+    printf("_c table created with tell function\n\r");
+    
+    // crow = _c (for compatibility)
+    lua_getglobal(L, "_c");
+    lua_setglobal(L, "crow");
+    
     // Set up crow.tell to point to the global tell() function (for sending to druid)
     // This is what l_crowlib_init() does, but we do it manually to avoid loading all libraries
     lua_getglobal(L, "crow");       // Get crow table (should exist from crowlib.lua)
@@ -1236,12 +1249,16 @@ public:
     lua_setfield(L, -2, "tell");    // Set crow.tell = tell
     lua_pop(L, 1);                  // Pop crow table
     
-    // Create _c table for internal backend communication (output.lua, input.lua)
-    // _c.tell is DIFFERENT from crow.tell - it routes to hardware, not to druid
-    lua_newtable(L);                // Create _c table
-    lua_pushcfunction(L, lua_c_tell);  // Push the c_tell function
-    lua_setfield(L, -2, "tell");    // Set _c.tell = lua_c_tell
-    lua_setglobal(L, "_c");         // Set _c as global
+    // NOTE: _c table is now created in l_bootstrap.c with l_bootstrap_c_tell
+    // That function handles both hardware commands (output, stream, etc) 
+    // AND crow protocol messages (pupdate, pub, etc)
+    // DO NOT recreate _c here or we'll overwrite the proper implementation
+    
+    // Old code that created _c with lua_c_tell (which only handles hardware):
+    // lua_newtable(L);                // Create _c table
+    // lua_pushcfunction(L, lua_c_tell);  // Push the c_tell function
+    // lua_setfield(L, -2, "tell");    // Set _c.tell = lua_c_tell
+    // lua_setglobal(L, "_c");         // Set _c as global
     
     // Initialize CASL instances for all 4 outputs
     for (int i = 0; i < 4; i++) {
@@ -3509,6 +3526,12 @@ int LuaManager::lua_c_tell(lua_State* L) {
     }
     
     return 0;
+}
+
+// C-callable wrapper for lua_c_tell (hardware output commands)
+// Called from l_bootstrap_c_tell to handle output/stream/change messages
+extern "C" int LuaManager_lua_c_tell(lua_State* L) {
+    return LuaManager::lua_c_tell(L);
 }
 
 // soutput_handler(channel, voltage) - Bridge from C to Lua output callbacks

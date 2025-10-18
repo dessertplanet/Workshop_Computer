@@ -325,7 +325,7 @@ static uint8_t beat_duration_buf_len = 0;
 static float mean_sum;
 static float mean_scale;
 
-static float crow_in_div = 4.0;
+static float crow_in_div = 0.25;  // Default: each pulse = 1/4 beat
 
 
 void clock_crow_init(void)
@@ -351,7 +351,7 @@ void clock_crow_handle_clock(void)
         clock_crow_last_time = current_time;
     } else {
         beat_duration = (float)(current_time - clock_crow_last_time)
-                            * crow_in_div;
+                            / crow_in_div;
         if( beat_duration > 4.0 ){ // assume clock stopped
             clock_crow_last_time = current_time;
         } else {
@@ -369,7 +369,7 @@ void clock_crow_handle_clock(void)
             clock_crow_counter++;
             clock_crow_last_time = current_time;
 
-            double beat = clock_crow_counter / crow_in_div;
+            double beat = clock_crow_counter * crow_in_div;
             clock_update_reference_from(beat, (double)mean_sum, CLOCK_SOURCE_CROW);
         }
     }
@@ -377,5 +377,5 @@ void clock_crow_handle_clock(void)
 
 void clock_crow_in_div( float div )
 {
-    crow_in_div = 1.0/div;
+    crow_in_div = div;
 }

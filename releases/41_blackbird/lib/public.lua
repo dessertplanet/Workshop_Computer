@@ -107,6 +107,18 @@ local function quoteptab(p)
     return string.format('{%s}', table.concat(t,','))
 end
 
+-- Helper function to quote a plain table (not a parameter object)
+local function quotetab(t)
+    local result = {}
+    local i = 1
+    while t[i] ~= nil do
+        if type(t[i]) == 'string' then result[i] = quote(t[i])
+        else result[i] = t[i] end
+        i = i + 1
+    end
+    return string.format('{%s}', table.concat(result,','))
+end
+
 local function dval(p)
     local tv = type(p.v)
     if tv == 'string' then return quote(p.v)
@@ -165,11 +177,13 @@ end
 P.broadcast = function(k, v, kk)
     local tv = type(v)
     if tv == 'string' then v = quote(v)
-    elseif tv == 'table' then v = quoteptab(v) end
+    elseif tv == 'table' then v = quotetab(v) end  -- Use quotetab for plain tables
     -- else v = v
     if kk then
         _c.tell('pupdate', quote(k), v, quote(kk))
-    else _c.tell('pupdate', quote(k), v) end
+    else 
+        _c.tell('pupdate', quote(k), v)
+    end
 end
 
 -- NOTE: To only be called by remote device
