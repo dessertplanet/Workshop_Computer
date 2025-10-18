@@ -103,10 +103,7 @@ void clock_update(uint32_t time_now)
     clock_internal_run(time_now);
 
     // calculate the fp64 beat count for .syncing checks
-    // only update precise_beat_now when clock is running to prevent drift
-    if( internal.running ){
-        precise_beat_now = precision_beat_of_now(time_now);
-    }
+    precise_beat_now = precision_beat_of_now(time_now);
 
     // TODO can we use <= for time comparison or does it create double-trigs?
     // this should reduce latency by 1ms if it works.
@@ -120,7 +117,6 @@ sleep_next:
     }
 sync_next:
     if(sync_head // list is not empty
-    && internal.running // only wake sync coroutines if transport is running
     && sync_head->wakeup < precise_beat_now){ // time to awaken
         L_queue_clock_resume(sync_head->coro_id); // event!
         ll_insert_idle(ll_pop(&sync_head)); // return to idle list
@@ -240,8 +236,6 @@ void clock_internal_set_tempo( float bpm )
 void clock_internal_start( float new_beat, bool transport_start )
 {
     internal_beat = new_beat;
-    internal.running = true; // set running BEFORE updating reference so precise_beat_now gets recalculated
-    
     clock_update_reference_from( internal_beat
                                , internal_interval_seconds
                                , CLOCK_SOURCE_INTERNAL );
@@ -250,17 +244,7 @@ void clock_internal_start( float new_beat, bool transport_start )
         clock_start_from( CLOCK_SOURCE_INTERNAL ); // user callback
     }
     internal.wakeup  = 0; // force event
-    
-    // immediately update precise_beat_now after reference is set
-    // this ensures sync events have correct beat reference on restart
-    precise_beat_now = internal_beat;
-    
-    // Wake up ALL sync'd coroutines so they can reschedule relative to the new beat
-    // This ensures clock.sync() coroutines resume properly after clock.stop()/clock.start()
-    while(sync_head) {
-        L_queue_clock_resume(sync_head->coro_id);
-        ll_insert_idle(ll_pop(&sync_head));
-    }
+    internal.running = true;
 }
 
 void clock_internal_stop(void)
@@ -325,7 +309,7 @@ static uint8_t beat_duration_buf_len = 0;
 static float mean_sum;
 static float mean_scale;
 
-static float crow_in_div = 0.25;  // Default: each pulse = 1/4 beat
+static float crow_in_div = 4.0;
 
 
 void clock_crow_init(void)
@@ -351,7 +335,7 @@ void clock_crow_handle_clock(void)
         clock_crow_last_time = current_time;
     } else {
         beat_duration = (float)(current_time - clock_crow_last_time)
-                            / crow_in_div;
+                            * crow_in_div;
         if( beat_duration > 4.0 ){ // assume clock stopped
             clock_crow_last_time = current_time;
         } else {
@@ -369,7 +353,7 @@ void clock_crow_handle_clock(void)
             clock_crow_counter++;
             clock_crow_last_time = current_time;
 
-            double beat = clock_crow_counter * crow_in_div;
+            double beat = clock_crow_counter / crow_in_div;
             clock_update_reference_from(beat, (double)mean_sum, CLOCK_SOURCE_CROW);
         }
     }
@@ -377,5 +361,5 @@ void clock_crow_handle_clock(void)
 
 void clock_crow_in_div( float div )
 {
-    crow_in_div = div;
+    crow_in_div = 1.0/div;
 }
