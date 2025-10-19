@@ -54,22 +54,14 @@ int l_bootstrap_c_tell(lua_State* L) {
     
     const char* event_type = luaL_checkstring(L, 1);
     
-    // Handle hardware commands (output, stream, change, etc) with integer channel
-    // These need special handling from lua_c_tell in main.cpp
-    if (nargs >= 2 && lua_isnumber(L, 2) && 
-        (strcmp(event_type, "output") == 0 ||
-         strcmp(event_type, "stream") == 0 ||
-         strcmp(event_type, "change") == 0 ||
-         strcmp(event_type, "window") == 0 ||
-         strcmp(event_type, "scale") == 0 ||
-         strcmp(event_type, "volume") == 0 ||
-         strcmp(event_type, "peak") == 0 ||
-         strcmp(event_type, "freq") == 0)) {
-        // Delegate to the hardware handler
+    // Handle ONLY 'output' as a hardware command - delegate to lua_c_tell
+    // All other messages (stream, change, window, etc) are sent as ^^ protocol messages
+    if (nargs >= 2 && lua_isnumber(L, 2) && strcmp(event_type, "output") == 0) {
+        // Delegate to the hardware handler for output commands only
         return LuaManager_lua_c_tell(L);
     }
     
-    // Handle crow-style ^^ messages (pupdate, pub, etc)
+    // Handle crow-style ^^ messages (stream, change, window, pupdate, pub, etc)
     // These are sent to the host computer over USB
     // Format: ^^event_type(arg1,arg2,...)
     // All arguments are coerced to strings (like real crow's _print_tell)
@@ -153,21 +145,13 @@ void l_bootstrap_init(lua_State* L){
     l_bootstrap_dofile(L); // hotrod without l_call
     lua_settop(L, 0);
 
-    // _c = {}
-    lua_newtable(L);
-    lua_setglobal(L, "_c");
-
-    // crow = _c
-    lua_getglobal(L, "_c");
-    lua_setglobal(L, "crow");
-
-    // Add _c.tell function for detection callbacks
-    lua_getglobal(L, "_c");
-    lua_pushcfunction(L, l_bootstrap_c_tell);
-    lua_setfield(L, -2, "tell");
-    lua_pop(L, 1);
-
-    // crowlib C extensions
+    // NOTE: _c and crow tables are created in main.cpp BEFORE l_bootstrap_init is called
+    // DO NOT recreate them here or we'll lose the setup done in main.cpp
+    // main.cpp creates:
+    //   - _c table with l_bootstrap_c_tell
+    //   - crow table (separate from _c) with l_bootstrap_c_tell
+    
+    // crowlib C extensions (adds crow.reset, crow.init, and other C functions)
     l_crowlib_init(L);
 
     // track all user-created globals 

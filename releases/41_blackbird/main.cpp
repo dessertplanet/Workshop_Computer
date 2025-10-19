@@ -697,6 +697,11 @@ static int pulseout_call(lua_State* L) {
     return 0;
 }
 
+// External C function from l_crowlib.c
+extern "C" {
+    int l_crowlib_crow_reset(lua_State* L);
+}
+
 // Simple Lua Manager for crow emulation
 class LuaManager {
 public:
@@ -1237,7 +1242,17 @@ public:
     lua_setfield(L, -2, "tell");
     lua_setglobal(L, "crow");
     
-    // NOTE: _c table is now created in l_bootstrap.c with l_bootstrap_c_tell
+    // Set up crow.reset and crow.init functions (from l_crowlib_crow_reset in l_crowlib.c)
+    // We do this manually here instead of calling l_bootstrap_init which has STM32-specific code
+    lua_getglobal(L, "crow");       // Get crow table
+    lua_pushcfunction(L, l_crowlib_crow_reset);
+    lua_setfield(L, -2, "reset");   // Set crow.reset
+    lua_pushcfunction(L, l_crowlib_crow_reset);
+    lua_setfield(L, -2, "init");    // Set crow.init (alias for reset)
+    lua_pop(L, 1);                  // Pop crow table
+    printf("crow.reset and crow.init functions registered\n\r");
+    
+    // NOTE: _c and crow tables are created above with l_bootstrap_c_tell
     // That function handles both hardware commands (output, stream, etc) 
     // AND crow protocol messages (pupdate, pub, etc)
     // DO NOT recreate _c here or we'll overwrite the proper implementation
@@ -1992,6 +2007,7 @@ static char g_new_script[16 * 1024];  // 16KB script buffer for uploads
 static volatile uint32_t g_new_script_len = 0;
 static char g_new_script_name[64] = "";  // Store script name from first comment line
 
+//REMOVED PERF MONITOR
 // Hardware timer-based PulseOut2 performance monitoring (outside class to avoid C++ issues)
 // static volatile bool g_pulse2_state = false;
 // static volatile uint32_t g_pulse2_counter = 0;
@@ -3505,18 +3521,10 @@ int LuaManager::lua_c_tell(lua_State* L) {
                 
                 hardware_output_set_voltage(channel, value);
             }
-    } else if (strcmp(module, "change") == 0) {
-        // Handle default change callback from Input.lua - just ignore for now
-        // This prevents crashes when detection triggers before user defines custom callback
-        int state = luaL_checkinteger(L, 3);
-        printf("Default change callback: ch%d=%d (ignored)\n\r", channel, state);
-    } else if (strcmp(module, "stream") == 0) {
-        // Handle stream callback - ignore for now
-        float value = (float)luaL_checknumber(L, 3);
-        printf("Stream callback: ch%d=%.3f (ignored)\n\r", channel, value);
     } else {
-        // Handle unknown modules gracefully
-        printf("_c.tell: unsupported module '%s' (ch=%d)\n\r", module, channel);
+        // Only 'output' is handled here - all other _c.tell messages (stream, change, window, etc)
+        // are handled by l_bootstrap_c_tell and sent as ^^ protocol messages
+        printf("_c.tell: unexpected module '%s' (ch=%d) - should be handled by l_bootstrap_c_tell\n\r", module, channel);
     }
     
     return 0;
