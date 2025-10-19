@@ -76,22 +76,26 @@ void l_crowlib_init(lua_State* L){
 
 
 	//////// crow.reset
-    lua_getglobal(L, "crow"); // @1
-    lua_pushcfunction(L, l_crowlib_crow_reset);
-    lua_setfield(L, 1, "reset");
-    lua_settop(L, 0);
-
+    // Create crow table if it doesn't exist
     lua_getglobal(L, "crow");
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
         lua_newtable(L);
         lua_setglobal(L, "crow");
-        lua_getglobal(L, "crow");
+    } else {
+        lua_pop(L, 1); // pop the existing crow table
     }
-
+    
+    // Now set crow.reset
+    lua_getglobal(L, "crow"); // @1
     lua_pushcfunction(L, l_crowlib_crow_reset);
-    lua_setfield(L, -2, "init");
-    lua_settop(L, 0);
+    lua_setfield(L, -2, "reset"); // set crow.reset, pops function
+    
+    // Set crow.init (alias for crow.reset)  
+    lua_pushcfunction(L, l_crowlib_crow_reset);
+    lua_setfield(L, -2, "init"); // set crow.init, pops function
+    
+    lua_pop(L, 1); // pop crow table
 
 
 	//////// tell
@@ -224,7 +228,6 @@ void l_crowlib_emptyinit(lua_State* L){
 
 
 int l_crowlib_crow_reset( lua_State* L ){
-printf("crow.reset()\r\n");
     S_reset();
 
     lua_getglobal(L, "input"); // @1
@@ -276,42 +279,62 @@ lua_gettable(L, 1); // replace @2 with: input[n]
 	}
 	lua_settop(L, 0);
 
-    // ii.reset_events(ii.self)
+    // ii.reset_events(ii.self) - only if ii exists
     lua_getglobal(L, "ii"); // @1
-    lua_getfield(L, 1, "reset_events"); // @2
-    lua_getfield(L, 1, "self"); // @3
-    lua_call(L, 1, 0);
+    if(!lua_isnil(L, 1)){
+        lua_getfield(L, 1, "reset_events"); // @2
+        if(!lua_isnil(L, 2)){
+            lua_getfield(L, 1, "self"); // @3
+            lua_call(L, 1, 0);
+        }
+    }
     lua_settop(L, 0);
 
-    // ii_follow_reset() -- resets forwarding to output libs
+    // ii_follow_reset() -- resets forwarding to output libs (only if exists)
     lua_getglobal(L, "ii_follow_reset");
-    lua_call(L, 0, 0);
+    if(!lua_isnil(L, 1)){
+        lua_call(L, 0, 0);
+    }
     lua_settop(L, 0);
 
-    // metro.free_all()
+    // metro.free_all() - only if metro exists
     lua_getglobal(L, "metro"); // @1
-    lua_getfield(L, 1, "free_all");
-    lua_call(L, 0, 0);
+    if(!lua_isnil(L, 1)){
+        lua_getfield(L, 1, "free_all");
+        if(!lua_isnil(L, 2)){
+            lua_call(L, 0, 0);
+        }
+    }
     lua_settop(L, 0);
 
     // if public then public.clear() end
     lua_getglobal(L, "public"); // @1
     if(!lua_isnil(L, 1)){ // if public is not nil
     	lua_getfield(L, 1, "clear");
-    	lua_call(L, 0, 0);
+    	if(!lua_isnil(L, 2)){
+            lua_call(L, 0, 0);
+        }
     }
     lua_settop(L, 0);
 
-    // clock.cleanup()
+    // clock.cleanup() - only if clock exists
     lua_getglobal(L, "clock"); // @1
-    lua_getfield(L, 1, "cleanup");
-    lua_call(L, 0, 0);
+    if(!lua_isnil(L, 1)){
+        lua_getfield(L, 1, "cleanup");
+        if(!lua_isnil(L, 2)){
+            lua_call(L, 0, 0);
+        }
+    }
     lua_settop(L, 0);
 
-    // hotswap.cleanup()
+    // hotswap.cleanup() - only if hotswap exists
     lua_getglobal(L, "hotswap"); // @1
-    lua_getfield(L, 1, "cleanup");
-    lua_call(L, 0, 0);
+    if(!lua_isnil(L, 1)){
+        lua_getfield(L, 1, "cleanup");
+        if(!lua_isnil(L, 2)){
+            lua_call(L, 0, 0);
+        }
+    }
     lua_settop(L, 0);
 
     return 0;

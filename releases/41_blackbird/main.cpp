@@ -1236,6 +1236,17 @@ public:
     lua_getglobal(L, "_c");
     lua_setglobal(L, "crow");
     
+    // Set up crow.reset and crow.init functions (from l_crowlib_crow_reset in l_crowlib.c)
+    // This is normally done by l_crowlib_init(), but we can't call that without loading libraries twice
+    extern int l_crowlib_crow_reset(lua_State* L);
+    lua_getglobal(L, "crow");       // Get crow table
+    lua_pushcfunction(L, l_crowlib_crow_reset);
+    lua_setfield(L, -2, "reset");   // Set crow.reset
+    lua_pushcfunction(L, l_crowlib_crow_reset);
+    lua_setfield(L, -2, "init");    // Set crow.init (alias for reset)
+    lua_pop(L, 1);                  // Pop crow table
+    printf("crow.reset and crow.init functions registered\n\r");
+    
     // Set up crow.tell to point to the global tell() function (for sending to druid)
     // This is what l_crowlib_init() does, but we do it manually to avoid loading all libraries
     lua_getglobal(L, "crow");       // Get crow table (should exist from crowlib.lua)
@@ -2235,8 +2246,7 @@ public:
                 } else {
                     tud_cdc_write_str(" Loaded: First.lua (default)\n\r");
                     tud_cdc_write_flush();
-                    // Call crow.reset() and init() like real crow does
-                    lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                    // Call init() like real crow does (no crow.reset() before init on startup)
                     lua_manager->evaluate_safe("if init then init() end");
                 }
                 break;
@@ -2258,8 +2268,7 @@ public:
                         }
                         tud_cdc_write_str(msg);
                         tud_cdc_write_flush();
-                        // Call crow.reset() and init() like real crow does
-                        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                        // Call init() like real crow does (no crow.reset() before init on startup)
                         lua_manager->evaluate_safe("if init then init() end");
                     } else {
                         tud_cdc_write_str(" Failed to load user script from flash, loading First.lua\n\r");
@@ -2269,8 +2278,7 @@ public:
                             && lua_pcall(lua_manager->L, 0, 0, 0) == LUA_OK) {
                             tud_cdc_write_str(" Loaded First.lua fallback\n\r");
                             tud_cdc_write_flush();
-                            // Call crow.reset() and init() for fallback too
-                            lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                            // Call init() like real crow does (no crow.reset() before init on startup)
                             lua_manager->evaluate_safe("if init then init() end");
                         } else {
                             tud_cdc_write_str(" Failed to load First.lua fallback\n\r");
@@ -2761,10 +2769,8 @@ public:
                     
                     // Run script in RAM (temporary) - matches crow's REPL_upload(0)
                     if (lua_manager->evaluate_safe(g_new_script)) {
-                        // 6. Reset crow modules to defaults (calls crow.reset() in Lua)
-                        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
                         
-                        // 7. Clear user globals using Crow's _user table approach
+                        // Clear user globals using Crow's _user table approach
                         lua_manager->evaluate_safe(
                             "if _user then "
                             "  for k,_ in pairs(_user) do "
@@ -2774,10 +2780,11 @@ public:
                             "_G._user = {}"
                         );
                         
-                        // 8. Garbage collect for cleanup
+                        // Garbage collect for cleanup
                         lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
                         
                         // Script loaded successfully - now call init() to start it (like Lua_crowbegin)
+                        // Real crow does NOT call crow.reset() before init() on script upload
                         lua_manager->evaluate_safe("if init then init() end");
                         tud_cdc_write_str("^^ready()\n\r"); // Inform host that script is running
                         // Silent success - script is now running
@@ -2860,10 +2867,19 @@ public:
                 if (FlashStorage::set_default_script_mode()) {
                     
                     tud_cdc_write_str("User script cleared!\n\r");
-                    tud_cdc_write_str("First.lua will load on next boot.\n\r");
-                    tud_cdc_write_str("\n\r");
-                    tud_cdc_write_str("Press the RESET button (next to card slot)\n\r");
-                    tud_cdc_write_str("on your Workshop Computer to load First.lua.\n\r");
+                    tud_cdc_write_flush();
+                    
+                    // Reset Lua environment immediately (matches real crow behavior)
+                    // This will call crow.reset() which calls public.clear()
+                    // which sends ^^pub("_clear")
+                    if (lua_manager) {
+                        // Call crow.reset() to clear state and trigger public.clear()
+                        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                        
+                        // Call init() if it exists (but there's no user script now)
+                        lua_manager->evaluate_safe("if init then init() end");
+                    }
+                    
                     tud_cdc_write_str("========================================\n\r");
                     tud_cdc_write_str("\n\r");
                     tud_cdc_write_flush();
