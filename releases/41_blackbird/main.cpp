@@ -157,7 +157,7 @@ static void set_input_state_simple(int channel, int16_t rawValue) {
 }
 
 // Update stream-equivalent values (called from main loop, not ISR)
-// Uses same denoising logic as stream callback: 10mV threshold + 10ms timeout
+// Uses same denoising logic as stream callback: 10mV threshold + 5ms timeout
 static void update_input_stream_values() {
     uint32_t now = time_us_32();
     
@@ -172,7 +172,7 @@ static void update_input_stream_values() {
         
         // Update if significant change (>10mV) OR timeout (10ms) OR first run
         bool significant_change = (delta > 0.01f);  // 10mV threshold
-        bool timeout = (time_since_update > 10000); // 10ms timeout
+        bool timeout = (time_since_update > 5000); // 5ms timeout
         
         if (significant_change || timeout || g_input_stream_last_update[ch] == 0) {
             g_input_stream_volts[ch] = current_volts;
@@ -189,9 +189,9 @@ static void update_input_stream_values() {
         float delta = fabsf(current_volts - g_audioin_stream_volts[ch]);
         uint32_t time_since_update = now - g_audioin_stream_last_update[ch];
         
-        // Update if significant change (>10mV) OR timeout (10ms) OR first run
+        // Update if significant change (>10mV) OR timeout (5ms) OR first run
         bool significant_change = (delta > 0.01f);  // 10mV threshold
-        bool timeout = (time_since_update > 10000); // 10ms timeout
+        bool timeout = (time_since_update > 5000); // 5ms timeout
         
         if (significant_change || timeout || g_audioin_stream_last_update[ch] == 0) {
             g_audioin_stream_volts[ch] = current_volts;
