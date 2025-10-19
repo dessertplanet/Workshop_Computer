@@ -81,9 +81,14 @@ int l_bootstrap_c_tell(lua_State* L) {
             Caw_printf("^^%s(%s)", event_type, luaL_checkstring(L, 2));
             break;
         case 3:
-            Caw_printf("^^%s(%s,%s)", event_type, 
-                       luaL_checkstring(L, 2),
-                       luaL_checkstring(L, 3));
+            // Check if arg 3 is a table - if so, convert to "[table]" string
+            if (lua_istable(L, 3)) {
+                Caw_printf("^^%s(%s,[table])", event_type, luaL_checkstring(L, 2));
+            } else {
+                Caw_printf("^^%s(%s,%s)", event_type, 
+                           luaL_checkstring(L, 2),
+                           luaL_checkstring(L, 3));
+            }
             break;
         case 4:
             Caw_printf("^^%s(%s,%s,%s)", event_type,

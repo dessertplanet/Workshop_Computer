@@ -635,6 +635,7 @@ static int pulseout_call(lua_State* L) {
                 lua_pushstring(L, "output");
                 lua_pushinteger(L, idx + 3);  // Pulse outputs are logical channels 3 & 4
                 lua_pushvalue(L, 2);  // Push the action argument
+                
                 if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
                     const char* error = lua_tostring(L, -1);
                     if (tud_cdc_connected() && error) {
@@ -1223,42 +1224,18 @@ public:
     lua_register(L, "clock_internal_start", lua_clock_internal_start);
     lua_register(L, "clock_internal_stop", lua_clock_internal_stop);
     
-    // Create _c table manually (minimal bootstrap without l_bootstrap_init)
-    // We can't use l_bootstrap_init because it loads all libraries again via l_crowlib_init
-    printf("Creating _c table...\n\r");
+    // Create _c table with l_bootstrap_c_tell (handles both hardware and crow protocol)
     lua_newtable(L);
     lua_pushcfunction(L, l_bootstrap_c_tell);
     lua_setfield(L, -2, "tell");
     lua_setglobal(L, "_c");
-    printf("_c table created with tell function\n\r");
     
-    // crow = _c (for compatibility)
-    lua_getglobal(L, "_c");
+    // Create crow table as a SEPARATE table, but with the same tell function
+    // This prevents the aliasing bug where crow.tell = tell would overwrite _c.tell
+    lua_newtable(L);
+    lua_pushcfunction(L, l_bootstrap_c_tell);
+    lua_setfield(L, -2, "tell");
     lua_setglobal(L, "crow");
-    
-    // Set up crow.reset and crow.init functions (from l_crowlib_crow_reset in l_crowlib.c)
-    // This is normally done by l_crowlib_init(), but we can't call that without loading libraries twice
-    extern int l_crowlib_crow_reset(lua_State* L);
-    lua_getglobal(L, "crow");       // Get crow table
-    lua_pushcfunction(L, l_crowlib_crow_reset);
-    lua_setfield(L, -2, "reset");   // Set crow.reset
-    lua_pushcfunction(L, l_crowlib_crow_reset);
-    lua_setfield(L, -2, "init");    // Set crow.init (alias for reset)
-    lua_pop(L, 1);                  // Pop crow table
-    printf("crow.reset and crow.init functions registered\n\r");
-    
-    // Set up crow.tell to point to the global tell() function (for sending to druid)
-    // This is what l_crowlib_init() does, but we do it manually to avoid loading all libraries
-    lua_getglobal(L, "crow");       // Get crow table (should exist from crowlib.lua)
-    if (lua_isnil(L, -1)) {
-        lua_pop(L, 1);              // Pop nil
-        lua_newtable(L);            // Create crow table
-        lua_setglobal(L, "crow");   // Set it as global
-        lua_getglobal(L, "crow");   // Get it back
-    }
-    lua_getglobal(L, "tell");       // Get the global tell function
-    lua_setfield(L, -2, "tell");    // Set crow.tell = tell
-    lua_pop(L, 1);                  // Pop crow table
     
     // NOTE: _c table is now created in l_bootstrap.c with l_bootstrap_c_tell
     // That function handles both hardware commands (output, stream, etc) 
@@ -2016,16 +1993,16 @@ static volatile uint32_t g_new_script_len = 0;
 static char g_new_script_name[64] = "";  // Store script name from first comment line
 
 // Hardware timer-based PulseOut2 performance monitoring (outside class to avoid C++ issues)
-static volatile bool g_pulse2_state = false;
-static volatile uint32_t g_pulse2_counter = 0;
-static struct repeating_timer g_pulse2_timer;
+// static volatile bool g_pulse2_state = false;
+// static volatile uint32_t g_pulse2_counter = 0;
+// static struct repeating_timer g_pulse2_timer;
 
-static bool __not_in_flash_func(pulse2_timer_callback)(struct repeating_timer *t) {
-    g_pulse2_state = !g_pulse2_state;
-    gpio_put(PULSE_2_RAW_OUT, !g_pulse2_state);
-    g_pulse2_counter++;
-    return true;
-}
+// static bool __not_in_flash_func(pulse2_timer_callback)(struct repeating_timer *t) {
+//     g_pulse2_state = !g_pulse2_state;
+//     gpio_put(PULSE_2_RAW_OUT, !g_pulse2_state);
+//     g_pulse2_counter++;
+//     return true;
+// }
 
 // Try to extract script name from first comment line (e.g., "-- Fiirst.lua")
 static void extract_script_name(const char* script, uint32_t length) {
@@ -2226,10 +2203,11 @@ public:
         FlashStorage::init();
         
         lua_manager = new LuaManager();
-        
-        if (!add_repeating_timer_us(-4000, pulse2_timer_callback, NULL, &g_pulse2_timer)) {
-            printf("Failed to start PulseOut2 timer\n");
-        }
+       
+        //REMOVED: timer for perf monitoring
+        // if (!add_repeating_timer_us(-4000, pulse2_timer_callback, NULL, &g_pulse2_timer)) {
+        //     printf("Failed to start PulseOut2 timer\n");
+        // }
     }
     
     // Load boot script from flash (called after hardware init)
