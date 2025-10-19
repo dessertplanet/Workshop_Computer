@@ -79,6 +79,12 @@ static volatile int32_t g_output_state_mv[4] = {0, 0, 0, 0};
 static volatile int32_t g_input_state_q12[2] = {0, 0};
 static volatile int16_t g_audioin_raw[2] = {0, 0};
 
+// Stream-equivalent values: Always maintained for .volts queries (matches crow behavior)
+static float g_input_stream_volts[2] = {0.0f, 0.0f};
+static uint32_t g_input_stream_last_update[2] = {0, 0};
+static float g_audioin_stream_volts[2] = {0.0f, 0.0f};
+static uint32_t g_audioin_stream_last_update[2] = {0, 0};
+
 // Pulse output state tracking (set from Lua layer)
 static volatile bool g_pulse_out_state[2] = {false, false};
 
@@ -138,7 +144,8 @@ static void set_output_state_simple(int channel, int32_t value_mv) {
 
 extern "C" float get_input_state_simple(int channel) {
     if (channel >= 0 && channel < 2) {
-        return (float) g_input_state_q12[channel] * (6.0f / 2047.0f);
+        // Return stream-equivalent value (always maintained, matches crow .volts behavior)
+        return g_input_stream_volts[channel];
     }
     return 0.0f;
 }
@@ -146,6 +153,50 @@ extern "C" float get_input_state_simple(int channel) {
 static void set_input_state_simple(int channel, int16_t rawValue) {
     if (channel >= 0 && channel < 2) {
         g_input_state_q12[channel] = rawValue;
+    }
+}
+
+// Update stream-equivalent values (called from main loop, not ISR)
+// Uses same denoising logic as stream callback: 10mV threshold + 10ms timeout
+static void update_input_stream_values() {
+    uint32_t now = time_us_32();
+    
+    // Update CV inputs
+    for (int ch = 0; ch < 2; ch++) {
+        // Get current raw value
+        float current_volts = (float) g_input_state_q12[ch] * (6.0f / 2047.0f);
+        
+        // Apply same denoising as stream callback
+        float delta = fabsf(current_volts - g_input_stream_volts[ch]);
+        uint32_t time_since_update = now - g_input_stream_last_update[ch];
+        
+        // Update if significant change (>10mV) OR timeout (10ms) OR first run
+        bool significant_change = (delta > 0.01f);  // 10mV threshold
+        bool timeout = (time_since_update > 10000); // 10ms timeout
+        
+        if (significant_change || timeout || g_input_stream_last_update[ch] == 0) {
+            g_input_stream_volts[ch] = current_volts;
+            g_input_stream_last_update[ch] = now;
+        }
+    }
+    
+    // Update audio inputs
+    for (int ch = 0; ch < 2; ch++) {
+        // Get current raw value
+        float current_volts = (float) g_audioin_raw[ch] * (6.0f / 2047.0f);
+        
+        // Apply same denoising as stream callback
+        float delta = fabsf(current_volts - g_audioin_stream_volts[ch]);
+        uint32_t time_since_update = now - g_audioin_stream_last_update[ch];
+        
+        // Update if significant change (>10mV) OR timeout (10ms) OR first run
+        bool significant_change = (delta > 0.01f);  // 10mV threshold
+        bool timeout = (time_since_update > 10000); // 10ms timeout
+        
+        if (significant_change || timeout || g_audioin_stream_last_update[ch] == 0) {
+            g_audioin_stream_volts[ch] = current_volts;
+            g_audioin_stream_last_update[ch] = now;
+        }
     }
 }
 
@@ -159,8 +210,8 @@ static void set_audioin_raw(int channel, int16_t rawValue) {
 // Convert to volts when accessed from Lua (outside ISR)
 extern "C" float get_audioin_volts(int channel) {
     if (channel >= 0 && channel < 2) {
-        // Convert 12-bit signed value to volts: -2048 to +2047 -> -6V to +6V
-        return (float) g_audioin_raw[channel] * (6.0f / 2047.0f);
+        // Return stream-equivalent value (always maintained, matches crow .volts behavior)
+        return g_audioin_stream_volts[channel];
     }
     return 0.0f;
 }
@@ -2348,6 +2399,9 @@ public:
             extern void Detect_process_events_core0(void);
             Detect_process_events_core0();
             
+            // Update stream-equivalent values for .volts queries (always maintained)
+            update_input_stream_values();
+            
             // *** CRITICAL: Process timer/slopes updates at ~1.5kHz (OUTSIDE ISR!) ***
             uint32_t now_us = time_us_32();
             if (now_us - last_timer_process_us >= timer_interval_us) {
@@ -3574,30 +3628,17 @@ int LuaManager::lua_io_get_input(lua_State* L) {
 // Mode-specific detection callbacks - OPTIMIZED for direct execution
 static constexpr bool kDetectionDebug = false;
 
-// Lock-free stream callback with time-based batching - posts to queue without blocking ISR
+// Lock-free stream callback - posts stream-equivalent values (always maintained)
 static void stream_callback(int channel, float value) {
-    // OPTIMIZATION: Time-based batching to reduce queue overhead
-    // Only post if: 1) Value changed significantly, OR 2) Timeout expired
-    static float last_value[8] = {0};
-    static uint32_t last_post_time[8] = {0};
+    // Use stream-equivalent value (already denoised by update_input_stream_values)
+    // This ensures stream callbacks and .volts queries always see the same value
+    float stream_value = (channel >= 0 && channel < 2) ? g_input_stream_volts[channel] : value;
     
-    uint32_t now = time_us_32();
-    float delta = fabsf(value - last_value[channel]);
-    uint32_t time_since_post = now - last_post_time[channel];
-    
-    // Post if significant change (>10mV) OR timeout (10ms for stream mode)
-    bool significant_change = (delta > 0.01f);  // 10mV threshold
-    bool timeout = (time_since_post > 10000);    // 10ms timeout
-    
-    if (significant_change || timeout) {
-        if (input_lockfree_post(channel, value, 1)) {  // type=1 for stream
-            last_value[channel] = value;
-            last_post_time[channel] = now;
-        } else {
-            static uint32_t drop_count = 0;
-            if (++drop_count % 100 == 0) {
-                queue_debug_message("Stream lock-free queue full, dropped %lu events", drop_count);
-            }
+    // Post to lock-free queue
+    if (!input_lockfree_post(channel, stream_value, 1)) {  // type=1 for stream
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            queue_debug_message("Stream lock-free queue full, dropped %lu events", drop_count);
         }
     }
 }
