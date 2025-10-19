@@ -3301,11 +3301,11 @@ int LuaManager::lua_set_output_scale(lua_State* L) {
         return luaL_error(L, "Invalid channel: %d (must be 1-4)", channel + 1);
     }
     
-    // Case 1: No scale argument -> chromatic quantization (semitones)
-    if (nargs == 1) {
+    // Case 1: No scale argument OR empty table -> chromatic quantization (semitones)
+    if (nargs == 1 || (lua_istable(L, 2) && lua_rawlen(L, 2) == 0)) {
         float divs[12] = {0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0};
         AShaper_set_scale(channel, divs, 12, 12.0, 1.0);
-        lua_pop(L, 1);
+        lua_pop(L, nargs);
         return 0;
     }
     
@@ -3326,7 +3326,7 @@ int LuaManager::lua_set_output_scale(lua_State* L) {
     }
     
     int tlen = lua_rawlen(L, 2);
-    if (tlen == 0 || tlen > MAX_DIV_LIST_LEN) {
+    if (tlen > MAX_DIV_LIST_LEN) {
         lua_pop(L, nargs);
         return luaL_error(L, "Scale table length must be 1-%d", MAX_DIV_LIST_LEN);
     }
