@@ -107,6 +107,9 @@ static volatile bool g_pulsein_state[2] = {false, false};
 static volatile bool g_pulsein_edge_detected[2] = {false, false};
 static volatile bool g_pulsein_edge_state[2] = {false, false};
 
+// Clock edge pending flags (deferred from ISR to Core 0 to avoid FP math in ISR)
+static volatile bool g_pulsein_clock_edge_pending[2] = {false, false};
+
 // ========================================================================
 // AUDIO-RATE NOISE GENERATOR (48kHz) - INTEGER MATH ONLY
 // ========================================================================
@@ -2459,6 +2462,14 @@ public:
                 first_switch_check = false;
             }
             
+            // Process clock edges deferred from ISR (avoids FP math in ISR)
+            for (int i = 0; i < 2; i++) {
+                if (g_pulsein_clock_edge_pending[i]) {
+                    g_pulsein_clock_edge_pending[i] = false;
+                    clock_crow_handle_clock();  // Safe on Core 0
+                }
+            }
+            
             // Check for pulse input changes and fire callbacks
             // Edge detection happens at 48kHz in ProcessSample(), we just check flags here
             for (int i = 0; i < 2; i++) {
@@ -3059,7 +3070,7 @@ public:
         } else if (g_pulsein_mode[0] == 2) {
             // Clock mode - only rising edges
             if (PulseIn1RisingEdge()) {
-                clock_crow_handle_clock();
+                g_pulsein_clock_edge_pending[0] = true;  // Defer to Core 0 (avoids FP math in ISR)
             }
         }
         if (g_pulsein_mode[1] == 1) {
@@ -3073,7 +3084,7 @@ public:
         } else if (g_pulsein_mode[1] == 2) {
             // Clock mode - only rising edges
             if (PulseIn2RisingEdge()) {
-                clock_crow_handle_clock();
+                g_pulsein_clock_edge_pending[1] = true;  // Defer to Core 0 (avoids FP math in ISR)
             }
         }
         
