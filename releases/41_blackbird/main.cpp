@@ -1772,6 +1772,7 @@ public:
                     -- Cancel existing clock coroutine if any
                     if self.ckcoro then 
                         clock.cancel(self.ckcoro)
+                        self.ckcoro = nil  -- Clear reference to prevent memory leak
                     end
                     
                     -- Start new clock coroutine
