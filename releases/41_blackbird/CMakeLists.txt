@@ -200,6 +200,14 @@ target_sources(${CARD_NAME} PRIVATE
 target_compile_definitions(${CARD_NAME} PRIVATE ${TEST_DEFINE})
 target_include_directories(${CARD_NAME} PRIVATE ${CMAKE_BINARY_DIR})
 
+# Performance optimizations for main code
+target_compile_options(${CARD_NAME} PRIVATE
+    -O3                    # Maximum speed optimization
+    -ffast-math           # Faster floating-point (safe for audio DSP)
+    # Note: -fno-exceptions and -fno-rtti already set by pico-sdk
+    # Note: -flto disabled due to naming conflict with clock.h/clock()
+)
+
 
 # Copy UF2 files to UF2 directory with descriptive names
 add_custom_command(
