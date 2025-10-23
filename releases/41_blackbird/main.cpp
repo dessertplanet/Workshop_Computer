@@ -120,6 +120,7 @@ static volatile bool g_led_pulse_snapshot[2] = {false, false};
 // ========================================================================
 // Noise generator state for audio-rate output
 static volatile bool g_noise_active[4] = {false, false, false, false};
+static volatile uint8_t g_noise_active_mask = 0;  // Bitmask for fast checking if ANY noise is active
 static volatile int32_t g_noise_gain[4] = {0, 0, 0, 0};  // Gain in fixed-point (0-6000 mV)
 static volatile uint32_t g_noise_lock_counter[4] = {0, 0, 0, 0};  // Prevent clearing noise for a few calls
 
@@ -2782,6 +2783,7 @@ public:
                         g_noise_gain[i] = 0;
                         g_noise_lock_counter[i] = 0;
                     }
+                    g_noise_active_mask = 0;  // Clear all bits in mask
                     
                     // 3b. Stop all output slopes
                     for (int i = 0; i < 4; i++) {
@@ -2860,6 +2862,7 @@ public:
                         g_noise_gain[i] = 0;
                         g_noise_lock_counter[i] = 0;
                     }
+                    g_noise_active_mask = 0;  // Clear all bits in mask
                     
                     // 4. Clear event queue
                     events_clear();
@@ -3134,10 +3137,12 @@ public:
         
         // === AUDIO-RATE NOISE GENERATION (48kHz) - INTEGER MATH ONLY ===
         // Generate and output noise for any active channels
-        for (int ch = 0; ch < 4; ch++) {
-            if (g_noise_active[ch]) {
-                // Generate noise in millivolts (-6000 to +6000) using integer math only
-                int32_t noise_mv = generate_audio_noise_mv(g_noise_gain[ch]);
+        // OPTIMIZATION: Fast check if ANY noise is active before iterating channels
+        if (g_noise_active_mask) {
+            for (int ch = 0; ch < 4; ch++) {
+                if (g_noise_active_mask & (1 << ch)) {
+                    // Generate noise in millivolts (-6000 to +6000) using integer math only
+                    int32_t noise_mv = generate_audio_noise_mv(g_noise_gain[ch]);
                 
                 // Update state for queries
                 g_output_state_mv[ch] = noise_mv;
@@ -3162,16 +3167,18 @@ public:
                     }
                 }
             }
-        }
+        } 
+     } // end if (g_noise_active_mask)
         
         // === PULSE OUTPUT 2: Controlled by Lua (default: follows switch) ===
         // Default behavior is set up in Lua on startup
         // Users can change by calling bb.pulseout[2]:clock() or setting bb.pulseout[2].action
         
         // === LED OUTPUT VISUALIZATION ===
-        // Snapshot values for Core 0 LED update (every 480 samples = ~100Hz at 48kHz)
+        // Snapshot values for Core 0 LED update (every 800 samples = 60Hz at 48kHz)
+        // 60Hz is the human eye's temporal resolution limit, no benefit to higher rates
         static int led_update_counter = 0;
-        if (++led_update_counter >= 480) {
+        if (++led_update_counter >= 800) {
             led_update_counter = 0;
             
             // Take atomic snapshot of output states for Core 0 to process
@@ -3216,6 +3223,7 @@ int LuaManager::lua_casl_action(lua_State* L) {
         // If lock counter is 10, noise was just set in describe phase, don't clear
         if (g_noise_lock_counter[internal] != 10) {
             g_noise_active[internal] = false;
+            g_noise_active_mask &= ~(1 << internal);  // Clear bit in mask
             g_noise_gain[internal] = 0;
             g_noise_lock_counter[internal] = 0;
         }
@@ -3295,6 +3303,7 @@ int LuaManager::lua_LL_set_noise(lua_State* L) {
     S_toward(ch_idx, 0.0, 0.0, SHAPE_Linear, NULL);
     
     g_noise_active[ch_idx] = true;
+    g_noise_active_mask |= (1 << ch_idx);  // Set bit in mask for fast checking
     // Convert gain to millivolts (0-6000 mV) as integer
     g_noise_gain[ch_idx] = (int32_t)(gain * 6000.0f);
     // Set lock counter to prevent immediate clearing (ignore next few hardware_output_set_voltage calls)
@@ -3314,6 +3323,7 @@ int LuaManager::lua_LL_clear_noise(lua_State* L) {
     
     int ch_idx = channel - 1;
     g_noise_active[ch_idx] = false;
+    g_noise_active_mask &= ~(1 << ch_idx);  // Clear bit in mask
     g_noise_gain[ch_idx] = 0;  // Clear integer gain
     g_noise_lock_counter[ch_idx] = 0;  // Clear lock
     
@@ -3603,6 +3613,7 @@ int LuaManager::lua_c_tell(lua_State* L) {
                 int ch_idx = channel - 1;
                 if (ch_idx >= 0 && ch_idx < 4 && g_noise_active[ch_idx]) {
                     g_noise_active[ch_idx] = false;
+                    g_noise_active_mask &= ~(1 << ch_idx);  // Clear bit in mask
                     g_noise_gain[ch_idx] = 0;
                     g_noise_lock_counter[ch_idx] = 0;
                 }
@@ -4664,6 +4675,7 @@ extern "C" void hardware_output_set_voltage(int channel, float voltage) {
         // Clear noise and let the new action take control
         if (g_noise_active[ch_idx]) {
             g_noise_active[ch_idx] = false;
+            g_noise_active_mask &= ~(1 << ch_idx);  // Clear bit in mask
             g_noise_gain[ch_idx] = 0;
             g_noise_lock_counter[ch_idx] = 0;
         }
