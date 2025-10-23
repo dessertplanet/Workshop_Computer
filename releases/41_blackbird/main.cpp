@@ -127,6 +127,13 @@ static volatile uint32_t g_noise_lock_counter[4] = {0, 0, 0, 0};  // Prevent cle
 // Fast xorshift32 PRNG state for audio-rate noise
 static uint32_t g_noise_state = 0xDEADBEEF;
 
+// ========================================================================
+// PERFORMANCE MONITORING
+// ========================================================================
+static volatile bool g_performance_warning = false;
+static volatile uint32_t g_worst_case_us = 0;
+static volatile uint32_t g_overrun_count = 0;
+
 // Fast audio-rate noise generation in ISR - NO FLOATING POINT
 // Returns noise value in millivolts (-6000 to +6000)
 static inline int32_t generate_audio_noise_mv(int32_t gain_mv) {
@@ -804,6 +811,7 @@ private:
     static int lua_unique_card_id(lua_State* L);
     static int lua_unique_id(lua_State* L);
     static int lua_memstats(lua_State* L);
+    static int lua_perf_stats(lua_State* L);
     static int lua_pub_view_in(lua_State* L);
     static int lua_pub_view_out(lua_State* L);
     static int lua_tell(lua_State* L);
@@ -1188,6 +1196,9 @@ public:
     
     // Add memory statistics function for debugging
     lua_register(L, "memstats", lua_memstats);
+    
+    // Add performance statistics function for monitoring
+    lua_register(L, "perf_stats", lua_perf_stats);
     
     // Add public view functions for norns integration
     lua_register(L, "pub_view_in", lua_pub_view_in);
@@ -2400,6 +2411,19 @@ public:
             // Handle USB input directly - no mailbox needed
             handle_usb_input();
             
+            // Check for performance warnings from ProcessSample
+            if (g_performance_warning) {
+                g_performance_warning = false;  // Clear flag
+                char perf_msg[256];
+                snprintf(perf_msg, sizeof(perf_msg), 
+                         "\n\r[PERF WARNING] ProcessSample exceeded budget: worst=%luus, overruns=%lu\n\r"
+                         "  Use perf_stats() in Lua to query/reset worst case timing.\n\r",
+                         (unsigned long)g_worst_case_us, (unsigned long)g_overrun_count);
+                tud_cdc_write_str(perf_msg);
+                tud_cdc_write_flush();
+                // Note: Don't reset g_worst_case_us here - let user query via perf_stats()
+            }
+            
             // Process queued messages from audio thread
             process_queued_messages();
             
@@ -3076,6 +3100,9 @@ public:
     // NO output processing in ISR - prevents multiplexer misalignment
     virtual void ProcessSample() override
     {
+        // Performance monitoring: capture start time (low-cost)
+        uint32_t start_time = time_us_32();
+        
         // Increment sample counter for timer system (lightweight)
         extern volatile uint64_t global_sample_counter;
         global_sample_counter++;
@@ -3191,6 +3218,30 @@ public:
             
             // Signal Core 0 to update LEDs
             g_led_update_pending = true;
+        }
+        
+        // === PERFORMANCE MONITORING (low-cost) ===
+        // Check if ProcessSample exceeded time budget
+        // At 48kHz, each sample has ~20.8us budget. Warn at 18us (87% utilization)
+        uint32_t elapsed = time_us_32() - start_time;
+        
+        // Always track worst-case execution time (available via perf_stats())
+        if (elapsed > g_worst_case_us) {
+            g_worst_case_us = elapsed;
+        }
+        
+        // Warn if exceeding budget threshold
+        if (elapsed > 18) {  // Threshold: 18 microseconds
+            g_overrun_count++;
+            
+            static uint32_t last_report_time = 0;
+            uint32_t now = time_us_32();
+            
+            // Report at most once per second to avoid flooding
+            if ((now - last_report_time) > 1000000) {
+                g_performance_warning = true;
+                last_report_time = now;
+            }
         }
     }
 };
@@ -4655,6 +4706,70 @@ int LuaManager::lua_memstats(lua_State* L) {
     tud_cdc_write_flush();
     
     return 0;
+}
+
+// Implementation of lua_perf_stats (performance monitoring statistics)
+// Usage: perf_stats()              -- prints formatted stats, resets counter
+//        perf_stats(false)         -- prints formatted stats, doesn't reset
+//        val = perf_stats("raw")   -- returns raw value (microseconds), resets
+//        val = perf_stats("raw", false) -- returns raw value, doesn't reset
+int LuaManager::lua_perf_stats(lua_State* L) {
+    int nargs = lua_gettop(L);
+    bool reset = true;
+    bool raw_mode = false;
+    
+    // Parse arguments
+    if (nargs >= 1) {
+        if (lua_isstring(L, 1)) {
+            const char* mode = lua_tostring(L, 1);
+            if (strcmp(mode, "raw") == 0) {
+                raw_mode = true;
+            }
+            // Check for second argument (reset flag)
+            if (nargs >= 2) {
+                reset = lua_toboolean(L, 2);
+            }
+        } else {
+            // First arg is boolean (reset flag)
+            reset = lua_toboolean(L, 1);
+        }
+    }
+    
+    // Get current worst-case value
+    uint32_t worst = g_worst_case_us;
+    uint32_t overruns = g_overrun_count;
+    
+    if (raw_mode) {
+        // Raw mode: just return the value
+        lua_pushinteger(L, worst);
+        if (reset) {
+            g_worst_case_us = 0;
+        }
+        return 1;
+    } else {
+        // Default mode: print formatted output via TinyUSB CDC
+        if (tud_cdc_connected()) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), 
+                     "ProcessSample Performance:\n\r"
+                     "  Worst case: %lu microseconds\n\r"
+                     "  Budget: 20.8us (48kHz sample rate)\n\r"
+                     "  Utilization: %.1f%%\n\r"
+                     "  Overruns (>18us): %lu\n\r",
+                     (unsigned long)worst,
+                     (worst / 20.8f) * 100.0f,
+                     (unsigned long)overruns);
+            tud_cdc_write_str(msg);
+            tud_cdc_write_flush();
+        }
+        
+        // Optionally reset the tracker
+        if (reset) {
+            g_worst_case_us = 0;
+        }
+        
+        return 0;  // No return value in print mode
+    }
 }
 
 // Implementation of C interface function (after BlackbirdCrow class is fully defined)
