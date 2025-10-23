@@ -31,6 +31,18 @@ end
 clock.cancel = function(coro_id)
   clock_cancel(coro_id)
   clock.threads[coro_id] = nil
+  
+  -- Reset ID counter when all threads are cancelled to prevent memory leak
+  local has_active = false
+  for _, coro in pairs(clock.threads) do
+    if coro then 
+      has_active = true
+      break
+    end
+  end
+  if not has_active then
+    clock.id = 0  -- Reset counter when no active threads
+  end
 end
 
 --- yield and schedule waking up the coroutine in s seconds;

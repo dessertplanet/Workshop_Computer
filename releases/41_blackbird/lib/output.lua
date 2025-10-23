@@ -27,12 +27,18 @@ end
 
 function Output.clock(self, div)
     if type(div) == 'string' then -- 'off' or 'none' will cancel a running output clock
-        if self.ckcoro then clock.cancel(self.ckcoro) end
+        if self.ckcoro then 
+            clock.cancel(self.ckcoro)
+            self.ckcoro = nil  -- Clear reference to prevent memory leak
+        end
         return
     end
     self.clock_div = div or self.clock_div
     self.asl:describe(pulse())
-    if self.ckcoro then clock.cancel(self.ckcoro) end -- replace the existing coro
+    if self.ckcoro then 
+        clock.cancel(self.ckcoro)
+        self.ckcoro = nil  -- Clear reference before creating new coroutine
+    end
     self.ckcoro = clock.run(function()
             while true do
                 clock.sync(self.clock_div)

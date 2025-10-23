@@ -196,6 +196,7 @@ end
 function TL:stop()
     if self.coro then -- check the coroutine exists (won't if not yet :play'd)
         clk.cancel(self.coro)
+        self.coro = nil  -- Clear reference to prevent memory leak
     end
 end
 
