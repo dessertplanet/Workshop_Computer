@@ -110,6 +110,11 @@ static volatile bool g_pulsein_edge_state[2] = {false, false};
 // Clock edge pending flags (deferred from ISR to Core 0 to avoid FP math in ISR)
 static volatile bool g_pulsein_clock_edge_pending[2] = {false, false};
 
+// LED update coordination between cores
+static volatile bool g_led_update_pending = false;
+static volatile int32_t g_led_output_snapshot[4] = {0, 0, 0, 0};
+static volatile bool g_led_pulse_snapshot[2] = {false, false};
+
 // ========================================================================
 // AUDIO-RATE NOISE GENERATOR (48kHz) - INTEGER MATH ONLY
 // ========================================================================
@@ -2470,6 +2475,41 @@ public:
                 }
             }
             
+            // *** LED UPDATE: Process LED updates from Core 1 snapshot (~100Hz) ***
+            if (g_led_update_pending) {
+                g_led_update_pending = false;
+                
+                // Read snapshot atomically (Core 1 writes these together)
+                int32_t cv1_mv = g_led_output_snapshot[0];
+                int32_t cv2_mv = g_led_output_snapshot[1];
+                int32_t audio1_mv = g_led_output_snapshot[2];
+                int32_t audio2_mv = g_led_output_snapshot[3];
+                bool pulse1 = g_led_pulse_snapshot[0];
+                bool pulse2 = g_led_pulse_snapshot[1];
+                
+                // Convert to absolute values for brightness
+                int32_t cv1_abs = (cv1_mv < 0) ? -cv1_mv : cv1_mv;
+                int32_t cv2_abs = (cv2_mv < 0) ? -cv2_mv : cv2_mv;
+                int32_t audio1_abs = (audio1_mv < 0) ? -audio1_mv : audio1_mv;
+                int32_t audio2_abs = (audio2_mv < 0) ? -audio2_mv : audio2_mv;
+                
+                // Convert mV to LED brightness (0-4095)
+                // Clamp to ±6V range (6000mV), normalize to 0-4095
+                // Using fixed-point: (abs_mv * 682) >> 10 ≈ abs_mv * (4095/6000)
+                uint16_t led0_brightness = (audio1_abs > 6000) ? 4095 : (uint16_t)((audio1_abs * 682) >> 10);
+                uint16_t led1_brightness = (audio2_abs > 6000) ? 4095 : (uint16_t)((audio2_abs * 682) >> 10);
+                uint16_t led2_brightness = (cv1_abs > 6000) ? 4095 : (uint16_t)((cv1_abs * 682) >> 10);
+                uint16_t led3_brightness = (cv2_abs > 6000) ? 4095 : (uint16_t)((cv2_abs * 682) >> 10);
+                
+                // Update LEDs (now safe on Core 0, no ISR timing impact)
+                LedBrightness(0, led0_brightness);  // LED 0 - Audio1 amplitude
+                LedBrightness(1, led1_brightness);  // LED 1 - Audio2 amplitude
+                LedBrightness(2, led2_brightness);  // LED 2 - CV1 amplitude
+                LedBrightness(3, led3_brightness);  // LED 3 - CV2 amplitude
+                LedOn(4, pulse1);  // LED 4 - Pulse1
+                LedOn(5, pulse2);  // LED 5 - Pulse2
+            }
+            
             // Check for pulse input changes and fire callbacks
             // Edge detection happens at 48kHz in ProcessSample(), we just check flags here
             for (int i = 0; i < 2; i++) {
@@ -3129,40 +3169,22 @@ public:
         // Users can change by calling bb.pulseout[2]:clock() or setting bb.pulseout[2].action
         
         // === LED OUTPUT VISUALIZATION ===
-        // Update LEDs every 480 samples (~100Hz at 48kHz)
+        // Snapshot values for Core 0 LED update (every 480 samples = ~100Hz at 48kHz)
         static int led_update_counter = 0;
         if (++led_update_counter >= 480) {
             led_update_counter = 0;
             
-            // Get output voltages in mV, convert to absolute values
-            int32_t audio1_abs = (g_output_state_mv[2] < 0) ? 0 : g_output_state_mv[2];
-            int32_t audio2_abs = (g_output_state_mv[3] < 0) ? 0 : g_output_state_mv[3];
-            int32_t cv1_abs = (g_output_state_mv[0] < 0) ? 0 : g_output_state_mv[0];
-            int32_t cv2_abs = (g_output_state_mv[1] < 0) ? 0 : g_output_state_mv[1];
+            // Take atomic snapshot of output states for Core 0 to process
+            g_led_output_snapshot[0] = g_output_state_mv[0];
+            g_led_output_snapshot[1] = g_output_state_mv[1];
+            g_led_output_snapshot[2] = g_output_state_mv[2];
+            g_led_output_snapshot[3] = g_output_state_mv[3];
+            g_led_pulse_snapshot[0] = g_pulse_out_state[0];
+            g_led_pulse_snapshot[1] = g_pulse_out_state[1];
             
-            // Convert mV to LED brightness (0-4095)
-            // Assume ±6V range (6000mV), normalize to 0-4095
-            // brightness = (abs_mv * 4095) / 6000
-            // Using shift for efficiency: (abs_mv * 4095) >> 12 approximates /4096 ≈ /6000 with scaling
-            // Better: (abs_mv * 682) >> 10 gives close to /6000 mapping (682/1024 ≈ 2/3, 4095*2/3/1024 ≈ /6000)
-            uint16_t led0_brightness = (audio1_abs > 6000) ? 4095 : (uint16_t)((audio1_abs * 682) >> 10);
-            uint16_t led1_brightness = (audio2_abs > 6000) ? 4095 : (uint16_t)((audio2_abs * 682) >> 10);
-            uint16_t led2_brightness = (cv1_abs > 6000) ? 4095 : (uint16_t)((cv1_abs * 682) >> 10);
-            uint16_t led3_brightness = (cv2_abs > 6000) ? 4095 : (uint16_t)((cv2_abs * 682) >> 10);
-            
-            // Set analog output LEDs with brightness (0-3)
-            LedBrightness(0, led0_brightness);  // LED 0 - Audio1 amplitude
-            LedBrightness(1, led1_brightness);  // LED 1 - Audio2 amplitude
-            LedBrightness(2, led2_brightness);  // LED 2 - CV1 amplitude
-            LedBrightness(3, led3_brightness);  // LED 3 - CV2 amplitude
-            
-            // Set pulse output LEDs on/off (4-5)
-            LedOn(4, g_pulse_out_state[0]); // LED 4 - Pulse1
-            LedOn(5, g_pulse_out_state[1]); // LED 5 - Pulse2
+            // Signal Core 0 to update LEDs
+            g_led_update_pending = true;
         }
-        
-        // That's it! Output processing moved to MainControlLoop()
-        // ISR time: ~5us vs. previous 500+us
     }
 };
 
