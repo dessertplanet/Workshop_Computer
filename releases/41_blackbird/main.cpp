@@ -342,7 +342,7 @@ static void process_queued_messages() {
         // Output message
         printf("%s", msg->message);
         if (!strstr(msg->message, "\n") && !strstr(msg->message, "\r")) {
-            printf("\r\n"); // Add line ending if not present
+            printf("\n\r"); // Add line ending if not present
         }
         fflush(stdout);
         
@@ -708,7 +708,7 @@ static int pulseout_call(lua_State* L) {
                     if (tud_cdc_connected() && error) {
                         tud_cdc_write_str("pulseout error: ");
                         tud_cdc_write_str(error);
-                        tud_cdc_write_str("\r\n");
+                        tud_cdc_write_str("\n\r");
                         tud_cdc_write_flush();
                     }
                     lua_pop(L, 1);
@@ -740,7 +740,7 @@ static int pulseout_call(lua_State* L) {
                     if (tud_cdc_connected() && error) {
                         tud_cdc_write_str("pulseout error: ");
                         tud_cdc_write_str(error);
-                        tud_cdc_write_str("\r\n");
+                        tud_cdc_write_str("\n\r");
                         tud_cdc_write_flush();
                     }
                     lua_pop(L, 1);
@@ -794,8 +794,7 @@ private:
             }
             lua_pop(L, 1);  // pop result
         }
-        tud_cdc_write_char('\n');  // crow line ending: LF then CR
-        tud_cdc_write_char('\r');
+        tud_cdc_write("\n\r",2);
         tud_cdc_write_flush();
         return 0;
     }
@@ -821,130 +820,130 @@ private:
 #ifdef EMBED_ALL_TESTS
     // Lua function to run enhanced multicore safety test
     static int lua_test_enhanced_multicore_safety(lua_State* L) {
-        printf("Running enhanced multicore safety test...\r\n");
+        printf("Running enhanced multicore safety test...\n\r");
         if (luaL_loadbuffer(L, (const char*)test_enhanced_multicore_safety, test_enhanced_multicore_safety_len, "test_enhanced_multicore_safety.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running enhanced multicore safety test: %s\r\n", error ? error : "unknown error");
+            printf("Error running enhanced multicore safety test: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Enhanced multicore safety test completed successfully!\r\n");
+            printf("Enhanced multicore safety test completed successfully!\n\r");
         }
         return 0;
     }
     
     // Lua function to run lock-free performance test
     static int lua_test_lockfree_performance(lua_State* L) {
-        printf("Running lock-free performance test...\r\n");
+        printf("Running lock-free performance test...\n\r");
         if (luaL_loadbuffer(L, (const char*)test_lockfree_performance, test_lockfree_performance_len, "test_lockfree_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running lock-free performance test: %s\r\n", error ? error : "unknown error");
+            printf("Error running lock-free performance test: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Lock-free performance test completed successfully!\r\n");
+            printf("Lock-free performance test completed successfully!\n\r");
         }
         return 0;
     }
     
     // Lua function to run random voltage test
     static int lua_test_random_voltage(lua_State* L) {
-        printf("Running random voltage test...\r\n");
+        printf("Running random voltage test...\n\r");
         if (luaL_loadbuffer(L, (const char*)test_random_voltage, test_random_voltage_len, "test_random_voltage.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running random voltage test: %s\r\n", error ? error : "unknown error");
+            printf("Error running random voltage test: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Random voltage test loaded successfully!\r\n");
+            printf("Random voltage test loaded successfully!\n\r");
         }
         return 0;
     }
     
     // Lua function to run Phase 2 performance test
     static int lua_test_phase2_performance(lua_State* L) {
-        printf("Running Phase 2 block processing performance test...\r\n");
+        printf("Running Phase 2 block processing performance test...\n\r");
         if (luaL_loadbuffer(L, (const char*)test_phase2_performance, test_phase2_performance_len, "test_phase2_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running Phase 2 performance test: %s\r\n", error ? error : "unknown error");
+            printf("Error running Phase 2 performance test: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Phase 2 performance test completed successfully!\r\n");
+            printf("Phase 2 performance test completed successfully!\n\r");
         }
         return 0;
     }
     
     // Lua function to run simple output test
     static int lua_test_simple_output(lua_State* L) {
-        printf("Running simple output hardware test...\r\n");
+        printf("Running simple output hardware test...\n\r");
         if (luaL_loadbuffer(L, (const char*)test_simple_output, test_simple_output_len, "test_simple_output.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running simple output test: %s\r\n", error ? error : "unknown error");
+            printf("Error running simple output test: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Simple output test completed successfully!\r\n");
+            printf("Simple output test completed successfully!\n\r");
         }
         return 0;
     }
 #elif defined(EMBED_TEST_ENHANCED_MULTICORE_SAFETY)
     // Single test: Enhanced multicore safety test
     static int lua_test_enhanced_multicore_safety(lua_State* L) {
-        printf("Running enhanced multicore safety test...\r\n");
+        printf("Running enhanced multicore safety test...\n\r");
         if (luaL_loadbuffer(L, (const char*)test_enhanced_multicore_safety, test_enhanced_multicore_safety_len, "test_enhanced_multicore_safety.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running enhanced multicore safety test: %s\r\n", error ? error : "unknown error");
+            printf("Error running enhanced multicore safety test: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Enhanced multicore safety test completed successfully!\r\n");
+            printf("Enhanced multicore safety test completed successfully!\n\r");
         }
         return 0;
     }
 #elif defined(EMBED_TEST_LOCKFREE_PERFORMANCE)
     // Single test: Lock-free performance test
     static int lua_test_lockfree_performance(lua_State* L) {
-        printf("Running lock-free performance test...\r\n");
+        printf("Running lock-free performance test...\n\r");
         if (luaL_loadbuffer(L, (const char*)test_lockfree_performance, test_lockfree_performance_len, "test_lockfree_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running lock-free performance test: %s\r\n", error ? error : "unknown error");
+            printf("Error running lock-free performance test: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Lock-free performance test completed successfully!\r\n");
+            printf("Lock-free performance test completed successfully!\n\r");
         }
         return 0;
     }
 #elif defined(EMBED_TEST_RANDOM_VOLTAGE)
     // Single test: Random voltage test
     static int lua_test_random_voltage(lua_State* L) {
-        printf("Running random voltage test...\r\n");
+        printf("Running random voltage test...\n\r");
         if (luaL_loadbuffer(L, (const char*)test_random_voltage, test_random_voltage_len, "test_random_voltage.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running random voltage test: %s\r\n", error ? error : "unknown error");
+            printf("Error running random voltage test: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Random voltage test loaded successfully!\r\n");
+            printf("Random voltage test loaded successfully!\n\r");
         }
         return 0;
     }
 #elif defined(EMBED_TEST_PHASE2_PERFORMANCE)
     // Single test: Phase 2 performance test
     static int lua_test_phase2_performance(lua_State* L) {
-        printf("Running Phase 2 block processing performance test...\r\n");
+        printf("Running Phase 2 block processing performance test...\n\r");
         if (luaL_loadbuffer(L, (const char*)test_phase2_performance, test_phase2_performance_len, "test_phase2_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running Phase 2 performance test: %s\r\n", error ? error : "unknown error");
+            printf("Error running Phase 2 performance test: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Phase 2 performance test completed successfully!\r\n");
+            printf("Phase 2 performance test completed successfully!\n\r");
         }
         return 0;
     }
 #elif defined(EMBED_TEST_SIMPLE_OUTPUT)
     // Single test: Simple output test
     static int lua_test_simple_output(lua_State* L) {
-        printf("Running simple output hardware test...\r\n");
+        printf("Running simple output hardware test...\n\r");
         if (luaL_loadbuffer(L, (const char*)test_simple_output, test_simple_output_len, "test_simple_output.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error running simple output test: %s\r\n", error ? error : "unknown error");
+            printf("Error running simple output test: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
-            printf("Simple output test completed successfully!\r\n");
+            printf("Simple output test completed successfully!\n\r");
         }
         return 0;
     }
@@ -962,7 +961,7 @@ private:
         }
         
         print_table_recursive(L, 1, 0);
-        tud_cdc_write_str("\r\n");  // Use CDC write instead of printf
+        tud_cdc_write_str("\n\r");  // Use CDC write instead of printf
         tud_cdc_write_flush();       // Flush the CDC buffer
         return 0;
     }
@@ -996,7 +995,7 @@ static void print_table_recursive(lua_State* L, int index, int depth) {
         return;
     }
     
-    tud_cdc_write_str("{\r\n");  // Use CDC write and proper line endings
+    tud_cdc_write_str("{\n\r");  // Use CDC write and proper line endings
     flush_if_needed();  // Check buffer after opening brace
     
     // Iterate through table
@@ -1029,7 +1028,7 @@ static void print_table_recursive(lua_State* L, int index, int depth) {
             lua_pop(L, 1);
         }
         
-        tud_cdc_write_str(",\r\n");  // Use proper line endings
+        tud_cdc_write_str(",\n\r");  // Use proper line endings
         flush_if_needed();  // Check buffer after each entry
         lua_pop(L, 1);  // remove value, keep key for next iteration
     }
@@ -1163,13 +1162,13 @@ public:
         // Create Lua state with custom allocator for memory tracking
         L = lua_newstate(lua_custom_alloc, NULL);
         if (!L) {
-            printf("Error: Could not create Lua state\r\n");
+            printf("Error: Could not create Lua state\n\r");
             return;
         }
         
         // Set panic handler for unrecoverable errors
         lua_atpanic(L, lua_panic_handler);
-        printf("Lua panic handler installed\r\n");
+        printf("Lua panic handler installed\n\r");
         
         // Load basic Lua libraries
         luaL_openlibs(L);
@@ -1180,7 +1179,7 @@ public:
         // setstepmul = 260 (default 200) - do more work per GC cycle
         lua_gc(L, LUA_GCSETPAUSE, 55);
         lua_gc(L, LUA_GCSETSTEPMUL, 260);
-        printf("Lua GC configured: pause=55, stepmul=260 (aggressive for embedded)\r\n");
+        printf("Lua GC configured: pause=55, stepmul=260 (aggressive for embedded)\n\r");
         
         // Override print function
         lua_register(L, "print", lua_print);
@@ -1351,10 +1350,10 @@ public:
         if (!L) return;
         
         // Load ASL library first
-    printf("Loading embedded ASL library...\r\n");
+    printf("Loading embedded ASL library...\n\r");
         if (luaL_loadbuffer(L, (const char*)asl, asl_len, "asl.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error loading ASL library: %s\r\n", error ? error : "unknown error");
+            printf("Error loading ASL library: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
             return;
         }
@@ -1367,10 +1366,10 @@ public:
         lua_setglobal(L, "asl");
         
         // Load ASLLIB library
-    printf("Loading embedded ASLLIB library...\r\n");
+    printf("Loading embedded ASLLIB library...\n\r");
         if (luaL_loadbuffer(L, (const char*)asllib, asllib_len, "asllib.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error loading ASLLIB library: %s\r\n", error ? error : "unknown error");
+            printf("Error loading ASLLIB library: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
             return;
         }
@@ -1386,15 +1385,15 @@ public:
         
         if (luaL_dostring(L, setup_globals) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error setting up ASL globals: %s\r\n", error ? error : "unknown error");
+            printf("Error setting up ASL globals: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         }
         
         // Load Output.lua class from embedded bytecode
-    printf("Loading embedded Output.lua class...\r\n");
+    printf("Loading embedded Output.lua class...\n\r");
         if (luaL_loadbuffer(L, (const char*)output, output_len, "output.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error loading Output.lua: %s\r\n", error ? error : "unknown error");
+            printf("Error loading Output.lua: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
             // Output.lua returns the Output table - capture it
@@ -1409,7 +1408,7 @@ public:
                 print("Output objects created successfully!")
             )") != LUA_OK) {
                 const char* error = lua_tostring(L, -1);
-                printf("Error creating output objects: %s\r\n", error ? error : "unknown error");
+                printf("Error creating output objects: %s\n\r", error ? error : "unknown error");
                 lua_pop(L, 1);
             } else {
                 printf("Output.lua loaded successfully!\n\r");
@@ -1761,7 +1760,7 @@ public:
         )";
         if (luaL_dostring(L, add_noise) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error adding bb.noise: %s\r\n", error ? error : "unknown error");
+            printf("Error adding bb.noise: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         }
         
@@ -1862,7 +1861,7 @@ public:
                 tud_cdc_write_str("\n\r");
                 tud_cdc_write_flush();
             }
-            printf("Error setting up pulseout defaults: %s\r\n", error ? error : "unknown error");
+            printf("Error setting up pulseout defaults: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
             if (tud_cdc_connected()) {
@@ -2603,7 +2602,7 @@ public:
             
             // Safety check - ensure buffer position is sane
             if (g_rx_buffer_pos < 0 || g_rx_buffer_pos >= USB_RX_BUFFER_SIZE) {
-                printf("ERROR: Buffer corruption detected! Resetting...\r\n");
+                printf("ERROR: Buffer corruption detected! Resetting...\n\r");
                 g_rx_buffer_pos = 0;
                 g_multiline_mode = false;
                 memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
@@ -2840,7 +2839,7 @@ public:
                     lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
                     lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
                     
-                    tud_cdc_write_str("lua environment reset\n\r");
+                    //tud_cdc_write_str("lua environment reset\n\r");
                 }
                 tud_cdc_write_flush();
                 break;
@@ -3026,13 +3025,13 @@ public:
                 break;
                 
             case C_loadFirst:
-                printf("loading First.lua\r\n");
+                printf("loading First.lua\n\r");
                 // Load First.lua immediately without touching flash
                 if (lua_manager) {
                     if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
                         const char* error = lua_tostring(lua_manager->L, -1);
                         lua_pop(lua_manager->L, 1);
-                        printf("error loading First.lua\r\n");
+                        printf("error loading First.lua\n\r");
                     } else {
 
                         // Model real crow: reset runtime so newly loaded script boots
@@ -3048,16 +3047,16 @@ public:
                         float input1_volts = get_input_state_simple(0);
                         float input2_volts = get_input_state_simple(1);
 
-                        printf("first.lua loaded\r\n");
+                        printf("first.lua loaded\n\r");
                     }
                 } else {
-                    printf("error: lua manager not available\r\n");
+                    printf("error: lua manager not available\n\r");
                 }
                 break;
                 
             default:
                 // For unimplemented commands, send a simple acknowledgment
-                printf("ok\r\n");
+                printf("ok\n\r");
                 break;
         }
         fflush(stdout);
@@ -4096,7 +4095,7 @@ int LuaManager::lua_set_input_stream(lua_State* L) {
         // // Use TinyUSB CDC for output
         // if (tud_cdc_connected()) {
         //     char msg[64];
-        //     snprintf(msg, sizeof(msg), "Input %d: stream mode, interval %.3fs\r\n", channel, time);
+        //     snprintf(msg, sizeof(msg), "Input %d: stream mode, interval %.3fs\n\r", channel, time);
         //     tud_cdc_write_str(msg);
         //     tud_cdc_write_flush();
         // }
@@ -4514,7 +4513,7 @@ static void public_update() {
                 
                 // Format the pubview message
                 int len = snprintf(msg_buf, sizeof(msg_buf), 
-                                  "^^pubview('output',%d,%g)\r\n", 
+                                  "^^pubview('output',%d,%g)\n\r", 
                                   chan + 1, new_val);
                 
                 // Send directly via TinyUSB CDC
@@ -4532,7 +4531,7 @@ static void public_update() {
                 
                 // Format the pubview message
                 int len = snprintf(msg_buf, sizeof(msg_buf), 
-                                  "^^pubview('input',%d,%g)\r\n", 
+                                  "^^pubview('input',%d,%g)\n\r", 
                                   input_chan + 1, new_val);
                 
                 // Send directly via TinyUSB CDC

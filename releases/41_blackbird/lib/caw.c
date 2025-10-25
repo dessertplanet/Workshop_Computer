@@ -51,8 +51,8 @@ void Caw_printf(const char* text, ...) {
         vsnprintf(buf, len + 1, text, args);
         
         // Add crow-style line ending
-        buf[len] = '\r';
-        buf[len + 1] = '\n';
+        buf[len] = '\n';
+        buf[len + 1] = '\r';
         buf[len + 2] = '\0';
         
         // Send directly via TinyUSB CDC (same method as ^^pubview)
