@@ -20,10 +20,15 @@ def read_serial(ser, stop_event):
             if ser.in_waiting > 0:
                 data = ser.read(ser.in_waiting)
                 
+                # Show decimal byte values
+                decimal_bytes = ' '.join(str(b) for b in data)
+                print(f"\nRX: {decimal_bytes}")
+                
                 # Show with visible escape characters
                 readable = data.decode('utf-8', errors='replace')
                 readable = readable.replace('\r', '\\r').replace('\n', '\\n').replace('\t', '\\t')
-                print(f"RX:  {readable}")
+                print(f"READ: {readable}")
+                print("> ", end='', flush=True)  # Restore prompt
                 
         except Exception as e:
             if not stop_event.is_set():
@@ -52,7 +57,7 @@ def main():
         ser = serial.Serial(port, 115200, timeout=0.1)
         print(f"Connected to {port} at 115200 baud")
         print("Type commands and press Enter to send (Ctrl+C to exit)")
-        print("Commands are sent with \\n appended")
+        print("commands must include their own line endings (e.g. \\n, \\r)")
         print("-" * 60)
         
         # Create stop event for thread
@@ -68,10 +73,13 @@ def main():
             try:
                 user_input = input()
                 if user_input:
-                    # Send with \n appended
-                    message = user_input + '\n'
-                    ser.write(message.encode('utf-8'))
-                    print(f"TX: {repr(message)}")
+                    # Decode escape sequences like \n, \r, \t
+                    message = user_input.encode('utf-8').decode('unicode_escape')
+                    message_bytes = message.encode('utf-8')
+                    # Show decimal byte values
+                    decimal_bytes = ' '.join(str(b) for b in message_bytes)
+                    print(f"TX: {decimal_bytes}")
+                    ser.write(message_bytes)
                 print("> ", end='', flush=True)
             except EOFError:
                 break
