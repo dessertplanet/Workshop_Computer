@@ -22,12 +22,12 @@ def read_serial(ser, stop_event):
                 
                 # Show decimal byte values
                 decimal_bytes = ' '.join(str(b) for b in data)
-                print(f"\nRX: {decimal_bytes}")
+                print(f"\nRX DECIMAL: {decimal_bytes}")
                 
                 # Show with visible escape characters
                 readable = data.decode('utf-8', errors='replace')
                 readable = readable.replace('\r', '\\r').replace('\n', '\\n').replace('\t', '\\t')
-                print(f"READ: {readable}")
+                print(f"RX ASCII: {readable}")
                 print("> ", end='', flush=True)  # Restore prompt
                 
         except Exception as e:
@@ -78,7 +78,7 @@ def main():
                     message_bytes = message.encode('utf-8')
                     # Show decimal byte values
                     decimal_bytes = ' '.join(str(b) for b in message_bytes)
-                    print(f"TX: {decimal_bytes}")
+                    print(f"TX DECIMAL: {decimal_bytes}")
                     ser.write(message_bytes)
                 print("> ", end='', flush=True)
             except EOFError:
