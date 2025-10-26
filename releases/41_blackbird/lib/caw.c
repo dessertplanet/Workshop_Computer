@@ -55,10 +55,10 @@ void Caw_printf(const char* text, ...) {
         buf[len + 1] = '\r';
         buf[len + 2] = '\0';
         
-        // Send directly via TinyUSB CDC (same method as ^^pubview)
+        // Write to buffer - batched flush happens every 2ms in main loop
         if (tud_cdc_connected()) {
             tud_cdc_write(buf, len + 2);
-            tud_cdc_write_flush();
+            // REMOVED: tud_cdc_write_flush(); - batched in main loop
         }
     }
     

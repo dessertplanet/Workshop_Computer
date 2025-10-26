@@ -795,7 +795,7 @@ private:
             lua_pop(L, 1);  // pop result
         }
         tud_cdc_write("\n\r",2);
-        tud_cdc_write_flush();
+        // REMOVED: tud_cdc_write_flush(); - batched in main loop
         return 0;
     }
     
@@ -2384,6 +2384,10 @@ public:
         // But we check more frequently to reduce jitter
         const uint32_t timer_interval_us = 667;
         
+        // USB TX batching timer (matches crow's 2ms interval)
+        static uint32_t last_usb_tx_us = 0;
+        const uint32_t usb_tx_interval_us = 2000; // 2ms like crow
+        
         while (1) {
             // CRITICAL: Service TinyUSB stack regularly
             tud_task();
@@ -2445,6 +2449,14 @@ public:
                 clock_update(time_now_ms);
                 
                 last_timer_process_us = now_us;
+            }
+            
+            // *** USB TX BATCHING: Flush every 2ms (matches crow's behavior) ***
+            if (now_us - last_usb_tx_us >= usb_tx_interval_us) {
+                if (tud_cdc_connected()) {
+                    tud_cdc_write_flush();
+                }
+                last_usb_tx_us = now_us;
             }
             
             // Process lock-free metro events first (highest priority)
@@ -4516,10 +4528,10 @@ static void public_update() {
                                   "^^pubview('output',%d,%g)\n\r", 
                                   chan + 1, new_val);
                 
-                // Send directly via TinyUSB CDC
+                // Write to buffer - batched flush happens every 2ms in main loop
                 if (len > 0 && tud_cdc_connected()) {
                     tud_cdc_write(msg_buf, len);
-                    tud_cdc_write_flush();
+                    // REMOVED: tud_cdc_write_flush(); - batched in main loop
                 }
             }
         } else { // inputs (4-5 -> 0-1)
@@ -4534,10 +4546,10 @@ static void public_update() {
                                   "^^pubview('input',%d,%g)\n\r", 
                                   input_chan + 1, new_val);
                 
-                // Send directly via TinyUSB CDC
+                // Write to buffer - batched flush happens every 2ms in main loop
                 if (len > 0 && tud_cdc_connected()) {
                     tud_cdc_write(msg_buf, len);
-                    tud_cdc_write_flush();
+                    // REMOVED: tud_cdc_write_flush(); - batched in main loop
                 }
             }
         }
