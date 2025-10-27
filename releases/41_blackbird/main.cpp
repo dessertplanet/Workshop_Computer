@@ -2379,10 +2379,10 @@ public:
         
         // Timer processing state - moved from ISR!
         static uint32_t last_timer_process_us = 0;
-        // Process every 667us = 1.5kHz (matches TIMER_BLOCK_SIZE=96 @ 48kHz)
-        // Calculation: 96 samples / 48000 Hz = 0.002s = 2000us
-        // But we check more frequently to reduce jitter
-        const uint32_t timer_interval_us = 667;
+        // Process every 100us = 10kHz (faster than TIMER_BLOCK_SIZE=8 @ 48kHz = 166µs)
+        // Calculation: 8 samples / 48000 Hz = 0.000166s = 166us
+        // Check at 10kHz to minimize jitter and ensure timely processing
+        const uint32_t timer_interval_us = 100;
         
         // USB TX batching timer (matches crow's 2ms interval)
         static uint32_t last_usb_tx_us = 0;
