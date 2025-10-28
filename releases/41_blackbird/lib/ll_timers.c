@@ -81,19 +81,32 @@ void Timer_Set_Params(int timer_id, float seconds) {
     //        timer_id, seconds, timers[timer_id].period_samples, timers[timer_id].period_error);
 }
 
-// Timer processing - called from MainControlLoop at ~1.5kHz
+// Timer processing - called from MainControlLoop at ~20kHz
 // NO LONGER IN ISR! Safe to take time for complex calculations
 void Timer_Process(void) {
     // Check if enough samples have passed for next block
     // global_sample_counter incremented by ProcessSample() ISR
     static uint64_t last_processed_sample = 0;
     
-    uint64_t samples_elapsed = global_sample_counter - last_processed_sample;
+    // Process missed blocks to maintain accurate countdown timing
+    // BUT limit catch-up to prevent infinite loops if CPU can't keep up
+    int blocks_processed = 0;
+    const int MAX_CATCHUP_BLOCKS = 8; // Limit to ~166µs of catch-up work
     
-    // Process a block when TIMER_BLOCK_SIZE samples have accumulated
-    if (samples_elapsed >= TIMER_BLOCK_SIZE) {
+    while (global_sample_counter - last_processed_sample >= TIMER_BLOCK_SIZE 
+           && blocks_processed < MAX_CATCHUP_BLOCKS) {
         Timer_Process_Block();
-        last_processed_sample = global_sample_counter;
+        // CRITICAL: Advance by exactly TIMER_BLOCK_SIZE to maintain precise timing
+        last_processed_sample += TIMER_BLOCK_SIZE;
+        blocks_processed++;
+    }
+    
+    // If we're STILL behind after catch-up limit, we're overloaded
+    // Skip ahead to prevent system freeze, but this WILL cause timing drift
+    if (global_sample_counter - last_processed_sample >= TIMER_BLOCK_SIZE * MAX_CATCHUP_BLOCKS) {
+        // Emergency: System is overloaded, skip ahead to prevent freeze
+        last_processed_sample = global_sample_counter - TIMER_BLOCK_SIZE;
+        // This will cause frequency drift, but better than a frozen system
     }
 }
 

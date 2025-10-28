@@ -370,10 +370,10 @@ static float* step_v( Slope_t* self
 
 static float* static_v( Slope_t* self, float* out, int size )
 {
-    float* out2 = out;
-    for( int i=0; i<size; i++ ){
-        *out2++ = self->here;
-    }
+    // OPTIMIZATION: Only set final sample since we discard the rest
+    // Skip the loop - value is static anyway
+    out[size-1] = self->here;
+    
     if( self->countdown > -1024.0 ){ // count overflow samples
         self->countdown -= (float)size;
     }
@@ -382,21 +382,23 @@ static float* static_v( Slope_t* self, float* out, int size )
 
 static float* motion_v( Slope_t* self, float* out, int size )
 {
-    float* out2 = out;
-    float* out3 = out;
-
+    // OPTIMIZATION: Only calculate final sample since we discard the rest
+    // This reduces work by 87.5% for size=8 blocks
+    
     if( self->scale == 0.0 || self->delta == 0.0 ){ // delay only
-        for( int i=0; i<size; i++ ){
-            *out2++ = self->here;
-        }
-    } else { // WARN: requires size >= 1
-        *out2++ = self->here + self->delta;
-        for( int i=1; i<size; i++ ){
-            *out2++ = *out3++ + self->delta;
-        }
+        // Static value, just use current position
+        self->here = self->here; // No change needed
+    } else {
+        // Calculate final position after 'size' samples
+        // Instead of iterating: for(i=0; i<size; i++) value += delta
+        // Just do: value += delta * size
+        self->here = self->here + (self->delta * (float)size);
     }
+    
+    // Store final value in last position for shaper_v to use
+    out[size-1] = self->here;
+    
     self->countdown -= (float)size;
-    self->here = out[size-1];
     return shaper_v( self, out, size );
 }
 
@@ -446,29 +448,30 @@ static float* breakpoint_v( Slope_t* self, float* out, int size )
 // vectors for optimized segments (assume: self->shape is constant)
 static float* shaper_v( Slope_t* self, float* out, int size )
 {
+    // OPTIMIZATION: Only process final sample since we discard the rest
+    // This avoids expensive vectorized processing of 7 unused samples
+    
+    float final_value = out[size-1]; // Get the already-calculated final position
+    
+    // Apply shape function to final value only
     switch( self->shape ){
-        case SHAPE_Sine:    out = shapes_v_sin( out, size ); break;
-        case SHAPE_Log:     out = shapes_v_log( out, size ); break;
-        case SHAPE_Expo:    out = shapes_v_exp( out, size ); break;
-        case SHAPE_Linear: break;
-        default: { // if no vector, use single-sample
-            float* out2 = out;
-            for( int i=0; i<size; i++ ){
-                *out2 = shaper( self, *out2 );
-                out2++;
-            }
-            // shaper() cleans up self->shaped etc
-            return out; }
+        case SHAPE_Sine:    final_value = shapes_sin( final_value ); break;
+        case SHAPE_Log:     final_value = shapes_log( final_value ); break;
+        case SHAPE_Expo:    final_value = shapes_exp( final_value ); break;
+        case SHAPE_Now:     final_value = shapes_step_now( final_value ); break;
+        case SHAPE_Wait:    final_value = shapes_step_wait( final_value ); break;
+        case SHAPE_Over:    final_value = shapes_ease_out_back( final_value ); break;
+        case SHAPE_Under:   final_value = shapes_ease_in_back( final_value ); break;
+        case SHAPE_Rebound: final_value = shapes_ease_out_rebound( final_value ); break;
+        case SHAPE_Linear: 
+        default: break; // Linear - no transformation needed
     }
-    // map to output range
-    b_add(
-       b_mul( out
-            , self->scale
-            , size )
-         , self->last
-         , size );
-    // save last state
-    self->shaped = out[size-1];
+    
+    // Map to output range
+    final_value = (final_value * self->scale) + self->last;
+    
+    // Save last state
+    self->shaped = final_value;
     
     // Apply quantization before hardware output
     extern float AShaper_quantize_single(int index, float voltage);
