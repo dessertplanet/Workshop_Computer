@@ -18,7 +18,7 @@ typedef void (*timer_callback_t)(int timer_id);
 //   4 = 83µs latency, 12kHz processing (recommended: good balance)
 //   8 = 166µs latency, 6kHz processing (stable baseline, excellent efficiency)
 //
-#define TIMER_BLOCK_SIZE 96  // ← ADJUST THIS VALUE ONLY (1, 2, 4, 8, etc.)
+#define TIMER_BLOCK_SIZE 240  // ← ADJUST THIS VALUE ONLY (1, 2, 4, 8, etc.)
 
 // Timer functions
 void Timer_Init(int num_timers);
