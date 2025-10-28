@@ -93,7 +93,10 @@ void Timer_Process(void) {
     // Process missed blocks to maintain accurate countdown timing
     // BUT limit catch-up to prevent infinite loops if CPU can't keep up
     int blocks_processed = 0;
-    const int MAX_CATCHUP_BLOCKS = 8; // Limit to ~166µs of catch-up work
+    // Adaptive catch-up limit based on block size:
+    // - Small blocks (≤4): Need more tolerance for Lua callback overhead
+    // - Larger blocks (≥8): Less likely to fall behind significantly
+    const int MAX_CATCHUP_BLOCKS = (TIMER_BLOCK_SIZE <= 4) ? 16 : 8;
     
     while (global_sample_counter - last_processed_sample >= TIMER_BLOCK_SIZE 
            && blocks_processed < MAX_CATCHUP_BLOCKS) {

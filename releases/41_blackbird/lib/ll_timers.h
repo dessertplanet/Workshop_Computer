@@ -9,8 +9,9 @@
 typedef void (*timer_callback_t)(int timer_id);
 
 // Block processing configuration - ALIGNED with audio block size for consistent timing
-// Optimized for low latency: 8 samples = 166µs @ 48kHz
-#define TIMER_BLOCK_SIZE 8  // Process timers every 8 samples (6kHz, 166µs blocks)
+// Optimized for best latency/efficiency balance: 4 samples = 83µs @ 48kHz
+// Sweet spot: 2× faster than size=8, 4× more efficient than size=1
+#define TIMER_BLOCK_SIZE 4  // Process timers every 4 samples (12kHz, 83µs blocks)
 
 // Timer functions
 void Timer_Init(int num_timers);

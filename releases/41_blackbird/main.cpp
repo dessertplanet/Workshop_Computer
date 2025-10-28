@@ -2381,10 +2381,10 @@ public:
         
         // Timer processing state - moved from ISR!
         static uint32_t last_timer_process_us = 0;
-        // Process every 50us = 20kHz (much faster than TIMER_BLOCK_SIZE=8 @ 48kHz = 166µs)
-        // Calculation: 8 samples / 48000 Hz = 0.000166s = 166us
-        // Check at 20kHz to handle multiple active channels without falling behind
-        const uint32_t timer_interval_us = 50;
+        // Optimized for TIMER_BLOCK_SIZE=4 (83µs blocks @ 48kHz)
+        // Poll at ~15kHz (67µs) to catch every block with good margin
+        // Balance: 2× lower latency than size=8, 4× less CPU than size=1
+        const uint32_t timer_interval_us = 60;
         
         // USB TX batching timer (matches crow's 2ms interval)
         static uint32_t last_usb_tx_us = 0;
@@ -2572,8 +2572,10 @@ public:
                 public_update();
             }
             
-            // Reduced sleep for tighter timer loop - 50us allows 20kHz loop rate
-            sleep_us(50);  // Was 100us - reduced to handle multiple simultaneous LFOs
+            // Optimized for TIMER_BLOCK_SIZE=4: 60us sleep = ~16.7kHz loop rate
+            // Provides good margin to catch 12kHz block generation (83µs per block)
+            // Balance: Responsive without excessive CPU usage
+            sleep_us(60);
         }
     }
     
