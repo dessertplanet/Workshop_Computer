@@ -143,9 +143,16 @@ void __not_in_flash_func(Timer_Process_Block)(void) {
     static float slope_buffer[TIMER_BLOCK_SIZE];
     
     for (int ch = 0; ch < 4; ch++) {
-        // Skip channels that are idle (no active slope/slew/action)
-        if (slopes && slopes[ch].countdown <= 0.0f && slopes[ch].action == NULL) {
-            continue; // Channel is static, no processing needed
+        // OPTIMIZATION: Skip truly idle channels (long-term inactive)
+        // A channel is only skippable if:
+        // 1. countdown <= -1024.0 (has been idle for a long time - see static_v overflow tracking)
+        // 2. No pending action callback
+        //
+        // This fixes the zero-slew bug where countdown=-0.0 and action=NULL looked "idle"
+        // but the channel still needed processing for future volts commands.
+        // Channels with countdown in range (-1024.0, 0.0] are recently active and MUST be processed.
+        if (slopes && slopes[ch].countdown <= -1024.0f && slopes[ch].action == NULL) {
+            continue; // Channel has been idle for 1024+ samples, safe to skip
         }
         
         // Process this channel's slope over the block
