@@ -2537,7 +2537,7 @@ public:
                 }
             }
             
-            // *** LED UPDATE: Process LED updates from Core 1 snapshot (~100Hz) ***
+            // *** LED UPDATE: Process LED updates from Core 1 snapshot (240Hz) ***
             if (g_led_update_pending) {
                 g_led_update_pending = false;
                 
@@ -2549,19 +2549,19 @@ public:
                 bool pulse1 = g_led_pulse_snapshot[0];
                 bool pulse2 = g_led_pulse_snapshot[1];
                 
-                // Convert to absolute values for brightness
-                int32_t cv1_abs = (cv1_mv < 0) ? -cv1_mv : cv1_mv;
-                int32_t cv2_abs = (cv2_mv < 0) ? -cv2_mv : cv2_mv;
-                int32_t audio1_abs = (audio1_mv < 0) ? -audio1_mv : audio1_mv;
-                int32_t audio2_abs = (audio2_mv < 0) ? -audio2_mv : audio2_mv;
+                // Clamp to positive values only (negative values = LED off)
+                int32_t cv1_pos = (cv1_mv < 0) ? 0 : cv1_mv;
+                int32_t cv2_pos = (cv2_mv < 0) ? 0 : cv2_mv;
+                int32_t audio1_pos = (audio1_mv < 0) ? 0 : audio1_mv;
+                int32_t audio2_pos = (audio2_mv < 0) ? 0 : audio2_mv;
                 
                 // Convert mV to LED brightness (0-4095)
-                // Clamp to ±6V range (6000mV), normalize to 0-4095
-                // Using fixed-point: (abs_mv * 682) >> 10 ≈ abs_mv * (4095/6000)
-                uint16_t led0_brightness = (audio1_abs > 6000) ? 4095 : (uint16_t)((audio1_abs * 682) >> 10);
-                uint16_t led1_brightness = (audio2_abs > 6000) ? 4095 : (uint16_t)((audio2_abs * 682) >> 10);
-                uint16_t led2_brightness = (cv1_abs > 6000) ? 4095 : (uint16_t)((cv1_abs * 682) >> 10);
-                uint16_t led3_brightness = (cv2_abs > 6000) ? 4095 : (uint16_t)((cv2_abs * 682) >> 10);
+                // Clamp to +6V range (6000mV), normalize to 0-4095
+                // Using fixed-point: (pos_mv * 682) >> 10 ≈ pos_mv * (4095/6000)
+                uint16_t led0_brightness = (audio1_pos > 6000) ? 4095 : (uint16_t)((audio1_pos * 682) >> 10);
+                uint16_t led1_brightness = (audio2_pos > 6000) ? 4095 : (uint16_t)((audio2_pos * 682) >> 10);
+                uint16_t led2_brightness = (cv1_pos > 6000) ? 4095 : (uint16_t)((cv1_pos * 682) >> 10);
+                uint16_t led3_brightness = (cv2_pos > 6000) ? 4095 : (uint16_t)((cv2_pos * 682) >> 10);
                 
                 // Update LEDs (now safe on Core 0, no ISR timing impact)
                 LedBrightness(0, led0_brightness);  // LED 0 - Audio1 amplitude
@@ -3240,10 +3240,10 @@ public:
         // Users can change by calling bb.pulseout[2]:clock() or setting bb.pulseout[2].action
         
         // === LED OUTPUT VISUALIZATION ===
-        // Snapshot values for Core 0 LED update (every 800 samples = 60Hz at 48kHz)
-        // 60Hz is the human eye's temporal resolution limit, no benefit to higher rates
+        // Snapshot values for Core 0 LED update (every 200 samples = 240Hz at 48kHz)
+        // 240Hz eliminates flicker on phone cameras (which run at 30-60fps)
         static int led_update_counter = 0;
-        if (++led_update_counter >= 800) {
+        if (++led_update_counter >= 200) {
             led_update_counter = 0;
             
             // Take atomic snapshot of output states for Core 0 to process
