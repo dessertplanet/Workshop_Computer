@@ -83,6 +83,8 @@ void Timer_Set_Params(int timer_id, float seconds) {
 
 // Timer processing - called from MainControlLoop at ~20kHz
 // NO LONGER IN ISR! Safe to take time for complex calculations
+// CRITICAL: Place in RAM for consistent timing at high poll rates
+__attribute__((section(".time_critical.Timer_Process")))
 void Timer_Process(void) {
     // Check if enough samples have passed for next block
     // global_sample_counter incremented by ProcessSample() ISR

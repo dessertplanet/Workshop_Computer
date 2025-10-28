@@ -87,7 +87,9 @@ static void init_shape_luts(void) {
 
 // Ultra-fast Q11 LUT lookup with linear interpolation
 // Performance: ~40-60 cycles on Cortex-M0+ (vs ~1500+ for powf())
-static inline float lut_lookup_q11(const q11_t* lut, float in) {
+// CRITICAL HOT PATH: Place in RAM for deterministic timing
+__attribute__((section(".time_critical.lut_lookup_q11")))
+static float lut_lookup_q11(const q11_t* lut, float in) {
     // Clamp input to [0, 1] range
     in = (in < 0.0f) ? 0.0f : ((in > 1.0f) ? 1.0f : in);
     
@@ -127,6 +129,8 @@ static float shapes_ease_out_rebound(float in) { return in; } // TODO: Implement
 #endif
 
 // Single sample shape functions - NOW USING Q11 LUTs for 30-50x speedup!
+// HOT PATH: In RAM for consistent timing during high-frequency slope processing
+__attribute__((section(".time_critical.shapes_sin")))
 static float shapes_sin(float in) {
     if (!luts_initialized) {
         // Fallback to slow math if LUTs not ready (should never happen)
@@ -135,6 +139,7 @@ static float shapes_sin(float in) {
     return lut_lookup_q11(lut_sin, in);
 }
 
+__attribute__((section(".time_critical.shapes_exp")))
 static float shapes_exp(float in) {
     if (!luts_initialized) {
         // Fallback to slow math if LUTs not ready (should never happen)
@@ -143,6 +148,7 @@ static float shapes_exp(float in) {
     return lut_lookup_q11(lut_exp, in);
 }
 
+__attribute__((section(".time_critical.shapes_log")))
 static float shapes_log(float in) {
     if (!luts_initialized) {
         // Fallback to slow math if LUTs not ready (should never happen)
@@ -197,13 +203,11 @@ Slope_t* slopes = NULL; // Exported for ll_timers.c conditional processing
 
 ////////////////////////////////
 // private declarations
-
+// Forward declarations for RAM-placed functions
 static float* step_v( Slope_t* self, float* out, int size );
-
 static float* static_v( Slope_t* self, float* out, int size );
 static float* motion_v( Slope_t* self, float* out, int size );
 static float* breakpoint_v( Slope_t* self, float* out, int size );
-
 static float* shaper_v( Slope_t* self, float* out, int size );
 static float shaper( Slope_t* self, float out );
 
@@ -337,6 +341,8 @@ void S_toward( int        index
     }
 }
 
+// CRITICAL: Place in RAM - called from Timer_Process_Block at high frequency
+__attribute__((section(".time_critical.S_step_v")))
 float* S_step_v( int     index
                , float*  out
                , int     size
@@ -353,6 +359,8 @@ float* S_step_v( int     index
 ///////////////////////
 // private defns
 
+// CRITICAL: Dispatcher in RAM for consistent timing
+__attribute__((section(".time_critical.step_v")))
 static float* step_v( Slope_t* self
                     , float*   out
                     , int      size
@@ -368,6 +376,8 @@ static float* step_v( Slope_t* self
     return out;
 }
 
+// CRITICAL: Static value handler in RAM
+__attribute__((section(".time_critical.static_v")))
 static float* static_v( Slope_t* self, float* out, int size )
 {
     // OPTIMIZATION: Only set final sample since we discard the rest
@@ -380,6 +390,8 @@ static float* static_v( Slope_t* self, float* out, int size )
     return shaper_v( self, out, size );
 }
 
+// CRITICAL: Motion calculation in RAM - most common path for LFOs
+__attribute__((section(".time_critical.motion_v")))
 static float* motion_v( Slope_t* self, float* out, int size )
 {
     // OPTIMIZATION: Only calculate final sample since we discard the rest
@@ -402,6 +414,8 @@ static float* motion_v( Slope_t* self, float* out, int size )
     return shaper_v( self, out, size );
 }
 
+// CRITICAL: Breakpoint handler in RAM - handles slope transitions and callbacks
+__attribute__((section(".time_critical.breakpoint_v")))
 static float* breakpoint_v( Slope_t* self, float* out, int size )
 {
     if( size <= 0 ){ return out; }
@@ -445,7 +459,9 @@ static float* breakpoint_v( Slope_t* self, float* out, int size )
 ///////////////////////////////
 // shapers
 
+// CRITICAL: Shape application in RAM - applies expensive sin/exp/log
 // vectors for optimized segments (assume: self->shape is constant)
+__attribute__((section(".time_critical.shaper_v")))
 static float* shaper_v( Slope_t* self, float* out, int size )
 {
     // OPTIMIZATION: Only process final sample since we discard the rest
@@ -484,7 +500,9 @@ static float* shaper_v( Slope_t* self, float* out, int size )
     return out;
 }
 
+// CRITICAL: Single-sample shaper in RAM - used by breakpoint_v for callbacks
 // single sample for breakpoint segment
+__attribute__((section(".time_critical.shaper")))
 static float shaper( Slope_t* self, float out )
 {
     switch( self->shape ){

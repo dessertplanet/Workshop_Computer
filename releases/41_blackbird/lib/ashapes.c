@@ -108,6 +108,8 @@ float* AShaper_v( int     index
 }
 
 // Single-sample quantization for real-time hardware output
+// CRITICAL: Place in RAM - called from shaper_v() on every block
+__attribute__((section(".time_critical.AShaper_quantize_single")))
 float AShaper_quantize_single( int index, float voltage )
 {
     if( index < 0 || index >= ASHAPER_CHANNELS ){ return voltage; }

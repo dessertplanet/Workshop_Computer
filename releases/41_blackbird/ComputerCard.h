@@ -1116,6 +1116,8 @@ uint32_t ComputerCard::MIDIToDAC(int midiNote, int channel)
 /// Returns true if requested voltage is outside of full range of DAC values
 /// millivolts should be in range -6000 to 6000.
 /// Accuracy is dependent, of course, on the calibration coefficients
+/// CRITICAL: Place in RAM - called from CVOutMillivolts in hot path
+__attribute__((section(".time_critical.MillivoltsToDAC")))
 uint32_t ComputerCard::MillivoltsToDAC(int millivolts, int channel, bool &limited)
 {
 	limited = false;

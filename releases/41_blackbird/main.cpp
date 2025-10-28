@@ -2164,6 +2164,8 @@ public:
     bool GetPulseIn2() { return PulseIn2(); }
     
     // Hardware abstraction functions for output
+    // CRITICAL: Place in RAM - called from shaper_v() on every slope update
+    __attribute__((section(".time_critical.hardware_set_output")))
     void hardware_set_output(int channel, float volts) {
         if (channel < 1 || channel > 4) return;
         
@@ -4784,7 +4786,10 @@ int LuaManager::lua_perf_stats(lua_State* L) {
 }
 
 // Implementation of C interface function (after BlackbirdCrow class is fully defined)
-extern "C" void hardware_output_set_voltage(int channel, float voltage) {
+// CRITICAL: Place in RAM - called from shaper_v() via slopes.c
+extern "C" {
+__attribute__((section(".time_critical.hardware_output_set_voltage")))
+void hardware_output_set_voltage(int channel, float voltage) {
     int ch_idx = channel - 1;  // channel is 1-based
     
     // If noise is currently active and locked, ignore this call completely
@@ -4810,6 +4815,7 @@ extern "C" void hardware_output_set_voltage(int channel, float voltage) {
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, voltage);
     }
+}
 }
 
 // C interface functions for pulse outputs (called from Lua)
