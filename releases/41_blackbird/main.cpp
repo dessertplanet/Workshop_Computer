@@ -88,6 +88,10 @@ static uint32_t g_audioin_stream_last_update[2] = {0, 0};
 // Pulse output state tracking (set from Lua layer)
 static volatile bool g_pulse_out_state[2] = {false, false};
 
+// Pulse output coroutine tracking (to cancel overlapping pulses)
+static volatile uint32_t g_pulse_out_coro_id[2] = {0, 0};
+static volatile uint32_t g_pulse_coro_counter = 1; // ID generator for pulse coroutines
+
 // Pulse input detection mode: 0='none', 1='change', 2='clock'
 static volatile int8_t g_pulsein_mode[2] = {0, 0};
 
@@ -815,6 +819,7 @@ private:
     static int lua_pub_view_out(lua_State* L);
     static int lua_tell(lua_State* L);
     static int lua_hardware_pulse(lua_State* L);
+    static int lua_pulse_coro_check(lua_State* L);
     
     // Conditional test function implementations - only compiled when tests are embedded
 #ifdef EMBED_ALL_TESTS
@@ -1208,6 +1213,7 @@ public:
     
     // Add hardware pulse output control
     lua_register(L, "hardware_pulse", lua_hardware_pulse);
+    lua_register(L, "_pulse_coro_check", lua_pulse_coro_check);
     
     // Add hardware knob and switch access functions
     lua_register(L, "get_knob_main", lua_get_knob_main);
@@ -1442,6 +1448,24 @@ public:
         
         // Load Metro.lua class from embedded bytecode (CRITICAL for First.lua)
         printf("Loading embedded Metro.lua class...\n\r");
+        
+        // Register pulse output helper function (must be before First.lua loads)
+        // This avoids using luaL_dostring in _c.tell which can cause ISR issues
+        if (luaL_dostring(L, R"(
+            _pulse_sleep_and_clear = function(channel, coro_id, sleep_time)
+                return function()
+                    clock.sleep(sleep_time)
+                    if _pulse_coro_check(channel, coro_id) then
+                        hardware_pulse(channel, false)
+                    end
+                end
+            end
+        )") != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error registering _pulse_sleep_and_clear: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        }
+        
         if (luaL_loadbuffer(L, (const char*)metro, metro_len, "metro.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("Error loading Metro.lua: %s\n\r", error ? error : "unknown error");
@@ -3628,39 +3652,70 @@ int LuaManager::lua_c_tell(lua_State* L) {
                     lua_pop(L, 1);  // pop action table copy
                     
                     // Now generate the pulse using clock.run
+                    // CRITICAL FIX: Cancel any pending pulse coroutine to prevent overlap issues
+                    if (g_pulse_out_coro_id[pulse_idx] != 0) {
+                        lua_getglobal(L, "clock");
+                        if (lua_istable(L, -1)) {
+                            lua_getfield(L, -1, "cancel");
+                            if (lua_isfunction(L, -1)) {
+                                lua_pushinteger(L, g_pulse_out_coro_id[pulse_idx]);
+                                lua_pcall(L, 1, 0, 0);  // Ignore errors
+                            } else {
+                                lua_pop(L, 1);  // pop non-function
+                            }
+                            lua_pop(L, 1);  // pop clock table
+                        } else {
+                            lua_pop(L, 1);  // pop non-table
+                        }
+                        g_pulse_out_coro_id[pulse_idx] = 0;  // Clear tracking
+                    }
+                    
                     // Set output high immediately
                     g_pulse_out_state[pulse_idx] = true;
                     hardware_pulse_output_set(pulse_idx + 1, true);
                     
                     // Schedule the pulse to go low after pulse_time
+                    // Create a unique coroutine ID for this pulse
+                    uint32_t coro_id = g_pulse_coro_counter++;
+                    g_pulse_out_coro_id[pulse_idx] = coro_id;
+                    
                     // Create a Lua coroutine to handle timing
+                    // Use _pulse_sleep_and_clear helper instead of luaL_dostring
                     lua_getglobal(L, "clock");
                     if (lua_istable(L, -1)) {
                         lua_getfield(L, -1, "run");
                         if (lua_isfunction(L, -1)) {
-                            // Create the function to run: clock.run(function() clock.sleep(time); hardware_pulse(idx, false) end)
-                            const char* pulse_code_fmt = 
-                                "return function() "
-                                "  clock.sleep(%.6f) "
-                                "  hardware_pulse(%d, false) "
-                                "end";
-                            char pulse_code[256];
-                            snprintf(pulse_code, sizeof(pulse_code), pulse_code_fmt, pulse_time, pulse_idx + 1);
-                            
-                            if (luaL_dostring(L, pulse_code) == LUA_OK) {
-                                // Stack: clock, run_func, generated_func
-                                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                                    lua_pop(L, 1);  // pop error (silent fail)
+                            // Get the helper function
+                            lua_getglobal(L, "_pulse_sleep_and_clear");
+                            if (lua_isfunction(L, -1)) {
+                                // Call: _pulse_sleep_and_clear(channel, coro_id, pulse_time)
+                                lua_pushinteger(L, pulse_idx + 1);  // channel
+                                lua_pushinteger(L, coro_id);         // coro_id
+                                lua_pushnumber(L, pulse_time);       // sleep duration
+                                
+                                // This creates a closure that clock.run will execute
+                                if (lua_pcall(L, 3, 1, 0) == LUA_OK) {
+                                    // Stack: clock, run_func, closure
+                                    if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                                        lua_pop(L, 1);  // pop error (silent fail)
+                                        g_pulse_out_coro_id[pulse_idx] = 0;  // Clear on error
+                                    }
+                                } else {
+                                    lua_pop(L, 1);  // pop error
+                                    g_pulse_out_coro_id[pulse_idx] = 0;  // Clear on error
                                 }
                             } else {
-                                lua_pop(L, 1);  // pop error (silent fail)
+                                lua_pop(L, 1);  // pop non-function
+                                g_pulse_out_coro_id[pulse_idx] = 0;  // Clear on error
                             }
                         } else {
                             lua_pop(L, 1);  // pop non-function
+                            g_pulse_out_coro_id[pulse_idx] = 0;  // Clear on error
                         }
                         lua_pop(L, 1);  // pop clock table
                     } else {
                         lua_pop(L, 1);  // pop non-table
+                        g_pulse_out_coro_id[pulse_idx] = 0;  // Clear on error
                     }
                 } else {
                     // Not a table - could be a direct voltage value
@@ -4619,6 +4674,30 @@ int LuaManager::lua_hardware_pulse(lua_State* L) {
     
     hardware_pulse_output_set(channel, state);
     return 0;
+}
+
+// _pulse_coro_check(channel, coro_id) - Verify if coroutine is still valid
+// Returns true if this coroutine should still control the pulse output
+// Returns false if a newer pulse has replaced this one (prevents overlap issues)
+int LuaManager::lua_pulse_coro_check(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    uint32_t coro_id = (uint32_t)luaL_checkinteger(L, 2);
+    
+    if (channel < 1 || channel > 2) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    
+    int idx = channel - 1;
+    bool is_current = (g_pulse_out_coro_id[idx] == coro_id);
+    
+    // Clear the tracking if this coroutine is finishing
+    if (is_current) {
+        g_pulse_out_coro_id[idx] = 0;
+    }
+    
+    lua_pushboolean(L, is_current);
+    return 1;
 }
 
 // Hardware knob access functions - return normalized 0.0-1.0 values
