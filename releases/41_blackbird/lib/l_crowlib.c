@@ -337,6 +337,27 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     }
     lua_settop(L, 0);
 
+    // bb.pulseout[1]:low() and bb.pulseout[2]:low() - reset pulse outputs to low
+    lua_getglobal(L, "bb"); // @1
+    if(!lua_isnil(L, 1)){
+        lua_getfield(L, 1, "pulseout"); // @2
+        if(!lua_isnil(L, 2)){
+            for(int i = 1; i <= 2; i++){
+                lua_pushinteger(L, i); // @3
+                lua_gettable(L, 2); // @3 = bb.pulseout[i]
+                if(!lua_isnil(L, 3)){
+                    lua_getfield(L, 3, "low"); // @4 = bb.pulseout[i].low
+                    if(!lua_isnil(L, 4)){
+                        lua_pushvalue(L, 3); // @5 = self (bb.pulseout[i])
+                        lua_call(L, 1, 0); // bb.pulseout[i]:low()
+                    }
+                }
+                lua_settop(L, 2); // pop back to bb.pulseout
+            }
+        }
+    }
+    lua_settop(L, 0);
+
     return 0;
 }
 
