@@ -2381,10 +2381,10 @@ public:
         
         // Timer processing state - moved from ISR!
         static uint32_t last_timer_process_us = 0;
-        // Optimized for TIMER_BLOCK_SIZE=4 (83µs blocks @ 48kHz)
-        // Poll at ~15kHz (67µs) to catch every block with good margin
-        // Balance: 2× lower latency than size=8, 4× less CPU than size=1
-        const uint32_t timer_interval_us = 60;
+        // Auto-calculate polling rate from TIMER_BLOCK_SIZE
+        // Formula: (TIMER_BLOCK_SIZE / 48000) * 1000000 * 0.75
+        // Poll at 75% of block duration to catch blocks with good margin
+        const uint32_t timer_interval_us = (TIMER_BLOCK_SIZE * 1000000) / (48000 * 4 / 3);
         
         // USB TX batching timer (matches crow's 2ms interval)
         static uint32_t last_usb_tx_us = 0;
@@ -2572,10 +2572,9 @@ public:
                 public_update();
             }
             
-            // Optimized for TIMER_BLOCK_SIZE=4: 60us sleep = ~16.7kHz loop rate
-            // Provides good margin to catch 12kHz block generation (83µs per block)
-            // Balance: Responsive without excessive CPU usage
-            sleep_us(60);
+            // Auto-calculated sleep matches polling rate
+            // Tight loop ensures we catch all blocks without missing any
+            sleep_us(timer_interval_us);
         }
     }
     
