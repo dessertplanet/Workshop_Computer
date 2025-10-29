@@ -163,7 +163,6 @@ void FlashStorage::clear_user_script() {
     restore_interrupts(ints);
     
     tud_cdc_write_str("User script cleared\n\r");
-    tud_cdc_write_flush();
 }
 
 // Set flash to use default First.lua script on boot

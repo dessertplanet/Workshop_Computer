@@ -58,7 +58,6 @@ void Caw_printf(const char* text, ...) {
         // Write to buffer - batched flush happens every 2ms in main loop
         if (tud_cdc_connected()) {
             tud_cdc_write(buf, len + 2);
-            // REMOVED: tud_cdc_write_flush(); - batched in main loop
         }
     }
     

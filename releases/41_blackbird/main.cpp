@@ -713,7 +713,6 @@ static int pulseout_call(lua_State* L) {
                         tud_cdc_write_str("pulseout error: ");
                         tud_cdc_write_str(error);
                         tud_cdc_write_str("\n\r");
-                        tud_cdc_write_flush();
                     }
                     lua_pop(L, 1);
                 }
@@ -745,7 +744,6 @@ static int pulseout_call(lua_State* L) {
                         tud_cdc_write_str("pulseout error: ");
                         tud_cdc_write_str(error);
                         tud_cdc_write_str("\n\r");
-                        tud_cdc_write_flush();
                     }
                     lua_pop(L, 1);
                 }
@@ -799,7 +797,7 @@ private:
             lua_pop(L, 1);  // pop result
         }
         tud_cdc_write("\n\r",2);
-        // REMOVED: tud_cdc_write_flush(); - batched in main loop
+        // REMOVED:  - batched in main loop
         return 0;
     }
     
@@ -967,7 +965,6 @@ private:
         
         print_table_recursive(L, 1, 0);
         tud_cdc_write_str("\n\r");  // Use CDC write instead of printf
-        tud_cdc_write_flush();       // Flush the CDC buffer
         return 0;
     }
     
@@ -980,7 +977,7 @@ static inline void flush_if_needed() {
         uint32_t timeout = 0;
         while (tud_cdc_write_available() < 128 && timeout < 10000) {
             sleep_us(10);
-            tud_task();  // Process USB tasks to transmit data
+            tud_task();  // Process USB tasks
             timeout++;
         }
     }
@@ -1043,41 +1040,6 @@ static void print_table_recursive(lua_State* L, int index, int depth) {
     tud_cdc_write_str("}");
     flush_if_needed();  // Check buffer after closing brace
 }    // Lua panic handler - called when Lua encounters an unrecoverable error
-    static int lua_panic_handler(lua_State* L) {
-        const char* msg = lua_tostring(L, -1);
-        char buffer[256];
-        
-        // Use TinyUSB CDC for output
-        tud_cdc_write_str("\n\r");
-        tud_cdc_write_str("========================================\n\r");
-        tud_cdc_write_str("*** LUA PANIC - UNRECOVERABLE ERROR ***\n\r");
-        tud_cdc_write_str("========================================\n\r");
-        
-        snprintf(buffer, sizeof(buffer), "Error: %s\n\r", msg ? msg : "unknown error");
-        tud_cdc_write_str(buffer);
-        
-        // Print memory usage
-        int kb_used = lua_gc(L, LUA_GCCOUNT, 0);
-        int bytes = lua_gc(L, LUA_GCCOUNTB, 0);
-        snprintf(buffer, sizeof(buffer), "Lua memory usage: %d KB + %d bytes (%.2f KB total)\n\r", 
-                 kb_used, bytes, kb_used + (bytes / 1024.0f));
-        tud_cdc_write_str(buffer);
-        
-        tud_cdc_write_str("========================================\n\r");
-        tud_cdc_write_str("System halted. Please reset the device.\n\r");
-        tud_cdc_write_str("========================================\n\r");
-        tud_cdc_write_flush();
-        
-        // Flash LED rapidly to indicate panic state
-        while (true) {
-            gpio_put(PICO_DEFAULT_LED_PIN, 1);
-            sleep_ms(100);
-            gpio_put(PICO_DEFAULT_LED_PIN, 0);
-            sleep_ms(100);
-        }
-        
-        return 0;  // Never reached
-    }
     
     // Custom allocator with memory tracking and diagnostics
     static void* lua_custom_alloc(void* ud, void* ptr, size_t osize, size_t nsize) {
@@ -1130,7 +1092,7 @@ static void print_table_recursive(lua_State* L, int index, int depth) {
                 tud_cdc_write_str("     2) Simplify your script\n\r");
                 tud_cdc_write_str("     3) Remove unused libraries\n\r");
                 tud_cdc_write_str("========================================\n\r");
-                tud_cdc_write_flush();
+                
                 
                 return NULL;  // Return NULL to let Lua handle it
             }
@@ -1171,9 +1133,6 @@ public:
             return;
         }
         
-        // Set panic handler for unrecoverable errors
-        lua_atpanic(L, lua_panic_handler);
-        printf("Lua panic handler installed\n\r");
         
         // Load basic Lua libraries
         luaL_openlibs(L);
@@ -1883,14 +1842,14 @@ public:
                 tud_cdc_write_str("ERROR setting up pulseout: ");
                 tud_cdc_write_str(error ? error : "unknown error");
                 tud_cdc_write_str("\n\r");
-                tud_cdc_write_flush();
+                
             }
             printf("Error setting up pulseout defaults: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         } else {
             if (tud_cdc_connected()) {
                 tud_cdc_write_str("Pulseout setup completed\n\r");
-                tud_cdc_write_flush();
+                
             }
         }
         
@@ -2425,12 +2384,14 @@ public:
                 tud_cdc_write_str("\n\r");
                 tud_cdc_write_str(" Blackbird-v0.8\n\r");
                 tud_cdc_write_str(" Music Thing Modular Workshop Computer\n\r");
-                tud_cdc_write_flush();
+
+                tud_cdc_write_flush(); // flush manually due to long welcome string
+                
                 snprintf(card_id_str, sizeof(card_id_str), " Program Card ID: 0x%08X%08X\n\r", 
                          (uint32_t)(cached_unique_id >> 32), (uint32_t)(cached_unique_id & 0xFFFFFFFF));
                 
                 tud_cdc_write_str(card_id_str);
-                tud_cdc_write_flush();
+                
                 welcome_sent = true;
                 
                 // NOW load the boot script - all hardware is initialized
@@ -2449,7 +2410,7 @@ public:
                          "  Use perf_stats() in Lua to query/reset worst case timing.\n\r",
                          (unsigned long)g_worst_case_us, (unsigned long)g_overrun_count);
                 tud_cdc_write_str(perf_msg);
-                tud_cdc_write_flush();
+                
                 // Note: Don't reset g_worst_case_us here - let user query via perf_stats()
             }
             
@@ -2610,7 +2571,7 @@ public:
         
         if (g_new_script_len + len >= sizeof(g_new_script)) {
             tud_cdc_write_str("!ERROR! Script is too long.\n\r");
-            tud_cdc_write_flush();
+            
             g_repl_mode = REPL_discard;
             return;
         }
@@ -2660,7 +2621,7 @@ public:
             if (g_rx_buffer_pos >= USB_RX_BUFFER_SIZE - 1) {
                 // Buffer full - send error message matching crow
                 tud_cdc_write_str("!chunk too long!\n\r");
-                tud_cdc_write_flush();
+                
                 g_rx_buffer_pos = 0;
                 g_multiline_mode = false;  // Reset multiline state on overflow
                 if (g_repl_mode == REPL_reception) {
@@ -2783,7 +2744,7 @@ public:
             case C_version: {
                 // Embed build date/time and debug format so a late serial connection can verify firmware
                 tud_cdc_write_str("^^version('blackbird-0.8')\n\r");
-                tud_cdc_write_flush();
+                
                 break; }
                 
             case C_identity: {
@@ -2792,7 +2753,7 @@ public:
                 snprintf(response, sizeof(response), "^^identity('0x%08X%08X')\n\r", 
                          (uint32_t)(unique_id >> 32), (uint32_t)(unique_id & 0xFFFFFFFF));
                 tud_cdc_write_str(response);
-                tud_cdc_write_flush();
+                
                 break;
             }
             
@@ -2813,20 +2774,20 @@ public:
                 } else {
                     tud_cdc_write_str("No user script.\n\r");
                 }
-                tud_cdc_write_flush();
+                
                 sleep_ms(50);  // Give USB time to transmit before next command
                 break;
             }
                 
             case C_restart:
                 tud_cdc_write_str("Press the RESET button to reset Workshop Computer.\n\r");
-                tud_cdc_write_flush();
+                
                 // Could implement actual restart here
                 break;
                 
             case C_killlua:
                 tud_cdc_write_str("killing lua...\n\r");
-                tud_cdc_write_flush();
+                
                 if (lua_manager) {
                     // Soft reset: clear Lua state but don't reboot hardware
                     // This matches real Crow's Lua_Reset() behavior
@@ -2880,12 +2841,12 @@ public:
                     
                     //tud_cdc_write_str("lua environment reset\n\r");
                 }
-                tud_cdc_write_flush();
+                
                 break;
                 
             case C_boot:
                 tud_cdc_write_str("Workshop Computer does not support bootloader command sorry.\n\r");
-                tud_cdc_write_flush();
+                
                 break;
                 
             case C_startupload:
@@ -2895,7 +2856,7 @@ public:
                 g_new_script_name[0] = '\0';  // Clear script name
                 g_repl_mode = REPL_reception;
                 tud_cdc_write_str("script upload started\n\r");
-                tud_cdc_write_flush();
+                
                 break;
                 
             case C_endupload:
@@ -2960,23 +2921,23 @@ public:
                     tud_cdc_write_str("\\no script data received\n\r");
                 }
                 g_repl_mode = REPL_normal;
-                tud_cdc_write_flush();
+                
                 break;
                 
             case C_flashupload: {
                 if (g_repl_mode == REPL_discard) {
                     tud_cdc_write_str("upload failed, discard mode\n\r");
-                    tud_cdc_write_flush();
+                    
                 } else if (g_new_script_len > 0 && lua_manager) {
                     // Try to extract script name from first comment line
                     extract_script_name(g_new_script, g_new_script_len);
                     
                     // Run script AND save to flash - matches crow's REPL_upload(1)
                     // Tell user to prepare for manual reset BEFORE we write to flash
-                    tud_cdc_write_flush();
+                    
                     tud_cdc_write_str("\n\r");
                     tud_cdc_write_str("========================================\n\r");
-                    tud_cdc_write_flush();
+                    
                     if (g_new_script_name[0]) {
                         char msg[64];
                         snprintf(msg, sizeof(msg), "Writing %s to flash...\n\r", g_new_script_name);
@@ -2984,20 +2945,20 @@ public:
                     } else {
                         tud_cdc_write_str("Writing script to flash...\n\r");
                     }
-                    tud_cdc_write_flush();
+                    
                     
                     // Write to flash (this will reset core1, do the flash write, then restart core1)
                     if (FlashStorage::write_user_script_with_name(g_new_script, g_new_script_len, g_new_script_name)) {
                         // Give USB time to stabilize after core1 restart
                         
-                        tud_cdc_write_flush();
+                        
                         tud_cdc_write_str("User script saved to flash!\n\r");
                         tud_cdc_write_str("\n\r");
                         tud_cdc_write_str("Press the RESET button (next to card slot)\n\r");
                         tud_cdc_write_str("on your Workshop Computer to load your script.\n\r");
                         tud_cdc_write_str("========================================\n\r");
                         tud_cdc_write_str("\n\r");
-                        tud_cdc_write_flush();
+                        
                         
                         // Light up all LEDs to indicate upload complete
                         this->LedOn(0);
@@ -3008,7 +2969,7 @@ public:
                         this->LedOn(5);
                     } else {
                         tud_cdc_write_str("flash write failed\n\r");
-                        tud_cdc_write_flush();
+                        
                     }
                 } else {
                     char debug_buf[128];
@@ -3017,13 +2978,13 @@ public:
                     tud_cdc_write_str(debug_buf);
                 }
                 g_repl_mode = REPL_normal;
-                tud_cdc_write_flush();
+                
                 break;
             }
                 
             case C_flashclear:
                 // Output status BEFORE flash operation (which disables interrupts)
-                tud_cdc_write_flush();
+                
                 tud_cdc_write_str("\n\r");
                 tud_cdc_write_str("========================================\n\r");
                 tud_cdc_write_str("Clearing user script...\n\r");
@@ -3032,7 +2993,7 @@ public:
                 if (FlashStorage::set_default_script_mode()) {
                     
                     tud_cdc_write_str("User script cleared!\n\r");
-                    tud_cdc_write_flush();
+                    
                     
                     // Reset Lua environment immediately (matches real crow behavior)
                     // This will call crow.reset() which calls public.clear()
@@ -3047,7 +3008,7 @@ public:
                     
                     tud_cdc_write_str("========================================\n\r");
                     tud_cdc_write_str("\n\r");
-                    tud_cdc_write_flush();
+                    
                     
                     // Light up all LEDs to indicate operation complete
                     this->LedOn(0);
@@ -3059,7 +3020,7 @@ public:
 
                 } else {
                     tud_cdc_write_str("flash write failed\n\r");
-                    tud_cdc_write_flush();
+                    
                 }
                 break;
                 
@@ -4167,7 +4128,7 @@ int LuaManager::lua_set_input_stream(lua_State* L) {
         //     char msg[64];
         //     snprintf(msg, sizeof(msg), "Input %d: stream mode, interval %.3fs\n\r", channel, time);
         //     tud_cdc_write_str(msg);
-        //     tud_cdc_write_flush();
+        //     
         // }
     }
     return 0;
@@ -4589,7 +4550,7 @@ static void public_update() {
                 // Write to buffer - batched flush happens every 2ms in main loop
                 if (len > 0 && tud_cdc_connected()) {
                     tud_cdc_write(msg_buf, len);
-                    // REMOVED: tud_cdc_write_flush(); - batched in main loop
+                    // REMOVED:  - batched in main loop
                 }
             }
         } else { // inputs (4-5 -> 0-1)
@@ -4607,7 +4568,7 @@ static void public_update() {
                 // Write to buffer - batched flush happens every 2ms in main loop
                 if (len > 0 && tud_cdc_connected()) {
                     tud_cdc_write(msg_buf, len);
-                    // REMOVED: tud_cdc_write_flush(); - batched in main loop
+                    // REMOVED:  - batched in main loop
                 }
             }
         }
@@ -4779,12 +4740,12 @@ int LuaManager::lua_memstats(lua_State* L) {
     char buffer[128];
     
     tud_cdc_write_str("Lua Memory Usage:\n\r");
-    tud_cdc_write_flush();
+    
     
     snprintf(buffer, sizeof(buffer), "  Current: %.2f KB (%d KB + %d bytes)\n\r", 
              total_kb, kb_used, bytes);
     tud_cdc_write_str(buffer);
-    tud_cdc_write_flush();
+    
     
     // Trigger a GC cycle and report change
     lua_gc(L, LUA_GCCOLLECT, 0);
@@ -4796,7 +4757,7 @@ int LuaManager::lua_memstats(lua_State* L) {
     snprintf(buffer, sizeof(buffer), "  After GC: %.2f KB (freed %.2f KB)\n\r", 
              total_after, freed);
     tud_cdc_write_str(buffer);
-    tud_cdc_write_flush();
+    
     
     return 0;
 }
@@ -4853,7 +4814,7 @@ int LuaManager::lua_perf_stats(lua_State* L) {
                      (worst / 20.8f) * 100.0f,
                      (unsigned long)overruns);
             tud_cdc_write_str(msg);
-            tud_cdc_write_flush();
+            
         }
         
         // Optionally reset the tracker
@@ -4958,7 +4919,7 @@ extern "C" {
             uint8_t ch = (uint8_t)c;
             tud_cdc_write(&ch, 1);
             if (c == '\n' || c == '\r') {
-                tud_cdc_write_flush();
+                
             }
         }
         return c;
@@ -4969,7 +4930,7 @@ extern "C" {
         if (tud_cdc_connected()) {
             tud_cdc_write_str(s);
             tud_cdc_write_char('\n');
-            tud_cdc_write_flush();
+            
         }
         return 1;
     }
@@ -4979,7 +4940,7 @@ extern "C" {
         if (handle == 1 || handle == 2) { // stdout or stderr
             if (tud_cdc_connected()) {
                 tud_cdc_write(data, size);
-                tud_cdc_write_flush();
+                
             }
             return size;
         }
