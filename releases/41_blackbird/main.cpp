@@ -134,9 +134,14 @@ static uint32_t g_noise_state = 0xDEADBEEF;
 // ========================================================================
 // PERFORMANCE MONITORING
 // ========================================================================
+// ProcessSample (Core 1 audio thread) performance
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
 static volatile uint32_t g_overrun_count = 0;
+
+// MainControlLoop (Core 0) performance
+static volatile uint32_t g_loop_worst_case_us = 0;
+static volatile uint32_t g_loop_iteration_count = 0;
 
 // Fast audio-rate noise generation in ISR - NO FLOATING POINT
 // Returns noise value in millivolts (-6000 to +6000)
@@ -2364,16 +2369,17 @@ public:
         
         // Timer processing state - moved from ISR!
         static uint32_t last_timer_process_us = 0;
-        // Auto-calculate polling rate from TIMER_BLOCK_SIZE
-        // Formula: (TIMER_BLOCK_SIZE / 48000) * 1000000 * 0.75
-        // Poll at 75% of block duration to catch blocks with good margin
-        const uint32_t timer_interval_us = (TIMER_BLOCK_SIZE * 1000000) / (48000 * 4 / 3);
+        
+        const uint32_t timer_interval_us = 667; // ~1.5kHz timer processing
         
         // USB TX batching timer (matches crow's 2ms interval)
         static uint32_t last_usb_tx_us = 0;
         const uint32_t usb_tx_interval_us = 2000; // 2ms like crow
         
         while (1) {
+            // === PERFORMANCE MONITORING: Track loop iteration time ===
+            uint32_t loop_start_time = time_us_32();
+            
             // CRITICAL: Service TinyUSB stack regularly
             tud_task();
             
@@ -2557,9 +2563,14 @@ public:
                 public_update();
             }
             
-            // Auto-calculated sleep matches polling rate
-            // Tight loop ensures we catch all blocks without missing any
-            sleep_us(timer_interval_us);
+            // === PERFORMANCE MONITORING: Track loop worst-case time ===
+            uint32_t loop_elapsed = time_us_32() - loop_start_time;
+            if (loop_elapsed > g_loop_worst_case_us) {
+                g_loop_worst_case_us = loop_elapsed;
+            }
+            g_loop_iteration_count++;
+            
+
         }
     }
     
@@ -4763,10 +4774,10 @@ int LuaManager::lua_memstats(lua_State* L) {
 }
 
 // Implementation of lua_perf_stats (performance monitoring statistics)
-// Usage: perf_stats()              -- prints formatted stats, resets counter
+// Usage: perf_stats()              -- prints formatted stats, resets counters
 //        perf_stats(false)         -- prints formatted stats, doesn't reset
-//        val = perf_stats("raw")   -- returns raw value (microseconds), resets
-//        val = perf_stats("raw", false) -- returns raw value, doesn't reset
+//        val = perf_stats("raw")   -- returns ProcessSample raw value (microseconds), resets
+//        val = perf_stats("raw", false) -- returns ProcessSample raw value, doesn't reset
 int LuaManager::lua_perf_stats(lua_State* L) {
     int nargs = lua_gettop(L);
     bool reset = true;
@@ -4789,37 +4800,49 @@ int LuaManager::lua_perf_stats(lua_State* L) {
         }
     }
     
-    // Get current worst-case value
+    // Get current worst-case values
     uint32_t worst = g_worst_case_us;
     uint32_t overruns = g_overrun_count;
+    uint32_t loop_worst = g_loop_worst_case_us;
+    uint32_t loop_count = g_loop_iteration_count;
     
     if (raw_mode) {
-        // Raw mode: just return the value
+        // Raw mode: just return ProcessSample value for backwards compatibility
         lua_pushinteger(L, worst);
         if (reset) {
             g_worst_case_us = 0;
+            g_loop_worst_case_us = 0;
+            g_loop_iteration_count = 0;
         }
         return 1;
     } else {
         // Default mode: print formatted output via TinyUSB CDC
         if (tud_cdc_connected()) {
-            char msg[256];
+            char msg[512];
             snprintf(msg, sizeof(msg), 
-                     "ProcessSample Performance:\n\r"
+                     "ProcessSample Performance (Core 1):\n\r"
                      "  Worst case: %lu microseconds\n\r"
                      "  Budget: 20.8us (48kHz sample rate)\n\r"
                      "  Utilization: %.1f%%\n\r"
-                     "  Overruns (>18us): %lu\n\r",
+                     "  Overruns (>18us): %lu\n\r"
+                     "\n\r"
+                     "MainControlLoop Performance (Core 0):\n\r"
+                     "  Worst case: %lu microseconds\n\r"
+                     "  Total iterations: %lu\n\r",
                      (unsigned long)worst,
                      (worst / 20.8f) * 100.0f,
-                     (unsigned long)overruns);
+                     (unsigned long)overruns,
+                     (unsigned long)loop_worst,
+                     (unsigned long)loop_count);
             tud_cdc_write_str(msg);
             
         }
         
-        // Optionally reset the tracker
+        // Optionally reset the trackers
         if (reset) {
             g_worst_case_us = 0;
+            g_loop_worst_case_us = 0;
+            g_loop_iteration_count = 0;
         }
         
         return 0;  // No return value in print mode
