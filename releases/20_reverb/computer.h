@@ -163,6 +163,14 @@ uint32_t midiToDac(int midiNote, int channel)
 	return dacValue;
 }
 
+uint32_t midiToDac8(int midiNote8, int channel)
+{
+	int32_t dacValue = ((calCoeffs[channel].mi * (midiNote8 - (60*256))) >> 12) + calCoeffs[channel].bi;
+	if (dacValue > 524287) dacValue = 524287;
+	if (dacValue < 0) dacValue = 0;
+	return dacValue;
+}
+
 void CalcCalCoeffs(int channel)
 {
 	float sumV = 0.0;
