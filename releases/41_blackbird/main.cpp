@@ -1,9 +1,12 @@
 #include "ComputerCard.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
+#include "hardware/timer.h"
+#include "hardware/irq.h"
 #include "tusb.h"
 #include "class/cdc/cdc_device.h"
 #include "lib/debug.h"
+#include "lib/usb_lockfree.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -1997,6 +2000,178 @@ static char g_rx_buffer[USB_RX_BUFFER_SIZE] = {0};
 static volatile int g_rx_buffer_pos = 0;
 static volatile bool g_multiline_mode = false;  // Track multi-line mode (triple backticks)
 
+// Forward declarations for USB command handling and processing
+class BlackbirdCrow;
+static void process_usb_byte(char c);
+
+// Forward declarations of static wrapper functions
+// (Implementations moved after BlackbirdCrow class definition)
+static void handle_usb_command(const char* command);
+static C_cmd_t parse_command(const char* buffer, int length);
+static void handle_command_with_response(C_cmd_t cmd);
+
+// Upload state machine (matches crow's REPL mode) - MUST BE BEFORE process_usb_byte!
+typedef enum {
+    REPL_normal = 0,
+    REPL_reception,
+    REPL_discard
+} repl_mode_t;
+
+static volatile repl_mode_t g_repl_mode = REPL_normal;
+static char g_new_script[16 * 1024];  // 16KB script buffer for uploads
+static volatile uint32_t g_new_script_len = 0;
+static char g_new_script_name[64] = "";  // Store script name from first comment line
+
+// NOW define process_usb_byte (after the variables it needs)
+static void process_usb_byte(char c) {
+    // Safety check - ensure buffer position is sane
+    if (g_rx_buffer_pos < 0 || g_rx_buffer_pos >= USB_RX_BUFFER_SIZE) {
+        printf("ERROR: Buffer corruption detected! Resetting...\n\r");
+        g_rx_buffer_pos = 0;
+        g_multiline_mode = false;
+        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+    }
+    
+    // Check for escape key (clears buffer, multiline mode, and reception mode)
+    if (c == 0x1B) {  // ESC key
+        g_rx_buffer_pos = 0;
+        g_multiline_mode = false;
+        g_repl_mode = REPL_normal;
+        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+        return;
+    }
+    
+    // Check for buffer overflow BEFORE adding character
+    if (g_rx_buffer_pos >= USB_RX_BUFFER_SIZE - 1) {
+        // Buffer full - send error message matching crow
+        tud_cdc_write_str("!chunk too long!\n\r");
+        
+        g_rx_buffer_pos = 0;
+        g_multiline_mode = false;  // Reset multiline state on overflow
+        if (g_repl_mode == REPL_reception) {
+            g_repl_mode = REPL_discard;  // Mark upload as failed
+        }
+        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+        return;
+    }
+    
+    // Add character to buffer
+    g_rx_buffer[g_rx_buffer_pos] = c;
+    g_rx_buffer_pos++;
+    g_rx_buffer[g_rx_buffer_pos] = '\0';
+    
+    // Check for triple backticks (multi-line delimiter)
+    if (check_for_backticks(g_rx_buffer, g_rx_buffer_pos)) {
+        // Toggle multiline mode
+        g_multiline_mode = !g_multiline_mode;
+        
+        if (g_multiline_mode) {
+            // Started multiline - strip the opening backticks
+            g_rx_buffer_pos -= 3;
+            g_rx_buffer[g_rx_buffer_pos] = '\0';
+        } else {
+            // Ended multiline - strip the closing backticks and execute
+            g_rx_buffer_pos -= 3;
+            g_rx_buffer[g_rx_buffer_pos] = '\0';
+            
+            // Execute the accumulated command if not empty
+            if (g_rx_buffer_pos > 0) {
+                handle_usb_command(g_rx_buffer);
+            }
+            
+            // Clear buffer
+            g_rx_buffer_pos = 0;
+            memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+        }
+        return;
+    }
+    
+    // In single-line mode, execute on newline
+    if (!g_multiline_mode && is_packet_complete(g_rx_buffer, g_rx_buffer_pos)) {
+        // Strip trailing whitespace
+        int clean_length = g_rx_buffer_pos;
+        while (clean_length > 0 && 
+               (g_rx_buffer[clean_length-1] == '\n' || 
+                g_rx_buffer[clean_length-1] == '\r' || 
+                g_rx_buffer[clean_length-1] == ' ' || 
+                g_rx_buffer[clean_length-1] == '\t')) {
+            clean_length--;
+        }
+        g_rx_buffer[clean_length] = '\0';
+        
+        // Skip empty commands
+        if (clean_length > 0) {
+            // Check for system commands FIRST (even in reception mode)
+            C_cmd_t cmd = parse_command(g_rx_buffer, clean_length);
+            if (cmd != C_none) {
+                // System command - process it
+                handle_command_with_response(cmd);
+            } else if (g_repl_mode == REPL_reception) {
+                // In reception mode and not a command - accumulate as script data
+                extern void receive_script_data(const char* buf, uint32_t len);
+                // Note: receive_script_data is a method, we'll need to handle this differently
+                // For now, just store the data (simplified)
+                if (g_new_script_len + clean_length < sizeof(g_new_script)) {
+                    memcpy(&g_new_script[g_new_script_len], g_rx_buffer, clean_length);
+                    g_new_script_len += clean_length;
+                    g_new_script[g_new_script_len++] = '\n';
+                }
+            } else {
+                // Normal REPL mode - execute Lua
+                handle_usb_command(g_rx_buffer);
+            }
+        }
+        
+        // Clear buffer after processing
+        g_rx_buffer_pos = 0;
+        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+        return;
+    }
+}
+
+// ============================================================================
+// USB IRQ TIMER - Services USB stack and queues at 1kHz
+// ============================================================================
+#define USB_SERVICE_INTERVAL_US 1000
+static struct repeating_timer g_usb_service_timer;
+
+// ISR-safe USB service callback - runs at 1kHz (1ms intervals)
+static bool __isr __time_critical_func(usb_service_callback)(struct repeating_timer *t) {
+    // Service TinyUSB stack (safe in non-RTOS mode per TinyUSB docs)
+    tud_task();
+    
+    // RX: Read available data and queue for main loop processing
+    if (tud_cdc_available()) {
+        uint8_t buf[64];
+        uint32_t count = tud_cdc_read(buf, sizeof(buf));
+        
+        if (count > 0) {
+            // Post to lock-free RX queue (IRQ → main loop)
+            usb_rx_lockfree_post((char*)buf, count);
+        }
+    }
+    
+    // TX: Process queued messages from main loop
+    if (tud_cdc_connected()) {
+        usb_tx_message_t msg;
+        while (usb_tx_lockfree_get(&msg)) {
+            // Write to USB CDC TX buffer
+            uint32_t written = tud_cdc_write(msg.data, msg.length);
+            
+            // If flush requested or buffer getting full, flush now
+            if (msg.needs_flush || tud_cdc_write_available() < 128) {
+                tud_cdc_write_flush();
+            }
+            
+            // If not all data was written, we're in trouble - just drop it
+            // (The TX queue is sized to prevent this in normal operation)
+            (void)written;
+        }
+    }
+    
+    return true;  // Keep timer running
+}
+
 // Global flag to signal core1 to pause for flash operations (not static - accessed from flash_storage.cpp)
 volatile bool g_flash_operation_pending = false;
 
@@ -2053,18 +2228,6 @@ extern "C" void output_batch_flush() {
 static inline bool output_is_batching() {
     return g_output_batch.batch_mode_active;
 }
-
-// Upload state machine (matches crow's REPL mode)
-typedef enum {
-    REPL_normal = 0,
-    REPL_reception,
-    REPL_discard
-} repl_mode_t;
-
-static volatile repl_mode_t g_repl_mode = REPL_normal;
-static char g_new_script[16 * 1024];  // 16KB script buffer for uploads
-static volatile uint32_t g_new_script_len = 0;
-static char g_new_script_name[64] = "";  // Store script name from first comment line
 
 //REMOVED PERF MONITOR
 // Hardware timer-based PulseOut2 performance monitoring (outside class to avoid C++ issues)
@@ -2352,9 +2515,20 @@ public:
     // Core0 main control loop - handles USB, events, Lua AND timer processing
     void MainControlLoop()
     {
+        // Initialize USB lock-free queues
+        usb_lockfree_init();
+        
         // Initialize USB buffer
         g_rx_buffer_pos = 0;
         memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+        
+        // Start USB service timer (1kHz IRQ for RX/TX)
+        if (!add_repeating_timer_us(-USB_SERVICE_INTERVAL_US, 
+                                     usb_service_callback, 
+                                     NULL, 
+                                     &g_usb_service_timer)) {
+            printf("Failed to start USB service timer!\n");
+        }
         
         // Welcome message timing - send 1.5s after startup
         bool welcome_sent = false;
@@ -2380,8 +2554,27 @@ public:
             // === PERFORMANCE MONITORING: Track loop iteration time ===
             uint32_t loop_start_time = time_us_32();
             
-            // CRITICAL: Service TinyUSB stack regularly
-            tud_task();
+            // Process USB RX messages from lock-free queue
+            usb_rx_message_t rx_msg;
+            while (usb_rx_lockfree_get(&rx_msg)) {
+                // Process each byte from the RX message
+                for (uint16_t i = 0; i < rx_msg.length; i++) {
+                    process_usb_byte(rx_msg.data[i]);
+                }
+                
+                // After processing each USB packet, check for commands without newlines
+                // (druid sends ^^s, ^^e, ^^w as 3-byte packets without line endings)
+                if (g_rx_buffer_pos >= 3 && g_rx_buffer_pos <= 10 && !g_multiline_mode) {
+                    C_cmd_t cmd = parse_command(g_rx_buffer, g_rx_buffer_pos);
+                    if (cmd != C_none) {
+                        // Found a command without newline - handle it
+                        handle_command_with_response(cmd);
+                        // Clear buffer
+                        g_rx_buffer_pos = 0;
+                        memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+                    }
+                }
+            }
             
             // Send welcome message 1.5s after startup
             if (!welcome_sent && absolute_time_diff_us(get_absolute_time(), welcome_time) <= 0) {
@@ -2404,8 +2597,8 @@ public:
                 load_boot_script();
             }
             
-            // Handle USB input directly - no mailbox needed
-            handle_usb_input();
+            // USB input now handled via lock-free queue (see above)
+            // No need to call handle_usb_input() - it's replaced by queue processing
             
             // Check for performance warnings from ProcessSample
             if (g_performance_warning) {
@@ -2598,129 +2791,129 @@ public:
     }
     
     // Handle USB input directly - no mailbox complexity
-    void handle_usb_input() {
-        // Check for available data from TinyUSB CDC
-        if (!tud_cdc_available()) {
-            return;
-        }
+    // void handle_usb_input() {
+    //     // Check for available data from TinyUSB CDC
+    //     if (!tud_cdc_available()) {
+    //         return;
+    //     }
         
-        // Read available characters
-        uint8_t buf[64];
-        uint32_t count = tud_cdc_read(buf, sizeof(buf));
+    //     // Read available characters
+    //     uint8_t buf[64];
+    //     uint32_t count = tud_cdc_read(buf, sizeof(buf));
         
-        for (uint32_t i = 0; i < count; i++) {
-            int c = buf[i];
+    //     for (uint32_t i = 0; i < count; i++) {
+    //         int c = buf[i];
             
-            // Safety check - ensure buffer position is sane
-            if (g_rx_buffer_pos < 0 || g_rx_buffer_pos >= USB_RX_BUFFER_SIZE) {
-                printf("ERROR: Buffer corruption detected! Resetting...\n\r");
-                g_rx_buffer_pos = 0;
-                g_multiline_mode = false;
-                memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-            }
+    //         // Safety check - ensure buffer position is sane
+    //         if (g_rx_buffer_pos < 0 || g_rx_buffer_pos >= USB_RX_BUFFER_SIZE) {
+    //             printf("ERROR: Buffer corruption detected! Resetting...\n\r");
+    //             g_rx_buffer_pos = 0;
+    //             g_multiline_mode = false;
+    //             memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+    //         }
             
-            // Check for escape key (clears buffer, multiline mode, and reception mode)
-            if (c == 0x1B) {  // ESC key
-                g_rx_buffer_pos = 0;
-                g_multiline_mode = false;
-                g_repl_mode = REPL_normal;
-                memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-                continue;
-            }
+    //         // Check for escape key (clears buffer, multiline mode, and reception mode)
+    //         if (c == 0x1B) {  // ESC key
+    //             g_rx_buffer_pos = 0;
+    //             g_multiline_mode = false;
+    //             g_repl_mode = REPL_normal;
+    //             memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+    //             continue;
+    //         }
             
-            // Check for buffer overflow BEFORE adding character
-            if (g_rx_buffer_pos >= USB_RX_BUFFER_SIZE - 1) {
-                // Buffer full - send error message matching crow
-                tud_cdc_write_str("!chunk too long!\n\r");
+    //         // Check for buffer overflow BEFORE adding character
+    //         if (g_rx_buffer_pos >= USB_RX_BUFFER_SIZE - 1) {
+    //             // Buffer full - send error message matching crow
+    //             tud_cdc_write_str("!chunk too long!\n\r");
                 
-                g_rx_buffer_pos = 0;
-                g_multiline_mode = false;  // Reset multiline state on overflow
-                if (g_repl_mode == REPL_reception) {
-                    g_repl_mode = REPL_discard;  // Mark upload as failed
-                }
-                memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-                continue;
-            }
+    //             g_rx_buffer_pos = 0;
+    //             g_multiline_mode = false;  // Reset multiline state on overflow
+    //             if (g_repl_mode == REPL_reception) {
+    //                 g_repl_mode = REPL_discard;  // Mark upload as failed
+    //             }
+    //             memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+    //             continue;
+    //         }
             
-            // Add character to buffer
-            g_rx_buffer[g_rx_buffer_pos] = (char)c;
-            g_rx_buffer_pos++;
-            g_rx_buffer[g_rx_buffer_pos] = '\0';
+    //         // Add character to buffer
+    //         g_rx_buffer[g_rx_buffer_pos] = (char)c;
+    //         g_rx_buffer_pos++;
+    //         g_rx_buffer[g_rx_buffer_pos] = '\0';
             
-            // Check for triple backticks (multi-line delimiter)
-            if (check_for_backticks(g_rx_buffer, g_rx_buffer_pos)) {
-                // Toggle multiline mode
-                g_multiline_mode = !g_multiline_mode;
+    //         // Check for triple backticks (multi-line delimiter)
+    //         if (check_for_backticks(g_rx_buffer, g_rx_buffer_pos)) {
+    //             // Toggle multiline mode
+    //             g_multiline_mode = !g_multiline_mode;
                 
-                if (g_multiline_mode) {
-                    // Started multiline - strip the opening backticks
-                    g_rx_buffer_pos -= 3;
-                    g_rx_buffer[g_rx_buffer_pos] = '\0';
-                } else {
-                    // Ended multiline - strip the closing backticks and execute
-                    g_rx_buffer_pos -= 3;
-                    g_rx_buffer[g_rx_buffer_pos] = '\0';
+    //             if (g_multiline_mode) {
+    //                 // Started multiline - strip the opening backticks
+    //                 g_rx_buffer_pos -= 3;
+    //                 g_rx_buffer[g_rx_buffer_pos] = '\0';
+    //             } else {
+    //                 // Ended multiline - strip the closing backticks and execute
+    //                 g_rx_buffer_pos -= 3;
+    //                 g_rx_buffer[g_rx_buffer_pos] = '\0';
                     
-                    // Execute the accumulated command if not empty
-                    if (g_rx_buffer_pos > 0) {
-                        handle_usb_command(g_rx_buffer);
-                    }
+    //                 // Execute the accumulated command if not empty
+    //                 if (g_rx_buffer_pos > 0) {
+    //                     handle_usb_command(g_rx_buffer);
+    //                 }
                     
-                    // Clear buffer
-                    g_rx_buffer_pos = 0;
-                    memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-                }
-                continue;
-            }
+    //                 // Clear buffer
+    //                 g_rx_buffer_pos = 0;
+    //                 memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+    //             }
+    //             continue;
+    //         }
             
-            // In single-line mode, execute on newline
-            if (!g_multiline_mode && is_packet_complete(g_rx_buffer, g_rx_buffer_pos)) {
-                // Strip trailing whitespace
-                int clean_length = g_rx_buffer_pos;
-                while (clean_length > 0 && 
-                       (g_rx_buffer[clean_length-1] == '\n' || 
-                        g_rx_buffer[clean_length-1] == '\r' || 
-                        g_rx_buffer[clean_length-1] == ' ' || 
-                        g_rx_buffer[clean_length-1] == '\t')) {
-                    clean_length--;
-                }
-                g_rx_buffer[clean_length] = '\0';
+    //         // In single-line mode, execute on newline
+    //         if (!g_multiline_mode && is_packet_complete(g_rx_buffer, g_rx_buffer_pos)) {
+    //             // Strip trailing whitespace
+    //             int clean_length = g_rx_buffer_pos;
+    //             while (clean_length > 0 && 
+    //                    (g_rx_buffer[clean_length-1] == '\n' || 
+    //                     g_rx_buffer[clean_length-1] == '\r' || 
+    //                     g_rx_buffer[clean_length-1] == ' ' || 
+    //                     g_rx_buffer[clean_length-1] == '\t')) {
+    //                 clean_length--;
+    //             }
+    //             g_rx_buffer[clean_length] = '\0';
                 
-                // Skip empty commands
-            if (clean_length > 0) {
-                // Check for system commands FIRST (even in reception mode)
-                C_cmd_t cmd = parse_command(g_rx_buffer, clean_length);
-                if (cmd != C_none) {
-                    // System command - process it
-                    handle_command_with_response(cmd);
-                } else if (g_repl_mode == REPL_reception) {
-                    // In reception mode and not a command - accumulate as script data
-                    receive_script_data(g_rx_buffer, clean_length);
-                } else {
-                    // Normal REPL mode - execute Lua
-                    handle_usb_command(g_rx_buffer);
-                }
-            }                // Clear buffer after processing
-                g_rx_buffer_pos = 0;
-                memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-            }
-            // In multiline mode, just keep accumulating characters
-        }
+    //             // Skip empty commands
+    //         if (clean_length > 0) {
+    //             // Check for system commands FIRST (even in reception mode)
+    //             C_cmd_t cmd = parse_command(g_rx_buffer, clean_length);
+    //             if (cmd != C_none) {
+    //                 // System command - process it
+    //                 handle_command_with_response(cmd);
+    //             } else if (g_repl_mode == REPL_reception) {
+    //                 // In reception mode and not a command - accumulate as script data
+    //                 receive_script_data(g_rx_buffer, clean_length);
+    //             } else {
+    //                 // Normal REPL mode - execute Lua
+    //                 handle_usb_command(g_rx_buffer);
+    //             }
+    //         }                // Clear buffer after processing
+    //             g_rx_buffer_pos = 0;
+    //             memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+    //         }
+    //         // In multiline mode, just keep accumulating characters
+    //     }
         
-        // After processing all characters in this USB packet, check if we have a command
-        // without a newline (like ^^e, ^^s, etc.) - this handles the case where druid
-        // sends commands as 3-byte packets without line endings
-        if (g_rx_buffer_pos >= 3 && g_rx_buffer_pos <= 10) {  // Commands are short
-            C_cmd_t cmd = parse_command(g_rx_buffer, g_rx_buffer_pos);
-            if (cmd != C_none) {
-                // Found a command without newline - handle it
-                handle_command_with_response(cmd);
-                // Clear buffer
-                g_rx_buffer_pos = 0;
-                memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
-            }
-        }
-    }
+    //     // After processing all characters in this USB packet, check if we have a command
+    //     // without a newline (like ^^e, ^^s, etc.) - this handles the case where druid
+    //     // sends commands as 3-byte packets without line endings
+    //     if (g_rx_buffer_pos >= 3 && g_rx_buffer_pos <= 10) {  // Commands are short
+    //         C_cmd_t cmd = parse_command(g_rx_buffer, g_rx_buffer_pos);
+    //         if (cmd != C_none) {
+    //             // Found a command without newline - handle it
+    //             handle_command_with_response(cmd);
+    //             // Clear buffer
+    //             g_rx_buffer_pos = 0;
+    //             memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
+    //         }
+    //     }
+    // }
     
     // Handle USB commands received from Core1 via mailbox
     void handle_usb_command(const char* command)
@@ -3255,6 +3448,26 @@ public:
         }
     }
 };
+
+// Static wrapper function implementations (after BlackbirdCrow class is fully defined)
+static void handle_usb_command(const char* command) {
+    if (g_blackbird_instance) {
+        ((BlackbirdCrow*)g_blackbird_instance)->handle_usb_command(command);
+    }
+}
+
+static C_cmd_t parse_command(const char* buffer, int length) {
+    if (g_blackbird_instance) {
+        return ((BlackbirdCrow*)g_blackbird_instance)->parse_command(buffer, length);
+    }
+    return C_none;
+}
+
+static void handle_command_with_response(C_cmd_t cmd) {
+    if (g_blackbird_instance) {
+        ((BlackbirdCrow*)g_blackbird_instance)->handle_command_with_response(cmd);
+    }
+}
 
 // CASL bridge functions
 int LuaManager::lua_casl_describe(lua_State* L) {

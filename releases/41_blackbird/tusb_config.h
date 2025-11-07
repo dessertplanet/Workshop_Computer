@@ -50,8 +50,13 @@ extern "C" {
 #define CFG_TUD_VENDOR              0
 
 // CDC FIFO size of TX and RX
-#define CFG_TUD_CDC_RX_BUFSIZE      256
-#define CFG_TUD_CDC_TX_BUFSIZE      256
+// Increased from 256 to 2048 bytes for better throughput and reduced buffer rotation
+// RP2040 has plenty of RAM (264KB total), and larger buffers help with:
+// - Script uploads (less fragmentation)
+// - Burst writes (pubview, debug output)
+// - Reduced IRQ overhead from buffer management
+#define CFG_TUD_CDC_RX_BUFSIZE      2048
+#define CFG_TUD_CDC_TX_BUFSIZE      2048
 
 #ifdef __cplusplus
 }

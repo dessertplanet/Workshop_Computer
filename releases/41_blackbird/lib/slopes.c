@@ -322,7 +322,14 @@ void S_toward( int        index
         self->last   = self->shaped;
         self->scale  = self->dest - self->last;
         float overflow = 0.0;
-        if( self->countdown < 0.0 && self->countdown > -1023.0 ){
+        // CRITICAL FIX: Check for pending callbacks from instant transitions
+        // If countdown is positive and small (e.g., 1.0 from ms=0 instant transition),
+        // treat it as overflow time so the new slope starts from the correct position
+        if( self->countdown > 0.0 && self->countdown < 100.0 ){
+            // Pending instant callback - clear it and use as overflow
+            overflow = self->countdown;
+            self->action = NULL;  // Clear pending action since we're starting a new slope
+        } else if( self->countdown < 0.0 && self->countdown > -1023.0 ){
             overflow = -(self->countdown);
         }
         self->countdown = ms * SAMPLES_PER_MS; // samples until callback

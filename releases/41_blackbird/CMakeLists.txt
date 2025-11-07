@@ -43,6 +43,7 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/clock_ll.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/events.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/events_lockfree.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/usb_lockfree.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/l_bootstrap.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/l_crowlib.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/l_ii_mod.c
