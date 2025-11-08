@@ -2150,26 +2150,25 @@ static bool __isr __time_critical_func(usb_service_callback)(struct repeating_ti
             usb_rx_lockfree_post((char*)buf, count);
         }
     }
-    
-    // TX: Process queued messages from main loop
-    if (tud_cdc_connected()) {
-        usb_tx_message_t msg;
-        while (usb_tx_lockfree_get(&msg)) {
-            // Write to USB CDC TX buffer
-            uint32_t written = tud_cdc_write(msg.data, msg.length);
-            
-            // If flush requested or buffer getting full, flush now
-            if (msg.needs_flush || tud_cdc_write_available() < 128) {
-                tud_cdc_write_flush();
-            }
-            
-            // If not all data was written, we're in trouble - just drop it
-            // (The TX queue is sized to prevent this in normal operation)
-            (void)written;
-        }
-    }
+    // NOTE: TX draining moved to usb_process_tx() in MainControlLoop to avoid
+    // concurrent tud_cdc_write / tud_cdc_write_flush from ISR and application code.
     
     return true;  // Keep timer running
+}
+
+// Non-ISR USB TX processing (option 3 implementation)
+// Drains lock-free TX queue and performs conditional flushes.
+static inline void usb_process_tx() {
+    if (!tud_cdc_connected()) return;
+    usb_tx_message_t msg;
+    while (usb_tx_lockfree_get(&msg)) {
+        uint32_t written = tud_cdc_write(msg.data, msg.length);
+        // Flush either when explicitly requested or when buffer space is low.
+        if (msg.needs_flush || tud_cdc_write_available() < 128) {
+            tud_cdc_write_flush();
+        }
+        (void)written; // We currently rely on queue sizing; partial writes are dropped.
+    }
 }
 
 // Global flag to signal core1 to pause for flash operations (not static - accessed from flash_storage.cpp)
@@ -2522,7 +2521,7 @@ public:
         g_rx_buffer_pos = 0;
         memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
         
-        // Start USB service timer (1kHz IRQ for RX/TX)
+        // Start USB service timer (1kHz IRQ for stack + RX only; TX now handled in main loop)
         if (!add_repeating_timer_us(-USB_SERVICE_INTERVAL_US, 
                                      usb_service_callback, 
                                      NULL, 
@@ -2575,6 +2574,9 @@ public:
                     }
                 }
             }
+
+            // NEW: Drain USB TX queue outside ISR (eliminates reentrancy races)
+            usb_process_tx();
             
             // Send welcome message 1.5s after startup
             if (!welcome_sent && absolute_time_diff_us(get_absolute_time(), welcome_time) <= 0) {
