@@ -9,11 +9,11 @@ extern "C" {
 #endif
 
 // Lock-free ring buffer for USB RX messages
-#define USB_RX_QUEUE_SIZE 32
+#define USB_RX_QUEUE_SIZE 64
 #define USB_RX_MSG_MAX_LENGTH 256
 
 // Lock-free ring buffer for USB TX messages
-#define USB_TX_QUEUE_SIZE 32
+#define USB_TX_QUEUE_SIZE 64
 #define USB_TX_MSG_MAX_LENGTH 256
 
 typedef struct {
