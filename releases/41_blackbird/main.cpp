@@ -2706,6 +2706,35 @@ public:
                     clock_crow_handle_clock();  // Safe on Core 0
                 }
             }
+
+            // === ASAP CALLBACK: User-defined high-frequency function (bb.asap) ===
+            // Runs every MainControlLoop iteration. Intended for lightweight mapping logic
+            // (e.g. reading knobs and updating outputs). Heavy work will degrade performance.
+            // Safe: never called from ISR. If it errors, we print once and clear it.
+            {
+                static bool asap_error_reported = false;
+                lua_getglobal(lua_manager->L, "bb");            // @1 = bb or nil
+                if (!lua_isnil(lua_manager->L, -1)) {
+                    lua_getfield(lua_manager->L, -1, "asap");   // @2 = bb.asap
+                    if (lua_isfunction(lua_manager->L, -1)) {
+                        if (lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
+                            const char* err = lua_tostring(lua_manager->L, -1);
+                            if (!asap_error_reported) {
+                                printf("bb.asap error: %s\n", err ? err : "(unknown)");
+                                asap_error_reported = true;
+                            }
+                            // Clear bb.asap to prevent repeated errors
+                            lua_getglobal(lua_manager->L, "bb"); // @3
+                            lua_pushnil(lua_manager->L);           // @4
+                            lua_setfield(lua_manager->L, -2, "asap");
+                            lua_pop(lua_manager->L, 2); // pop error + bb
+                        }
+                    } else {
+                        lua_pop(lua_manager->L, 1); // pop non-function asap
+                    }
+                }
+                lua_settop(lua_manager->L, 0); // clean stack
+            }
             
             // *** LED UPDATE: Process LED updates from Core 1 snapshot (240Hz) ***
             if (g_led_update_pending) {
