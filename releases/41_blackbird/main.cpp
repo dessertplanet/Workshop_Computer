@@ -2657,13 +2657,13 @@ public:
             uint32_t now_us = time_us_32();
             if (now_us - last_timer_process_us >= timer_interval_us) {
                 Timer_Process();  // Safe here - not in ISR context!
-                
-                // Update clock system - call every 1ms for proper clock scheduling
-                uint32_t time_now_ms = to_ms_since_boot(get_absolute_time());
-                clock_update(time_now_ms);
-                
                 last_timer_process_us = now_us;
             }
+            
+            // *** CRITICAL: Update clock BEFORE event processing ***
+            // Ensures clock coroutines are scheduled even if event processing takes time
+            uint32_t time_now_ms = to_ms_since_boot(get_absolute_time());
+            clock_update(time_now_ms);
             
             // *** USB TX BATCHING: Flush every 2ms (matches crow's behavior) ***
             if (now_us - last_usb_tx_us >= usb_tx_interval_us) {
@@ -2680,13 +2680,28 @@ public:
             }
             
             // Process lock-free input detection events (high priority)
+            // IMPORTANT: Limit events per iteration to prevent starving clock system
+            // Fast triggers can fill the queue, blocking clock_update() and coroutines
             input_event_lockfree_t input_event;
-            while (input_lockfree_get(&input_event)) {
+            const int max_input_events_per_loop = 8;  // Process up to 8 events per loop
+            int input_events_processed = 0;
+            while (input_lockfree_get(&input_event) && input_events_processed < max_input_events_per_loop) {
                 L_handle_input_lockfree(&input_event);
+                input_events_processed++;
+                
+                // Update clock after EACH input event to prevent starvation
+                // Input callbacks can take milliseconds in Lua
+                time_now_ms = to_ms_since_boot(get_absolute_time());
+                clock_update(time_now_ms);
             }
             
-            // Process regular events (lower priority - system events, etc.)
-            event_next();
+            // Process regular events (lower priority - system events, clock resumes, etc.)
+            // IMPORTANT: Process multiple events per loop to prevent clock resume starvation
+            // Clock resumes are queued via event_post(), so we need to drain them quickly
+            const int max_events_per_loop = 16;  // Process up to 16 events per loop
+            for (int i = 0; i < max_events_per_loop; i++) {
+                event_next();  // Processes one event (or none if queue empty)
+            }
             
             // Check for switch changes and fire callback
             static ComputerCard::Switch last_switch = ComputerCard::Switch::Middle;
