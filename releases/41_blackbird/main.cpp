@@ -3268,32 +3268,16 @@ public:
                 break;
                 
             case C_loadFirst:
-                printf("loading First.lua\n\r");
-                // Load First.lua immediately without touching flash
-                if (lua_manager) {
-                    if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
-                        const char* error = lua_tostring(lua_manager->L, -1);
-                        lua_pop(lua_manager->L, 1);
-                        printf("error loading First.lua\n\r");
-                    } else {
-
-                        // Model real crow: reset runtime so newly loaded script boots
-                        if (!lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end")) {
-                            printf("Warning: crow.reset() failed after First.lua load\n\r");
-                        }
-                        if (!lua_manager->evaluate_safe("local ok, err = pcall(function() if init then init() end end); if not ok then print('init() error', err) end")) {
-                            printf("Warning: init() invocation failed after First.lua load\n\r");
-                        }
-
-                        //convert 12 bit signed raw input to volts
-                        // 0 = 0V, 2047 = +6V, -2048 = -6V
-                        float input1_volts = get_input_state_simple(0);
-                        float input2_volts = get_input_state_simple(1);
-
-                        printf("first.lua loaded\n\r");
-                    }
+                // Load First.lua from compiled bytecode
+                lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+                
+                if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK 
+                    || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
+                    tud_cdc_write_str(" Failed to load First.lua\n\r");
                 } else {
-                    printf("error: lua manager not available\n\r");
+                    tud_cdc_write_str(" Loaded: First.lua (default)\n\r");
+                    // Call init() like real crow does (no crow.reset() before init on startup)
+                    lua_manager->evaluate_safe("if init then init() end");
                 }
                 break;
                 
@@ -3328,7 +3312,7 @@ public:
                     case 'w': return C_flashupload;
                     case 'c': return C_flashclear;
                     case 'k': return C_killlua;
-                    case 'f':
+                    case 'f': return C_loadFirst;
                     case 'F': return C_loadFirst;
                 }
             }
