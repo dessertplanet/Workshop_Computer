@@ -1533,6 +1533,14 @@ public:
         
         // Create Workshop Computer namespace table with knob and switch
         create_bb_table(L);
+
+        // Attach bb.priority after bb table creation (may not yet exist when l_crowlib_init ran)
+        lua_getglobal(L, "bb");
+        if(!lua_isnil(L, -1)) {
+            lua_pushcfunction(L, l_bb_priority);
+            lua_setfield(L, -2, "priority");
+        }
+        lua_settop(L, 0);
         
         // Print Lua memory usage for diagnostics
         int lua_mem_kb = lua_gc(L, LUA_GCCOUNT, 0);

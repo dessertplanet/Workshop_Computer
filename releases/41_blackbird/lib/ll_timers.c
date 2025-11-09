@@ -21,8 +21,28 @@ static timer_t* timers = NULL;
 static int max_timers = 0;
 volatile uint64_t global_sample_counter = 0; // Incremented in ProcessSample() ISR - 64-bit for precision
 
+// Runtime-adjustable block size (defaults to 'timing')
+int g_timer_block_size = 480; // default mapping for bb.priority='timing'
+
 // Block processing state - aligned with audio blocks for consistent timing
 static int sample_accumulator = 0; // Count samples until next block processing
+
+// Deferred block size change state
+static int pending_block_size = 0; // 0 means no pending change
+
+int Timer_Block_Size_Change_Pending(void) { return pending_block_size != 0; }
+
+int Timer_Set_Block_Size(int size) {
+    if (size < 1) size = 1;
+    if (size > TIMER_BLOCK_SIZE_MAX) size = TIMER_BLOCK_SIZE_MAX;
+    // If timers not yet initialized or first call scenario just apply directly
+    // We detect that by pending_block_size==0 and global_sample_counter==0 and g_timer_block_size defaulted
+    // Always defer to boundary for simplicity; apply at end of Timer_Process
+    pending_block_size = size;
+    return 1;
+}
+
+int Timer_Get_Block_Size(void) { return g_timer_block_size; }
 
 void Timer_Init(int num_timers) {
     max_timers = num_timers;
@@ -86,6 +106,11 @@ void Timer_Set_Params(int timer_id, float seconds) {
 // CRITICAL: Place in RAM for consistent timing at high poll rates
 __attribute__((section(".time_critical.Timer_Process")))
 void Timer_Process(void) {
+    // Apply any deferred block size change from previous cycle BEFORE measuring catch-up
+    if (pending_block_size != 0) {
+        g_timer_block_size = pending_block_size;
+        pending_block_size = 0;
+    }
     // Check if enough samples have passed for next block
     // global_sample_counter incremented by ProcessSample() ISR
     static uint64_t last_processed_sample = 0;
@@ -112,6 +137,12 @@ void Timer_Process(void) {
         // Emergency: System is overloaded, skip ahead to prevent freeze
         last_processed_sample = global_sample_counter - TIMER_BLOCK_SIZE;
         // This will cause frequency drift, but better than a frozen system
+    }
+
+    // Defer applying size if it was requested during callbacks in this processing cycle
+    if (pending_block_size != 0) {
+        g_timer_block_size = pending_block_size;
+        pending_block_size = 0;
     }
 }
 
@@ -140,7 +171,7 @@ void __not_in_flash_func(Timer_Process_Block)(void) {
     } Slope_t;
     extern Slope_t* slopes; // Defined in slopes.c
     
-    static float slope_buffer[TIMER_BLOCK_SIZE];
+    static float slope_buffer[TIMER_BLOCK_SIZE_MAX];
     
     for (int ch = 0; ch < 4; ch++) {
         // OPTIMIZATION: Skip truly idle channels (long-term inactive)
@@ -157,7 +188,7 @@ void __not_in_flash_func(Timer_Process_Block)(void) {
         
         // Process this channel's slope over the block
         // Quantization is applied inside S_step_v before hardware output
-        S_step_v(ch, slope_buffer, TIMER_BLOCK_SIZE);
+    S_step_v(ch, slope_buffer, TIMER_BLOCK_SIZE);
     }
     
     // Process timer callbacks

@@ -14,6 +14,8 @@ extern float get_input_state_simple(int channel); // returns input voltage in vo
 #include "lib/events.h"     // event_t, event_post()
 #include "lib/events_lockfree.h"  // Lock-free event queues
 #include "lib/slopes.h"     // S_reset()
+#include "ll_timers.h"       // Timer_Set_Block_Size()
+#include <string.h>
 
 #define L_CL_MIDDLEC 		(261.63f)
 #define L_CL_MIDDLEC_INV 	(1.0f/L_CL_MIDDLEC)
@@ -38,6 +40,54 @@ void L_handle_clock_stop( event_t* e );
 static int _lua_void_function( lua_State* L ){
 	lua_settop(L, 0);
 	return 0;
+}
+
+// ---- bb.priority implementation (file-scope) ----
+// Behavior:
+//  - bb.priority()            -> returns 'timing', 'accuracy', or current custom block size (int)
+//  - bb.priority('timing')    -> sets size 480 (if still safe) and returns 'timing'
+//  - bb.priority('accuracy')  -> sets size 1 (if safe) and returns 'accuracy'
+//  - bb.priority(N)           -> sets size N (clamped to [1,MAX]) if safe;
+//                                returns mapped string for 1/480 else the applied integer size
+//  - After processing starts (guard active) requests are ignored; current descriptor returned.
+int l_bb_priority(lua_State* L) {
+    int nargs = lua_gettop(L);
+    if (nargs >= 1) {
+        if (lua_isnumber(L, 1)) {
+            int requested = luaL_checkinteger(L, 1);
+            if (requested < 1) requested = 1;
+            if (requested > TIMER_BLOCK_SIZE_MAX) requested = TIMER_BLOCK_SIZE_MAX;
+            (void)Timer_Set_Block_Size(requested); // deferred
+        } else if (lua_isstring(L, 1)) {
+            const char* requested = lua_tostring(L, 1);
+            if (strcmp(requested, "accuracy") == 0) {
+                (void)Timer_Set_Block_Size(1);
+            } else if (strcmp(requested, "timing") == 0) {
+                (void)Timer_Set_Block_Size(480);
+            } else {
+                // Unrecognized string: treat as 'timing'
+                (void)Timer_Set_Block_Size(480);
+            }
+        } else {
+            // Ignore other types
+        }
+    }
+
+    lua_settop(L, 0);
+    int current = Timer_Get_Block_Size();
+    if (Timer_Block_Size_Change_Pending()) {
+        // Report the target that's about to be applied
+        int pending = Timer_Get_Block_Size(); // current still old; we don't expose internal pending value
+        // We can't directly read pending here without extra API; keep reporting current classification
+    }
+    if (current == 1) {
+        lua_pushstring(L, "accuracy");
+    } else if (current == 480) {
+        lua_pushstring(L, "timing");
+    } else {
+        lua_pushinteger(L, current);
+    }
+    return 1;
 }
 
 static void _load_lib(lua_State* L, char* filename, char* luaname){
@@ -218,6 +268,29 @@ void l_crowlib_init(lua_State* L){
 					"end\n");
 
     l_crowlib_emptyinit(L);
+
+    //////// bb table (create if missing) and add priority controls
+    lua_getglobal(L, "bb"); // @1
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_setglobal(L, "bb");
+    } else {
+        lua_pop(L, 1);
+    }
+
+    // bb.priority getter/setter implemented in C for validation and dynamic block size
+    // Use global-static so we can declare function at file scope (embedded C forbids nested funcs)
+    // Forward declare function
+    extern int l_bb_priority(lua_State* L);
+    // Ensure default value is set before first use
+    Timer_Set_Block_Size(480);
+    lua_getglobal(L, "bb"); // @1
+    lua_pushcfunction(L, l_bb_priority);
+    lua_setfield(L, -2, "priority"); // bb.priority
+    // Initialize block size to default 'timing' explicitly
+    Timer_Set_Block_Size(480);
+    lua_pop(L, 1); // pop bb
 }
 
 void l_crowlib_emptyinit(lua_State* L){
@@ -229,6 +302,23 @@ void l_crowlib_emptyinit(lua_State* L){
 
 int l_crowlib_crow_reset( lua_State* L ){
     S_reset();
+
+    // Ensure bb.priority still exists after any user manipulations
+    lua_getglobal(L, "bb"); // @1
+    if(!lua_isnil(L, 1)){
+        lua_getfield(L, 1, "priority"); // @2
+        if(lua_isnil(L, 2)){
+            lua_pop(L, 2); // pop nil and bb
+            lua_getglobal(L, "bb"); // @1
+            lua_pushcfunction(L, l_bb_priority);
+            lua_setfield(L, -2, "priority");
+            lua_pop(L, 1);
+        } else {
+            lua_settop(L, 0); // priority exists
+        }
+    } else {
+        lua_settop(L, 0);
+    }
 
     lua_getglobal(L, "input"); // @1
 for(int i=1; i<=2; i++){

@@ -8,17 +8,29 @@
 // Timer callback function type
 typedef void (*timer_callback_t)(int timer_id);
 
-// Block processing configuration - ALIGNED with audio block size for consistent timing
-// Simply adjust TIMER_BLOCK_SIZE to experiment with latency vs CPU tradeoff
-// All timing parameters auto-calculate from this value
-// 
-// Block size guide:
-//   1 = 21µs latency, 48kHz processing (high CPU, no optimization benefit)
-//   2 = 42µs latency, 24kHz processing (still high CPU, minimal optimization)
-//   4 = 83µs latency, 12kHz processing (recommended: good balance)
-//   8 = 166µs latency, 6kHz processing (stable baseline, excellent efficiency)
+// Block processing configuration - runtime adjustable via bb.priority
+// bb.priority values:
+//   'timing'   -> larger block (480) for lower CPU usage, higher scheduling latency
+//   'accuracy' -> block size 1 for minimal latency, high CPU usage
+// Any other assignment maps back to 'timing'.
 //
-#define TIMER_BLOCK_SIZE 240  // ← ADJUST THIS VALUE ONLY (1, 2, 4, 8, etc.)
+// Implementation notes:
+// - We keep a MAX size for static allocations; actual working size is g_timer_block_size
+// - Change at runtime is allowed; switching from a large to small block may cause a burst
+//   of catch-up processing (expected). Best set early in init.
+// - Existing code that referenced TIMER_BLOCK_SIZE now uses a macro that resolves to the
+//   mutable variable, except where a compile-time constant is required (buffers).
+//
+#define TIMER_BLOCK_SIZE_MAX 480
+extern int g_timer_block_size;           // current active timer processing block size
+#define TIMER_BLOCK_SIZE (g_timer_block_size)
+
+// Runtime control (exposed indirectly to Lua via bb.priority)
+// Mid-run changes are deferred: request schedules new size, applied after the
+// current processing loop completes (at a block boundary). Always returns 1.
+int  Timer_Set_Block_Size(int size);     // clamps to [1, TIMER_BLOCK_SIZE_MAX], schedules change
+int  Timer_Get_Block_Size(void);
+int  Timer_Block_Size_Change_Pending(void); // 1 if a deferred change is waiting
 
 // Timer functions
 void Timer_Init(int num_timers);

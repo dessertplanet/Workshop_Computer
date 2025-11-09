@@ -27,3 +27,6 @@ void L_queue_clock_stop( void );
 // Lock-free event handler functions
 void L_handle_metro_lockfree( metro_event_lockfree_t* event );
 void L_handle_input_lockfree( input_event_lockfree_t* event );
+
+// Expose bb.priority binding so other C code (main.cpp) can attach it
+int l_bb_priority(lua_State* L);
