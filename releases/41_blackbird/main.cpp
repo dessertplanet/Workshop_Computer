@@ -1796,7 +1796,10 @@ public:
                     -- Start new clock coroutine
                     self.ckcoro = clock.run(function()
                         while true do
-                            clock.sync(self.clock_div)
+                            -- Use clock.sleep with tempo-based timing instead of clock.sync
+                            -- This runs off the internal clock, independent of clock source
+                            local beat_time = clock.get_beat_sec(self.clock_div)
+                            clock.sleep(beat_time)
                             -- Execute the action if still set
                             if self._action then
                                 if type(self._action) == 'table' then
@@ -1835,6 +1838,21 @@ public:
             
             -- Set up default: pulseout[1] generates 10ms pulses on beat
             bb.pulseout[1]:clock(1)
+            
+            -- Hook into clock.transport.stop to pause pulseout clocks
+            local original_transport_stop = clock.transport.stop
+            clock.transport.stop = function()
+                -- Stop pulseout clocks when clock stops
+                for i = 1, 2 do
+                    if bb.pulseout[i].ckcoro then
+                        bb.pulseout[i]:clock('off')
+                    end
+                end
+                -- Call original stop handler
+                if original_transport_stop then
+                    original_transport_stop()
+                end
+            end
             
             -- Hook into clock.cleanup to stop pulseout clocks
             local original_cleanup = clock.cleanup
