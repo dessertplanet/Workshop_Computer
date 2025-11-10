@@ -63,7 +63,7 @@ extern "C" {
 #include "lib/caw.h"
 }
 
-// Generated Lua bytecode headers - Core libraries (always included)
+// Generated Lua bytecode headers - Core libraries 
 #include "asl.h"
 #include "asllib.h"
 #include "output.h"
@@ -84,6 +84,8 @@ extern const unsigned int clock_len;
 #include "quote.h"
 #include "timeline.h"
 #include "hotswap.h"
+
+//Globals: ========================================================================
 
 static volatile int32_t g_output_state_mv[4] = {0, 0, 0, 0};
 static volatile int32_t g_input_state_q12[2] = {0, 0};
@@ -373,7 +375,7 @@ static void process_queued_messages() {
     }
 }
 
-// Convenience macros for different message types
+// Convenience macros for different message types (As of Blackbird 1.0 not sure these are used/useful)
 #define queue_user_message(fmt, ...) queue_message(false, fmt, ##__VA_ARGS__)
 #define queue_debug_message(fmt, ...) queue_message(true, fmt, ##__VA_ARGS__)
 
@@ -1676,7 +1678,7 @@ public:
             end
             
             -- Set up default: pulseout[1] generates 10ms pulses on beat
-            bb.pulseout[1]:clock(1)
+            bb.pulseout[1]:clock(0.5)
             
             -- Hook into clock.transport.stop to pause pulseout clocks
             local original_transport_stop = clock.transport.stop
