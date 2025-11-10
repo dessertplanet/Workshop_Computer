@@ -85,8 +85,11 @@ extern const unsigned int clock_len;
 #include "timeline.h"
 #include "hotswap.h"
 
-//Globals: ========================================================================
+// ============================================================================
+// GLOBAL VARIABLES
+// ============================================================================
 
+// CV Output & Input State
 static volatile int32_t g_output_state_mv[4] = {0, 0, 0, 0};
 static volatile int32_t g_input_state_q12[2] = {0, 0};
 static volatile int16_t g_audioin_raw[2] = {0, 0};
@@ -97,7 +100,7 @@ static uint32_t g_input_stream_last_update[2] = {0, 0};
 static float g_audioin_stream_volts[2] = {0.0f, 0.0f};
 static uint32_t g_audioin_stream_last_update[2] = {0, 0};
 
-// Pulse output state tracking (set from Lua layer)
+// Pulse I/O State
 static volatile bool g_pulse_out_state[2] = {false, false};
 
 // Pulse output coroutine tracking (to cancel overlapping pulses)
@@ -134,9 +137,9 @@ static volatile bool g_led_update_pending = false;
 static volatile int32_t g_led_output_snapshot[4] = {0, 0, 0, 0};
 static volatile bool g_led_pulse_snapshot[2] = {false, false};
 
-// ========================================================================
-// AUDIO-RATE NOISE GENERATOR (48kHz) - INTEGER MATH ONLY
-// ========================================================================
+// ============================================================================
+// AUDIO-RATE NOISE GENERATOR (48kHz)
+// ============================================================================
 // Noise generator state for audio-rate output
 static volatile bool g_noise_active[4] = {false, false, false, false};
 static volatile uint8_t g_noise_active_mask = 0;  // Bitmask for fast checking if ANY noise is active
@@ -146,9 +149,9 @@ static volatile uint32_t g_noise_lock_counter[4] = {0, 0, 0, 0};  // Prevent cle
 // Fast xorshift32 PRNG state for audio-rate noise
 static uint32_t g_noise_state = 0xDEADBEEF;
 
-// ========================================================================
+// ============================================================================
 // PERFORMANCE MONITORING
-// ========================================================================
+// ============================================================================
 // ProcessSample (Core 1 audio thread) performance
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
@@ -157,6 +160,10 @@ static volatile uint32_t g_overrun_count = 0;
 // MainControlLoop (Core 0) performance
 static volatile uint32_t g_loop_worst_case_us = 0;
 static volatile uint32_t g_loop_iteration_count = 0;
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
 
 // Fast audio-rate noise generation in ISR - NO FLOATING POINT
 // Returns noise value in millivolts (-6000 to +6000)
@@ -284,6 +291,10 @@ static inline bool check_for_backticks(const char* buffer, int pos) {
             buffer[pos-1] == '`');
 }
 
+// ============================================================================
+// FORWARD DECLARATIONS
+// ============================================================================
+
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
 void core1_entry(); // defined after BlackbirdCrow - non-static so flash_storage can call it
@@ -306,10 +317,12 @@ extern "C" void output_batch_flush();
 static void output_batch_queue(int channel, float volts);
 static bool output_is_batching();
 
+// ============================================================================
+// MESSAGE QUEUE SYSTEM (Audio-Safe Printf Replacement)
+// ============================================================================
 
 class LuaManager;
 
-// Message queue system for audio-safe printf replacement
 #define MESSAGE_QUEUE_SIZE 32
 #define MESSAGE_MAX_LENGTH 240
 
@@ -589,9 +602,12 @@ static int pulsein_call(lua_State* L) {
     return 0;
 }
 
-// ========================================================================
-// PULSE OUTPUT LUA C FUNCTIONS (bb.pulseout[1] and bb.pulseout[2])
-// ========================================================================
+// ============================================================================
+// BLACKBIRD-SPECIFIC LUA API (bb namespace)
+// ============================================================================
+
+// Pulse Output Functions (bb.pulseout[1] and bb.pulseout[2])
+// ----------------------------------------------------------------------------
 
 // __index metamethod for bb.pulseout[n].action, bb.pulseout[n].state, bb.pulseout[n].clock
 static int pulseout_index(lua_State* L) {
@@ -767,12 +783,15 @@ static int pulseout_call(lua_State* L) {
     return 0;
 }
 
+// ============================================================================
+// LUA MANAGER CLASS
+// ============================================================================
+
 // External C function from l_crowlib.c
 extern "C" {
     int l_crowlib_crow_reset(lua_State* L);
 }
 
-// Simple Lua Manager for crow emulation
 class LuaManager {
 public:
     lua_State* L;  // Made public for direct access in main.cpp
@@ -1984,14 +2003,15 @@ static inline void usb_process_tx() {
     }
 }
 
+// ============================================================================
+// OUTPUT BATCHING SYSTEM
+// ============================================================================
+// Queue output changes during Lua execution, flush all at once to avoid
+// redundant calibration calculations and hardware writes
+
 // Global flag to signal core1 to pause for flash operations
 volatile bool g_flash_operation_pending = false;
 
-// ========================================================================
-// Output Batching System
-// Queue output changes during Lua execution, flush all at once to avoid
-// redundant calibration calculations and hardware writes
-// ========================================================================
 typedef struct {
     bool pending;       // Has this output changed?
     float target_volts; // Target voltage to set
@@ -2089,6 +2109,10 @@ static void extract_script_name(const char* script, uint32_t length) {
         }
     }
 }
+
+// ============================================================================
+// BLACKBIRD CROW CLASS (Main Hardware Interface)
+// ============================================================================
 
 class BlackbirdCrow : public ComputerCard
 {
@@ -3813,6 +3837,10 @@ static void freq_callback(int channel, float freq) {
     }
 }
 
+// ============================================================================
+// EVENT HANDLERS (Core-Safe Callbacks)
+// ============================================================================
+
 // Lock-free input event handler - processes detection events from lock-free queue
 extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
     LuaManager* lua_mgr = LuaManager::getInstance();
@@ -4026,6 +4054,10 @@ extern "C" void L_queue_asl_done(int channel) {
     }
 }
 
+// ============================================================================
+// INPUT MODE FUNCTIONS (Lua Bindings for Detection System)
+// ============================================================================
+
 // Input mode functions - connect to detection system with mode-specific callbacks
 int LuaManager::lua_set_input_stream(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
@@ -4181,6 +4213,10 @@ int LuaManager::lua_set_input_none(lua_State* L) {
     }
     return 0;
 }
+
+// ============================================================================
+// METRO & CLOCK SYSTEM (Lua Bindings)
+// ============================================================================
 
 // Metro system Lua bindings implementation
 
@@ -4642,6 +4678,10 @@ int LuaManager::lua_memstats(lua_State* L) {
     return 0;
 }
 
+// ============================================================================
+// UTILITY & DIAGNOSTIC FUNCTIONS (Lua Bindings)
+// ============================================================================
+
 // Implementation of lua_perf_stats (performance monitoring statistics)
 // Usage: perf_stats()              -- prints formatted stats, resets counters
 //        perf_stats(false)         -- prints formatted stats, doesn't reset
@@ -4718,6 +4758,10 @@ int LuaManager::lua_perf_stats(lua_State* L) {
     }
 }
 
+// ============================================================================
+// C INTERFACE FUNCTIONS (Called from crow C libraries)
+// ============================================================================
+
 // Implementation of C interface function (after BlackbirdCrow class is fully defined)
 // CRITICAL: Place in RAM - called from shaper_v() via slopes.c
 extern "C" {
@@ -4782,6 +4826,10 @@ extern "C" lua_State* get_lua_state(void) {
     LuaManager* lua_mgr = LuaManager::getInstance();
     return lua_mgr ? lua_mgr->L : nullptr;
 }
+
+// ============================================================================
+// MAIN ENTRY POINTS & STDIO REDIRECTION
+// ============================================================================
 
 BlackbirdCrow crow;
 
