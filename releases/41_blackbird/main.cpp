@@ -1,3 +1,18 @@
+/*
+
+Blackbird Crow Emulator - Basic Communication Protocol
+
+This implements the basic crow command protocol using stdio USB:
+- ^^v - Version request
+- ^^i - Identity request  
+- ^^p - Print script request
+
+Commands use crow-style responses with \n\r line endings.
+
+To test, connect USB and use a serial terminal at 115200 baud.
+Send commands like ^^v and ^^i to test the protocol.
+*/
+
 #include "ComputerCard.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
@@ -58,25 +73,6 @@ extern const unsigned int clock_len;
 #include "quote.h"
 #include "timeline.h"
 #include "hotswap.h"
-
-// Conditionally included test script headers
-#ifdef EMBED_ALL_TESTS
-#include "test_enhanced_multicore_safety.h"
-#include "test_lockfree_performance.h"
-#include "test_random_voltage.h"
-#include "test_phase2_performance.h"
-#include "test_simple_output.h"
-#elif defined(EMBED_TEST_ENHANCED_MULTICORE_SAFETY)
-#include "test_enhanced_multicore_safety.h"
-#elif defined(EMBED_TEST_LOCKFREE_PERFORMANCE)
-#include "test_lockfree_performance.h"
-#elif defined(EMBED_TEST_RANDOM_VOLTAGE)
-#include "test_random_voltage.h"
-#elif defined(EMBED_TEST_PHASE2_PERFORMANCE)
-#include "test_phase2_performance.h"
-#elif defined(EMBED_TEST_SIMPLE_OUTPUT)
-#include "test_simple_output.h"
-#endif
 
 static volatile int32_t g_output_state_mv[4] = {0, 0, 0, 0};
 static volatile int32_t g_input_state_q12[2] = {0, 0};
@@ -386,22 +382,6 @@ static bool usb_log_printf(const char* fmt, ...) {
     return true;
 }
 
-/*
-
-Blackbird Crow Emulator - Basic Communication Protocol
-
-This implements the basic crow command protocol using stdio USB:
-- ^^v - Version request
-- ^^i - Identity request  
-- ^^p - Print script request
-
-Commands use crow-style responses with \n\r line endings.
-
-To test, connect USB and use a serial terminal at 115200 baud.
-Send commands like ^^v and ^^i to test the protocol.
-*/
-
-// Command types (from crow's caw.h) - now included via lib/caw.h
 
 // Audio input Lua C functions - similar to pulsein but simpler (read-only volts)
 static int audioin_index(lua_State* L) {
@@ -830,141 +810,6 @@ private:
     static int lua_hardware_pulse(lua_State* L);
     static int lua_pulse_coro_check(lua_State* L);
     
-    // Conditional test function implementations - only compiled when tests are embedded
-#ifdef EMBED_ALL_TESTS
-    // Lua function to run enhanced multicore safety test
-    static int lua_test_enhanced_multicore_safety(lua_State* L) {
-        printf("Running enhanced multicore safety test...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_enhanced_multicore_safety, test_enhanced_multicore_safety_len, "test_enhanced_multicore_safety.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running enhanced multicore safety test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Enhanced multicore safety test completed successfully!\n\r");
-        }
-        return 0;
-    }
-    
-    // Lua function to run lock-free performance test
-    static int lua_test_lockfree_performance(lua_State* L) {
-        printf("Running lock-free performance test...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_lockfree_performance, test_lockfree_performance_len, "test_lockfree_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running lock-free performance test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Lock-free performance test completed successfully!\n\r");
-        }
-        return 0;
-    }
-    
-    // Lua function to run random voltage test
-    static int lua_test_random_voltage(lua_State* L) {
-        printf("Running random voltage test...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_random_voltage, test_random_voltage_len, "test_random_voltage.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running random voltage test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Random voltage test loaded successfully!\n\r");
-        }
-        return 0;
-    }
-    
-    // Lua function to run Phase 2 performance test
-    static int lua_test_phase2_performance(lua_State* L) {
-        printf("Running Phase 2 block processing performance test...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_phase2_performance, test_phase2_performance_len, "test_phase2_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running Phase 2 performance test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Phase 2 performance test completed successfully!\n\r");
-        }
-        return 0;
-    }
-    
-    // Lua function to run simple output test
-    static int lua_test_simple_output(lua_State* L) {
-        printf("Running simple output hardware test...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_simple_output, test_simple_output_len, "test_simple_output.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running simple output test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Simple output test completed successfully!\n\r");
-        }
-        return 0;
-    }
-#elif defined(EMBED_TEST_ENHANCED_MULTICORE_SAFETY)
-    // Single test: Enhanced multicore safety test
-    static int lua_test_enhanced_multicore_safety(lua_State* L) {
-        printf("Running enhanced multicore safety test...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_enhanced_multicore_safety, test_enhanced_multicore_safety_len, "test_enhanced_multicore_safety.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running enhanced multicore safety test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Enhanced multicore safety test completed successfully!\n\r");
-        }
-        return 0;
-    }
-#elif defined(EMBED_TEST_LOCKFREE_PERFORMANCE)
-    // Single test: Lock-free performance test
-    static int lua_test_lockfree_performance(lua_State* L) {
-        printf("Running lock-free performance test...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_lockfree_performance, test_lockfree_performance_len, "test_lockfree_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running lock-free performance test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Lock-free performance test completed successfully!\n\r");
-        }
-        return 0;
-    }
-#elif defined(EMBED_TEST_RANDOM_VOLTAGE)
-    // Single test: Random voltage test
-    static int lua_test_random_voltage(lua_State* L) {
-        printf("Running random voltage test...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_random_voltage, test_random_voltage_len, "test_random_voltage.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running random voltage test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Random voltage test loaded successfully!\n\r");
-        }
-        return 0;
-    }
-#elif defined(EMBED_TEST_PHASE2_PERFORMANCE)
-    // Single test: Phase 2 performance test
-    static int lua_test_phase2_performance(lua_State* L) {
-        printf("Running Phase 2 block processing performance test...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_phase2_performance, test_phase2_performance_len, "test_phase2_performance.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running Phase 2 performance test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Phase 2 performance test completed successfully!\n\r");
-        }
-        return 0;
-    }
-#elif defined(EMBED_TEST_SIMPLE_OUTPUT)
-    // Single test: Simple output test
-    static int lua_test_simple_output(lua_State* L) {
-        printf("Running simple output hardware test...\n\r");
-        if (luaL_loadbuffer(L, (const char*)test_simple_output, test_simple_output_len, "test_simple_output.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error running simple output test: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        } else {
-            printf("Simple output test completed successfully!\n\r");
-        }
-        return 0;
-    }
-#else
-    // Production build - no test functions
-#endif
-    
     // Lua tab.print function - pretty print tables
     static int lua_tab_print(lua_State* L) {
         if (!tud_cdc_connected()) return 0;  // Add CDC connection check
@@ -1191,27 +1036,7 @@ public:
     lua_register(L, "get_knob_y", lua_get_knob_y);
     lua_register(L, "get_switch_position", lua_get_switch_position);
     
-    // Register test functions - conditional compilation
-#ifdef EMBED_ALL_TESTS
-    lua_register(L, "test_enhanced_multicore_safety", lua_test_enhanced_multicore_safety);
-    lua_register(L, "test_lockfree_performance", lua_test_lockfree_performance);
-    lua_register(L, "test_random_voltage", lua_test_random_voltage);
-    lua_register(L, "test_phase2_performance", lua_test_phase2_performance);
-    lua_register(L, "test_simple_output", lua_test_simple_output);
-#elif defined(EMBED_TEST_ENHANCED_MULTICORE_SAFETY)
-    lua_register(L, "test_enhanced_multicore_safety", lua_test_enhanced_multicore_safety);
-#elif defined(EMBED_TEST_LOCKFREE_PERFORMANCE)
-    lua_register(L, "test_lockfree_performance", lua_test_lockfree_performance);
-#elif defined(EMBED_TEST_RANDOM_VOLTAGE)
-    lua_register(L, "test_random_voltage", lua_test_random_voltage);
-#elif defined(EMBED_TEST_PHASE2_PERFORMANCE)
-    lua_register(L, "test_phase2_performance", lua_test_phase2_performance);
-#elif defined(EMBED_TEST_SIMPLE_OUTPUT)
-    lua_register(L, "test_simple_output", lua_test_simple_output);
-#endif
-    // Production builds have no test functions registered
-    
-    // Essential crow library functions will be added after we implement them
+    // Essential crow library functions will be added after we implement them (as of 1.0 not sure if Blackbird has/needs these)
     // lua_register(L, "nop_fn", lua_nop_fn);
     // lua_register(L, "get_out", lua_get_out);
     // lua_register(L, "get_cv", lua_get_cv);
