@@ -286,7 +286,6 @@ static inline bool check_for_backticks(const char* buffer, int pos) {
 
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
-static BlackbirdCrow* g_crow_core1 = nullptr;
 void core1_entry(); // defined after BlackbirdCrow - non-static so flash_storage can call it
 
 
@@ -1679,8 +1678,6 @@ public:
                 
             }
         }
-        
-        //printf("bb table created (bb.knob.main, bb.knob.x, bb.knob.y, bb.switch.position, bb.switch.change, bb.noise)\n\r");
     }
     
 
@@ -2765,8 +2762,6 @@ public:
                     // 9. Garbage collect twice for thorough cleanup
                     lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
                     lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
-                    
-                    //tud_cdc_write_str("lua environment reset\n\r");
                 }
                 
                 break;
@@ -3180,7 +3175,6 @@ static void handle_command_with_response(C_cmd_t cmd) {
 int LuaManager::lua_casl_describe(lua_State* L) {
     int raw = luaL_checkinteger(L, 1);
     int internal = raw - 1;
-    //printf("[DBG] lua_casl_describe raw=%d internal=%d\n\r", raw, internal);
     
     // DON'T clear noise here - it needs to be cleared when the action actually RUNS
     // The noise() action will set it, and other actions should clear it when they start
@@ -3194,7 +3188,6 @@ int LuaManager::lua_casl_action(lua_State* L) {
     int raw = luaL_checkinteger(L, 1);
     int act = luaL_checkinteger(L, 2);
     int internal = raw - 1;
-   // printf("[DBG] lua_casl_action raw=%d internal=%d action=%d\n\r", raw, internal, act);
     
     // When an action is explicitly triggered (act == 1), clear any existing noise
     // UNLESS noise was just set in the describe phase (lock counter == 10).
@@ -4008,8 +4001,6 @@ extern "C" void L_handle_asl_done_safe(event_t* e) {
     
     int channel = e->index.i + 1; // Convert to 1-based
     
-    // printf("ASL sequence completed on output[%d] - triggering 'done' callback\n\r", channel);
-    
     // Use crow-style ASL completion callback dispatching
     char lua_call[128];
     snprintf(lua_call, sizeof(lua_call),
@@ -4201,7 +4192,6 @@ int LuaManager::lua_metro_start(lua_State* L) {
     // Set time first, then start (crow-style)
     Metro_set_time(id, time);
     Metro_start(id);
-    //printf("Metro %d started with interval %.3fs\n\r", id, time);
     return 0;
 }
 
@@ -4211,7 +4201,6 @@ int LuaManager::lua_metro_stop(lua_State* L) {
     
     // Call C metro backend
     Metro_stop(id);
-    //printf("Metro %d stopped\n\r", id);
     return 0;
 }
 
@@ -4222,7 +4211,6 @@ int LuaManager::lua_metro_set_time(lua_State* L) {
     
     // Call C metro backend
     Metro_set_time(id, time);
-    //printf("Metro %d time set to %.3fs\n\r", id, time);
     return 0;
 }
 
@@ -4233,7 +4221,6 @@ int LuaManager::lua_metro_set_count(lua_State* L) {
     
     // Call C metro backend
     Metro_set_count(id, count);
-   // printf("Metro %d count set to %d\n\r", id, count);
     return 0;
 }
 
@@ -4811,8 +4798,6 @@ extern "C" uint64_t get_card_unique_id(void) {
 
 void core1_entry() {
         printf("[boot] core1 audio engine starting\n\r");
-        //Normalisation probe was causing issues so disabling.
-        //crow.EnableNormalisationProbe();
         crow.Run(); 
 }
 
