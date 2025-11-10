@@ -375,7 +375,7 @@ static void process_queued_messages() {
     }
 }
 
-// Convenience macros for different message types (As of Blackbird 1.0 not sure these are used/useful)
+// Convenience macros for different message types
 #define queue_user_message(fmt, ...) queue_message(false, fmt, ##__VA_ARGS__)
 #define queue_debug_message(fmt, ...) queue_message(true, fmt, ##__VA_ARGS__)
 
@@ -801,7 +801,6 @@ private:
             lua_pop(L, 1);  // pop result
         }
         tud_cdc_write("\n\r",2);
-        // REMOVED:  - batched in main loop
         return 0;
     }
     
@@ -892,7 +891,7 @@ static void print_table_recursive(lua_State* L, int index, int depth) {
             print_table_recursive(L, lua_gettop(L), depth + 1);
         } else {
             lua_getglobal(L, "tostring");
-            lua_pushvalue(L, -2);  // the value (fix: was -2, should be -2 to get value below tostring)
+            lua_pushvalue(L, -2);  // Push the value below tostring
             lua_call(L, 1, 1);
             const char* s = lua_tostring(L, -1);
             if (s) tud_cdc_write_str(s);
@@ -914,7 +913,7 @@ static void print_table_recursive(lua_State* L, int index, int depth) {
     static void* lua_custom_alloc(void* ud, void* ptr, size_t osize, size_t nsize) {
         (void)ud;  // unused
         
-        // Print detailed allocation info for debugging (can be disabled in production)
+        // Track memory allocation statistics for diagnostics
         static size_t total_allocated = 0;
         static size_t peak_allocated = 0;
         static size_t allocation_count = 0;
@@ -1049,12 +1048,6 @@ public:
     lua_register(L, "get_knob_y", lua_get_knob_y);
     lua_register(L, "get_switch_position", lua_get_switch_position);
     
-    // Essential crow library functions will be added after we implement them (as of 1.0 not sure if Blackbird has/needs these)
-    // lua_register(L, "nop_fn", lua_nop_fn);
-    // lua_register(L, "get_out", lua_get_out);
-    // lua_register(L, "get_cv", lua_get_cv);
-    // lua_register(L, "math_random_enhanced", lua_math_random_enhanced);
-    
     // Create tab table and add print function
     lua_newtable(L);
     lua_pushcfunction(L, lua_tab_print);
@@ -1119,15 +1112,13 @@ public:
     lua_setfield(L, -2, "tell");
     lua_setglobal(L, "_c");
     
-    // Create crow table as a SEPARATE table, but with the same tell function
-    // This prevents the aliasing bug where crow.tell = tell would overwrite _c.tell
+    // Create crow table as a separate table with the same tell function
     lua_newtable(L);
     lua_pushcfunction(L, l_bootstrap_c_tell);
     lua_setfield(L, -2, "tell");
     lua_setglobal(L, "crow");
     
-    // Set up crow.reset and crow.init functions (from l_crowlib_crow_reset in l_crowlib.c)
-    // We do this manually here instead of calling l_bootstrap_init which has STM32-specific code
+    // Set up crow.reset and crow.init functions
     lua_getglobal(L, "crow");       // Get crow table
     lua_pushcfunction(L, l_crowlib_crow_reset);
     lua_setfield(L, -2, "reset");   // Set crow.reset
@@ -1136,30 +1127,16 @@ public:
     lua_pop(L, 1);                  // Pop crow table
     printf("crow.reset and crow.init functions registered\n\r");
     
-    // NOTE: _c and crow tables are created above with l_bootstrap_c_tell
-    // That function handles both hardware commands (output, stream, etc) 
-    // AND crow protocol messages (pupdate, pub, etc)
-    // DO NOT recreate _c here or we'll overwrite the proper implementation
-    
-    // Old code that created _c with lua_c_tell (which only handles hardware):
-    // lua_newtable(L);                // Create _c table
-    // lua_pushcfunction(L, lua_c_tell);  // Push the c_tell function
-    // lua_setfield(L, -2, "tell");    // Set _c.tell = lua_c_tell
-    // lua_setglobal(L, "_c");         // Set _c as global
-    
     // Initialize CASL instances for all 4 outputs
     for (int i = 0; i < 4; i++) {
         casl_init(i);
     }
-    
-    // Initialize crow output functionality (will be replaced with Output.lua)
-    // init_crow_bindings();
         
         // Load and execute embedded ASL libraries
         load_embedded_asl();
     }
     
-    // Load embedded ASL libraries using luaL_dobuffer - made public for manual debug triggers
+    // Load embedded ASL libraries from compiled bytecode
     void load_embedded_asl() {
         if (!L) return;
         
@@ -1312,7 +1289,6 @@ public:
         }
         
         printf("ASL libraries loaded successfully!\n\r");
-        // Index translation handled directly in asl.lua (Option B); runtime patch removed.
         
         // Load crow ecosystem libraries (sequins, public, clock, quote, timeline)
         load_crow_ecosystem();
@@ -1975,9 +1951,6 @@ static void process_usb_byte(char c) {
                 handle_command_with_response(cmd);
             } else if (g_repl_mode == REPL_reception) {
                 // In reception mode and not a command - accumulate as script data
-                extern void receive_script_data(const char* buf, uint32_t len);
-                // Note: receive_script_data is a method, we'll need to handle this differently
-                // For now, just store the data (simplified)
                 if (g_new_script_len + clean_length < sizeof(g_new_script)) {
                     memcpy(&g_new_script[g_new_script_len], g_rx_buffer, clean_length);
                     g_new_script_len += clean_length;
@@ -2017,13 +1990,13 @@ static bool __isr __time_critical_func(usb_service_callback)(struct repeating_ti
             usb_rx_lockfree_post((char*)buf, count);
         }
     }
-    // NOTE: TX draining moved to usb_process_tx() in MainControlLoop to avoid
-    // concurrent tud_cdc_write / tud_cdc_write_flush from ISR and application code.
+    // NOTE: TX processing happens in usb_process_tx() on main loop to avoid
+    // concurrent access to TinyUSB CDC functions.
     
     return true;  // Keep timer running
 }
 
-// Non-ISR USB TX processing (option 3 implementation)
+// Non-ISR USB TX processing
 // Drains lock-free TX queue and performs conditional flushes.
 static inline void usb_process_tx() {
     if (!tud_cdc_connected()) return;
@@ -2038,11 +2011,11 @@ static inline void usb_process_tx() {
     }
 }
 
-// Global flag to signal core1 to pause for flash operations (not static - accessed from flash_storage.cpp)
+// Global flag to signal core1 to pause for flash operations
 volatile bool g_flash_operation_pending = false;
 
 // ========================================================================
-// Output Batching System - OPTIMIZATION 2
+// Output Batching System
 // Queue output changes during Lua execution, flush all at once to avoid
 // redundant calibration calculations and hardware writes
 // ========================================================================
@@ -2095,20 +2068,7 @@ static inline bool output_is_batching() {
     return g_output_batch.batch_mode_active;
 }
 
-//REMOVED PERF MONITOR
-// Hardware timer-based PulseOut2 performance monitoring (outside class to avoid C++ issues)
-// static volatile bool g_pulse2_state = false;
-// static volatile uint32_t g_pulse2_counter = 0;
-// static struct repeating_timer g_pulse2_timer;
-
-// static bool __not_in_flash_func(pulse2_timer_callback)(struct repeating_timer *t) {
-//     g_pulse2_state = !g_pulse2_state;
-//     gpio_put(PULSE_2_RAW_OUT, !g_pulse2_state);
-//     g_pulse2_counter++;
-//     return true;
-// }
-
-// Try to extract script name from first comment line (e.g., "-- Fiirst.lua")
+// Try to extract script name from first comment line (e.g., "-- First.lua")
 static void extract_script_name(const char* script, uint32_t length) {
     g_new_script_name[0] = '\0';
     if (!script || length < 5) return;
@@ -2251,19 +2211,13 @@ public:
         return;
     }
     
-    // Public LED control functions for debugging
+    // LED control stubs (not implemented in current version)
     void debug_led_on(int index) {
-        // if (index >= 0 && index <= 5) {
-        //     //noop
-        //     //LedOn(index, true);
-        // }
+        // Not implemented
     }
     
     void debug_led_off(int index) {
-        // if (index >= 0 && index <= 5) {
-        //    //noop
-        //     // LedOn(index, false);
-        // }
+        // Not implemented
     }
     
     BlackbirdCrow()
@@ -2309,11 +2263,6 @@ public:
         FlashStorage::init();
         
         lua_manager = new LuaManager();
-       
-        //REMOVED: timer for perf monitoring
-        // if (!add_repeating_timer_us(-4000, pulse2_timer_callback, NULL, &g_pulse2_timer)) {
-        //     printf("Failed to start PulseOut2 timer\n");
-        // }
     }
     
     // Load boot script from flash (called after hardware init)
@@ -4102,9 +4051,7 @@ extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
     
     lua_mgr->evaluate_safe(lua_call);
     
-    // ===============================================
-    // OPTIMIZATION 2: Flush batched outputs
-    // ===============================================
+    // Flush batched outputs after Lua callback execution
     output_batch_flush();
     
     if (g_blackbird_instance) {
@@ -4185,7 +4132,7 @@ extern "C" void L_handle_change_safe(event_t* e) {
     int channel = e->index.i + 1; // Convert to 1-based
     bool state = (e->data.f > 0.5f);
     
-    // Debug output with callback counter to track progress
+    // Optional debug output for troubleshooting
     if (kDetectionDebug) {
         printf("SAFE CALLBACK #%lu: ch%d state=%s\n\r",
                callback_counter, channel, state ? "HIGH" : "LOW");
@@ -4692,7 +4639,6 @@ static void public_update() {
                 // Write to buffer - batched flush happens every 2ms in main loop
                 if (len > 0 && tud_cdc_connected()) {
                     tud_cdc_write(msg_buf, len);
-                    // REMOVED:  - batched in main loop
                 }
             }
         } else { // inputs (4-5 -> 0-1)
@@ -4710,7 +4656,6 @@ static void public_update() {
                 // Write to buffer - batched flush happens every 2ms in main loop
                 if (len > 0 && tud_cdc_connected()) {
                     tud_cdc_write(msg_buf, len);
-                    // REMOVED:  - batched in main loop
                 }
             }
         }
@@ -5109,7 +5054,7 @@ int main()
     // Initialize TinyUSB (replaces stdio_init_all)
     tusb_init();
     
-    // Disable stdio buffering to ensure immediate visibility of debug prints
+    // Disable stdio buffering for immediate console output
     setvbuf(stdout, NULL, _IONBF, 0);
     
     // Wait briefly (up to 1500ms) for a USB serial host to connect so the boot banner is visible
