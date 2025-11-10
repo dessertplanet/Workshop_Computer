@@ -18,8 +18,8 @@ Special thanks to:
 - Tom Whitwell for the Workshop System
 - Chris Johnson for the ComputerCard framework
 - Brian Crabtree and Trent Gill (monome & Whimsical Raps) for the original crow and the open source crow firmware
-- Zack Scholl for encouragement and proving lua can work on rp2040 with his midi-to-cv project
-- Ben Regnier for extensive testing and feedback without which this would not have been possible
+- Zack Scholl (infinitedigits) for encouragement and proving lua can work on rp2040 with his midi-to-cv project
+- Ben Regnier (Q*Ben) for extensive testing and feedback without which this would not have been possible
 
 License is GPLv3 or later- see LICENSE file for details.
 */
