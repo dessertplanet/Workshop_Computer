@@ -1011,7 +1011,6 @@ public:
         // setstepmul = 260 (default 200) - do more work per GC cycle
         lua_gc(L, LUA_GCSETPAUSE, 55);
         lua_gc(L, LUA_GCSETSTEPMUL, 260);
-        printf("Lua GC configured: pause=55, stepmul=260 (aggressive for embedded)\n\r");
         
         // Override print function
         lua_register(L, "print", lua_print);
@@ -1125,7 +1124,6 @@ public:
     lua_pushcfunction(L, l_crowlib_crow_reset);
     lua_setfield(L, -2, "init");    // Set crow.init (alias for reset)
     lua_pop(L, 1);                  // Pop crow table
-    printf("crow.reset and crow.init functions registered\n\r");
     
     // Initialize CASL instances for all 4 outputs
     for (int i = 0; i < 4; i++) {
@@ -1141,7 +1139,6 @@ public:
         if (!L) return;
         
         // Load ASL library first
-    printf("Loading embedded ASL library...\n\r");
         if (luaL_loadbuffer(L, (const char*)asl, asl_len, "asl.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("Error loading ASL library: %s\n\r", error ? error : "unknown error");
@@ -1157,7 +1154,6 @@ public:
         lua_setglobal(L, "asl");
         
         // Load ASLLIB library
-    printf("Loading embedded ASLLIB library...\n\r");
         if (luaL_loadbuffer(L, (const char*)asllib, asllib_len, "asllib.lua") != LUA_OK || lua_pcall(L, 0, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("Error loading ASLLIB library: %s\n\r", error ? error : "unknown error");
@@ -1181,7 +1177,6 @@ public:
         }
         
         // Load Output.lua class from embedded bytecode
-    printf("Loading embedded Output.lua class...\n\r");
         if (luaL_loadbuffer(L, (const char*)output, output_len, "output.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("Error loading Output.lua: %s\n\r", error ? error : "unknown error");
@@ -1201,13 +1196,10 @@ public:
                 const char* error = lua_tostring(L, -1);
                 printf("Error creating output objects: %s\n\r", error ? error : "unknown error");
                 lua_pop(L, 1);
-            } else {
-                printf("Output.lua loaded successfully!\n\r");
             }
         }
         
         // Load Input.lua class from embedded bytecode
-        printf("Loading embedded Input.lua class...\n\r");
         if (luaL_loadbuffer(L, (const char*)input, input_len, "input.lua") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("Error loading Input.lua: %s\n\r", error ? error : "unknown error");
@@ -1226,13 +1218,10 @@ public:
                 const char* error = lua_tostring(L, -1);
                 printf("Error creating input objects: %s\n\r", error ? error : "unknown error");
                 lua_pop(L, 1);
-            } else {
-                printf("Input.lua loaded and objects created successfully!\n\r");
             }
         }
         
         // Load Metro.lua class from embedded bytecode (CRITICAL for First.lua)
-        printf("Loading embedded Metro.lua class...\n\r");
         
         // Register pulse output helper function (must be before First.lua loads)
         // This avoids using luaL_dostring in _c.tell which can cause ISR issues
@@ -1258,7 +1247,6 @@ public:
         } else {
             // Metro.lua returns the metro table - capture it as global "metro"
             lua_setglobal(L, "metro");
-            printf("Metro.lua loaded as global 'metro' object!\n\r");
         }
         
         // Set up crow-style global handlers for event dispatching
@@ -1288,8 +1276,6 @@ public:
             lua_pop(L, 1);
         }
         
-        printf("ASL libraries loaded successfully!\n\r");
-        
         // Load crow ecosystem libraries (sequins, public, clock, quote, timeline)
         load_crow_ecosystem();
     }
@@ -1298,12 +1284,9 @@ public:
     void load_crow_ecosystem() {
         if (!L) return;
         
-        printf("Loading minimal crow ecosystem (sequins, public, clock)...\n\r");
-        
         // Helper lambda to load a library from embedded bytecode
         auto load_lib = [this](const char* lib_name, const char* global_name, 
                                const unsigned char* bytecode, size_t len) {
-            printf("  Loading %s...\n\r", lib_name);
             if (luaL_loadbuffer(L, (const char*)bytecode, len, lib_name) != LUA_OK) {
                 printf("  ERROR loading %s: %s\n\r", lib_name, lua_tostring(L, -1));
                 lua_pop(L, 1);
@@ -1315,7 +1298,6 @@ public:
                 return;
             }
             lua_setglobal(L, global_name);
-            printf("  %s loaded as '%s'\n\r", lib_name, global_name);
         };
         
         // Load only essential libraries (sequins before public!)
@@ -1342,11 +1324,7 @@ public:
                          "end\n") != LUA_OK) {
             printf("  ERROR defining delay() function: %s\n\r", lua_tostring(L, -1));
             lua_pop(L, 1);
-        } else {
-            printf("  delay() function defined\n\r");
         }
-        
-        printf("Crow ecosystem loaded (6 libraries: sequins, public, clock, quote, timeline, hotswap)!\n\r");
         
         // Create Workshop Computer namespace table with knob and switch
         create_bb_table(L);
@@ -4083,11 +4061,6 @@ extern "C" void L_handle_stream_safe(event_t* e) {
     int channel = e->index.i + 1; // Convert to 1-based
     float value = e->data.f;
     
-    if (kDetectionDebug) {
-        printf("STREAM SAFE CALLBACK #%lu: ch%d value=%.3f\n\r",
-               callback_counter, channel, value);
-    }
-    
     // Use crow-style global stream_handler dispatching
     char lua_call[128];
     snprintf(lua_call, sizeof(lua_call),
@@ -4099,10 +4072,6 @@ extern "C" void L_handle_stream_safe(event_t* e) {
     
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(3);
-    }
-    
-    if (kDetectionDebug) {
-        printf("STREAM SAFE CALLBACK #%lu: Completed successfully\n\r", callback_counter);
     }
 }
 
@@ -4127,16 +4096,9 @@ extern "C" void L_handle_change_safe(event_t* e) {
         }
         return;
     }
-
     
     int channel = e->index.i + 1; // Convert to 1-based
     bool state = (e->data.f > 0.5f);
-    
-    // Optional debug output for troubleshooting
-    if (kDetectionDebug) {
-        printf("SAFE CALLBACK #%lu: ch%d state=%s\n\r",
-               callback_counter, channel, state ? "HIGH" : "LOW");
-    }
     
     // Use crow-style global change_handler dispatching for error isolation
     char lua_call[128];
@@ -4158,10 +4120,6 @@ extern "C" void L_handle_change_safe(event_t* e) {
         // Turn off other LEDs now that we're done (non-blocking)
         ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
         ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(1);
-    }
-    
-    if (kDetectionDebug) {
-        printf("SAFE CALLBACK #%lu: Completed successfully\n\r", callback_counter);
     }
 }
 
@@ -4212,26 +4170,15 @@ int LuaManager::lua_set_input_stream(lua_State* L) {
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         Detect_stream(detector, stream_callback, time);
-        // // Use TinyUSB CDC for output
-        // if (tud_cdc_connected()) {
-        //     char msg[64];
-        //     snprintf(msg, sizeof(msg), "Input %d: stream mode, interval %.3fs\n\r", channel, time);
-        //     tud_cdc_write_str(msg);
-        //     
-        // }
     }
     return 0;
 }
 
 int LuaManager::lua_set_input_change(lua_State* L) {
-    DEBUG_AUDIO_PRINT("DEBUG: lua_set_input_change called!\n\r");
     int channel = luaL_checkinteger(L, 1);
     float threshold = (float)luaL_checknumber(L, 2);
     float hysteresis = (float)luaL_checknumber(L, 3);
     const char* direction = luaL_checkstring(L, 4);
-    
-    DEBUG_AUDIO_PRINT("DEBUG: args: ch=%d, thresh=%.3f, hyst=%.3f, dir='%s'\n\r", 
-                      channel, threshold, hysteresis, direction);
     
     // CRITICAL FIX: Reset callback state when mode changes to allow new callbacks to fire
     reset_change_callback_state(channel - 1);
@@ -4239,12 +4186,7 @@ int LuaManager::lua_set_input_change(lua_State* L) {
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         int8_t dir = Detect_str_to_dir(direction);
-        DEBUG_AUDIO_PRINT("DEBUG: Direction '%s' converted to %d\n\r", direction, dir);
         Detect_change(detector, change_callback, threshold, hysteresis, dir);
-        DEBUG_DETECT_PRINT("Input %d: change mode, thresh %.3f, hyst %.3f, dir %s\n\r", 
-                           channel, threshold, hysteresis, direction);
-    } else {
-        printf("Input %d: Error - detector not found\n\r", channel);
     }
     return 0;
 }
@@ -4274,7 +4216,6 @@ int LuaManager::lua_set_input_window(lua_State* L) {
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         Detect_window(detector, window_callback, windows, wLen, hysteresis);
-        printf("Input %d: window mode, %d windows, hyst %.3f\n\r", channel, wLen, hysteresis);
     }
     return 0;
 }
@@ -4303,8 +4244,6 @@ int LuaManager::lua_set_input_scale(lua_State* L) {
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         Detect_scale(detector, scale_callback, scale, sLen, temp, scaling);
-        printf("Input %d: scale mode, %d notes, temp %.1f, scaling %.3f\n\r", 
-               channel, sLen, temp, scaling);
     }
     return 0;
 }
@@ -4316,7 +4255,6 @@ int LuaManager::lua_set_input_volume(lua_State* L) {
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         Detect_volume(detector, volume_callback, time);
-        printf("Input %d: volume mode, interval %.3fs\n\r", channel, time);
     }
     return 0;
 }
@@ -4329,8 +4267,6 @@ int LuaManager::lua_set_input_peak(lua_State* L) {
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         Detect_peak(detector, peak_callback, threshold, hysteresis);
-        printf("Input %d: peak mode, thresh %.3f, hyst %.3f\n\r", 
-               channel, threshold, hysteresis);
     }
     return 0;
 }
@@ -4342,7 +4278,6 @@ int LuaManager::lua_set_input_freq(lua_State* L) {
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
         Detect_freq(detector, freq_callback, time);
-        printf("Input %d: freq mode, interval %.3fs (not fully implemented)\n\r", channel, time);
     }
     return 0;
 }
@@ -4362,8 +4297,6 @@ int LuaManager::lua_set_input_clock(lua_State* L) {
         
         // Use clock_input_handler instead of generic change_callback
         Detect_change(detector, clock_input_handler, threshold, hysteresis, 1); // Rising edge
-        printf("Input %d: clock mode, div %.3f, thresh %.3f, hyst %.3f\n\r", 
-               channel, div, threshold, hysteresis);
     }
     return 0;
 }
