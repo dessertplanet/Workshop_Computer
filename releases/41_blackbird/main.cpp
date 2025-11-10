@@ -114,6 +114,9 @@ static volatile bool g_pulsein_state[2] = {false, false};
 static volatile bool g_pulsein_edge_detected[2] = {false, false};
 static volatile bool g_pulsein_edge_state[2] = {false, false};
 
+// Reentrancy protection for pulsein callbacks (prevents crashes from fast clocks)
+static volatile bool g_pulsein_callback_active[2] = {false, false};
+
 // Clock edge pending flags (deferred from ISR to Core 0 to avoid FP math in ISR)
 static volatile bool g_pulsein_clock_edge_pending[2] = {false, false};
 
@@ -2806,18 +2809,28 @@ public:
             
             // Check for pulse input changes and fire callbacks
             // Edge detection happens at 48kHz in ProcessSample(), we just check flags here
+            // REENTRANCY PROTECTION: Skip callback if one is already running (prevents crashes from fast clocks)
             for (int i = 0; i < 2; i++) {
-                if (g_pulsein_edge_detected[i]) {
+                if (g_pulsein_edge_detected[i] && !g_pulsein_callback_active[i]) {
+                    // Mark callback as active FIRST to prevent reentrancy
+                    g_pulsein_callback_active[i] = true;
+                    
+                    // Clear the edge flag AFTER marking active (prevents race)
+                    g_pulsein_edge_detected[i] = false;
+                    
+                    // Cache the edge state before calling Lua (in case it changes)
+                    bool edge_state = g_pulsein_edge_state[i];
+                    
                     // Edge was detected at audio rate - fire callback
                     char lua_call[128];
                     snprintf(lua_call, sizeof(lua_call),
                         "if _pulsein%d_change_callback then _pulsein%d_change_callback(%s) end",
-                        i + 1, i + 1, g_pulsein_edge_state[i] ? "true" : "false");
+                        i + 1, i + 1, edge_state ? "true" : "false");
                     
                     lua_manager->evaluate_safe(lua_call);
                     
-                    // Clear the edge flag
-                    g_pulsein_edge_detected[i] = false;
+                    // Mark callback as complete
+                    g_pulsein_callback_active[i] = false;
                 }
             }
             
@@ -3852,7 +3865,12 @@ int LuaManager::lua_c_tell(lua_State* L) {
                     // Extract pulse width from the ASL table structure
                     float pulse_time = 0.010;  // default 10ms
                     
-                    // Navigate the pulse() ASL structure
+                    // OPTIMIZATION: Use protected call for table navigation to prevent crashes
+                    // from corrupted Lua state during fast callbacks
+                    int initial_top = lua_gettop(L);
+                    bool extraction_success = false;
+                    
+                    // Navigate the pulse() ASL structure safely
                     // asl._if(pred, t) inserts {'IF', pred} at start of t and returns it
                     // So pulse(2) structure is: [1] = { {'IF',1}, to(5,0,'now'), to(5,2), to(0,0,'now') }
                     // [1][1] = {'IF', 1}
@@ -3864,33 +3882,39 @@ int LuaManager::lua_c_tell(lua_State* L) {
                     if (lua_istable(L, -1)) {
                         lua_geti(L, -1, 1);  // get first element (the asl._if branch for polarity=1)
                         if (lua_istable(L, -1)) {
-                            lua_geti(L, -1, 2);  // get [1][2]
+                            lua_geti(L, -1, 3);  // get [1][3] (the timing 'to')
                             if (lua_istable(L, -1)) {
-                                lua_pop(L, 1);  // pop [1][2], we don't need it
-                                
-                                // Get [1][3] which is the second 'to' with the pulse duration
+                                // [1][3] = {'to', level, time, ...}
+                                // time is at index 3
                                 lua_geti(L, -1, 3);
-                                if (lua_istable(L, -1)) {
-                                    // [1][3] = {'to', level, time, ...}
-                                    // time is at index 3
-                                    lua_geti(L, -1, 3);
-                                    if (lua_isnumber(L, -1)) {
-                                        pulse_time = lua_tonumber(L, -1);
-                                    }
-                                    lua_pop(L, 1);  // pop [1][3][3]
-                                    lua_pop(L, 1);  // pop [1][3]
-                                } else {
-                                    lua_pop(L, 1);  // pop non-table
+                                if (lua_isnumber(L, -1)) {
+                                    pulse_time = lua_tonumber(L, -1);
+                                    extraction_success = true;
                                 }
-                            } else {
-                                lua_pop(L, 1);  // pop [1][2]
                             }
-                            lua_pop(L, 1);  // pop [1]
-                        } else {
-                            lua_pop(L, 1);  // pop [1]
                         }
                     }
-                    lua_pop(L, 1);  // pop action table copy
+                    
+                    // Clean up stack
+                    lua_settop(L, initial_top);
+                    
+                    // If pulse_time is 0 or very small, just set low immediately without coroutine
+                    if (pulse_time < 0.001f) {  // Less than 1ms
+                        g_pulse_out_state[pulse_idx] = false;
+                        hardware_pulse_output_set(pulse_idx + 1, false);
+                        g_pulse_out_coro_id[pulse_idx] = 0;  // Clear any pending coroutine ID
+                        lua_settop(L, argc);  // Clean up and return
+                        return 0;
+                    }
+                    
+                    // If pulse_time is very long (>100s), treat as constant high
+                    if (pulse_time > 100.0f) {
+                        g_pulse_out_state[pulse_idx] = true;
+                        hardware_pulse_output_set(pulse_idx + 1, true);
+                        g_pulse_out_coro_id[pulse_idx] = 0;  // Clear any pending coroutine ID
+                        lua_settop(L, argc);  // Clean up and return
+                        return 0;
+                    }
                     
                     // Now generate the pulse using clock.run
                     // CRITICAL FIX: Cancel any pending pulse coroutine to prevent overlap issues
