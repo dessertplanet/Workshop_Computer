@@ -68,8 +68,8 @@ int l_bb_priority(lua_State* L) {
             } else if (strcmp(requested, "timing") == 0) {
                 (void)Timer_Set_Block_Size(480);
             } else {
-                // Unrecognized string: treat as 'balanced' (default)
-                (void)Timer_Set_Block_Size(240);
+                // Unrecognized string: treat as 'timing' (default)
+                (void)Timer_Set_Block_Size(480);
             }
         } else {
             // Ignore other types

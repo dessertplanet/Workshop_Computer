@@ -21,8 +21,8 @@ static timer_t* timers = NULL;
 static int max_timers = 0;
 volatile uint64_t global_sample_counter = 0; // Incremented in ProcessSample() ISR - 64-bit for precision
 
-// Runtime-adjustable block size (defaults to 'balanced')
-int g_timer_block_size = 240; // default mapping for bb.priority='balanced'
+// Runtime-adjustable block size (defaults to 'timing')
+int g_timer_block_size = 480; // default mapping for bb.priority='timing'
 
 // Block processing state - aligned with audio blocks for consistent timing
 static int sample_accumulator = 0; // Count samples until next block processing
