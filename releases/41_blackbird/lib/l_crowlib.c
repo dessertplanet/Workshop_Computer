@@ -44,11 +44,12 @@ static int _lua_void_function( lua_State* L ){
 
 // ---- bb.priority implementation (file-scope) ----
 // Behavior:
-//  - bb.priority()            -> returns 'timing', 'accuracy', or current custom block size (int)
+//  - bb.priority()            -> returns 'timing', 'balanced', 'accuracy', or current custom block size (int)
 //  - bb.priority('timing')    -> sets size 480 (if still safe) and returns 'timing'
-//  - bb.priority('accuracy')  -> sets size 1 (if safe) and returns 'accuracy'
+//  - bb.priority('balanced')  -> sets size 240 (if still safe) and returns 'balanced'
+//  - bb.priority('accuracy')  -> sets size 4 (if safe) and returns 'accuracy'
 //  - bb.priority(N)           -> sets size N (clamped to [1,MAX]) if safe;
-//                                returns mapped string for 1/480 else the applied integer size
+//                                returns mapped string for 4/240/480 else the applied integer size
 //  - After processing starts (guard active) requests are ignored; current descriptor returned.
 int l_bb_priority(lua_State* L) {
     int nargs = lua_gettop(L);
@@ -61,12 +62,14 @@ int l_bb_priority(lua_State* L) {
         } else if (lua_isstring(L, 1)) {
             const char* requested = lua_tostring(L, 1);
             if (strcmp(requested, "accuracy") == 0) {
-                (void)Timer_Set_Block_Size(1);
+                (void)Timer_Set_Block_Size(4);
+            } else if (strcmp(requested, "balanced") == 0) {
+                (void)Timer_Set_Block_Size(240);
             } else if (strcmp(requested, "timing") == 0) {
                 (void)Timer_Set_Block_Size(480);
             } else {
-                // Unrecognized string: treat as 'timing'
-                (void)Timer_Set_Block_Size(480);
+                // Unrecognized string: treat as 'balanced' (default)
+                (void)Timer_Set_Block_Size(240);
             }
         } else {
             // Ignore other types
@@ -80,8 +83,10 @@ int l_bb_priority(lua_State* L) {
         int pending = Timer_Get_Block_Size(); // current still old; we don't expose internal pending value
         // We can't directly read pending here without extra API; keep reporting current classification
     }
-    if (current == 1) {
+    if (current == 4) {
         lua_pushstring(L, "accuracy");
+    } else if (current == 240) {
+        lua_pushstring(L, "balanced");
     } else if (current == 480) {
         lua_pushstring(L, "timing");
     } else {

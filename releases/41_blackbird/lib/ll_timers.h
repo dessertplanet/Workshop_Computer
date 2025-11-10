@@ -11,8 +11,9 @@ typedef void (*timer_callback_t)(int timer_id);
 // Block processing configuration - runtime adjustable via bb.priority
 // bb.priority values:
 //   'timing'   -> larger block (480) for lower CPU usage, higher scheduling latency
-//   'accuracy' -> block size 1 for minimal latency, high CPU usage
-// Any other assignment maps back to 'timing'.
+//   'balanced' -> medium block (240) for balanced CPU usage and latency (default)
+//   'accuracy' -> block size 4 for minimal latency, higher CPU usage
+// Any other assignment maps back to 'balanced'.
 //
 // Implementation notes:
 // - We keep a MAX size for static allocations; actual working size is g_timer_block_size
