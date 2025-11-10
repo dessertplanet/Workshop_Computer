@@ -1,16 +1,27 @@
 /*
+Blackbird Crow Emulator version 1.0
 
-Blackbird Crow Emulator - Basic Communication Protocol
+A fully crow-compatible program card for the Music Thing Modular Workshop Computer.
+It does everything crow can do and works with all (?) existing crow scripts. 
+I have also added the bb namespace with some Blackbird-specific functionality:
+ - audio-rate noise action with bb.noise()
+ - use the knobs, switches, audio inputs & pulse i/o of the Workshop Computer
+ (and for advanced users)
+ - bb.asap function that runs as fast as possible in the control thread with no detection
+ - Use bb.priority() for balancing accurate timing with accurate output (effectively configuring the failure mode when overloaded)
 
-This implements the basic crow command protocol using stdio USB:
-- ^^v - Version request
-- ^^i - Identity request  
-- ^^p - Print script request
+Tested with druid, norns, MAX/MSP, pyserial- works with ANY serial host that sends compatible strings.
 
-Commands use crow-style responses with \n\r line endings.
+Written by Dune Desormeaux / @dessertplanet , 2025
 
-To test, connect USB and use a serial terminal at 115200 baud.
-Send commands like ^^v and ^^i to test the protocol.
+Special thanks to:
+- Tom Whitwell for the Workshop System
+- Chris Johnson for the ComputerCard framework
+- Brian Crabtree and Trent Gill (monome & Whimsical Raps) for the original crow and the open source crow firmware
+- Zack Scholl for encouragement and proving lua can work on rp2040 with his midi-to-cv project
+- Ben Regnier for extensive testing and feedback without which this would not have been possible
+
+License is GPLv3 or later- see LICENSE file for details.
 */
 
 #include "ComputerCard.h"
