@@ -153,5 +153,5 @@ end
 
 4. **Smooth transitions**: Consider adding hysteresis or smoothing for cleaner control
    ```lua
-   local smoothed = smoothed * 0.9 + ws.knob.main * 0.1
+   local smoothed = smoothed * 0.9 + bb.knob.main * 0.1
    ```

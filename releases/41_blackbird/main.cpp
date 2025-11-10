@@ -3126,9 +3126,8 @@ public:
         } 
      } // end if (g_noise_active_mask)
         
-        // === PULSE OUTPUT 2: Controlled by Lua (default: follows switch) ===
-        // Default behavior is set up in Lua on startup
-        // Users can change by calling bb.pulseout[2]:clock() or setting bb.pulseout[2].action
+        // === PULSE OUTPUT 2: Controlled by Lua (no default behavior) ===
+        // Users can control by calling bb.pulseout[2]:clock() or setting bb.pulseout[2].action
         
         // === LED OUTPUT VISUALIZATION ===
         // Snapshot values for Core 0 LED update (every 200 samples = 240Hz at 48kHz)

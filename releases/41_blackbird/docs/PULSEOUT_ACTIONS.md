@@ -12,15 +12,15 @@ The Blackbird hardware has two pulse outputs that can be controlled via Lua. Thi
 ## Default Behavior
 
 ### Pulse Output 1
-By default, `bb.pulseout[1]` generates a **10ms pulse** on every beat of the internal clock (equivalent to `:clock(1)`).
+By default, `bb.pulseout[1]` generates a **10ms pulse** twice per beat of the internal clock (equivalent to `:clock(0.5)`).
 
 ```lua
 -- Default setup (done automatically on startup)
-bb.pulseout[1]:clock(1)
+bb.pulseout[1]:clock(0.5)
 ```
 
 ### Pulse Output 2
-By default, `bb.pulseout[2]` **follows the switch position** - it's high when the switch is in the down position, low otherwise. This is implemented as a clock coroutine that checks the switch state on every beat.
+By default, `bb.pulseout[2]` has no default behavior and remains low until you configure it.
 
 ## Quick Reference
 
@@ -126,7 +126,7 @@ bb.pulseout[1]:high()
 bb.pulseout[1]:low()
 
 -- Toggle based on condition
-if bb.switch() == 'down' then
+if bb.switch.position == 'down' then
     bb.pulseout[2]:high()
 else
     bb.pulseout[2]:low()

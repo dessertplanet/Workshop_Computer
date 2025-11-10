@@ -122,7 +122,7 @@ Use switch to select mode, knobs to control parameters:
 ```lua
 function init()
     -- Switch changes envelope shape
-    switch.change = function(pos)
+    bb.switch.change = function(pos)
         if pos == 'down' then
             output[1].shape = 'linear'
         elseif pos == 'middle' then
