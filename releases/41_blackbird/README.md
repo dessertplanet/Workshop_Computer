@@ -10,7 +10,9 @@ This enables you to:
 
 Blackbird does everything monome crow can do and works with all (I hope!) existing crow scripts. It has also been extended with Blackbird-specific functionality via the `bb` namespace. 
 
-A great place to get started is the [original crow documentation](https://monome.org/docs/crow/) since the examples there work here perfectly according to the hardware mapping below. 
+A great place to get started is the [original crow documentation](https://monome.org/docs/crow/) since the examples there work here perfectly according to the hardware mapping below. More docs linked below.
+
+Also check out the examples directory in this repo for some sample scripts (more to be added soon!)
 
 Tested with druid, norns, MAX/MSP, pyserial - works with **ANY** serial host that sends compatible strings.
 
