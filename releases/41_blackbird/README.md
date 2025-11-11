@@ -6,7 +6,7 @@ This enables you to:
 - Live code with the workshop computer connected to a non-workshop computer running [druid](https://monome.org/docs/crow/druid/)
 - Connect a [monome norns](https://monome.org/docs/norns/) via USB and run scripts on norns that interact with crow natively (try [awake](https://llllllll.co/t/awake/21022), [buoys](https://llllllll.co/t/buoys-v1-2-0/37639), [loom](https://llllllll.co/t/loom/21091) ... many of these also allow you do use a monome grid for WS interactions)
 - Connect the workshop to a non-WS computer running [Max MSP or MaxforLive](https://monome.org/docs/crow/max-m4l/) with Ableton and use the monome-built M4L instruments to make the WS interact with Ableton or your own Max creations. 
-- Write and upload your own (simple) program cards in the [Lua (5.4.8) language](https://www.lua.org/manual/5.4/). Upload to the WS computer via the "u" command in druid (on a non-WS computer). Uploaded scripts are saved to flash on the physical card itself- So you can write many different blackbird cards and hot-swap!
+- Write and upload your own (simple) program cards in the [Lua (5.4.8) language](https://www.lua.org/manual/5.4/). Upload to the WS computer via the "u" command in druid (on a non-WS computer). Uploaded scripts are saved to flash on the **physical card itself**- So you can write many different blackbird cards and hot-swap!
 
 Blackbird does everything monome crow can do and works with all (I hope!) existing crow scripts. It has also been extended with Blackbird-specific functionality via the `bb` namespace. 
 
@@ -60,7 +60,7 @@ Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as 
   - [Using Knobs with ASL Dynamics](docs/KNOBS_WITH_ASL.md)
   - [Pulse Input Detection](docs/PULSEIN_DETECTION.md)
   - [Pulse Output Actions](docs/PULSEOUT_ACTIONS.md)
-  
+
 ## How It Works
 
 Blackbird communicates with host applications (druid, norns, Max/MSP) over USB serial by using exactly the same protocol as real crow, and presents itself over USB in such a way that existing hosts don't know the difference between blackbird and crow.
@@ -99,7 +99,7 @@ Blackbird communicates with host applications (druid, norns, Max/MSP) over USB s
 │                      │                                             │
 │                      ▼                                             │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │ Hardware I/O interaction via Chris Johnsons ComputerCard.h   │  │
+│  │ Hardware I/O interaction via Chris Johnson's ComputerCard.h   │  │
 │  │ • Inputs/outputs/knobs/switch                                │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                    │
