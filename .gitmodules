@@ -1,0 +1,3 @@
+[submodule "releases/41_blackbird/lua"]
+	path = releases/41_blackbird/lua
+	url = git@github.com:dessertplanet/lua.git
