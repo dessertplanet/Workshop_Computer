@@ -22,6 +22,7 @@
 | 30_cirpy_wavetable | Wavetable oscillator that using wavetables from Plaits, Braids, and Microwave, | 0.1 | Circuit Python | @todbot / Tod Kurt |  |  | Functional but WIP |
 | 37_compulidean | Generative Euclidean drum + sample player. | (see source repo) | C++/Arduino, with vscode+platformio. | Tristan Rowley |  |  | Functional, but WIP |
 | 38_od | Loopable chaotic Lorenz attractor trajectories and zero-crossings as CV and pulses, with sensitivity to initial conditions. | 1.0 | MicroPython | M. John Mills |  |  | Released |
+| 41_blackbird | A scriptable, live-codable, USB-serial-to-CV device implementing monome crow's protocol | 1.0 | Pico SDK + Lua | Dune Desormeaux |  |  | Released |
 | 42_backyard_rain | Nature soundscape audio. A cozy rain ambience mix for background listening. You control the intensity. This card plays rain ambience which was recorded in my backyard. | (see source repo) | Rust (Embassy framework) | Brian Dorsey |  |  | Released |
 | 47_NZT | Grain Noise and Noise Tools | 1.0.0 | C++ (ComputerCard) | @kjnilsson |  |  | Released |
 | 53_glitter | Granular Looping Sampler | 0.1.0 | Pico SDK 2.1.1 | Steve Jones |  |  | Beta Test |
