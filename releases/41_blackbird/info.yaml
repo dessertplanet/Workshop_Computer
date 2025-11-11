@@ -1,0 +1,5 @@
+Description: A scriptable, live-codable, USB-serial-to-CV device implementing monome crow's protocol
+Language: Pico SDK + Lua
+Creator: Dune Desormeaux
+Version: 1.0
+Status: Released
