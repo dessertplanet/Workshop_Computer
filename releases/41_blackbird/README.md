@@ -6,7 +6,10 @@ This enables you to:
 - Live code with the workshop computer connected to a non-workshop computer running [druid](https://monome.org/docs/crow/druid/)
 - Connect a [monome norns](https://monome.org/docs/norns/) via USB and run scripts on norns that interact with crow natively (try [awake](https://llllllll.co/t/awake/21022), [buoys](https://llllllll.co/t/buoys-v1-2-0/37639), [loom](https://llllllll.co/t/loom/21091) ... many of these also allow you do use a monome grid for WS interactions)
 - Connect the workshop to a non-WS computer running [Max MSP or MaxforLive](https://monome.org/docs/crow/max-m4l/) with Ableton and use the monome-built M4L instruments to make the WS interact with Ableton or your own Max creations. 
-- Write and upload your own (simple) program cards in the [Lua (5.4.8) language](https://www.lua.org/manual/5.4/). Upload to the WS computer via the "u" command in druid (on a non-WS computer). Uploaded scripts are saved to flash on the **physical card itself**- So you can write many different blackbird cards and hot-swap!
+- Write and upload your own (simple) program cards in the [Lua (5.4.8) language](https://www.lua.org/manual/5.4/). Upload to the WS computer via the "u" command in druid (on a non-WS computer). Uploaded scripts are saved to flash on the **physical card itself**- So you can write many different blackbird cards and hot-swap! If you want the name of your patch saved to flash for future reference (printed to host at startup) make the first line of your script match the format `-- mycoolscript.lua`.
+
+  > [NOTE] 
+  > Make sure you wait for blackbird to fully start up before attempting to upload a lua script from druid. Startup is complete when welcome messages are printed in druid and the bottom-left LED starts flashing. Sending commands before blackbird is fully online can cause weirdness.
 
 Blackbird does everything monome crow can do and works with all (I hope!) existing crow scripts. It has also been extended with Blackbird-specific functionality via the `bb` namespace. 
 
@@ -18,7 +21,7 @@ Tested with druid, norns, MAX/MSP, pyserial - works with **ANY** serial host tha
 
 ## Hardware Mapping
 
-Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as follows:
+Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as described below.
 
 ### Outputs
 
@@ -36,7 +39,10 @@ Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as 
 | `input[1]` | CV In 1 | CV Input |
 | `input[2]` | CV In 2 | CV Input |
 
-### Blackbird-Specific Hardware (bb namespace)
+### Blackbird-Specific Hardware
+
+> [NOTE]
+> The WS computer's LEDs always show the positive output voltages for each of the six outputs (negative voltages are not shown).
 
 | Lua API | Workshop Computer | Type |
 |---------|-------------------|------|
@@ -83,10 +89,10 @@ Blackbird communicates with host applications (druid, norns, Max/MSP) over USB s
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │ USB Serial Handler                                           │  │
 │  │ • Receives commands and code via USB                         │  │
-|  | • Anything with a ^^ prefix is read as a crow command        |  |
-|  | • Anything else is interpreted as lua code                   |  |
-|  | • Newline character '\n' tells system packet is complete.    |  |
-|  | • multi-line chunks can be sent between triple back-ticks ```|  |
+│  │ • Anything with a ^^ prefix is read as a crow command        │  │
+│  │ • Anything else is interpreted as lua code                   │  │
+│  │ • Newline character '\n' tells system packet is complete.    │  │
+│  │ • multi-line chunks can be sent between triple back-ticks ```│  │
 │  │ • Sends responses and print() output back to host            │  │
 │  └───────────────────┬──────────────────────────────────────────┘  │
 │                      │                                             │
@@ -101,7 +107,7 @@ Blackbird communicates with host applications (druid, norns, Max/MSP) over USB s
 │                      │                                             │
 │                      ▼                                             │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │ Hardware I/O interaction via Chris Johnson's ComputerCard.h   │  │
+│  │ Hardware I/O interaction via Chris Johnson's ComputerCard.h  │  │
 │  │ • Inputs/outputs/knobs/switch                                │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                    │
@@ -112,7 +118,7 @@ Blackbird communicates with host applications (druid, norns, Max/MSP) over USB s
 
 ### Noise Generation
 
-**Audio-rate noise action** with `bb.noise()` - generates noise directly in the audio loop for clean, efficient noise generation on any CV/Audio output.
+**Audio-rate noise action** with `bb.noise()` - generates noise directly in the audio loop for clean, efficient noise generation on any CV/Audio output. Optional paramater sets the noise level between 0.0 (silence) and 1.0 (full vol, default).
 
 Example:
 
@@ -121,7 +127,7 @@ output[4]( bb.noise() )
 
 --OR
 
-output[2].action = bb.noise() -- define action
+output[2].action = bb.noise(0.5) -- define action
 output[2]() -- run the action
 ```
 
@@ -158,3 +164,13 @@ Special thanks to:
 ## License
 
 GPLv3 or later - see [LICENSE](LICENSE.txt) file for details.
+
+## Known Issues
+
+A few things that are on the radar but that I don't plan to fix (at least not now). If you think any of them are dealbreakers please file a github issue and we can debate!
+
+- Setting `clock.tempo` above 500 bpm can cause crashes. Slow down, man!
+- Running scripts with references to the `ii` table produces harmless (but chatty) lua nil global errors. Ideally these would be silent until/unless i2c support is somehow added/defined for an alleged eurorack-computer-only-future-module.
+- System does not prevent receipt of serial comms during startup that are known to cause issues. This is doc'd in the overview but could be prevented in code entirely in a future version.
+- Running `crow.reset()` or `^^k` doesn't clear callback functions so they can still be called if triggers continue until they are manually cleared or redefined.
+- Wobblewobble norns script doesn't play nice with blackbird as is. I think the solution is to turn down the frequency that supercollider is triggering output.volts message dispatch in the norns-side code but this is untested.
