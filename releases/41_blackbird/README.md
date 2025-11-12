@@ -86,10 +86,10 @@ Blackbird communicates with host applications (druid, norns, Max/MSP) over USB s
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │ USB Serial Handler                                           │  │
 │  │ • Receives commands and code via USB                         │  │
-│  | • Anything with a ^^ prefix is read as a crow command        │  │
-│  | • Anything else is interpreted as lua code                   │  │
-│  | • Newline character '\n' tells system packet is complete.    │  │
-│  | • multi-line chunks can be sent between triple back-ticks ```│  │
+│  │ • Anything with a ^^ prefix is read as a crow command        │  │
+│  │ • Anything else is interpreted as lua code                   │  │
+│  │ • Newline character '\n' tells system packet is complete.    │  │
+│  │ • multi-line chunks can be sent between triple back-ticks ```│  │
 │  │ • Sends responses and print() output back to host            │  │
 │  └───────────────────┬──────────────────────────────────────────┘  │
 │                      │                                             │
