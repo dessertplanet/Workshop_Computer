@@ -1,9 +1,8 @@
 -- turing.lua
 
 function init() 
-    seq_length = 5
-    max = tonumber('11111', 2) -- maximum binary value is all 1's (matches seq_length)
-    bits = {0,0,0,0,0} -- initialize bits (size matches seq_length)
+    max = tonumber('11111', 2) -- maximum binary value is all 1's (matches bits table size)
+    bits = {0,0,0,0,0} -- initialize bits (size matches max string length above)
 
     range = 4.0 -- output range in volts
 
@@ -14,8 +13,7 @@ function init()
 end
 
 bb.pulsein[1].change = function()
-    -- remove first bit, add it at the end (rotates the table of bits)
-    first = table.remove(bits,1)
+    first = table.remove(bits,1)  -- remove first bit, add it at the end (rotates the table of bits)
     table.insert(bits, first)
 
     -- compare noise against main knob and flip the first bit if noise >= knob
