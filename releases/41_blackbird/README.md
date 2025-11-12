@@ -21,7 +21,7 @@ Tested with druid, norns, MAX/MSP, pyserial - works with **ANY** serial host tha
 
 ## Hardware Mapping
 
-Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as follows:
+Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as described below.
 
 ### Outputs
 
@@ -39,7 +39,10 @@ Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as 
 | `input[1]` | CV In 1 | CV Input |
 | `input[2]` | CV In 2 | CV Input |
 
-### Blackbird-Specific Hardware (bb namespace)
+### Blackbird-Specific Hardware
+
+> [NOTE]
+> The WS computer's LEDs always show the positive output voltages for each of the six outputs (negative voltages are not shown).
 
 | Lua API | Workshop Computer | Type |
 |---------|-------------------|------|
