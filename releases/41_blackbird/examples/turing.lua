@@ -17,7 +17,7 @@ bb.pulsein[1].change = function()
     table.insert(bits, first)
 
     -- compare noise against main knob and flip the first bit if noise >= knob
-    -- Tiny scaling to ensure that bit always flips when knob is at 0.0, never flips when knob is at 1.0
+    -- Scaling by 0.999 to ensure that bit always flips when knob is at 0.0, never flips when knob is at 1.0
     if math.random() * 0.999 >= bb.knob.main then
         bits[1] = 1 - bits[1]
     end
