@@ -28,6 +28,6 @@ bb.pulsein[1].change = function()
     bits_int = tonumber(bits_string,2) -- integer 0 to max
     bits_float = bits_int / max -- float 0.0 to 1.0
 
-    output[1].volts = bits_float * range
-    output[2]()
+    output[1].volts = bits_float * range -- send the scaled output voltage to output 1 (where it will be quantized)
+    output[2]() -- trigger the envelope on output 2
 end
