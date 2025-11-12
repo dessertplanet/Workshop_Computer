@@ -8,6 +8,9 @@ This enables you to:
 - Connect the workshop to a non-WS computer running [Max MSP or MaxforLive](https://monome.org/docs/crow/max-m4l/) with Ableton and use the monome-built M4L instruments to make the WS interact with Ableton or your own Max creations. 
 - Write and upload your own (simple) program cards in the [Lua (5.4.8) language](https://www.lua.org/manual/5.4/). Upload to the WS computer via the "u" command in druid (on a non-WS computer). Uploaded scripts are saved to flash on the **physical card itself**- So you can write many different blackbird cards and hot-swap!
 
+  > [NOTE] 
+  > Make sure you wait for blackbird to fully start up before attempting to upload a lua script from druid. Startup is complete when welcome messages are printed in druid and the bottom-left LED starts flashing. Sending commands before blackbird is fully online can cause weirdness.
+
 Blackbird does everything monome crow can do and works with all (I hope!) existing crow scripts. It has also been extended with Blackbird-specific functionality via the `bb` namespace. 
 
 A great place to get started is the [original crow documentation](https://monome.org/docs/crow/) since the examples there work here perfectly according to the hardware mapping below. More docs linked below.
@@ -83,10 +86,10 @@ Blackbird communicates with host applications (druid, norns, Max/MSP) over USB s
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │ USB Serial Handler                                           │  │
 │  │ • Receives commands and code via USB                         │  │
-|  | • Anything with a ^^ prefix is read as a crow command        |  |
-|  | • Anything else is interpreted as lua code                   |  |
-|  | • Newline character '\n' tells system packet is complete.    |  |
-|  | • multi-line chunks can be sent between triple back-ticks ```|  |
+│  | • Anything with a ^^ prefix is read as a crow command        │  │
+│  | • Anything else is interpreted as lua code                   │  │
+│  | • Newline character '\n' tells system packet is complete.    │  │
+│  | • multi-line chunks can be sent between triple back-ticks ```│  │
 │  │ • Sends responses and print() output back to host            │  │
 │  └───────────────────┬──────────────────────────────────────────┘  │
 │                      │                                             │
@@ -101,7 +104,7 @@ Blackbird communicates with host applications (druid, norns, Max/MSP) over USB s
 │                      │                                             │
 │                      ▼                                             │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │ Hardware I/O interaction via Chris Johnson's ComputerCard.h   │  │
+│  │ Hardware I/O interaction via Chris Johnson's ComputerCard.h  │  │
 │  │ • Inputs/outputs/knobs/switch                                │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                    │
@@ -158,3 +161,12 @@ Special thanks to:
 ## License
 
 GPLv3 or later - see [LICENSE](LICENSE.txt) file for details.
+
+## Known Issues
+
+A few things that are on the radar but that I don't plan to fix (at least not now). If you think any of them are dealbreakers please file a github issue and we can debate!
+
+- Setting `clock.tempo` above 500 bpm can cause crashes. Slow down, man!
+- Running scripts with references to the `ii` table produces harmless (but chatty) lua nil global errors. Ideally these would be silent until/unless i2c support is somehow added/defined for an alleged eurorack-computer-only-future-module.
+- System does not prevent receipt of serial comms during startup that are known to cause issues. This is doc'd in the overview but could be prevented in code entirely in a future version.
+- Wobblewobble norns script doesn't play nice with blackbird as is. I think the solution is to turn down the frequency that supercollider is triggering output.volts message dispatch in the norns-side code but this is untested.
