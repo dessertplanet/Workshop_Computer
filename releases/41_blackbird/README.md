@@ -118,7 +118,7 @@ Blackbird communicates with host applications (druid, norns, Max/MSP) over USB s
 
 ### Noise Generation
 
-**Audio-rate noise action** with `bb.noise()` - generates noise directly in the audio loop for clean, efficient noise generation on any CV/Audio output.
+**Audio-rate noise action** with `bb.noise()` - generates noise directly in the audio loop for clean, efficient noise generation on any CV/Audio output. Optional paramater sets the noise level between 0.0 (silence) and 1.0 (full vol, default).
 
 Example:
 
@@ -127,7 +127,7 @@ output[4]( bb.noise() )
 
 --OR
 
-output[2].action = bb.noise() -- define action
+output[2].action = bb.noise(0.5) -- define action
 output[2]() -- run the action
 ```
 
