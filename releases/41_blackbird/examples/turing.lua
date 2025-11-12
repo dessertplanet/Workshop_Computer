@@ -8,6 +8,7 @@ function init()
     range = 4.0 -- output range in volts
 
     output[1].scale = {0,2,4,5,7,9,11} -- configure output quant to major scale
+    output[2].action = ar(0,0.4) -- configure output 2 as an attack/release envelope ( attack = 0s, release = 0.4s ) 
 
     bb.pulsein[1]{ mode = 'change', direction = 'rising'} -- configure pulse input 1 as trigger
 end
@@ -28,4 +29,5 @@ bb.pulsein[1].change = function()
     bits_float = bits_int / max -- float 0.0 to 1.0
 
     output[1].volts = bits_float * range
+    output[2]()
 end
