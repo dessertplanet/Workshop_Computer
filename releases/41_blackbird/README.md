@@ -143,6 +143,29 @@ bb.asap = function()
 end
 ```
 
+### Check which inputs are plugged in
+
+**Check if inputs are connected** with `bb.connected` - Query whether a cable is plugged into any input jack. This uses the Workshop Computer's built-in normalization probe hardware to detect physical cable presence.
+
+Available for all six input jacks:
+- `bb.connected.cv1` / `bb.connected.cv2` - CV inputs
+- `bb.connected.pulse1` / `bb.connected.pulse2` - Pulse inputs  
+- `bb.connected.audio1` / `bb.connected.audio2` - Audio inputs
+
+Returns `true` if a cable is plugged in, `false` if the jack is empty.
+
+Example:
+```lua
+-- optionally attenuate an incoming voltage with a knob,
+-- but use the knob if nothing is plugged in
+bb.asap = function()
+    myparameter = bb.knob.main
+    if bb.connected.cv1 then
+      myparameter = myparameter * input[1].volts
+  end
+end
+```
+
 ### Choose your priorities (advanced/dangerous-living users only)
 `bb.priority()` - Balance accurate timing with accurate output (configures failure mode when overloaded). the default priority is `'timing'`, meaning that maintaining the schedule of output events is more important than either reproducing the requested signal as accuractely as possible or as early as possible. For most situations this will work perfectly.
 
