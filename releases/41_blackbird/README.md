@@ -159,9 +159,9 @@ Example:
 -- optionally attenuate an incoming voltage with a knob,
 -- but use the knob if nothing is plugged in
 bb.asap = function()
-    myparameter = bb.knob.main
-    if bb.connected.cv1 then
-      myparameter = myparameter * input[1].volts
+  myparameter = bb.knob.main
+  if bb.connected.cv1 then
+    myparameter = myparameter * input[1].volts
   end
 end
 ```
