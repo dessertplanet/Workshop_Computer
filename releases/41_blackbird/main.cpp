@@ -308,6 +308,9 @@ extern "C" void hardware_pulse_output_set(int channel, bool state);
 extern "C" void L_handle_change_safe(event_t* e);
 extern "C" void L_handle_stream_safe(event_t* e);
 extern "C" void L_handle_asl_done_safe(event_t* e);
+
+// Forward declaration for pulse input connection check (defined after BlackbirdCrow class)
+static bool is_pulse_input_connected(int pulse_idx);
 extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event);
 extern "C" void L_handle_metro_lockfree(metro_event_lockfree_t* event);
 
@@ -497,17 +500,31 @@ static int pulsein_newindex(lua_State* L) {
     } else if (strcmp(key, "mode") == 0) {
         const char* mode = lua_tostring(L, 3);
         if (!mode) return luaL_error(L, "pulsein.mode must be a string");
+        
+        // Check if pulse input is connected for change/clock modes
+        bool is_connected = is_pulse_input_connected(idx);
+        
         if (strcmp(mode, "none") == 0) {
             g_pulsein_mode[idx] = 0;
         } else if (strcmp(mode, "change") == 0) {
-            g_pulsein_mode[idx] = 1;
+            if (is_connected) {
+                g_pulsein_mode[idx] = 1;
+            } else {
+                // Pulse input not connected - set to none to prevent spurious triggers
+                g_pulsein_mode[idx] = 0;
+            }
         } else if (strcmp(mode, "clock") == 0) {
-            g_pulsein_mode[idx] = 2;
-            // Clock mode only detects rising edges
-            g_pulsein_direction[idx] = 1;
-            // Set clock source to external (crow input)
-            clock_set_source(CLOCK_SOURCE_CROW);
-            clock_crow_in_div(g_pulsein_clock_div[idx]);
+            if (is_connected) {
+                g_pulsein_mode[idx] = 2;
+                // Clock mode only detects rising edges
+                g_pulsein_direction[idx] = 1;
+                // Set clock source to external (crow input)
+                clock_set_source(CLOCK_SOURCE_CROW);
+                clock_crow_in_div(g_pulsein_clock_div[idx]);
+            } else {
+                // Pulse input not connected - set to none to prevent spurious clock triggers
+                g_pulsein_mode[idx] = 0;
+            }
         } else {
             return luaL_error(L, "pulsein.mode must be 'none', 'change', or 'clock'");
         }
@@ -551,6 +568,9 @@ static int pulsein_call(lua_State* L) {
         return luaL_error(L, "pulsein() expects a table argument");
     }
     
+    // Check if pulse input is connected for change/clock modes
+    bool is_connected = is_pulse_input_connected(idx);
+    
     // Process mode field
     lua_getfield(L, 2, "mode");
     if (lua_isstring(L, -1)) {
@@ -558,12 +578,22 @@ static int pulsein_call(lua_State* L) {
         if (strcmp(mode, "none") == 0) {
             g_pulsein_mode[idx] = 0;
         } else if (strcmp(mode, "change") == 0) {
-            g_pulsein_mode[idx] = 1;
+            if (is_connected) {
+                g_pulsein_mode[idx] = 1;
+            } else {
+                // Pulse input not connected - set to none to prevent spurious triggers
+                g_pulsein_mode[idx] = 0;
+            }
         } else if (strcmp(mode, "clock") == 0) {
-            g_pulsein_mode[idx] = 2;
-            g_pulsein_direction[idx] = 1;  // Clock always uses rising edges
-            clock_set_source(CLOCK_SOURCE_CROW);
-            clock_crow_in_div(g_pulsein_clock_div[idx]);
+            if (is_connected) {
+                g_pulsein_mode[idx] = 2;
+                g_pulsein_direction[idx] = 1;  // Clock always uses rising edges
+                clock_set_source(CLOCK_SOURCE_CROW);
+                clock_crow_in_div(g_pulsein_clock_div[idx]);
+            } else {
+                // Pulse input not connected - set to none to prevent spurious clock triggers
+                g_pulsein_mode[idx] = 0;
+            }
         } else {
             return luaL_error(L, "pulsein mode must be 'none', 'change', or 'clock'");
         }
@@ -2137,6 +2167,9 @@ public:
     bool GetPulseIn1() { return PulseIn1(); }
     bool GetPulseIn2() { return PulseIn2(); }
     
+    // Public wrapper for normalization probe detection (for detection system)
+    bool IsInputConnected(ComputerCard::Input i) { return Connected(i); }
+    
     // Hardware abstraction functions for output
     // CRITICAL: Place in RAM - called from shaper_v() on every slope update
     __attribute__((section(".time_critical.hardware_set_output")))
@@ -3194,6 +3227,17 @@ static void handle_command_with_response(C_cmd_t cmd) {
     }
 }
 
+// Helper function to check if pulse input is connected (for normalization probe)
+static bool is_pulse_input_connected(int pulse_idx) {
+    BlackbirdCrow* card = (BlackbirdCrow*)g_blackbird_instance;
+    if (!card) return true; // If no card instance, assume connected (safe default)
+    
+    // Map pulse index (0 or 1) to ComputerCard Input enum
+    ComputerCard::Input pulse_input = (pulse_idx == 0) ? ComputerCard::Input::Pulse1 : ComputerCard::Input::Pulse2;
+    
+    return card->IsInputConnected(pulse_input);
+}
+
 // CASL bridge functions
 int LuaManager::lua_casl_describe(lua_State* L) {
     int raw = luaL_checkinteger(L, 1);
@@ -4057,6 +4101,27 @@ extern "C" void L_queue_asl_done(int channel) {
 // INPUT MODE FUNCTIONS (Lua Bindings for Detection System)
 // ============================================================================
 
+// Helper function to check if an input is connected (for normalization probe)
+// Only applies to CV inputs (channels 1-2) - pulse inputs handled separately
+static bool is_input_connected(int channel) {
+    BlackbirdCrow* card = (BlackbirdCrow*)g_blackbird_instance;
+    if (!card) return true; // If no card instance, assume connected (safe default)
+    
+    // Map input[] channels to ComputerCard Input enum
+    // input[1] → CV1, input[2] → CV2
+    ComputerCard::Input input;
+    if (channel == 1) {
+        input = ComputerCard::Input::CV1;
+    } else if (channel == 2) {
+        input = ComputerCard::Input::CV2;
+    } else {
+        // Only channels 1-2 use the detection system for CV inputs
+        return true; // Unknown channel, assume connected
+    }
+    
+    return card->IsInputConnected(input);
+}
+
 // Input mode functions - connect to detection system with mode-specific callbacks
 int LuaManager::lua_set_input_stream(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
@@ -4080,8 +4145,14 @@ int LuaManager::lua_set_input_change(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        int8_t dir = Detect_str_to_dir(direction);
-        Detect_change(detector, change_callback, threshold, hysteresis, dir);
+        // Check if CV input is connected (prevents spurious triggers from normalization probe noise)
+        if (!is_input_connected(channel)) {
+            // Input not connected - set mode to none instead of change detection
+            Detect_none(detector);
+        } else {
+            int8_t dir = Detect_str_to_dir(direction);
+            Detect_change(detector, change_callback, threshold, hysteresis, dir);
+        }
     }
     return 0;
 }
@@ -4110,7 +4181,13 @@ int LuaManager::lua_set_input_window(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_window(detector, window_callback, windows, wLen, hysteresis);
+        // Check if CV input is connected (prevents spurious triggers from normalization probe noise)
+        if (!is_input_connected(channel)) {
+            // Input not connected - set mode to none instead of window detection
+            Detect_none(detector);
+        } else {
+            Detect_window(detector, window_callback, windows, wLen, hysteresis);
+        }
     }
     return 0;
 }
@@ -4138,7 +4215,13 @@ int LuaManager::lua_set_input_scale(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        Detect_scale(detector, scale_callback, scale, sLen, temp, scaling);
+        // Check if CV input is connected (prevents spurious triggers from normalization probe noise)
+        if (!is_input_connected(channel)) {
+            // Input not connected - set mode to none instead of scale detection
+            Detect_none(detector);
+        } else {
+            Detect_scale(detector, scale_callback, scale, sLen, temp, scaling);
+        }
     }
     return 0;
 }
@@ -4186,12 +4269,18 @@ int LuaManager::lua_set_input_clock(lua_State* L) {
     // Clock mode is a specialized change detection
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        // Set clock to external input source and configure division
-        clock_set_source(CLOCK_SOURCE_CROW);
-        clock_crow_in_div(div);
-        
-        // Use clock_input_handler instead of generic change_callback
-        Detect_change(detector, clock_input_handler, threshold, hysteresis, 1); // Rising edge
+        // Check if CV input is connected (prevents spurious clock triggers from normalization probe noise)
+        if (!is_input_connected(channel)) {
+            // Input not connected - set mode to none instead of clock detection
+            Detect_none(detector);
+        } else {
+            // Set clock to external input source and configure division
+            clock_set_source(CLOCK_SOURCE_CROW);
+            clock_crow_in_div(div);
+            
+            // Use clock_input_handler instead of generic change_callback
+            Detect_change(detector, clock_input_handler, threshold, hysteresis, 1); // Rising edge
+        }
     }
     return 0;
 }
