@@ -311,6 +311,7 @@ extern "C" void L_handle_asl_done_safe(event_t* e);
 
 // Forward declaration for pulse input connection check (defined after BlackbirdCrow class)
 static bool is_pulse_input_connected(int pulse_idx);
+static int bb_connected_index(lua_State* L);
 extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event);
 extern "C" void L_handle_metro_lockfree(metro_event_lockfree_t* event);
 
@@ -1584,6 +1585,25 @@ public:
         lua_pop(L, 1);  // pop metatable
         
         lua_setfield(L, -2, "audioin");  // bb.audioin = array
+        
+        // Create bb.connected table for querying normalization probe status
+        lua_newtable(L);  // connected table @2
+        
+        // Create metatable with __index for dynamic property access
+        lua_newtable(L);  // metatable @3
+        lua_pushcfunction(L, bb_connected_index);
+        lua_setfield(L, -2, "__index");
+        
+        // Make table read-only
+        lua_pushcfunction(L, [](lua_State* L) -> int {
+            luaL_error(L, "bb.connected table is read-only");
+            return 0;
+        });
+        lua_setfield(L, -2, "__newindex");
+        
+        lua_setmetatable(L, -2);  // setmetatable(connected, metatable)
+        
+        lua_setfield(L, -2, "connected");  // bb.connected = connected table
         
         // Set bb as global
         lua_setglobal(L, "bb");  // _G.bb = bb table
@@ -3236,6 +3256,43 @@ static bool is_pulse_input_connected(int pulse_idx) {
     ComputerCard::Input pulse_input = (pulse_idx == 0) ? ComputerCard::Input::Pulse1 : ComputerCard::Input::Pulse2;
     
     return card->IsInputConnected(pulse_input);
+}
+
+// __index metamethod for bb.connected table
+static int bb_connected_index(lua_State* L) {
+    const char* key = lua_tostring(L, 2);
+    if (!key) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    
+    BlackbirdCrow* card = (BlackbirdCrow*)g_blackbird_instance;
+    if (!card) {
+        lua_pushboolean(L, true);  // Assume connected if no card
+        return 1;
+    }
+    
+    // Map string keys to ComputerCard Input enum
+    ComputerCard::Input input;
+    if (strcmp(key, "cv1") == 0) {
+        input = ComputerCard::Input::CV1;
+    } else if (strcmp(key, "cv2") == 0) {
+        input = ComputerCard::Input::CV2;
+    } else if (strcmp(key, "pulse1") == 0) {
+        input = ComputerCard::Input::Pulse1;
+    } else if (strcmp(key, "pulse2") == 0) {
+        input = ComputerCard::Input::Pulse2;
+    } else if (strcmp(key, "audio1") == 0) {
+        input = ComputerCard::Input::Audio1;
+    } else if (strcmp(key, "audio2") == 0) {
+        input = ComputerCard::Input::Audio2;
+    } else {
+        lua_pushboolean(L, false);  // Unknown input
+        return 1;
+    }
+    
+    lua_pushboolean(L, card->IsInputConnected(input));
+    return 1;
 }
 
 // CASL bridge functions
