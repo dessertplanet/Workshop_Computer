@@ -4845,6 +4845,7 @@ extern "C" uint64_t get_card_unique_id(void) {
 
 void core1_entry() {
         printf("[boot] core1 audio engine starting\n\r");
+        crow.EnableNormalisationProbe();
         crow.Run(); 
 }
 
