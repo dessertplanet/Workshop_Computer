@@ -3,3 +3,4 @@ Language: Pico SDK + Lua
 Creator: Dune Desormeaux
 Version: 1.0
 Status: Released
+Editor: programs/41_blackbird/web-druid/index.html

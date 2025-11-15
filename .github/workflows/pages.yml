@@ -2,7 +2,7 @@ name: Build and Deploy GitHub Pages
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "web-druid" ]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -35,6 +37,11 @@ jobs:
       - name: Build site
         run: |
           npm run build --prefix tools/sitegen
+
+      - name: Copy web-druid editor
+        run: |
+          mkdir -p site/programs/41_blackbird
+          cp -r releases/41_blackbird/druid/src/web-druid site/programs/41_blackbird/web-druid
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
