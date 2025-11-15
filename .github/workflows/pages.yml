@@ -16,8 +16,6 @@ concurrency:
 
 jobs:
   build:
-    # Don't run on forked repositories
-    if: github.event.repository.fork != true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -49,8 +47,6 @@ jobs:
           path: site
 
   deploy:
-    # Don't run on forked repositories
-    if: github.event.repository.fork != true
     needs: build
     runs-on: ubuntu-latest
     steps:
