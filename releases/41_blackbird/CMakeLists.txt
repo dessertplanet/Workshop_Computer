@@ -180,12 +180,15 @@ target_compile_options(${CARD_NAME} PRIVATE
     # Note: -flto disabled due to naming conflict with clock.h/clock()
 )
 
-# Copy UF2 files to UF2 directory with descriptive names
+# Copy UF2 files to UF2 directory and add user script erase blocks
 add_custom_command(
     TARGET ${CARD_NAME}
     POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_SOURCE_DIR}/UF2
-    COMMAND ${CMAKE_COMMAND} -E copy
+    # First create a temp UF2 with erase blocks
+    COMMAND ${CMAKE_COMMAND} -E env python3 
+            ${CMAKE_CURRENT_SOURCE_DIR}/util/add_uf2_erase_block.py
             ${CMAKE_CURRENT_BINARY_DIR}/${CARD_NAME}.uf2
             ${CMAKE_CURRENT_SOURCE_DIR}/UF2/${CARD_NAME}.uf2
+    COMMENT "Adding user script erase blocks to UF2"
 )

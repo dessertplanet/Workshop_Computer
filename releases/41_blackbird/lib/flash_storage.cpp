@@ -8,7 +8,8 @@ extern volatile bool g_flash_operation_pending;
 
 void FlashStorage::init() {
     // Nothing special needed - XIP is already configured by SDK
-    // Silent init - no output needed
+    // User script clearing is now handled by the UF2 file itself
+    // (the build process adds erase blocks to the UF2 that clear the user script area)
 }
 
 USERSCRIPT_t FlashStorage::which_user_script() {

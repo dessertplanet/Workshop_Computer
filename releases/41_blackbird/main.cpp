@@ -2319,6 +2319,7 @@ public:
     void load_boot_script()
     {
         // Load script from flash based on what's stored
+        // Note: UF2 installation clears user scripts (erase blocks added during build)
         switch(FlashStorage::which_user_script()) {
             case USERSCRIPT_Default:
                 // Load First.lua from compiled bytecode
