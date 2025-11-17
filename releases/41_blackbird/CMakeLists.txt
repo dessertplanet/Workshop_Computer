@@ -176,6 +176,7 @@ target_include_directories(${CARD_NAME} PRIVATE ${CMAKE_BINARY_DIR})
 target_compile_options(${CARD_NAME} PRIVATE
     -O3                    # Maximum speed optimization
     -ffast-math           # Faster floating-point (safe for audio DSP)
+    -fsingle-precision-constant  # Treat float literals as float, not double (critical for RP2040 performance)
     # Note: -fno-exceptions and -fno-rtti already set by pico-sdk
     # Note: -flto disabled due to naming conflict with clock.h/clock()
 )
