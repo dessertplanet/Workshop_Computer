@@ -302,6 +302,7 @@ void core1_entry(); // defined after BlackbirdCrow - non-static so flash_storage
 
 // Forward declaration of C interface function (implemented after BlackbirdCrow class)
 extern "C" void hardware_output_set_voltage(int channel, float voltage);
+extern "C" void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
 extern "C" void hardware_pulse_output_set(int channel, bool state);
 
 // Forward declaration of safe event handlers
@@ -2221,6 +2222,46 @@ public:
                 }
                 break;
             case 4: // Output 2 → AudioOut2 (audio outputs use raw 12-bit values)
+                {
+                    int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
+                    AudioOut2(dac_value);
+                }
+                break;
+        }
+    }
+    
+    // Q16-native hardware output - eliminates float conversion in hot path
+    __attribute__((section(".time_critical.hardware_set_output_q16")))
+    void hardware_set_output_q16(int channel, q16_t voltage_q16) {
+        if (channel < 1 || channel > 4) return;
+        
+        // Convert Q16 to millivolts using integer math
+        // But clamp to ±6V first: ±6.0 in Q16 = ±393216
+        const q16_t Q16_6V = 393216;  // 6.0 * 65536
+        if (voltage_q16 > Q16_6V) voltage_q16 = Q16_6V;
+        if (voltage_q16 < -Q16_6V) voltage_q16 = -Q16_6V;
+        
+        // Convert Q16 to millivolts: (q16 * 1000) >> 16
+        int32_t volts_mV = ((int64_t)voltage_q16 * 1000) >> 16;
+        
+        // Store state for lua queries
+        set_output_state_simple(channel - 1, volts_mV);
+        
+        // Route to correct hardware output
+        switch (channel) {
+            case 1: // Output 3 → CVOut1
+                CVOut1Millivolts(volts_mV);
+                break;
+            case 2: // Output 4 → CVOut2
+                CVOut2Millivolts(volts_mV);
+                break;
+            case 3: // Output 1 → AudioOut1
+                {
+                    int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
+                    AudioOut1(dac_value);
+                }
+                break;
+            case 4: // Output 2 → AudioOut2
                 {
                     int16_t dac_value = (int16_t)((volts_mV * 2048) / 6000);
                     AudioOut2(dac_value);
@@ -4937,6 +4978,31 @@ void hardware_output_set_voltage(int channel, float voltage) {
     
     if (g_blackbird_instance) {
         ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output(channel, voltage);
+    }
+}
+
+// Q16-native version - eliminates float conversion in hot path
+// Called from slopes.c shaper_v() and S_toward_q16()
+__attribute__((section(".time_critical.hardware_output_set_voltage_q16")))
+void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16) {
+    int ch_idx = channel - 1;  // channel is 1-based
+    
+    // Same noise handling as float version
+    if (ch_idx >= 0 && ch_idx < 4) {
+        if (g_noise_active[ch_idx] && g_noise_lock_counter[ch_idx] > 0) {
+            return;
+        }
+        
+        if (g_noise_active[ch_idx]) {
+            g_noise_active[ch_idx] = false;
+            g_noise_active_mask &= ~(1 << ch_idx);
+            g_noise_gain[ch_idx] = 0;
+            g_noise_lock_counter[ch_idx] = 0;
+        }
+    }
+    
+    if (g_blackbird_instance) {
+        ((BlackbirdCrow*)g_blackbird_instance)->hardware_set_output_q16(channel, voltage_q16);
     }
 }
 }

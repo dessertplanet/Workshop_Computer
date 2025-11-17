@@ -112,6 +112,36 @@ static float lut_lookup_q11(const q11_t* lut, float in) {
     return (float)result / Q11_SCALE;
 }
 
+// Q16-native LUT lookup - eliminates redundant float conversions in hot path
+// Directly converts Q16 input to Q16 output via Q11 LUT
+// Performance: Same as lut_lookup_q11 but saves 2 float conversions per call
+__attribute__((section(".time_critical.lut_lookup_q16")))
+static inline q16_t lut_lookup_q16(const q11_t* lut, q16_t in_q16) {
+    // Clamp Q16 input to [0, 1] range (0 to Q16_ONE)
+    if (in_q16 <= 0) return 0;
+    if (in_q16 >= Q16_ONE) in_q16 = Q16_ONE - 1;  // Prevent overflow
+    
+    // Convert Q16 [0, Q16_ONE] to fixed-point index with 8-bit sub-precision
+    // fidx = in_q16 * (LUT_SIZE - 1) / Q16_ONE * 256
+    // Simplified: fidx = (in_q16 * (LUT_SIZE - 1) * 256) >> Q16_SHIFT
+    uint32_t fidx = ((uint32_t)in_q16 * (LUT_SIZE - 1) * 256) >> Q16_SHIFT;
+    uint32_t idx = fidx >> 8;          // Table index (integer part)
+    uint32_t frac = fidx & 0xFF;       // Fractional part (0-255)
+    
+    // Load two Q11 values from LUT
+    int32_t v0 = (int32_t)lut[idx];      // Sign-extend to 32-bit
+    int32_t v1 = (int32_t)lut[idx + 1];
+    
+    // Linear interpolation in fixed-point
+    int32_t delta = v1 - v0;
+    int32_t result_q11 = v0 + ((delta * (int32_t)frac) >> 8);
+    
+    // Convert Q11 [0, 2047] to Q16 [0, Q16_ONE]
+    // Q16 = Q11 * (Q16_ONE / Q11_MAX) = Q11 * (65536 / 2047)
+    // Use shift instead: Q16 = Q11 << (Q16_SHIFT - 11) with rounding
+    return (q16_t)((result_q11 << (Q16_SHIFT - 11)) + ((result_q11 * 65536) / 2047 - (result_q11 << (Q16_SHIFT - 11))));
+}
+
 
 // TODO: Add missing shape function stubs
 // Q16.16 step helpers avoid float conversion for common gate-like shapes
@@ -333,8 +363,8 @@ void S_toward_q16( int        index
         // Apply quantization before hardware output
         extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
         q16_t quantized_q16 = AShaper_quantize_single_q16(index, self->shaped_q16);
-        extern void hardware_output_set_voltage(int channel, float voltage);
-        hardware_output_set_voltage(index+1, Q16_TO_FLOAT(quantized_q16));
+        extern void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
+        hardware_output_set_voltage_q16(index+1, quantized_q16);  // Direct Q16, no conversion!
         
         // Schedule callback for instant transitions
         // Fire on next audio cycle to allow ASL sequences to continue
@@ -530,13 +560,13 @@ static float* shaper_v( Slope_t* self, float* out, int size )
     // for others we still use the existing float-based helpers.
     switch( self->shape ){
         case SHAPE_Sine:
-            shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_sin, Q16_TO_FLOAT(here_q16)));
+            shaped_q16 = lut_lookup_q16(lut_sin, here_q16);  // Direct Q16→Q16, no float conversions!
             break;
         case SHAPE_Log:
-            shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_log, Q16_TO_FLOAT(here_q16)));
+            shaped_q16 = lut_lookup_q16(lut_log, here_q16);  // Direct Q16→Q16, no float conversions!
             break;
         case SHAPE_Expo:
-            shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_exp, Q16_TO_FLOAT(here_q16)));
+            shaped_q16 = lut_lookup_q16(lut_exp, here_q16);  // Direct Q16→Q16, no float conversions!
             break;
         case SHAPE_Now:
             shaped_q16 = shapes_step_now_q16(here_q16);
@@ -570,8 +600,8 @@ static float* shaper_v( Slope_t* self, float* out, int size )
     q16_t quantized_q16 = AShaper_quantize_single_q16(self->index, voltage_q16);
 
     // Update hardware output directly for real-time response
-    extern void hardware_output_set_voltage(int channel, float voltage);
-    hardware_output_set_voltage(self->index + 1, Q16_TO_FLOAT(quantized_q16));  // Convert to 1-based channel
+    extern void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
+    hardware_output_set_voltage_q16(self->index + 1, quantized_q16);  // Direct Q16, no conversion!
 
     return out;
 }

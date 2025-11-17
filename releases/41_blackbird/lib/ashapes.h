@@ -15,6 +15,12 @@ typedef struct{
     float  offset;
     bool   active;
     float  state;
+    
+    // Q16 versions for fast quantization without conversions
+    q16_t  divlist_q16[MAX_DIV_LIST_LEN];
+    q16_t  modulo_q16;
+    q16_t  scaling_q16;
+    q16_t  offset_q16;
 } AShape_t;
 
 void AShaper_init( int channels );
