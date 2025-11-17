@@ -23,6 +23,8 @@ typedef int32_t q16_t;
 // Q16.16 arithmetic (compiler will optimize these)
 #define Q16_MUL(a, b) ((q16_t)(((int64_t)(a) * (int64_t)(b)) >> Q16_SHIFT))
 #define Q16_DIV(a, b) ((q16_t)(((int64_t)(a) << Q16_SHIFT) / (int64_t)(b)))
+// Wide variant keeps full precision for intermediate values larger than 32-bit
+#define Q16_MUL_WIDE(a, b) (((int64_t)(a) * (int64_t)(b)) >> Q16_SHIFT)
 
 // Q16 to Q12 conversion for 12-bit DAC output (±2048 range)
 #define Q16_TO_Q12(q) ((int16_t)((q) >> (Q16_SHIFT - 12)))
@@ -58,8 +60,9 @@ typedef struct{
     
     // Q16.16 interpolation state
     q16_t       here_q16;      // current interp position [0.0, 1.0]
-    q16_t       delta_q16;     // increment per sample
-    q16_t       countdown_q16; // samples until breakpoint (sub-sample precision)
+    int64_t     countdown_q16; // samples remaining (Q16 precision)
+    int64_t     duration_q16;  // total samples for the current slew (Q16 precision)
+    int64_t     elapsed_q16;   // samples already processed (Q16 precision)
     
     Shape_t     shape;
     Callback_t  action;

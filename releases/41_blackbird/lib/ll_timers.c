@@ -158,22 +158,9 @@ void __not_in_flash_func(Timer_Process_Block)(void) {
     extern float* S_step_v(int index, float* out, int size);
     
     // Access slope internals to check if processing is needed
-    typedef struct {
-        int index;
-        q16_t dest_q16;
-        q16_t last_q16;
-        int shape;
-        void* action;
-        q16_t here_q16;
-        q16_t delta_q16;
-        q16_t countdown_q16;
-        q16_t scale_q16;
-        q16_t shaped_q16;
-    } Slope_t;
     extern Slope_t* slopes; // Defined in slopes.c
-    
     static float slope_buffer[TIMER_BLOCK_SIZE_MAX];
-    
+
     for (int ch = 0; ch < 4; ch++) {
         // OPTIMIZATION: Skip truly idle channels (long-term inactive)
         // A channel is only skippable if:
@@ -183,14 +170,14 @@ void __not_in_flash_func(Timer_Process_Block)(void) {
         // This fixes the zero-slew bug where countdown=-0.0 and action=NULL looked "idle"
         // but the channel still needed processing for future volts commands.
         // Channels with countdown in range (-1024.0, 0.0] are recently active and MUST be processed.
-        q16_t threshold_q16 = -(1024 << Q16_SHIFT); // -1024.0 in Q16
+        int64_t threshold_q16 = -((int64_t)1024 << Q16_SHIFT); // -1024.0 in Q16
         if (slopes && slopes[ch].countdown_q16 <= threshold_q16 && slopes[ch].action == NULL) {
             continue; // Channel has been idle for 1024+ samples, safe to skip
         }
         
         // Process this channel's slope over the block
         // Quantization is applied inside S_step_v before hardware output
-    S_step_v(ch, slope_buffer, TIMER_BLOCK_SIZE);
+        S_step_v(ch, slope_buffer, TIMER_BLOCK_SIZE);
     }
     
     // Process timer callbacks

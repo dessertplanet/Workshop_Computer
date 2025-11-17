@@ -245,6 +245,52 @@ static float* shapes_v_log(float* in, int size) {
 static uint8_t slope_count = 0;
 Slope_t* slopes = NULL; // Exported for ll_timers.c conditional processing
 
+// Compute normalized progress (0-1 in Q16) from elapsed samples
+static inline q16_t slope_progress_from_elapsed(const Slope_t* self)
+{
+    if( self->duration_q16 <= 0 ){
+        return (self->elapsed_q16 >= 0) ? Q16_ONE : 0;
+    }
+
+    int64_t elapsed = self->elapsed_q16;
+    if( elapsed <= 0 ){
+        return 0;
+    }
+    if( elapsed >= self->duration_q16 ){
+        return Q16_ONE;
+    }
+    return (q16_t)(((elapsed << Q16_SHIFT)) / self->duration_q16);
+}
+
+// Advance the slope by 'samples_q16' (Q16 samples) and refresh cached progress
+static inline void slope_advance(Slope_t* self, int64_t samples_q16)
+{
+    if( samples_q16 <= 0 ){
+        return;
+    }
+
+    if( self->duration_q16 <= 0 ){
+        // Zero-duration slews still use countdown for callback scheduling
+        self->countdown_q16 -= samples_q16;
+        if( self->countdown_q16 < 0 ){
+            self->countdown_q16 = 0;
+        }
+        return;
+    }
+
+    self->elapsed_q16 += samples_q16;
+    if( self->elapsed_q16 > self->duration_q16 ){
+        self->elapsed_q16 = self->duration_q16;
+    }
+
+    self->countdown_q16 -= samples_q16;
+    if( self->countdown_q16 < 0 ){
+        self->countdown_q16 = 0;
+    }
+
+    self->here_q16 = slope_progress_from_elapsed(self);
+}
+
 
 ////////////////////////////////
 // private declarations
@@ -277,8 +323,9 @@ void S_init( int channels )
         slopes[j].action = NULL;
 
         slopes[j].here_q16      = 0;
-        slopes[j].delta_q16     = 0;
-        slopes[j].countdown_q16 = -Q16_ONE;  // -1.0 in Q16
+        slopes[j].countdown_q16 = -(int64_t)Q16_ONE;  // -1.0 in Q16
+        slopes[j].duration_q16  = 0;
+        slopes[j].elapsed_q16   = 0;
     }
 }
 
@@ -295,8 +342,9 @@ void S_reset(void)
         slopes[j].shape = SHAPE_Linear;
         slopes[j].action = NULL;
         slopes[j].here_q16 = 0;
-        slopes[j].delta_q16 = 0;
-        slopes[j].countdown_q16 = -Q16_ONE;  // -1.0 in Q16
+        slopes[j].countdown_q16 = -(int64_t)Q16_ONE;  // -1.0 in Q16
+        slopes[j].duration_q16 = 0;
+        slopes[j].elapsed_q16 = 0;
     }
 }
 
@@ -355,6 +403,8 @@ void S_toward_q16( int        index
         self->shaped_q16    = self->dest_q16;
         self->scale_q16     = 0;
         self->here_q16      = Q16_ONE; // 1.0 in Q16 - end of range
+        self->duration_q16  = 0;
+        self->elapsed_q16   = 0;
         if(self->countdown_q16 > 0){
             // only happens when assynchronously updating S_toward
             self->countdown_q16 = 0; // inactive
@@ -376,36 +426,40 @@ void S_toward_q16( int        index
         self->last_q16  = self->shaped_q16;
         self->scale_q16 = self->dest_q16 - self->last_q16;
         q16_t overflow_q16 = 0;
-        
+
         // CRITICAL FIX: Check for pending callbacks from instant transitions
         // If countdown is positive and small (e.g., 1.0 from ms=0 instant transition),
         // treat it as overflow time so the new slope starts from the correct position
-        q16_t threshold_100_q16 = 100 << Q16_SHIFT; // 100.0 in Q16
-        q16_t threshold_1023_q16 = 1023 << Q16_SHIFT; // 1023.0 in Q16
-        
+        const int64_t threshold_100_q16 = ((int64_t)100 << Q16_SHIFT);   // 100.0 in Q16
+        const int64_t threshold_1023_q16 = ((int64_t)1023 << Q16_SHIFT); // 1023.0 in Q16
+
         if( self->countdown_q16 > 0 && self->countdown_q16 < threshold_100_q16 ){
             // Pending instant callback - clear it and use as overflow
-            overflow_q16 = self->countdown_q16;
+            overflow_q16 = (q16_t)self->countdown_q16;
             self->action = NULL;  // Clear pending action since we're starting a new slope
         } else if( self->countdown_q16 < 0 && self->countdown_q16 > -threshold_1023_q16 ){
-            overflow_q16 = -(self->countdown_q16);
+            overflow_q16 = (q16_t)(-self->countdown_q16);
         }
-        
+
         // Convert ms to samples: ms * SAMPLES_PER_MS
-        // Both are Q16, result is Q16 (with intermediate Q32 from multiply)
-        q16_t samples_q16 = Q16_MUL(ms_q16, SAMPLES_PER_MS_Q16);
-        
+        // Use wide math so we can support multi-second slews without overflow
+        int64_t samples_q16 = Q16_MUL_WIDE(ms_q16, SAMPLES_PER_MS_Q16);
+        if( samples_q16 <= 0 ){
+            // Never allow zero or negative sample windows (would div/0)
+            samples_q16 = (int64_t)Q16_ONE; // minimum of 1 sample
+        }
+
+        self->duration_q16  = samples_q16;
         self->countdown_q16 = samples_q16;
-        self->delta_q16     = Q16_DIV(Q16_ONE, samples_q16); // 1.0 / samples
+        self->elapsed_q16   = 0;
         self->here_q16      = 0; // start of slope
-        
+
         if( overflow_q16 > 0 ){
-            self->here_q16 += Q16_MUL(overflow_q16, self->delta_q16);
-            self->countdown_q16 -= overflow_q16;
+            slope_advance(self, (int64_t)overflow_q16);
             if( self->countdown_q16 <= 0 ){ // guard against overflow hitting callback
                 printf("FIXME near immediate callback\n");
                 // FIXME this should apply the destination & call self->action
-                self->countdown_q16 = (Q16_ONE >> 16); // force callback on next sample (0.00001)
+                self->countdown_q16 = (int64_t)(Q16_ONE >> 16); // force callback on next sample (0.00001)
                 self->here_q16 = Q16_ONE; // set to destination
             }
         }
@@ -454,7 +508,7 @@ static float* step_v( Slope_t* self
 {
     if( self->countdown_q16 <= 0 ){ // at destination (Q16 comparison)
         static_v( self, out, size );
-    } else if( self->countdown_q16 > (size << Q16_SHIFT) ){ // no edge case (size as Q16)
+    } else if( self->countdown_q16 > ((int64_t)size << Q16_SHIFT) ){ // no edge case (size as Q16)
         motion_v( self, out, size );
     } else {
         breakpoint_v( self, out, size );
@@ -470,9 +524,9 @@ static float* static_v( Slope_t* self, float* out, int size )
     // Skip the loop - value is static anyway
     out[size-1] = Q16_TO_FLOAT(self->here_q16);  // Convert Q16 to float for buffer
     
-    q16_t threshold_q16 = -(1024 << Q16_SHIFT); // -1024.0 in Q16
+    int64_t threshold_q16 = -((int64_t)1024 << Q16_SHIFT); // -1024.0 in Q16
     if( self->countdown_q16 > threshold_q16 ){ // count overflow samples
-        self->countdown_q16 -= (size << Q16_SHIFT); // size as Q16
+        self->countdown_q16 -= ((int64_t)size << Q16_SHIFT); // size as Q16
     }
     return shaper_v( self, out, size );
 }
@@ -484,19 +538,12 @@ static float* motion_v( Slope_t* self, float* out, int size )
     // OPTIMIZATION: Only calculate final sample since we discard the rest
     // This reduces work by 87.5% for size=8 blocks
     
-    // Q16.16 FIXED-POINT ARITHMETIC - No FPU operations!
-    if( self->scale_q16 == 0 || self->delta_q16 == 0 ){ // delay only
-        // Static value, no change needed
-    } else {
-        // Pure integer math: here += delta * size
-        // delta_q16 is Q16, size is int, multiply gives Q16 result
-        self->here_q16 = self->here_q16 + (self->delta_q16 * size);
-    }
+    // Advance by the whole block in one shot (Q16 precision, 64-bit safe)
+    slope_advance(self, ((int64_t)size << Q16_SHIFT));
     
     // Store final value (convert Q16 to float for buffer compatibility)
     out[size-1] = Q16_TO_FLOAT(self->here_q16);
     
-    self->countdown_q16 -= (size << Q16_SHIFT); // size as Q16
     return shaper_v( self, out, size );
 }
 
@@ -506,9 +553,7 @@ static float* breakpoint_v( Slope_t* self, float* out, int size )
 {
     if( size <= 0 ){ return out; }
 
-    self->here_q16 += self->delta_q16; // Q16 add - no collision can happen on first samp
-
-    self->countdown_q16 -= Q16_ONE; // Decrement by 1.0 in Q16
+    slope_advance(self, (int64_t)Q16_ONE); // Advance by one sample
     if( self->countdown_q16 <= 0 ){
         // TODO unroll overshoot and apply proportionally to the post-*act sample
         self->here_q16 = Q16_ONE; // clamp for overshoot (1.0 in Q16)
@@ -531,7 +576,6 @@ static float* breakpoint_v( Slope_t* self, float* out, int size )
             }
         } else { // slope complete, or queued response
             self->here_q16  = Q16_ONE; // 1.0 in Q16
-            self->delta_q16 = 0;
             *out++ = Q16_TO_FLOAT(self->here_q16);
             return static_v( self, out, size-1 );
         }
