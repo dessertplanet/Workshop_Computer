@@ -132,3 +132,14 @@ float AShaper_quantize_single( int index, float voltage )
     
     return self->scaling * (divs + note_map);
 }
+
+// Q16 version of quantization - converts Q16 voltage to float, quantizes, converts back
+// CRITICAL: Place in RAM - called from shaper_v() on every block
+__attribute__((section(".time_critical.AShaper_quantize_single_q16")))
+q16_t AShaper_quantize_single_q16( int index, q16_t voltage_q16 )
+{
+    // Convert Q16 to float, quantize, convert back to Q16
+    float voltage_f = Q16_TO_FLOAT(voltage_q16);
+    float quantized_f = AShaper_quantize_single(index, voltage_f);
+    return FLOAT_TO_Q16(quantized_f);
+}

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include "pico/stdlib.h"
 #include "ashapes.h"  // For output quantization
+#include "slopes.h"   // For q16_t and Q16_SHIFT
 
 // Timer implementation for RP2040 Workshop Computer with block processing optimization
 // Aligned block size (32 samples) for consistent timing with audio processing
@@ -159,15 +160,15 @@ void __not_in_flash_func(Timer_Process_Block)(void) {
     // Access slope internals to check if processing is needed
     typedef struct {
         int index;
-        float dest;
-        float last;
+        q16_t dest_q16;
+        q16_t last_q16;
         int shape;
         void* action;
-        float here;
-        float delta;
-        float countdown;
-        float scale;
-        float shaped;
+        q16_t here_q16;
+        q16_t delta_q16;
+        q16_t countdown_q16;
+        q16_t scale_q16;
+        q16_t shaped_q16;
     } Slope_t;
     extern Slope_t* slopes; // Defined in slopes.c
     
@@ -182,7 +183,8 @@ void __not_in_flash_func(Timer_Process_Block)(void) {
         // This fixes the zero-slew bug where countdown=-0.0 and action=NULL looked "idle"
         // but the channel still needed processing for future volts commands.
         // Channels with countdown in range (-1024.0, 0.0] are recently active and MUST be processed.
-        if (slopes && slopes[ch].countdown <= -1024.0f && slopes[ch].action == NULL) {
+        q16_t threshold_q16 = -(1024 << Q16_SHIFT); // -1024.0 in Q16
+        if (slopes && slopes[ch].countdown_q16 <= threshold_q16 && slopes[ch].action == NULL) {
             continue; // Channel has been idle for 1024+ samples, safe to skip
         }
         

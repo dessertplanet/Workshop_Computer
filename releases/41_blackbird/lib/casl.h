@@ -7,7 +7,7 @@
 #include "../lua/src/lauxlib.h"
 #include "../lua/src/lualib.h"
 
-#include "slopes.h" // S_toward
+#include "slopes.h" // S_toward, Q16 types
 
 #define TO_COUNT   16   // 28bytes
 #define SEQ_COUNT  8    // 16bytes
@@ -26,14 +26,14 @@ typedef enum{ ToLiteral
 } ToControl;
 
 typedef union{
-    float   f;
-    int     dyn; // index into the dynamics array
+    q16_t   q;       // Q16.16 fixed-point value (replaces float f)
+    int     dyn;     // index into the dynamics array
     uint16_t var[2]; // 2 indexes into dynamic table
-    int     seq; // reference to a Sequence object
+    int     seq;     // reference to a Sequence object
     Shape_t shape;
 } ElemO; // 4bytes
 
-typedef enum{ ElemT_Float
+typedef enum{ ElemT_Fixed   // Q16.16 fixed-point (formerly ElemT_Float)
             , ElemT_Shape
             , ElemT_Dynamic
             , ElemT_Mutable

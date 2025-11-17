@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include "slopes.h" // For q16_t type
 
 #define MAX_DIV_LIST_LEN 24
 #define ASHAPER_CHANNELS 4
@@ -33,3 +34,4 @@ float* AShaper_v( int     index
                 );
 
 float AShaper_quantize_single( int index, float voltage );
+q16_t AShaper_quantize_single_q16( int index, q16_t voltage_q16 );
