@@ -114,8 +114,23 @@ static float lut_lookup_q11(const q11_t* lut, float in) {
 
 
 // TODO: Add missing shape function stubs
-static float shapes_step_now(float in) { return (in >= 1.0f) ? 1.0f : 0.0f; }
-static float shapes_step_wait(float in) { return (in <= 0.0f) ? 0.0f : 1.0f; }
+// Q16.16 step helpers avoid float conversion for common gate-like shapes
+static inline q16_t shapes_step_now_q16(q16_t here_q16)
+{
+    // Output stays at 0 until we reach the end of the segment
+    // Equivalent to: (in >= 1.0f) ? 1.0f : 0.0f;
+    return (here_q16 >= Q16_ONE) ? Q16_ONE : 0;
+}
+
+static inline q16_t shapes_step_wait_q16(q16_t here_q16)
+{
+    // Output is 0 while here > 0, and jumps to 1 at the end.
+    // Equivalent to: (in <= 0.0f) ? 0.0f : 1.0f;
+    return (here_q16 <= 0) ? 0 : Q16_ONE;
+}
+
+// The more complex back/rebound shapes still use float helpers for now.
+// They remain stubs (identity) until fully implemented.
 static float shapes_ease_out_back(float in) { return in; } // TODO: Implement proper back easing
 static float shapes_ease_in_back(float in) { return in; } // TODO: Implement proper back easing  
 static float shapes_ease_out_rebound(float in) { return in; } // TODO: Implement proper rebound
@@ -209,7 +224,7 @@ static float* static_v( Slope_t* self, float* out, int size );
 static float* motion_v( Slope_t* self, float* out, int size );
 static float* breakpoint_v( Slope_t* self, float* out, int size );
 static float* shaper_v( Slope_t* self, float* out, int size );
-static q16_t shaper( Slope_t* self, q16_t here_q16 );
+// shaper_v now applies the shape directly; no separate shaper() helper.
 
 ////////////////////////////////
 // public definitions
@@ -475,7 +490,7 @@ static float* breakpoint_v( Slope_t* self, float* out, int size )
             // side-affects: self->{dest, shape, action, countdown, delta, (here)}
         }
         if( self->action != NULL ){ // instant callback
-            *out++ = Q16_TO_FLOAT(shaper( self, self->here_q16 ));
+            *out++ = Q16_TO_FLOAT(self->here_q16);
             // 1. unwind self->countdown (ADD it to countdown)
             // 2. recalc current sample with new slope
             // 3. below call should be on out[0] and size
@@ -487,11 +502,11 @@ static float* breakpoint_v( Slope_t* self, float* out, int size )
         } else { // slope complete, or queued response
             self->here_q16  = Q16_ONE; // 1.0 in Q16
             self->delta_q16 = 0;
-            *out++ = Q16_TO_FLOAT(shaper( self, self->here_q16 ));
+            *out++ = Q16_TO_FLOAT(self->here_q16);
             return static_v( self, out, size-1 );
         }
     } else {
-        *out++ = Q16_TO_FLOAT(shaper( self, self->here_q16 ));
+        *out++ = Q16_TO_FLOAT(self->here_q16);
         return breakpoint_v( self, out, size-1 ); // recursive call
     }
 }
@@ -507,74 +522,56 @@ static float* shaper_v( Slope_t* self, float* out, int size )
 {
     // OPTIMIZATION: Only process final sample since we discard the rest
     // This avoids expensive vectorized processing of 7 unused samples
-    
+
     q16_t here_q16 = self->here_q16; // Already in Q16 [0.0, 1.0]
     q16_t shaped_q16;
-    
-    // Apply shape function using Q11 LUTs (returns float [0,1], convert to Q16)
+
+    // Apply shape function. For the common step shapes we stay in Q16,
+    // for others we still use the existing float-based helpers.
     switch( self->shape ){
-        case SHAPE_Sine:    shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_sin, Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Log:     shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_log, Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Expo:    shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_exp, Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Now:     shaped_q16 = FLOAT_TO_Q16(shapes_step_now(Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Wait:    shaped_q16 = FLOAT_TO_Q16(shapes_step_wait(Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Over:    shaped_q16 = FLOAT_TO_Q16(shapes_ease_out_back(Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Under:   shaped_q16 = FLOAT_TO_Q16(shapes_ease_in_back(Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Rebound: shaped_q16 = FLOAT_TO_Q16(shapes_ease_out_rebound(Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Linear: 
-        default: shaped_q16 = here_q16; break; // Linear - no transformation
+        case SHAPE_Sine:
+            shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_sin, Q16_TO_FLOAT(here_q16)));
+            break;
+        case SHAPE_Log:
+            shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_log, Q16_TO_FLOAT(here_q16)));
+            break;
+        case SHAPE_Expo:
+            shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_exp, Q16_TO_FLOAT(here_q16)));
+            break;
+        case SHAPE_Now:
+            shaped_q16 = shapes_step_now_q16(here_q16);
+            break;
+        case SHAPE_Wait:
+            shaped_q16 = shapes_step_wait_q16(here_q16);
+            break;
+        case SHAPE_Over:
+            shaped_q16 = FLOAT_TO_Q16(shapes_ease_out_back(Q16_TO_FLOAT(here_q16)));
+            break;
+        case SHAPE_Under:
+            shaped_q16 = FLOAT_TO_Q16(shapes_ease_in_back(Q16_TO_FLOAT(here_q16)));
+            break;
+        case SHAPE_Rebound:
+            shaped_q16 = FLOAT_TO_Q16(shapes_ease_out_rebound(Q16_TO_FLOAT(here_q16)));
+            break;
+        case SHAPE_Linear:
+        default:
+            shaped_q16 = here_q16; // Linear shape already in Q16
+            break;
     }
-    
+
     // Map to output range: shaped * scale + last (all Q16 arithmetic)
     q16_t voltage_q16 = Q16_MUL(shaped_q16, self->scale_q16) + self->last_q16;
-    
+
     // Save last state
     self->shaped_q16 = voltage_q16;
-    
+
     // Apply quantization before hardware output
     extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
     q16_t quantized_q16 = AShaper_quantize_single_q16(self->index, voltage_q16);
-    
+
     // Update hardware output directly for real-time response
     extern void hardware_output_set_voltage(int channel, float voltage);
     hardware_output_set_voltage(self->index + 1, Q16_TO_FLOAT(quantized_q16));  // Convert to 1-based channel
-    
-    return out;
-}
 
-// CRITICAL: Single-sample shaper in RAM - used by breakpoint_v for callbacks
-// Returns Q16 shaped value
-__attribute__((section(".time_critical.shaper")))
-static q16_t shaper( Slope_t* self, q16_t here_q16 )
-{
-    q16_t shaped_q16;
-    
-    switch( self->shape ){
-        case SHAPE_Sine:    shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_sin, Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Log:     shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_log, Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Expo:    shaped_q16 = FLOAT_TO_Q16(lut_lookup_q11(lut_exp, Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Now:     shaped_q16 = FLOAT_TO_Q16(shapes_step_now(Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Wait:    shaped_q16 = FLOAT_TO_Q16(shapes_step_wait(Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Over:    shaped_q16 = FLOAT_TO_Q16(shapes_ease_out_back(Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Under:   shaped_q16 = FLOAT_TO_Q16(shapes_ease_in_back(Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Rebound: shaped_q16 = FLOAT_TO_Q16(shapes_ease_out_rebound(Q16_TO_FLOAT(here_q16))); break;
-        case SHAPE_Linear: 
-        default: shaped_q16 = here_q16; break; // Linear falls through
-    }
-    
-    // Map to output range: shaped * scale + last (all Q16)
-    q16_t voltage_q16 = Q16_MUL(shaped_q16, self->scale_q16) + self->last_q16;
-    
-    // Save last state
-    self->shaped_q16 = voltage_q16;
-    
-    // Apply quantization before hardware output
-    extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
-    q16_t quantized_q16 = AShaper_quantize_single_q16(self->index, voltage_q16);
-    
-    // Update hardware output directly for immediate response
-    extern void hardware_output_set_voltage(int channel, float voltage);
-    hardware_output_set_voltage(self->index + 1, Q16_TO_FLOAT(quantized_q16));  // Convert to 1-based channel
-    
-    return voltage_q16;
+    return out;
 }
