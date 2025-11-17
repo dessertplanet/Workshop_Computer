@@ -641,6 +641,86 @@ static int pulsein_call(lua_State* L) {
 // Pulse Output Functions (bb.pulseout[1] and bb.pulseout[2])
 // ----------------------------------------------------------------------------
 
+static bool find_pulse_time_in_branch(lua_State* L, int branch_index, float* out_time) {
+    int abs_index = lua_absindex(L, branch_index);
+    if (!lua_istable(L, abs_index)) {
+        return false;
+    }
+
+    bool found_any = false;
+    int len = (int)luaL_len(L, abs_index);
+    for (int i = 1; i <= len; i++) {
+        lua_geti(L, abs_index, i);
+        bool entry_popped = false;
+        if (lua_istable(L, -1)) {
+            lua_geti(L, -1, 1);
+            const char* tag = lua_tostring(L, -1);
+            lua_pop(L, 1);
+
+            if (tag && (strcmp(tag, "TO") == 0 || strcmp(tag, "to") == 0)) {
+                lua_geti(L, -1, 3);
+                if (lua_isnumber(L, -1)) {
+                    float candidate = (float)lua_tonumber(L, -1);
+                    lua_pop(L, 1);  // pop time
+                    if (candidate > 0.0001f) {
+                        *out_time = candidate;
+                        lua_pop(L, 1);  // pop entry table
+                        return true;
+                    } else {
+                        *out_time = candidate;
+                        found_any = true;
+                        lua_pop(L, 1);  // pop entry table after recording fallback
+                        entry_popped = true;
+                        continue;
+                    }
+                } else {
+                    lua_pop(L, 1);  // pop non-number
+                }
+            } else {
+                if (find_pulse_time_in_branch(L, -1, out_time)) {
+                    lua_pop(L, 1);  // pop entry table from recursive call
+                    if (*out_time > 0.0001f) {
+                        return true;
+                    }
+                    found_any = true;
+                    entry_popped = true;
+                }
+            }
+        }
+
+        if (!entry_popped) {
+            lua_pop(L, 1);  // pop entry table or non-table value
+        }
+    }
+    return found_any;
+}
+
+static float extract_pulse_time_from_action(lua_State* L, int action_index) {
+    float pulse_time = 0.010f;  // default 10ms if extraction fails
+    int abs_index = lua_absindex(L, action_index);
+    if (!lua_istable(L, abs_index)) {
+        return pulse_time;
+    }
+
+    bool found_any = false;
+    int len = (int)luaL_len(L, abs_index);
+    for (int i = 1; i <= len; i++) {
+        lua_geti(L, abs_index, i);
+        if (lua_istable(L, -1)) {
+            if (find_pulse_time_in_branch(L, -1, &pulse_time)) {
+                lua_pop(L, 1);
+                if (pulse_time > 0.0001f) {
+                    return pulse_time;
+                }
+                found_any = true;
+                continue;
+            }
+        }
+        lua_pop(L, 1);
+    }
+    return found_any ? pulse_time : 0.010f;
+}
+
 // __index metamethod for bb.pulseout[n].action, bb.pulseout[n].state, bb.pulseout[n].clock
 static int pulseout_index(lua_State* L) {
     lua_getfield(L, 1, "_idx");
@@ -1640,14 +1720,11 @@ public:
                             clock.cancel(self.ckcoro)
                             self.ckcoro = nil
                         end
-                        -- Clear the action
-                        rawset(self, '_action', nil)
                         return
                     end
                     
-                    -- Set default pulse action
-                    self.clock_div = div or 1
-                    rawset(self, '_action', pulse(0.010))  -- 10ms default pulse width
+                    -- Match crow output clock semantics (use main clock)
+                    self.clock_div = div or self.clock_div or 1
                     
                     -- Cancel existing clock coroutine if any
                     if self.ckcoro then 
@@ -1655,19 +1732,16 @@ public:
                         self.ckcoro = nil  -- Clear reference to prevent memory leak
                     end
                     
-                    -- Start new clock coroutine
+                    -- Start new clock coroutine that syncs to the main clock engine
                     self.ckcoro = clock.run(function()
                         while true do
-                            -- Use clock.sleep with tempo-based timing instead of clock.sync
-                            -- This runs off the internal clock, independent of clock source
-                            local beat_time = clock.get_beat_sec(self.clock_div)
-                            clock.sleep(beat_time)
-                            -- Execute the action if still set
-                            if self._action then
-                                if type(self._action) == 'table' then
-                                    _c.tell('output', self._idx + 3, self._action)
-                                elseif type(self._action) == 'function' then
-                                    self._action()
+                            clock.sync(self.clock_div)
+                            local action = rawget(self, '_action')
+                            if action then
+                                if type(action) == 'table' then
+                                    _c.tell('output', self._idx + 3, action)
+                                elseif type(action) == 'function' then
+                                    action()
                                 end
                             end
                         end
@@ -1697,39 +1771,7 @@ public:
                     _c.tell('output', self._idx + 3, pulse(0))
                 end)
             end
-            
-            -- Set up default: pulseout[1] generates 10ms pulses on beat
-            bb.pulseout[1]:clock(0.5)
-            
-            -- Hook into clock.transport.stop to pause pulseout clocks
-            local original_transport_stop = clock.transport.stop
-            clock.transport.stop = function()
-                -- Stop pulseout clocks when clock stops
-                for i = 1, 2 do
-                    if bb.pulseout[i].ckcoro then
-                        bb.pulseout[i]:clock('off')
-                    end
-                end
-                -- Call original stop handler
-                if original_transport_stop then
-                    original_transport_stop()
-                end
-            end
-            
-            -- Hook into clock.cleanup to stop pulseout clocks
-            local original_cleanup = clock.cleanup
-            clock.cleanup = function()
-                -- Stop pulseout clocks by calling :clock('off') on each
-                for i = 1, 2 do
-                    if bb.pulseout[i].ckcoro then
-                        bb.pulseout[i]:clock('off')
-                    end
-                end
-                -- Call original cleanup
-                if original_cleanup then
-                    original_cleanup()
-                end
-            end
+            -- No default pulseout clocks are started; users configure them explicitly
         )";
         
         if (luaL_dostring(L, setup_pulseout_defaults) != LUA_OK) {
@@ -2190,6 +2232,11 @@ public:
     
     // Public wrapper for normalization probe detection (for detection system)
     bool IsInputConnected(ComputerCard::Input i) { return Connected(i); }
+
+    // Public wrappers for LED access (needed outside class scope)
+    void IndicatorLedOn(uint32_t index) { this->LedOn(index); }
+    void IndicatorLedOn(uint32_t index, bool state) { this->LedOn(index, state); }
+    void IndicatorLedOff(uint32_t index) { this->LedOff(index); }
     
     // Hardware abstraction functions for output
     // CRITICAL: Place in RAM - called from shaper_v() on every slope update
@@ -3659,41 +3706,7 @@ int LuaManager::lua_c_tell(lua_State* L) {
                     // pulse(time) creates: {asl._if(polarity, {to(level,0,'now'), to(level,time), to(0,0,'now')}), ...}
                     // We need to extract the 'time' parameter and create a clock-based pulse
                     
-                    // Extract pulse width from the ASL table structure
-                    float pulse_time = 0.010;  // default 10ms
-                    
-                    // OPTIMIZATION: Use protected call for table navigation to prevent crashes
-                    // from corrupted Lua state during fast callbacks
-                    int initial_top = lua_gettop(L);
-                    bool extraction_success = false;
-                    
-                    // Navigate the pulse() ASL structure safely
-                    // asl._if(pred, t) inserts {'IF', pred} at start of t and returns it
-                    // So pulse(2) structure is: [1] = { {'IF',1}, to(5,0,'now'), to(5,2), to(0,0,'now') }
-                    // [1][1] = {'IF', 1}
-                    // [1][2] = to(5, 0, 'now')  - first jump
-                    // [1][3] = to(5, 2)         - hold for TIME (this is what we want!)
-                    // [1][4] = to(0, 0, 'now')  - return to zero
-                    
-                    lua_pushvalue(L, 3);  // push the action table
-                    if (lua_istable(L, -1)) {
-                        lua_geti(L, -1, 1);  // get first element (the asl._if branch for polarity=1)
-                        if (lua_istable(L, -1)) {
-                            lua_geti(L, -1, 3);  // get [1][3] (the timing 'to')
-                            if (lua_istable(L, -1)) {
-                                // [1][3] = {'to', level, time, ...}
-                                // time is at index 3
-                                lua_geti(L, -1, 3);
-                                if (lua_isnumber(L, -1)) {
-                                    pulse_time = lua_tonumber(L, -1);
-                                    extraction_success = true;
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Clean up stack
-                    lua_settop(L, initial_top);
+                    float pulse_time = extract_pulse_time_from_action(L, 3);
                     
                     // If pulse_time is 0 or very small, just set low immediately without coroutine
                     if (pulse_time < 0.001f) {  // Less than 1ms
@@ -5045,6 +5058,36 @@ extern "C" lua_State* get_lua_state(void) {
 
 BlackbirdCrow crow;
 
+// Simple MIDI-style LED animation while waiting for USB host connection
+static void usb_wait_led_step() {
+    static const uint8_t led_path[] = {0, 1, 3, 5, 4, 2};
+    static size_t path_index = 0;
+    static int last_led = -1;
+    static uint64_t last_step_us = 0;
+
+    uint64_t now = time_us_64();
+    if (now - last_step_us < 50000) {
+        return;  // ~20 Hz animation rate
+    }
+    last_step_us = now;
+
+    if (last_led >= 0) {
+        crow.IndicatorLedOff(last_led);
+    }
+
+    int current_led = led_path[path_index];
+    crow.IndicatorLedOn(current_led);
+    last_led = current_led;
+
+    path_index = (path_index + 1) % (sizeof(led_path) / sizeof(led_path[0]));
+}
+
+static void usb_wait_led_clear() {
+    for (int i = 0; i < 6; i++) {
+        crow.IndicatorLedOff(i);
+    }
+}
+
 // Expose card unique ID for USB descriptors
 // This ensures the USB serial number follows the card, not the board
 extern "C" uint64_t get_card_unique_id(void) {
@@ -5114,9 +5157,12 @@ int main()
         absolute_time_t until = make_timeout_time_ms(1500);
         while (!tud_cdc_connected() && absolute_time_diff_us(get_absolute_time(), until) > 0) {
             tud_task();  // Must service TinyUSB while waiting
+            usb_wait_led_step();
             tight_loop_contents();
         }
     }
+
+    usb_wait_led_clear();
 
     multicore_launch_core1(core1_entry);
     
