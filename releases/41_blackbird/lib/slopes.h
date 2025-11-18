@@ -108,6 +108,7 @@ q16_t S_step_one_sample_q16( int index );
 void S_slope_buffer_reset(void);
 bool S_slope_buffer_needs_fill(int index);
 void S_slope_buffer_fill_block(int index, int samples);
+void S_request_slope_buffer_fill(int index);
 q16_t S_consume_buffered_sample_q16(int index);
 void S_slope_buffer_background_service(void);
 

@@ -182,7 +182,8 @@ static void process_slope_action_callbacks() {
 // PERFORMANCE MONITORING
 // ============================================================================
 static constexpr double kProcessSampleBudgetUs = 1000000.0 / 6000.0;  // 6kHz sample rate
-static constexpr uint32_t kProcessSampleWarnThresholdUs = 145;        // ~87% of budget
+static constexpr uint32_t kProcessSampleOverrunThresholdUs =
+    static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~167us)
 // ProcessSample (Core 1 audio thread) performance
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
@@ -3219,7 +3220,7 @@ public:
         // Process one sample per channel per ISR call (~115-210 cycles per active channel)
         extern q16_t S_consume_buffered_sample_q16(int index);
         extern bool S_slope_buffer_needs_fill(int index);
-        extern void S_slope_buffer_fill_block(int index, int samples);
+        extern void S_request_slope_buffer_fill(int index);
         
         for (int ch = 0; ch < SLOPE_CHANNELS; ch++) {
             q16_t output_q16 = S_consume_buffered_sample_q16(ch);
@@ -3227,7 +3228,7 @@ public:
         }
         static int slope_refill_channel = 0;
         if (S_slope_buffer_needs_fill(slope_refill_channel)) {
-            S_slope_buffer_fill_block(slope_refill_channel, SLOPE_RENDER_CHUNK);
+            S_request_slope_buffer_fill(slope_refill_channel);
         }
         slope_refill_channel = (slope_refill_channel + 1) % SLOPE_CHANNELS;
         
@@ -3316,7 +3317,7 @@ public:
         
         // === PERFORMANCE MONITORING (low-cost) ===
         // Check if ProcessSample exceeded time budget
-        // At 6kHz, each sample has ~166.7us budget. Warn at 145us (~87% utilization)
+        // At 6kHz, each sample has ~166.7us budget; only >=100% counts as an overrun
         uint32_t elapsed = time_us_32() - start_time;
         
         // Always track worst-case execution time (available via perf_stats())
@@ -3324,8 +3325,8 @@ public:
             g_worst_case_us = elapsed;
         }
         
-        // Warn if exceeding budget threshold
-        if (elapsed > kProcessSampleWarnThresholdUs) {  // Threshold: 145 microseconds (~87% of 166.7us budget at 6kHz)
+        // Only flag overruns when we actually exceed the entire 6kHz budget (~167us)
+        if (elapsed >= kProcessSampleOverrunThresholdUs) {
             g_overrun_count++;
             
             static uint32_t last_report_time = 0;
@@ -4960,7 +4961,7 @@ int LuaManager::lua_perf_stats(lua_State* L) {
                      "  Worst case: %lu microseconds\n\r"
                      "  Budget: %.1fus (6kHz sample rate)\n\r"
                      "  Utilization: %.1f%%\n\r"
-                     "  Overruns (>%.0fus): %lu\n\r"
+                     "  Overruns (>=%.1fus): %lu\n\r"
                      "\n\r"
                      "MainControlLoop Performance (Core 0):\n\r"
                      "  Worst case: %lu microseconds\n\r"
@@ -4968,7 +4969,7 @@ int LuaManager::lua_perf_stats(lua_State* L) {
                      (unsigned long)worst,
                      kProcessSampleBudgetUs,
                      utilization,
-                     static_cast<double>(kProcessSampleWarnThresholdUs),
+                     kProcessSampleBudgetUs,
                      (unsigned long)overruns,
                      (unsigned long)loop_worst,
                      (unsigned long)loop_count);

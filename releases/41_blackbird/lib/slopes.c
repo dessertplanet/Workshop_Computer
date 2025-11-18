@@ -261,6 +261,7 @@ static slope_buffer_entry_t slope_output_buffers[SLOPE_CHANNELS][SLOPE_BUFFER_CA
 static uint8_t slope_buffer_head[SLOPE_CHANNELS];
 static uint8_t slope_buffer_tail[SLOPE_CHANNELS];
 static volatile uint8_t slope_buffer_flush_request[SLOPE_CHANNELS];
+static volatile uint32_t slope_fill_request_mask = 0;
 
 static slope_buffer_entry_t S_render_one_sample_q16(int index);
 
@@ -311,6 +312,9 @@ static inline bool slope_buffer_pop(int index, slope_buffer_entry_t* out) {
 }
 
 void S_slope_buffer_reset(void) {
+    uint32_t irq_state = save_and_disable_interrupts();
+    slope_fill_request_mask = 0;
+    restore_interrupts(irq_state);
     for (int ch = 0; ch < SLOPE_CHANNELS; ch++) {
         slope_buffer_clear_channel(ch);
         slope_buffer_flush_request[ch] = 0;
@@ -339,6 +343,15 @@ void S_slope_buffer_fill_block(int index, int samples) {
     }
 }
 
+void S_request_slope_buffer_fill(int index) {
+    if (index < 0 || index >= SLOPE_CHANNELS) {
+        return;
+    }
+    uint32_t irq_state = save_and_disable_interrupts();
+    slope_fill_request_mask |= (1u << index);
+    restore_interrupts(irq_state);
+}
+
 __attribute__((section(".time_critical.S_consume_buffered_sample_q16")))
 q16_t S_consume_buffered_sample_q16(int index) {
     if (index < 0 || index >= SLOPE_CHANNELS) { return 0; }
@@ -362,6 +375,26 @@ void S_slope_buffer_background_service(void) {
     if (!slopes) {
         return;
     }
+
+    // Service explicit refill requests first (set by ProcessSample when buffers dip)
+    int requested_channel = -1;
+    {
+        uint32_t irq_state = save_and_disable_interrupts();
+        uint32_t pending = slope_fill_request_mask;
+        if (pending) {
+            requested_channel = __builtin_ctz(pending);
+            slope_fill_request_mask &= ~(1u << requested_channel);
+        }
+        restore_interrupts(irq_state);
+    }
+
+    if (requested_channel >= 0) {
+        if (S_slope_buffer_needs_fill(requested_channel)) {
+            S_slope_buffer_fill_block(requested_channel, SLOPE_RENDER_CHUNK);
+        }
+        return;
+    }
+
     for (int i = 0; i < SLOPE_CHANNELS; i++) {
         int channel = (service_index + i) % SLOPE_CHANNELS;
         if (S_slope_buffer_needs_fill(channel)) {
