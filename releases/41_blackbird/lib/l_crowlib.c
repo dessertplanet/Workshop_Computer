@@ -489,6 +489,14 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     }
     lua_settop(L, 0);
 
+    // bb.asap = nil - clear user-defined high-frequency callback
+    lua_getglobal(L, "bb"); // @1
+    if(!lua_isnil(L, 1)){
+        lua_pushnil(L); // @2
+        lua_setfield(L, 1, "asap"); // bb.asap = nil
+    }
+    lua_settop(L, 0);
+
     return 0;
 }
 
