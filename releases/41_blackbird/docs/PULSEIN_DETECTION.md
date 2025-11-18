@@ -69,7 +69,7 @@ The system uses the hardware's built-in edge detection (`PulseIn1RisingEdge()`, 
 - **Accurate timing**: Edge detection happens at audio rate, not main loop rate
 - **Low overhead**: Flags are set in ISR, callbacks fired in main loop
 
-### Main Loop Processing (~10kHz)
+### Main Loop Processing (~8kHz)
 The main loop checks edge flags and fires Lua callbacks:
 
 - Callbacks execute outside the ISR context (safe for Lua VM)

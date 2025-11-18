@@ -61,6 +61,7 @@ extern "C" {
 #include "lib/events_lockfree.h"
 #include "lib/flash_storage.h"
 #include "lib/caw.h"
+#include "lib/sample_rate.h"
 }
 
 // Generated Lua bytecode headers - Core libraries 
@@ -122,7 +123,7 @@ static volatile uint16_t g_pulse_led_stretch[2] = {0, 0};
 // Pulse input state tracking (read from hardware, cached for Lua access)
 static volatile bool g_pulsein_state[2] = {false, false};
 
-// Pulse input edge detection flags (set at 48kHz, cleared in main loop)
+// Pulse input edge detection flags (set at 8kHz, cleared in main loop)
 static volatile bool g_pulsein_edge_detected[2] = {false, false};
 static volatile bool g_pulsein_edge_state[2] = {false, false};
 
@@ -133,7 +134,7 @@ static volatile bool g_pulsein_callback_active[2] = {false, false};
 static volatile bool g_pulsein_clock_edge_pending[2] = {false, false};
 
 // ============================================================================
-// AUDIO-RATE NOISE GENERATOR (6kHz)
+// AUDIO-RATE NOISE GENERATOR (8kHz)
 // ============================================================================
 // Noise generator state for audio-rate output
 static volatile bool g_noise_active[4] = {false, false, false, false};
@@ -181,9 +182,10 @@ static void process_slope_action_callbacks() {
 // ============================================================================
 // PERFORMANCE MONITORING
 // ============================================================================
-static constexpr double kProcessSampleBudgetUs = 1000000.0 / 6000.0;  // 6kHz sample rate
+static constexpr double kProcessSampleRateHz = PROCESS_SAMPLE_RATE_HZ_DOUBLE;
+static constexpr double kProcessSampleBudgetUs = 1000000.0 / kProcessSampleRateHz;  // 8kHz sample rate
 static constexpr uint32_t kProcessSampleOverrunThresholdUs =
-    static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~167us)
+    static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~100us)
 // ProcessSample (Core 1 audio thread) performance
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
@@ -2769,7 +2771,7 @@ public:
             }
             
             // Check for pulse input changes and fire callbacks
-            // Edge detection happens at 6kHz in ProcessSample(), we just check flags here
+            // Edge detection happens at 8kHz in ProcessSample(), we just check flags here
             // REENTRANCY PROTECTION: Skip callback if one is already running (prevents crashes from fast clocks)
             for (int i = 0; i < 2; i++) {
                 if (g_pulsein_edge_detected[i] && !g_pulsein_callback_active[i]) {
@@ -3248,7 +3250,7 @@ public:
         Detect_process_sample(0, cv1);
         Detect_process_sample(1, cv2);
         
-        // Pulse input edge detection (6kHz) - catches even very short pulses
+        // Pulse input edge detection (8kHz) - catches even very short pulses
         // Check for edges when change or clock mode is enabled, respecting direction filter
         // mode: 0=none, 1=change, 2=clock
         if (g_pulsein_mode[0] == 1) {
@@ -3284,7 +3286,7 @@ public:
         g_pulsein_state[0] = PulseIn1();
         g_pulsein_state[1] = PulseIn2();
         
-        // === AUDIO-RATE NOISE GENERATION (6kHz) - INTEGER MATH ONLY ===
+        // === AUDIO-RATE NOISE GENERATION (8kHz) - INTEGER MATH ONLY ===
         // Generate and output noise for any active channels
         // OPTIMIZATION: Fast check if ANY noise is active before iterating channels
         if (g_noise_active_mask) {
@@ -3317,7 +3319,7 @@ public:
         
         // === PERFORMANCE MONITORING (low-cost) ===
         // Check if ProcessSample exceeded time budget
-        // At 6kHz, each sample has ~166.7us budget; only >=100% counts as an overrun
+        // At 8kHz, each sample has a 125us budget; only >=100% counts as an overrun
         uint32_t elapsed = time_us_32() - start_time;
         
         // Always track worst-case execution time (available via perf_stats())
@@ -3325,7 +3327,7 @@ public:
             g_worst_case_us = elapsed;
         }
         
-        // Only flag overruns when we actually exceed the entire 6kHz budget (~167us)
+        // Only flag overruns when we actually exceed the entire 8kHz budget (~125us)
         if (elapsed >= kProcessSampleOverrunThresholdUs) {
             g_overrun_count++;
             
@@ -4959,7 +4961,7 @@ int LuaManager::lua_perf_stats(lua_State* L) {
             snprintf(msg, sizeof(msg), 
                      "ProcessSample Performance (Core 1):\n\r"
                      "  Worst case: %lu microseconds\n\r"
-                     "  Budget: %.1fus (6kHz sample rate)\n\r"
+                     "  Budget: %.1fus (8kHz sample rate)\n\r"
                      "  Utilization: %.1f%%\n\r"
                      "  Overruns (>=%.1fus): %lu\n\r"
                      "\n\r"

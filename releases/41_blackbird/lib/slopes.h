@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "sample_rate.h"
+
 // ========================================================================
 // Q16.16 Fixed-Point System for RP2040 (Cortex-M0+ has no FPU)
 // ========================================================================
@@ -32,9 +34,9 @@ typedef int32_t q16_t;
 #define Q12_TO_Q16(q) ((q16_t)((q) << (Q16_SHIFT - 12)))
 
 // need an Init() fn. send SR as an argument
-#define SAMPLE_RATE 6000
-#define iSAMPLE_RATE (1.0/(float)SAMPLE_RATE)
-#define SAMPLES_PER_MS ((float)SAMPLE_RATE/1000.0)
+#define SAMPLE_RATE PROCESS_SAMPLE_RATE_HZ_INT
+#define iSAMPLE_RATE (1.0f/(float)PROCESS_SAMPLE_RATE_HZ)
+#define SAMPLES_PER_MS (PROCESS_SAMPLE_RATE_HZ/1000.0f)
 #define SAMPLES_PER_MS_Q16 FLOAT_TO_Q16(SAMPLES_PER_MS)  // Pre-calculated Q16 constant
 
 typedef enum{ SHAPE_Linear

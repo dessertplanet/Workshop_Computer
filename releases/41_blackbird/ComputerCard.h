@@ -13,7 +13,7 @@ System Computer.
 
 It aims to present a very simple C++ interface for card programmers 
 to use the jacks, knobs, switch and LEDs, for programs running at
-a fixed 6kHz audio sample rate.
+a fixed 8kHz audio sample rate.
 
 See examples/ directory
 */
@@ -24,6 +24,7 @@ See examples/ directory
 
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
+#include "lib/sample_rate.h"
 
 #define PULSE_1_RAW_OUT 8
 #define PULSE_2_RAW_OUT 9
@@ -72,7 +73,7 @@ public:
 	static ComputerCard *ThisPtr() {return thisptr;}
 
 protected:
-	/// Callback, called once per sample at 6kHz
+	/// Callback, called once per sample at 8kHz
 	virtual void ProcessSample() = 0;
 	static Core1BackgroundHook core1_background_hook;
 
@@ -523,9 +524,9 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 
 
 	// ADC clock runs at 48MHz
-	// 48MHz ÷ (999+1) = 48kHz ADC sample rate
-	//                 = 8×6kHz ProcessSample rate
-	adc_set_clkdiv(999);
+	// 48MHz ÷ (749+1) = 64kHz ADC sample rate
+	//                 = 8×8kHz ProcessSample rate
+	adc_set_clkdiv(749);
 
 	// claim and setup DMAs for reading to ADC, and writing to SPI DAC
 	adc_dma = dma_claim_unused_channel(true);
@@ -707,13 +708,13 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 			np = (np<<1)+(normprobe&0x1);
 		}
 
-		// CV sampled at 6kHz comes in over two successive samples
+		// CV sampled at 8kHz comes in over two successive samples
 		if (norm_probe_count == 14 || norm_probe_count == 15)
 		{
 			plug_state[2+cvi] = (plug_state[2+cvi]<<1)+(ADC_Buffer[cpuPhase][7]<1800);
 		}
 
-		// Audio and pulse measured every sample at 6kHz
+		// Audio and pulse measured every sample at 8kHz
 		if (norm_probe_count == 15)
 		{
 			plug_state[Input::Audio1] = (plug_state[Input::Audio1]<<1)+(ADC_Buffer[cpuPhase][5]<1800);

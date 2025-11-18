@@ -5,6 +5,7 @@
 #include "pico/stdlib.h"
 #include "ashapes.h"  // For output quantization
 #include "slopes.h"   // For q16_t and Q16_SHIFT
+#include "sample_rate.h"
 
 // Timer implementation for RP2040 Workshop Computer with block processing optimization
 // Aligned block size (32 samples) for consistent timing with audio processing
@@ -13,7 +14,7 @@ typedef struct {
     timer_callback_t callback;
     float period_seconds;
     bool active;
-    uint32_t period_samples;      // Period in 6kHz samples
+    uint32_t period_samples;      // Period in ProcessSample-rate samples
     uint64_t next_trigger_sample; // When to trigger next (64-bit for long-running systems)
     float period_error;           // Accumulated fractional sample error for precision
 } timer_t;
@@ -22,7 +23,7 @@ static timer_t* timers = NULL;
 static int max_timers = 0;
 volatile uint64_t global_sample_counter = 0; // Incremented in ProcessSample() ISR - 64-bit for precision
 
-#define TIMER_SAMPLE_RATE 6000.0f
+#define TIMER_SAMPLE_RATE PROCESS_SAMPLE_RATE_HZ
 
 // Runtime-adjustable block size (defaults to 'timing')
 int g_timer_block_size = 240; // default mapping for bb.priority='timing'
@@ -58,7 +59,7 @@ void Timer_Init(int num_timers) {
         timers[i].callback = NULL;
         timers[i].period_seconds = 1.0f;
         timers[i].active = false;
-        timers[i].period_samples = (uint32_t)TIMER_SAMPLE_RATE; // Default 1 second at 6kHz
+        timers[i].period_samples = (uint32_t)TIMER_SAMPLE_RATE; // Default 1 second at ProcessSample rate
         timers[i].next_trigger_sample = 0;
         timers[i].period_error = 0.0f;
     }
@@ -96,7 +97,7 @@ void Timer_Set_Params(int timer_id, float seconds) {
     }
     
     timers[timer_id].period_seconds = seconds;
-    // Convert seconds to samples at 6kHz with precise fractional handling
+    // Convert seconds to samples at ProcessSample rate with precise fractional handling
     float precise_samples = seconds * TIMER_SAMPLE_RATE;
     timers[timer_id].period_samples = (uint32_t)precise_samples;
     timers[timer_id].period_error = precise_samples - (float)timers[timer_id].period_samples;

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "tusb.h"
+#include "sample_rate.h"
 
 #define DETECT_DEBUG 0
 
@@ -24,7 +25,7 @@ static int detector_count = 0;
 #define DETECT_CANARY 0xD37EC7u
 
 // Detection processing sample rate (matches audio engine)
-#define DETECT_SAMPLE_RATE 6000.0f
+#define DETECT_SAMPLE_RATE PROCESS_SAMPLE_RATE_HZ
 // Crow evaluates detectors once per 32-sample audio block. We still call
 // Detect_process_sample() every sample for edge fidelity, but interval-based
 // modes (stream / volume / peak) should interpret the user-specified interval
@@ -575,7 +576,7 @@ static void scale_bounds(Detect_t* self, int ix, int oct) {
 
 // ========================================================================
 // ULTRA-FAST ISR Processing - INTEGER ONLY, NO FLOATING POINT!
-// Runs on Core 1 at 6kHz - must complete in ~150µs worst case
+// Runs on Core 1 at 8kHz - must complete in ~125µs worst case
 // Only tracks state changes, defers callbacks to Core 0
 // ========================================================================
 void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
