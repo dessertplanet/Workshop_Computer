@@ -35,6 +35,8 @@ class ComputerCard
 	constexpr static int numLeds = 6;
 	constexpr static uint8_t leds[numLeds] = { 10, 11, 12, 13, 14, 15 };
 public:
+	typedef void (*Core1BackgroundHook)(void);
+	static void RegisterCore1BackgroundHook(Core1BackgroundHook hook);
 
 	/// Knob index, used by KnobVal
 	enum Knob {Main, X, Y};
@@ -68,6 +70,7 @@ public:
 protected:
 	/// Callback, called once per sample at 12kHz
 	virtual void ProcessSample() = 0;
+	static Core1BackgroundHook core1_background_hook;
 
 
 
@@ -489,6 +492,12 @@ volatile uint32_t ComputerCard::cvValue[2] = {262144,262144};
 
 
 ComputerCard *ComputerCard::thisptr;
+ComputerCard::Core1BackgroundHook ComputerCard::core1_background_hook = nullptr;
+
+void ComputerCard::RegisterCore1BackgroundHook(Core1BackgroundHook hook)
+{
+	core1_background_hook = hook;
+}
 
 // Return pseudo-random bit for normalisation probe
 uint32_t __not_in_flash_func(ComputerCard::next_norm_probe)()
@@ -588,6 +597,11 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 			break;
 		}
 		   
+
+		if (core1_background_hook)
+		{
+			core1_background_hook();
+		}
 
 	}
 }

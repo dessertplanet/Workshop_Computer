@@ -4,6 +4,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include "hardware/sync.h"
 
 // TODO: Port STM32 dependencies to RP2040
 // #include "stm32f7xx.h" // STM32-specific, removed
@@ -250,6 +252,127 @@ static float* shapes_v_log(float* in, int size) {
 static uint8_t slope_count = 0;
 Slope_t* slopes = NULL; // Exported for ll_timers.c conditional processing
 
+typedef struct {
+    q16_t value_q16;
+    uint8_t action_due;
+} slope_buffer_entry_t;
+
+static slope_buffer_entry_t slope_output_buffers[SLOPE_CHANNELS][SLOPE_BUFFER_CAPACITY];
+static uint8_t slope_buffer_head[SLOPE_CHANNELS];
+static uint8_t slope_buffer_tail[SLOPE_CHANNELS];
+static volatile uint8_t slope_buffer_flush_request[SLOPE_CHANNELS];
+
+static slope_buffer_entry_t S_render_one_sample_q16(int index);
+
+static inline void slope_buffer_clear_channel(int index) {
+    slope_buffer_head[index] = 0;
+    slope_buffer_tail[index] = 0;
+}
+
+static inline uint8_t slope_buffer_next(uint8_t value) {
+    return (uint8_t)((value + 1) % SLOPE_BUFFER_CAPACITY);
+}
+
+static inline int slope_buffer_fill_level(int index) {
+    uint8_t head = slope_buffer_head[index];
+    uint8_t tail = slope_buffer_tail[index];
+    if (head >= tail) {
+        return head - tail;
+    }
+    return SLOPE_BUFFER_CAPACITY - (tail - head);
+}
+
+static inline int slope_buffer_space_remaining(int index) {
+    // Leave one slot empty to distinguish full vs empty
+    return (SLOPE_BUFFER_CAPACITY - 1) - slope_buffer_fill_level(index);
+}
+
+static inline bool slope_buffer_push(int index, slope_buffer_entry_t entry) {
+    uint8_t head = slope_buffer_head[index];
+    uint8_t next_head = slope_buffer_next(head);
+    if (next_head == slope_buffer_tail[index]) {
+        return false; // buffer full
+    }
+    slope_output_buffers[index][head] = entry;
+    __dmb();
+    slope_buffer_head[index] = next_head;
+    return true;
+}
+
+static inline bool slope_buffer_pop(int index, slope_buffer_entry_t* out) {
+    uint8_t tail = slope_buffer_tail[index];
+    if (tail == slope_buffer_head[index]) {
+        return false;
+    }
+    *out = slope_output_buffers[index][tail];
+    __dmb();
+    slope_buffer_tail[index] = slope_buffer_next(tail);
+    return true;
+}
+
+void S_slope_buffer_reset(void) {
+    for (int ch = 0; ch < SLOPE_CHANNELS; ch++) {
+        slope_buffer_clear_channel(ch);
+        slope_buffer_flush_request[ch] = 0;
+    }
+}
+
+bool S_slope_buffer_needs_fill(int index) {
+    if (index < 0 || index >= SLOPE_CHANNELS) { return false; }
+    return slope_buffer_fill_level(index) <= SLOPE_BUFFER_LOW_WATER;
+}
+
+__attribute__((section(".time_critical.S_slope_buffer_fill_block")))
+void S_slope_buffer_fill_block(int index, int samples) {
+    if (index < 0 || index >= SLOPE_CHANNELS || samples <= 0 || slopes == NULL) {
+        return;
+    }
+    if (slope_buffer_flush_request[index]) {
+        slope_buffer_clear_channel(index);
+        slope_buffer_flush_request[index] = 0;
+    }
+    while (samples-- > 0 && slope_buffer_space_remaining(index) > 0) {
+        slope_buffer_entry_t entry = S_render_one_sample_q16(index);
+        if (!slope_buffer_push(index, entry)) {
+            break;
+        }
+    }
+}
+
+__attribute__((section(".time_critical.S_consume_buffered_sample_q16")))
+q16_t S_consume_buffered_sample_q16(int index) {
+    if (index < 0 || index >= SLOPE_CHANNELS) { return 0; }
+    if (slope_buffer_flush_request[index]) {
+        slope_buffer_clear_channel(index);
+        slope_buffer_flush_request[index] = 0;
+    }
+    slope_buffer_entry_t entry;
+    if (!slope_buffer_pop(index, &entry)) {
+        entry = S_render_one_sample_q16(index);
+    }
+    if (entry.action_due) {
+        extern void queue_slope_action_callback(int channel);
+        queue_slope_action_callback(index);
+    }
+    return entry.value_q16;
+}
+
+void S_slope_buffer_background_service(void) {
+    static int service_index = 0;
+    if (!slopes) {
+        return;
+    }
+    for (int i = 0; i < SLOPE_CHANNELS; i++) {
+        int channel = (service_index + i) % SLOPE_CHANNELS;
+        if (S_slope_buffer_needs_fill(channel)) {
+            S_slope_buffer_fill_block(channel, SLOPE_RENDER_CHUNK);
+            service_index = (channel + 1) % SLOPE_CHANNELS;
+            return;
+        }
+    }
+    service_index = (service_index + 1) % SLOPE_CHANNELS;
+}
+
 // Compute normalized progress (0-1 in Q16) from elapsed samples
 static inline q16_t slope_progress_from_elapsed(const Slope_t* self)
 {
@@ -337,6 +460,7 @@ void S_init( int channels )
         slopes[j].duration_q16  = 0;
         slopes[j].elapsed_q16   = 0;
     }
+    S_slope_buffer_reset();
 }
 
 void S_reset(void)
@@ -355,6 +479,10 @@ void S_reset(void)
         slopes[j].countdown_q16 = -(int64_t)Q16_ONE;  // -1.0 in Q16
         slopes[j].duration_q16 = 0;
         slopes[j].elapsed_q16 = 0;
+    }
+
+    for (int j = 0; j < slope_count; j++) {
+        slope_buffer_flush_request[j] = 1;
     }
 }
 
@@ -390,22 +518,19 @@ float S_get_state( int index )
     return Q16_TO_FLOAT(slopes[index].shaped_q16);
 }
 
-// Single-sample slope processing for Core 1 ISR
-// Returns shaped, quantized output voltage in Q16 format
-// CRITICAL: Place in RAM for deterministic ISR timing
-__attribute__((section(".time_critical.S_step_one_sample_q16")))
-q16_t S_step_one_sample_q16(int index)
+__attribute__((section(".time_critical.S_render_one_sample_q16")))
+static slope_buffer_entry_t S_render_one_sample_q16(int index)
 {
-    if( index < 0 || index >= SLOPE_CHANNELS ){ return 0; }
+    slope_buffer_entry_t entry = { .value_q16 = 0, .action_due = 0 };
+    if( index < 0 || index >= SLOPE_CHANNELS || slopes == NULL ){ return entry; }
     Slope_t* self = &slopes[index];
     
-    // Check if slope is active (countdown > 0)
+    // If slope inactive, just return last shaped value
     if( self->countdown_q16 <= 0 ) {
-        // Slope finished - return last output without processing
-        return self->shaped_q16;
+        entry.value_q16 = self->shaped_q16;
+        return entry;
     }
     
-    // Advance countdown by one sample in Q16 units
     const int64_t one_sample_q16 = (int64_t)Q16_ONE;
     self->countdown_q16 -= one_sample_q16;
     self->elapsed_q16   += one_sample_q16;
@@ -417,22 +542,18 @@ q16_t S_step_one_sample_q16(int index)
         self->elapsed_q16 = self->duration_q16;
     }
     
-    // Calculate progress [0.0, 1.0] in Q16 format
     q16_t here_q16;
     if( self->duration_q16 <= 0 ) {
-        // Instant transition - already at destination
         here_q16 = Q16_ONE;
     } else if( self->elapsed_q16 <= 0 ) {
         here_q16 = 0;
     } else if( self->elapsed_q16 >= self->duration_q16 ) {
         here_q16 = Q16_ONE;
     } else {
-        // Progress = elapsed / duration (in Q16)
         here_q16 = (q16_t)(((self->elapsed_q16 << Q16_SHIFT)) / self->duration_q16);
     }
     self->here_q16 = here_q16;
     
-    // Apply shape function (pure Q16 integer math)
     q16_t shaped_q16;
     extern const q11_t* lut_sin_ptr;
     extern const q11_t* lut_log_ptr;
@@ -461,26 +582,33 @@ q16_t S_step_one_sample_q16(int index)
             break;
     }
     
-    // Map to output range: shaped * scale + last (Q16 arithmetic)
     q16_t voltage_q16 = Q16_MUL(shaped_q16, self->scale_q16) + self->last_q16;
     self->shaped_q16 = voltage_q16;
     
-    // Apply quantization
     extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
     q16_t quantized_q16 = AShaper_quantize_single_q16(index, voltage_q16);
+    entry.value_q16 = quantized_q16;
     
-    // Update hardware output
-    extern void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
-    hardware_output_set_voltage_q16(index + 1, quantized_q16);
-    
-    // Check for action callback at end of slope
     if( self->countdown_q16 == 0 && self->action != NULL ) {
-        // Queue callback to Core 0 via event system
+        entry.action_due = 1;
+    }
+    
+    return entry;
+}
+
+// Single-sample slope processing for Core 1 ISR (immediate mode)
+__attribute__((section(".time_critical.S_step_one_sample_q16")))
+q16_t S_step_one_sample_q16(int index)
+{
+    if (index < 0 || index >= SLOPE_CHANNELS) { return 0; }
+    slope_buffer_entry_t entry = S_render_one_sample_q16(index);
+    extern void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
+    hardware_output_set_voltage_q16(index + 1, entry.value_q16);
+    if (entry.action_due) {
         extern void queue_slope_action_callback(int channel);
         queue_slope_action_callback(index);
     }
-    
-    return quantized_q16;
+    return entry.value_q16;
 }
 
 // Q16.16 Fixed-Point Slope Engine - Core Implementation
@@ -499,6 +627,7 @@ void S_toward_q16( int        index
     self->dest_q16  = destination_q16;
     self->shape     = shape;
     self->action    = cb;
+    slope_buffer_flush_request[index] = 1; // ensure buffered samples are discarded on Core 1
 
     // direct update & callback if ms = 0 (ie instant)
     if( ms_q16 <= 0 ){

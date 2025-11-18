@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 
 // ========================================================================
 // Q16.16 Fixed-Point System for RP2040 (Cortex-M0+ has no FPU)
@@ -70,6 +71,11 @@ typedef struct{
 
 #define SLOPE_CHANNELS 4
 
+// Sample buffering configuration for Core 1 block renderer
+#define SLOPE_BUFFER_CAPACITY 32
+#define SLOPE_BUFFER_LOW_WATER 8
+#define SLOPE_RENDER_CHUNK 8
+
 // refactor for dynamic SLOPE_CHANNELS
 // refactor for dynamic SAMPLE_RATE
 // refactor to S_init returning pointers, but internally tracking indexes?
@@ -97,6 +103,13 @@ void S_toward( int        index
              );
 // Single-sample processing for Core 1 ISR (new, optimized for sample-accurate output)
 q16_t S_step_one_sample_q16( int index );
+
+// Core 1 buffered rendering helpers
+void S_slope_buffer_reset(void);
+bool S_slope_buffer_needs_fill(int index);
+void S_slope_buffer_fill_block(int index, int samples);
+q16_t S_consume_buffered_sample_q16(int index);
+void S_slope_buffer_background_service(void);
 
 float* S_step_v( int     index
                , float*  out

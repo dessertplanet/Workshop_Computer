@@ -2266,7 +2266,32 @@ public:
     void IndicatorLedOn(uint32_t index) { this->LedOn(index); }
     void IndicatorLedOn(uint32_t index, bool state) { this->LedOn(index, state); }
     void IndicatorLedOff(uint32_t index) { this->LedOff(index); }
-    
+    void UpdateOutputLeds() {
+        int32_t cv1_mv = g_output_state_mv[0];
+        int32_t cv2_mv = g_output_state_mv[1];
+        int32_t audio1_mv = g_output_state_mv[2];
+        int32_t audio2_mv = g_output_state_mv[3];
+        bool pulse1 = g_pulse_out_state[0];
+        bool pulse2 = g_pulse_out_state[1];
+
+        auto mv_to_brightness = [](int32_t mv) -> uint16_t {
+            if (mv <= 0) {
+                return 0;
+            }
+            if (mv >= 6000) {
+                return 4095;
+            }
+            return (uint16_t)((mv * 682) >> 10);
+        };
+
+        LedBrightness(0, mv_to_brightness(audio1_mv));
+        LedBrightness(1, mv_to_brightness(audio2_mv));
+        LedBrightness(2, mv_to_brightness(cv1_mv));
+        LedBrightness(3, mv_to_brightness(cv2_mv));
+        LedOn(4, pulse1);
+        LedOn(5, pulse2);
+    }
+
     // Hardware abstraction functions for output
     // CRITICAL: Place in RAM - called from shaper_v() on every slope update
     __attribute__((section(".time_critical.hardware_set_output")))
@@ -2401,6 +2426,7 @@ public:
         
         // Initialize slopes system for crow-style output processing
         S_init(4); // Initialize 4 output channels
+        ComputerCard::RegisterCore1BackgroundHook(S_slope_buffer_background_service);
         
         // Initialize AShaper system for output quantization (pass-through mode)
         AShaper_init(4); // Initialize 4 output channels
@@ -2532,6 +2558,10 @@ public:
         // USB TX batching timer (matches crow's 2ms interval)
         static uint32_t last_usb_tx_us = 0;
         const uint32_t usb_tx_interval_us = 2000; // 2ms like crow
+
+        // LED visualization cadence (~60Hz)
+        static uint32_t last_led_update_us = 0;
+        const uint32_t led_update_interval_us = 16667; // ~60Hz
         
         while (1) {
             // === PERFORMANCE MONITORING: Track loop iteration time ===
@@ -2561,6 +2591,12 @@ public:
 
             // NEW: Drain USB TX queue outside ISR (eliminates reentrancy races)
             usb_process_tx();
+
+            uint32_t now_us = time_us_32();
+            if ((now_us - last_led_update_us) >= led_update_interval_us) {
+                last_led_update_us = now_us;
+                UpdateOutputLeds();
+            }
             
             // Send welcome message 1.5s after startup
             if (!welcome_sent && absolute_time_diff_us(get_absolute_time(), welcome_time) <= 0) {
@@ -2615,7 +2651,6 @@ public:
             update_input_stream_values();
             
             // *** CRITICAL: Process timer/slopes updates at ~1.5kHz (OUTSIDE ISR!) ***
-            uint32_t now_us = time_us_32();
             if (now_us - last_timer_process_us >= timer_interval_us) {
                 Timer_Process();  // Safe here - not in ISR context!
                 last_timer_process_us = now_us;
@@ -2774,7 +2809,6 @@ public:
 
         }
     }
-    
     // Accumulate script data during upload (REPL_reception mode)
     void receive_script_data(const char* buf, uint32_t len) {
         if (g_repl_mode != REPL_reception) {
@@ -3181,19 +3215,19 @@ public:
         // === SLOPE PROCESSING: Sample-accurate output generation ===
         // Moved from Core 0 Timer_Process for zero-jitter, sample-accurate output
         // Process one sample per channel per ISR call (~115-210 cycles per active channel)
-        extern Slope_t* slopes;
-        extern q16_t S_step_one_sample_q16(int index);
+        extern q16_t S_consume_buffered_sample_q16(int index);
+        extern bool S_slope_buffer_needs_fill(int index);
+        extern void S_slope_buffer_fill_block(int index, int samples);
         
-        for (int ch = 0; ch < 4; ch++) {
-            // Check if this slope needs processing
-            // Active if countdown > 0 OR recently finished (countdown in (-1024, 0])
-            int64_t threshold_q16 = -((int64_t)1024 << 16); // -1024.0 in Q16
-            if (slopes && (slopes[ch].countdown_q16 > threshold_q16 || slopes[ch].action != NULL)) {
-                // Process one sample - returns shaped, quantized voltage
-                q16_t output_q16 = S_step_one_sample_q16(ch);
-                // Output is written directly to hardware inside S_step_one_sample_q16
-            }
+        for (int ch = 0; ch < SLOPE_CHANNELS; ch++) {
+            q16_t output_q16 = S_consume_buffered_sample_q16(ch);
+            hardware_output_set_voltage_q16(ch + 1, output_q16);
         }
+        static int slope_refill_channel = 0;
+        if (S_slope_buffer_needs_fill(slope_refill_channel)) {
+            S_slope_buffer_fill_block(slope_refill_channel, SLOPE_RENDER_CHUNK);
+        }
+        slope_refill_channel = (slope_refill_channel + 1) % SLOPE_CHANNELS;
         
         // Read CV inputs directly - clean and simple
         int16_t cv1 = CVIn1();
@@ -3284,44 +3318,6 @@ public:
         
         // === PULSE OUTPUT 2: Controlled by Lua (no default behavior) ===
         // Users can control by calling bb.pulseout[2]:clock() or setting bb.pulseout[2].action
-        
-        // === LED OUTPUT VISUALIZATION (Direct on Core 1, 60Hz @ 12kHz) ===
-        // Update LEDs directly on Core 1 - safe since LED writes are just PWM register updates
-        // 60Hz eliminates flicker on phone cameras (which run at 30-60fps)
-        static int led_update_counter = 0;
-        if (++led_update_counter >= 200) {
-            led_update_counter = 0;
-            
-            // Read current output states
-            int32_t cv1_mv = g_output_state_mv[0];
-            int32_t cv2_mv = g_output_state_mv[1];
-            int32_t audio1_mv = g_output_state_mv[2];
-            int32_t audio2_mv = g_output_state_mv[3];
-            bool pulse1 = g_pulse_out_state[0];
-            bool pulse2 = g_pulse_out_state[1];
-            
-            // Clamp to positive values only (negative values = LED off)
-            int32_t cv1_pos = (cv1_mv < 0) ? 0 : cv1_mv;
-            int32_t cv2_pos = (cv2_mv < 0) ? 0 : cv2_mv;
-            int32_t audio1_pos = (audio1_mv < 0) ? 0 : audio1_mv;
-            int32_t audio2_pos = (audio2_mv < 0) ? 0 : audio2_mv;
-            
-            // Convert mV to LED brightness (0-4095)
-            // Clamp to +6V range (6000mV), normalize to 0-4095
-            // Using fixed-point: (pos_mv * 682) >> 10 ≈ pos_mv * (4095/6000)
-            uint16_t led0_brightness = (audio1_pos > 6000) ? 4095 : (uint16_t)((audio1_pos * 682) >> 10);
-            uint16_t led1_brightness = (audio2_pos > 6000) ? 4095 : (uint16_t)((audio2_pos * 682) >> 10);
-            uint16_t led2_brightness = (cv1_pos > 6000) ? 4095 : (uint16_t)((cv1_pos * 682) >> 10);
-            uint16_t led3_brightness = (cv2_pos > 6000) ? 4095 : (uint16_t)((cv2_pos * 682) >> 10);
-            
-            // Update LEDs directly (safe on Core 1 - just PWM register writes)
-            LedBrightness(0, led0_brightness);  // LED 0 - Audio1 amplitude
-            LedBrightness(1, led1_brightness);  // LED 1 - Audio2 amplitude
-            LedBrightness(2, led2_brightness);  // LED 2 - CV1 amplitude
-            LedBrightness(3, led3_brightness);  // LED 3 - CV2 amplitude
-            LedOn(4, pulse1);  // LED 4 - Pulse1
-            LedOn(5, pulse2);  // LED 5 - Pulse2
-        }
         
         // === PERFORMANCE MONITORING (low-cost) ===
         // Check if ProcessSample exceeded time budget
