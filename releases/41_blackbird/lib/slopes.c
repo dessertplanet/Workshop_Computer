@@ -405,9 +405,13 @@ q16_t S_step_one_sample_q16(int index)
         return self->shaped_q16;
     }
     
-    // Advance countdown by 1 sample
-    self->countdown_q16--;
-    self->elapsed_q16++;
+    // Advance countdown by one sample in Q16 units
+    const int64_t one_sample_q16 = (int64_t)Q16_ONE;
+    self->countdown_q16 -= one_sample_q16;
+    self->elapsed_q16   += one_sample_q16;
+    if( self->countdown_q16 < 0 ) {
+        self->countdown_q16 = 0;
+    }
     
     if( self->elapsed_q16 > self->duration_q16 ) {
         self->elapsed_q16 = self->duration_q16;
