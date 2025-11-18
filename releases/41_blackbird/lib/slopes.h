@@ -31,7 +31,7 @@ typedef int32_t q16_t;
 #define Q12_TO_Q16(q) ((q16_t)((q) << (Q16_SHIFT - 12)))
 
 // need an Init() fn. send SR as an argument
-#define SAMPLE_RATE 48000
+#define SAMPLE_RATE 24000
 #define iSAMPLE_RATE (1.0/(float)SAMPLE_RATE)
 #define SAMPLES_PER_MS ((float)SAMPLE_RATE/1000.0)
 #define SAMPLES_PER_MS_Q16 FLOAT_TO_Q16(SAMPLES_PER_MS)  // Pre-calculated Q16 constant
@@ -95,6 +95,9 @@ void S_toward( int        index
              , Shape_t    shape
              , Callback_t cb
              );
+// Single-sample processing for Core 1 ISR (new, optimized for sample-accurate output)
+q16_t S_step_one_sample_q16( int index );
+
 float* S_step_v( int     index
                , float*  out
                , int     size

@@ -13,7 +13,7 @@ typedef struct {
     timer_callback_t callback;
     float period_seconds;
     bool active;
-    uint32_t period_samples;      // Period in 48kHz samples
+    uint32_t period_samples;      // Period in 24kHz samples
     uint64_t next_trigger_sample; // When to trigger next (64-bit for long-running systems)
     float period_error;           // Accumulated fractional sample error for precision
 } timer_t;
@@ -93,8 +93,8 @@ void Timer_Set_Params(int timer_id, float seconds) {
     }
     
     timers[timer_id].period_seconds = seconds;
-    // Convert seconds to samples at 48kHz with precise fractional handling
-    float precise_samples = seconds * 48000.0f;
+    // Convert seconds to samples at 24kHz with precise fractional handling
+    float precise_samples = seconds * 24000.0f;
     timers[timer_id].period_samples = (uint32_t)precise_samples;
     timers[timer_id].period_error = precise_samples - (float)timers[timer_id].period_samples;
     
@@ -150,35 +150,8 @@ void Timer_Process(void) {
 // Critical: Timer callback processing - place in RAM for consistent timing
 void __not_in_flash_func(Timer_Process_Block)(void) {
     // Process all timer events that occurred in this block
-    // This function runs at 1.5kHz instead of 48kHz, reducing CPU overhead by 97%
-    
-    // OPTIMIZATION: Only process slopes that are actually changing
-    // Check which channels have active slopes before expensive S_step_v calls
-    extern float S_get_state(int index);
-    extern float* S_step_v(int index, float* out, int size);
-    
-    // Access slope internals to check if processing is needed
-    extern Slope_t* slopes; // Defined in slopes.c
-    static float slope_buffer[TIMER_BLOCK_SIZE_MAX];
-
-    for (int ch = 0; ch < 4; ch++) {
-        // OPTIMIZATION: Skip truly idle channels (long-term inactive)
-        // A channel is only skippable if:
-        // 1. countdown <= -1024.0 (has been idle for a long time - see static_v overflow tracking)
-        // 2. No pending action callback
-        //
-        // This fixes the zero-slew bug where countdown=-0.0 and action=NULL looked "idle"
-        // but the channel still needed processing for future volts commands.
-        // Channels with countdown in range (-1024.0, 0.0] are recently active and MUST be processed.
-        int64_t threshold_q16 = -((int64_t)1024 << Q16_SHIFT); // -1024.0 in Q16
-        if (slopes && slopes[ch].countdown_q16 <= threshold_q16 && slopes[ch].action == NULL) {
-            continue; // Channel has been idle for 1024+ samples, safe to skip
-        }
-        
-        // Process this channel's slope over the block
-        // Quantization is applied inside S_step_v before hardware output
-        S_step_v(ch, slope_buffer, TIMER_BLOCK_SIZE);
-    }
+    // NOTE: Slope processing has moved to Core 1 ProcessSample() for sample-accurate output
+    // This function now only handles timer callbacks (metros, ASL actions, etc.)
     
     // Process timer callbacks
     for (int i = 0; i < max_timers; i++) {

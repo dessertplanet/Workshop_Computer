@@ -85,6 +85,11 @@ static void init_shape_luts(void) {
     printf("  Expected speedup: ~30-50x for exp/log, ~10x for sin\n");
 }
 
+// Export LUT table pointers for S_step_one_sample_q16 in ISR
+const q11_t* lut_sin_ptr = NULL;
+const q11_t* lut_log_ptr = NULL;
+const q11_t* lut_exp_ptr = NULL;
+
 // Ultra-fast Q11 LUT lookup with linear interpolation
 // Performance: ~40-60 cycles on Cortex-M0+ (vs ~1500+ for powf())
 // CRITICAL HOT PATH: Place in RAM for deterministic timing
@@ -310,6 +315,11 @@ void S_init( int channels )
     // Initialize Q11 LUTs first for optimal performance
     init_shape_luts();
     
+    // Export LUT pointers for S_step_one_sample_q16 in Core 1 ISR
+    lut_sin_ptr = lut_sin;
+    lut_log_ptr = lut_log;
+    lut_exp_ptr = lut_exp;
+    
     slope_count = channels;
     slopes = malloc( sizeof ( Slope_t ) * channels );
     if( !slopes ){ printf("slopes malloc failed\n"); return; }
@@ -378,6 +388,95 @@ float S_get_state( int index )
 {
     if( index < 0 || index >= SLOPE_CHANNELS ){ return 0.0; }
     return Q16_TO_FLOAT(slopes[index].shaped_q16);
+}
+
+// Single-sample slope processing for Core 1 ISR
+// Returns shaped, quantized output voltage in Q16 format
+// CRITICAL: Place in RAM for deterministic ISR timing
+__attribute__((section(".time_critical.S_step_one_sample_q16")))
+q16_t S_step_one_sample_q16(int index)
+{
+    if( index < 0 || index >= SLOPE_CHANNELS ){ return 0; }
+    Slope_t* self = &slopes[index];
+    
+    // Check if slope is active (countdown > 0)
+    if( self->countdown_q16 <= 0 ) {
+        // Slope finished - return last output without processing
+        return self->shaped_q16;
+    }
+    
+    // Advance countdown by 1 sample
+    self->countdown_q16--;
+    self->elapsed_q16++;
+    
+    if( self->elapsed_q16 > self->duration_q16 ) {
+        self->elapsed_q16 = self->duration_q16;
+    }
+    
+    // Calculate progress [0.0, 1.0] in Q16 format
+    q16_t here_q16;
+    if( self->duration_q16 <= 0 ) {
+        // Instant transition - already at destination
+        here_q16 = Q16_ONE;
+    } else if( self->elapsed_q16 <= 0 ) {
+        here_q16 = 0;
+    } else if( self->elapsed_q16 >= self->duration_q16 ) {
+        here_q16 = Q16_ONE;
+    } else {
+        // Progress = elapsed / duration (in Q16)
+        here_q16 = (q16_t)(((self->elapsed_q16 << Q16_SHIFT)) / self->duration_q16);
+    }
+    self->here_q16 = here_q16;
+    
+    // Apply shape function (pure Q16 integer math)
+    q16_t shaped_q16;
+    extern const q11_t* lut_sin_ptr;
+    extern const q11_t* lut_log_ptr;
+    extern const q11_t* lut_exp_ptr;
+    extern q16_t lut_lookup_q16(const q11_t* lut, q16_t in_q16);
+    
+    switch( self->shape ) {
+        case SHAPE_Sine:
+            shaped_q16 = lut_lookup_q16(lut_sin_ptr, here_q16);
+            break;
+        case SHAPE_Log:
+            shaped_q16 = lut_lookup_q16(lut_log_ptr, here_q16);
+            break;
+        case SHAPE_Expo:
+            shaped_q16 = lut_lookup_q16(lut_exp_ptr, here_q16);
+            break;
+        case SHAPE_Now:
+            shaped_q16 = (here_q16 >= Q16_ONE) ? Q16_ONE : 0;
+            break;
+        case SHAPE_Wait:
+            shaped_q16 = (here_q16 <= 0) ? 0 : Q16_ONE;
+            break;
+        case SHAPE_Linear:
+        default:
+            shaped_q16 = here_q16;
+            break;
+    }
+    
+    // Map to output range: shaped * scale + last (Q16 arithmetic)
+    q16_t voltage_q16 = Q16_MUL(shaped_q16, self->scale_q16) + self->last_q16;
+    self->shaped_q16 = voltage_q16;
+    
+    // Apply quantization
+    extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
+    q16_t quantized_q16 = AShaper_quantize_single_q16(index, voltage_q16);
+    
+    // Update hardware output
+    extern void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
+    hardware_output_set_voltage_q16(index + 1, quantized_q16);
+    
+    // Check for action callback at end of slope
+    if( self->countdown_q16 == 0 && self->action != NULL ) {
+        // Queue callback to Core 0 via event system
+        extern void queue_slope_action_callback(int channel);
+        queue_slope_action_callback(index);
+    }
+    
+    return quantized_q16;
 }
 
 // Q16.16 Fixed-Point Slope Engine - Core Implementation

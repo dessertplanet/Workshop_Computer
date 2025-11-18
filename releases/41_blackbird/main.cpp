@@ -149,6 +149,40 @@ static volatile uint32_t g_noise_lock_counter[4] = {0, 0, 0, 0};  // Prevent cle
 // Fast xorshift32 PRNG state for audio-rate noise
 static uint32_t g_noise_state = 0xDEADBEEF;
 
+// Slope action callback queue (Core 1 → Core 0)
+// When slopes complete and have action callbacks, Core 1 queues them here
+#define SLOPE_ACTION_QUEUE_SIZE 16
+static volatile uint8_t g_slope_action_queue[SLOPE_ACTION_QUEUE_SIZE];
+static volatile uint32_t g_slope_action_write_idx = 0;
+static volatile uint32_t g_slope_action_read_idx = 0;
+
+// Queue slope action callback from Core 1 (called in ISR)
+extern "C" void queue_slope_action_callback(int channel) {
+    uint32_t next_write = (g_slope_action_write_idx + 1) % SLOPE_ACTION_QUEUE_SIZE;
+    if (next_write != g_slope_action_read_idx) {
+        g_slope_action_queue[g_slope_action_write_idx] = (uint8_t)channel;
+        g_slope_action_write_idx = next_write;
+    }
+    // If queue full, drop the callback (shouldn't happen in practice)
+}
+
+// Process slope action callbacks on Core 0 (called from MainControlLoop)
+static void process_slope_action_callbacks() {
+    extern Slope_t* slopes;
+    
+    while (g_slope_action_read_idx != g_slope_action_write_idx) {
+        uint8_t channel = g_slope_action_queue[g_slope_action_read_idx];
+        g_slope_action_read_idx = (g_slope_action_read_idx + 1) % SLOPE_ACTION_QUEUE_SIZE;
+        
+        // Fire the action callback if it's still set
+        if (slopes && channel < 4 && slopes[channel].action != NULL) {
+            Callback_t callback = slopes[channel].action;
+            slopes[channel].action = NULL; // Clear before calling to prevent re-trigger
+            callback((int)channel);
+        }
+    }
+}
+
 // ============================================================================
 // PERFORMANCE MONITORING
 // ============================================================================
@@ -2573,6 +2607,9 @@ public:
             // Process queued messages from audio thread
             process_queued_messages();
             
+            // Process slope action callbacks from Core 1
+            process_slope_action_callbacks();
+            
             // *** OPTIMIZATION: Process detection events on Core 0 ***
             // This does the FP conversion and fires callbacks
             // Deferred from Core 1 ISR to eliminate FP math from audio thread
@@ -2734,7 +2771,7 @@ public:
             }
             
             // Check for pulse input changes and fire callbacks
-            // Edge detection happens at 48kHz in ProcessSample(), we just check flags here
+            // Edge detection happens at 24kHz in ProcessSample(), we just check flags here
             // REENTRANCY PROTECTION: Skip callback if one is already running (prevents crashes from fast clocks)
             for (int i = 0; i < 2; i++) {
                 if (g_pulsein_edge_detected[i] && !g_pulsein_callback_active[i]) {
@@ -3181,6 +3218,23 @@ public:
         // Keep clock system synchronized (lightweight)
         clock_increment_sample_counter();
         
+        // === SLOPE PROCESSING: Sample-accurate output generation ===
+        // Moved from Core 0 Timer_Process for zero-jitter, sample-accurate output
+        // Process one sample per channel per ISR call (~115-210 cycles per active channel)
+        extern Slope_t* slopes;
+        extern q16_t S_step_one_sample_q16(int index);
+        
+        for (int ch = 0; ch < 4; ch++) {
+            // Check if this slope needs processing
+            // Active if countdown > 0 OR recently finished (countdown in (-1024, 0])
+            int64_t threshold_q16 = -((int64_t)1024 << 16); // -1024.0 in Q16
+            if (slopes && (slopes[ch].countdown_q16 > threshold_q16 || slopes[ch].action != NULL)) {
+                // Process one sample - returns shaped, quantized voltage
+                q16_t output_q16 = S_step_one_sample_q16(ch);
+                // Output is written directly to hardware inside S_step_one_sample_q16
+            }
+        }
+        
         // Read CV inputs directly - clean and simple
         int16_t cv1 = CVIn1();
         int16_t cv2 = CVIn2();
@@ -3197,7 +3251,7 @@ public:
         Detect_process_sample(0, cv1);
         Detect_process_sample(1, cv2);
         
-        // Pulse input edge detection (48kHz) - catches even very short pulses
+        // Pulse input edge detection (24kHz) - catches even very short pulses
         // Check for edges when change or clock mode is enabled, respecting direction filter
         // mode: 0=none, 1=change, 2=clock
         if (g_pulsein_mode[0] == 1) {
@@ -3233,7 +3287,7 @@ public:
         g_pulsein_state[0] = PulseIn1();
         g_pulsein_state[1] = PulseIn2();
         
-        // === AUDIO-RATE NOISE GENERATION (48kHz) - INTEGER MATH ONLY ===
+        // === AUDIO-RATE NOISE GENERATION (24kHz) - INTEGER MATH ONLY ===
         // Generate and output noise for any active channels
         // OPTIMIZATION: Fast check if ANY noise is active before iterating channels
         if (g_noise_active_mask) {
@@ -3272,8 +3326,8 @@ public:
         // Users can control by calling bb.pulseout[2]:clock() or setting bb.pulseout[2].action
         
         // === LED OUTPUT VISUALIZATION ===
-        // Snapshot values for Core 0 LED update (every 200 samples = 240Hz at 48kHz)
-        // 240Hz eliminates flicker on phone cameras (which run at 30-60fps)
+        // Snapshot values for Core 0 LED update (every 200 samples = 120Hz at 24kHz)
+        // 120Hz eliminates flicker on phone cameras (which run at 30-60fps)
         static int led_update_counter = 0;
         if (++led_update_counter >= 200) {
             led_update_counter = 0;
@@ -3292,7 +3346,7 @@ public:
         
         // === PERFORMANCE MONITORING (low-cost) ===
         // Check if ProcessSample exceeded time budget
-        // At 48kHz, each sample has ~20.8us budget. Warn at 18us (87% utilization)
+        // At 24kHz, each sample has ~41.6us budget. Warn at 36us (87% utilization)
         uint32_t elapsed = time_us_32() - start_time;
         
         // Always track worst-case execution time (available via perf_stats())
@@ -3301,7 +3355,7 @@ public:
         }
         
         // Warn if exceeding budget threshold
-        if (elapsed > 18) {  // Threshold: 18 microseconds
+        if (elapsed > 36) {  // Threshold: 36 microseconds (87% of 41.6us budget at 24kHz)
             g_overrun_count++;
             
             static uint32_t last_report_time = 0;
@@ -4931,7 +4985,7 @@ int LuaManager::lua_perf_stats(lua_State* L) {
             snprintf(msg, sizeof(msg), 
                      "ProcessSample Performance (Core 1):\n\r"
                      "  Worst case: %lu microseconds\n\r"
-                     "  Budget: 20.8us (48kHz sample rate)\n\r"
+                     "  Budget: 41.6us (24kHz sample rate)\n\r"
                      "  Utilization: %.1f%%\n\r"
                      "  Overruns (>18us): %lu\n\r"
                      "\n\r"
