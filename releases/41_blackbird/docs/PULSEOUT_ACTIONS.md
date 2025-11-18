@@ -12,7 +12,7 @@ The Blackbird hardware has two pulse outputs that can be controlled via Lua. Thi
 ## Default Behavior
 
 ### Pulse Output 1
-By default, `bb.pulseout[1]` generates a **10ms pulse** twice per beat of the internal clock (equivalent to `:clock(0.5)`).
+By default, `bb.pulseout[1]` generates a **10ms pulse** twice per beat of the internal clock (equivalent to `:clock(0.5)`). Just like `output[1]:clock(0.5)`, it automatically installs a `pulse()` action if you have not provided one.
 
 ```lua
 -- Default setup (done automatically on startup)
@@ -60,6 +60,7 @@ bb.pulseout[1]:clock('off') -- Stop the clock
 - Executes the action (default: `pulse(0.010)`) on each trigger
 - Can be stopped with `:clock('off')` or `clock.cleanup()`
 - Calling `:clock(div)` again replaces the previous clock coroutine
+- Mirrors `output[n]:clock(div)` semantics: if `.action` is nil, it automatically injects `pulse()` so you always get a trigger without extra setup
 
 ### `:high()`
 Set the output high (5V) indefinitely and stop any running clock coroutine.

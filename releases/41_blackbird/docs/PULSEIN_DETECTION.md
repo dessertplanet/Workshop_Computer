@@ -1,7 +1,7 @@
 # Pulse Input Detection Implementation
 
 ## Overview
-Added support for pulse input change detection in the monome crow emulator. The system detects edges at 48kHz audio rate, ensuring even very short pulses (< 20μs) are reliably captured.
+Added support for pulse input change detection in the monome crow emulator. The system detects edges inside the 8kHz `ProcessSample()` ISR, which is fast enough to capture short Eurorack triggers while keeping CPU headroom for the new Core 1 slope worker.
 
 ## API
 
@@ -62,12 +62,16 @@ bb.pulsein[2].change = function(state) print(state) end
 ### Architecture
 The implementation avoids using Lua C closures with upvalues (which can interfere with the Pico SDK's timer system). Instead, each pulsein table stores its index as a `_idx` field, and the metamethods read this field to determine which pulse input they're operating on.
 
-### Edge Detection at Audio Rate (48kHz)
-The system uses the hardware's built-in edge detection (`PulseIn1RisingEdge()`, `PulseIn1FallingEdge()`) which runs at 48kHz in the `ProcessSample()` ISR. This ensures:
+### Edge Detection at Audio Rate (8kHz)
+The system uses the hardware's built-in edge detection (`PulseIn1RisingEdge()`, `PulseIn1FallingEdge()`) which now runs at the 8kHz `ProcessSample()` ISR cadence. This ensures:
 
-- **No missed pulses**: Even pulses as short as ~20μs (one audio sample) are detected
-- **Accurate timing**: Edge detection happens at audio rate, not main loop rate
+- **Reliable trigger capture**: Pulses longer than ~125μs (one 8kHz sample) are detected
+- **Accurate timing**: Edge detection happens in the ISR, not the main loop
 - **Low overhead**: Flags are set in ISR, callbacks fired in main loop
+
+### Normalization-aware gating
+
+Configuration no longer fails when a jack appears disconnected. Lua scripts can put a `pulsein` into `change` or `clock` mode at any time, and the ISR will automatically suppress edge flags until the normalization probe reports that the jack is truly patched. This keeps noise from the normed signal from generating phantom edges while making the API behave more like real crow.
 
 ### Main Loop Processing (~8kHz)
 The main loop checks edge flags and fires Lua callbacks:
@@ -149,9 +153,9 @@ bb.pulsein[1].change = nil  -- Optional: clear callback
 
 ## Performance Characteristics
 
-- **Detection latency**: ~20μs (one audio sample at 48kHz)
+- **Detection latency**: ~125μs (one audio sample at 8kHz)
 - **Callback latency**: 100μs typical (main loop period)
-- **Minimum detectable pulse**: ~20μs (48kHz = 20.8μs period)
+- **Minimum detectable pulse**: ~125μs (8kHz = 125μs period)
 - **ISR overhead**: ~100 clock cycles per sample when mode is 'change'
 
 ## Files Modified

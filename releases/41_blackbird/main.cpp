@@ -543,26 +543,20 @@ static int pulsein_newindex(lua_State* L) {
         if (strcmp(mode, "none") == 0) {
             g_pulsein_mode[idx] = 0;
         } else if (strcmp(mode, "change") == 0) {
-            if (is_connected) {
-                g_pulsein_mode[idx] = 1;
-            } else {
-                // Pulse input not connected - set to none to prevent spurious triggers
-                g_pulsein_mode[idx] = 0;
-            }
+            g_pulsein_mode[idx] = 1;
         } else if (strcmp(mode, "clock") == 0) {
-            if (is_connected) {
-                g_pulsein_mode[idx] = 2;
-                // Clock mode only detects rising edges
-                g_pulsein_direction[idx] = 1;
-                // Set clock source to external (crow input)
-                clock_set_source(CLOCK_SOURCE_CROW);
-                clock_crow_in_div(g_pulsein_clock_div[idx]);
-            } else {
-                // Pulse input not connected - set to none to prevent spurious clock triggers
-                g_pulsein_mode[idx] = 0;
-            }
+            g_pulsein_mode[idx] = 2;
+            // Clock mode only detects rising edges
+            g_pulsein_direction[idx] = 1;
+            // Set clock source to external (crow input)
+            clock_set_source(CLOCK_SOURCE_CROW);
+            clock_crow_in_div(g_pulsein_clock_div[idx]);
         } else {
             return luaL_error(L, "pulsein.mode must be 'none', 'change', or 'clock'");
+        }
+        
+        if (!is_connected && g_pulsein_mode[idx] != 0) {
+            printf("pulsein[%d]: mode '%s' enabled while jack not detected; waiting for connection\n\r", idx + 1, mode);
         }
         return 0;
     } else if (strcmp(key, "division") == 0) {
@@ -604,9 +598,6 @@ static int pulsein_call(lua_State* L) {
         return luaL_error(L, "pulsein() expects a table argument");
     }
     
-    // Check if pulse input is connected for change/clock modes
-    bool is_connected = is_pulse_input_connected(idx);
-    
     // Process mode field
     lua_getfield(L, 2, "mode");
     if (lua_isstring(L, -1)) {
@@ -614,24 +605,18 @@ static int pulsein_call(lua_State* L) {
         if (strcmp(mode, "none") == 0) {
             g_pulsein_mode[idx] = 0;
         } else if (strcmp(mode, "change") == 0) {
-            if (is_connected) {
-                g_pulsein_mode[idx] = 1;
-            } else {
-                // Pulse input not connected - set to none to prevent spurious triggers
-                g_pulsein_mode[idx] = 0;
-            }
+            g_pulsein_mode[idx] = 1;
         } else if (strcmp(mode, "clock") == 0) {
-            if (is_connected) {
-                g_pulsein_mode[idx] = 2;
-                g_pulsein_direction[idx] = 1;  // Clock always uses rising edges
-                clock_set_source(CLOCK_SOURCE_CROW);
-                clock_crow_in_div(g_pulsein_clock_div[idx]);
-            } else {
-                // Pulse input not connected - set to none to prevent spurious clock triggers
-                g_pulsein_mode[idx] = 0;
-            }
+            g_pulsein_mode[idx] = 2;
+            g_pulsein_direction[idx] = 1;  // Clock always uses rising edges
+            clock_set_source(CLOCK_SOURCE_CROW);
+            clock_crow_in_div(g_pulsein_clock_div[idx]);
         } else {
             return luaL_error(L, "pulsein mode must be 'none', 'change', or 'clock'");
+        }
+        
+        if (!is_pulse_input_connected(idx) && g_pulsein_mode[idx] != 0) {
+            printf("pulsein[%d]: mode '%s' enabled while jack not detected; waiting for connection\n\r", idx + 1, mode);
         }
     }
     lua_pop(L, 1);
@@ -1759,6 +1744,16 @@ public:
                     
                     -- Match crow output clock semantics (use main clock)
                     self.clock_div = div or self.clock_div or 1
+
+                    -- Ensure there is always a pulse() action to run, just like output[n]:clock()
+                    if rawget(self, '_action') == nil then
+                        local ok, default_action = pcall(pulse)
+                        if ok then
+                            rawset(self, '_action', default_action)
+                        else
+                            print('bb.pulseout clock: pulse() unavailable (' .. tostring(default_action) .. ')')
+                        end
+                    end
                     
                     -- Cancel existing clock coroutine if any
                     if self.ckcoro then 
@@ -1771,11 +1766,14 @@ public:
                         while true do
                             clock.sync(self.clock_div)
                             local action = rawget(self, '_action')
-                            if action then
-                                if type(action) == 'table' then
-                                    _c.tell('output', self._idx + 3, action)
-                                elseif type(action) == 'function' then
-                                    action()
+                            if type(action) == 'table' then
+                                _c.tell('output', self._idx + 3, action)
+                            elseif type(action) == 'function' then
+                                action()
+                            else
+                                local ok, fallback = pcall(pulse)
+                                if ok then
+                                    _c.tell('output', self._idx + 3, fallback)
                                 end
                             end
                         end
@@ -3251,40 +3249,54 @@ public:
         Detect_process_sample(1, cv2);
         
         // Pulse input edge detection (8kHz) - catches even very short pulses
-        // Check for edges when change or clock mode is enabled, respecting direction filter
-        // mode: 0=none, 1=change, 2=clock
-        if (g_pulsein_mode[0] == 1) {
-            bool rising = PulseIn1RisingEdge();
-            bool falling = PulseIn1FallingEdge();
-            // direction: 0=both, 1=rising only, -1=falling only
-            if ((rising && g_pulsein_direction[0] != -1) || (falling && g_pulsein_direction[0] != 1)) {
-                g_pulsein_edge_detected[0] = true;
-                g_pulsein_edge_state[0] = PulseIn1();
+        // Only process edges for physical jacks that the normalization probe reports as connected
+        bool pulse1_connected = Connected(ComputerCard::Input::Pulse1);
+        bool pulse2_connected = Connected(ComputerCard::Input::Pulse2);
+
+        if (pulse1_connected) {
+            if (g_pulsein_mode[0] == 1) {
+                bool rising = PulseIn1RisingEdge();
+                bool falling = PulseIn1FallingEdge();
+                // direction: 0=both, 1=rising only, -1=falling only
+                if ((rising && g_pulsein_direction[0] != -1) || (falling && g_pulsein_direction[0] != 1)) {
+                    g_pulsein_edge_detected[0] = true;
+                    g_pulsein_edge_state[0] = PulseIn1();
+                }
+            } else if (g_pulsein_mode[0] == 2) {
+                // Clock mode - only rising edges
+                if (PulseIn1RisingEdge()) {
+                    g_pulsein_clock_edge_pending[0] = true;  // Defer to Core 0 (avoids FP math in ISR)
+                }
             }
-        } else if (g_pulsein_mode[0] == 2) {
-            // Clock mode - only rising edges
-            if (PulseIn1RisingEdge()) {
-                g_pulsein_clock_edge_pending[0] = true;  // Defer to Core 0 (avoids FP math in ISR)
-            }
+            g_pulsein_state[0] = PulseIn1();
+        } else {
+            // Clear any stale edge flags while disconnected
+            g_pulsein_edge_detected[0] = false;
+            g_pulsein_clock_edge_pending[0] = false;
+            g_pulsein_state[0] = false;
         }
-        if (g_pulsein_mode[1] == 1) {
-            bool rising = PulseIn2RisingEdge();
-            bool falling = PulseIn2FallingEdge();
-            // direction: 0=both, 1=rising only, -1=falling only
-            if ((rising && g_pulsein_direction[1] != -1) || (falling && g_pulsein_direction[1] != 1)) {
-                g_pulsein_edge_detected[1] = true;
-                g_pulsein_edge_state[1] = PulseIn2();
+
+        if (pulse2_connected) {
+            if (g_pulsein_mode[1] == 1) {
+                bool rising = PulseIn2RisingEdge();
+                bool falling = PulseIn2FallingEdge();
+                // direction: 0=both, 1=rising only, -1=falling only
+                if ((rising && g_pulsein_direction[1] != -1) || (falling && g_pulsein_direction[1] != 1)) {
+                    g_pulsein_edge_detected[1] = true;
+                    g_pulsein_edge_state[1] = PulseIn2();
+                }
+            } else if (g_pulsein_mode[1] == 2) {
+                // Clock mode - only rising edges
+                if (PulseIn2RisingEdge()) {
+                    g_pulsein_clock_edge_pending[1] = true;  // Defer to Core 0 (avoids FP math in ISR)
+                }
             }
-        } else if (g_pulsein_mode[1] == 2) {
-            // Clock mode - only rising edges
-            if (PulseIn2RisingEdge()) {
-                g_pulsein_clock_edge_pending[1] = true;  // Defer to Core 0 (avoids FP math in ISR)
-            }
+            g_pulsein_state[1] = PulseIn2();
+        } else {
+            g_pulsein_edge_detected[1] = false;
+            g_pulsein_clock_edge_pending[1] = false;
+            g_pulsein_state[1] = false;
         }
-        
-        // Update current pulse state cache (for .state queries)
-        g_pulsein_state[0] = PulseIn1();
-        g_pulsein_state[1] = PulseIn2();
         
         // === AUDIO-RATE NOISE GENERATION (8kHz) - INTEGER MATH ONLY ===
         // Generate and output noise for any active channels
