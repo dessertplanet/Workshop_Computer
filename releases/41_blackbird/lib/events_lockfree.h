@@ -16,6 +16,12 @@ typedef struct {
     uint32_t timestamp_us;  // For debugging timing precision
 } metro_event_lockfree_t;
 
+// Clock resume event structure for lock-free queue
+typedef struct {
+    int coro_id;
+    uint32_t timestamp_us;
+} clock_event_lockfree_t;
+
 // Input detection event structure for lock-free queue  
 typedef struct {
     int channel;        // Input channel (0-based)
@@ -51,6 +57,12 @@ typedef struct {
     volatile metro_event_lockfree_t events[LOCKFREE_QUEUE_SIZE];
 } metro_lockfree_queue_t;
 
+// Complete lock-free clock resume queue
+typedef struct {
+    lockfree_queue_header_t header;
+    volatile clock_event_lockfree_t events[LOCKFREE_QUEUE_SIZE];
+} clock_lockfree_queue_t;
+
 // Complete lock-free input queue
 typedef struct {
     lockfree_queue_header_t header;
@@ -60,6 +72,7 @@ typedef struct {
 // Global lock-free queues
 extern metro_lockfree_queue_t g_metro_lockfree_queue;
 extern input_lockfree_queue_t g_input_lockfree_queue;
+extern clock_lockfree_queue_t g_clock_lockfree_queue;
 
 // Lock-free queue operations
 
@@ -70,6 +83,11 @@ void events_lockfree_init(void);
 bool metro_lockfree_post(int metro_id, int stage);
 bool metro_lockfree_get(metro_event_lockfree_t* event);
 uint32_t metro_lockfree_queue_depth(void);
+
+// Clock resume queue functions
+bool clock_lockfree_post(int coro_id);
+bool clock_lockfree_get(clock_event_lockfree_t* event);
+uint32_t clock_lockfree_queue_depth(void);
 
 // Input queue functions (Core 1 = producer, Core 0 = consumer)  
 bool input_lockfree_post(int channel, float value, int detection_type);

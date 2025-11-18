@@ -32,6 +32,7 @@ static int _delay( lua_State* L );
 // Forward declarations for L_handle_* functions
 void L_handle_metro( event_t* e );
 void L_handle_clock_resume( event_t* e );
+void L_handle_clock_resume_lockfree(clock_event_lockfree_t* event);
 void L_handle_clock_start( event_t* e );
 void L_handle_clock_stop( event_t* e );
 
@@ -340,6 +341,41 @@ lua_gettable(L, 1); // replace @2 with: input[n]
         lua_pushvalue(L, 2); // @4 copy of input[n]
         lua_call(L, 1, 0);
 }
+    lua_settop(L, 0);
+
+    // bb.pulsein[1/2] defaults: clear callbacks and modes to keep hardware safe
+    lua_getglobal(L, "bb"); // @1
+    if(!lua_isnil(L, 1)){
+        lua_getfield(L, 1, "pulsein"); // @2
+        if(!lua_isnil(L, 2)){
+            for(int i = 1; i <= 2; i++){
+                lua_pushinteger(L, i); // @3
+                lua_gettable(L, 2); // @3 = bb.pulsein[i]
+                if(lua_isnil(L, 3)){
+                    lua_settop(L, 2);
+                    continue;
+                }
+
+                // pulsein[i].mode = 'none'
+                lua_pushstring(L, "none");
+                lua_setfield(L, 3, "mode");
+
+                // pulsein[i].direction = 'both' (match crow.reset defaults)
+                lua_pushstring(L, "both");
+                lua_setfield(L, 3, "direction");
+
+                // pulsein[i].division = 1 -- keeps default external clock div
+                lua_pushnumber(L, 1.0);
+                lua_setfield(L, 3, "division");
+
+                // pulsein[i].change = nil (clears callback)
+                lua_pushnil(L);
+                lua_setfield(L, 3, "change");
+
+                lua_settop(L, 2); // drop bb.pulsein[i]
+            }
+        }
+    }
     lua_settop(L, 0);
 
     lua_getglobal(L, "output"); // @1
@@ -781,6 +817,10 @@ void L_handle_metro_lockfree( metro_event_lockfree_t* event )
 
 void L_queue_clock_resume( int coro_id )
 {
+    if (clock_lockfree_post(coro_id)) {
+        return;
+    }
+
     event_t e = { .handler = L_handle_clock_resume
                 , .index.i = coro_id
                 };
@@ -809,7 +849,6 @@ void L_handle_metro( event_t* e )
     lua_State* L = get_lua_state();
     
     if (!L) {
-        printf("L_handle_metro: no Lua state available\n");
         return;
     }
     
@@ -834,24 +873,18 @@ void L_handle_metro( event_t* e )
     }
 }
 
-void L_handle_clock_resume( event_t* e )
-{
+static void handle_clock_resume_common(int coro_id) {
     extern lua_State* get_lua_state(void);
     lua_State* L = get_lua_state();
-    
+
     if (!L) {
         printf("L_handle_clock_resume: no Lua state available\n");
         return;
     }
-    
-    int coro_id = e->index.i;
-    
-    // Call the global clock_resume_handler function in Lua
+
     lua_getglobal(L, "clock_resume_handler");
     if (lua_isfunction(L, -1)) {
-        lua_pushinteger(L, coro_id);  // Pass coroutine ID
-        
-        // Protected call to prevent crashes
+        lua_pushinteger(L, coro_id);
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
             printf("clock_resume_handler error: %s\n", error ? error : "unknown");
@@ -860,6 +893,16 @@ void L_handle_clock_resume( event_t* e )
     } else {
         lua_pop(L, 1);
     }
+}
+
+void L_handle_clock_resume( event_t* e )
+{
+    handle_clock_resume_common(e->index.i);
+}
+
+void L_handle_clock_resume_lockfree(clock_event_lockfree_t* event)
+{
+    handle_clock_resume_common(event->coro_id);
 }
 
 void L_handle_clock_start( event_t* e )

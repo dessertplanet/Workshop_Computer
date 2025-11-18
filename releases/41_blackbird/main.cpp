@@ -29,6 +29,7 @@ License is GPLv3 or later- see LICENSE file for details.
 #include "pico/stdlib.h"
 #include "hardware/timer.h"
 #include "hardware/irq.h"
+#include "hardware/sync.h"
 #include "tusb.h"
 #include "class/cdc/cdc_device.h"
 #include "lib/debug.h"
@@ -120,6 +121,10 @@ static volatile float g_pulsein_clock_div[2] = {1.0f, 1.0f};
 // LED pulse stretching counters (to make 10ms pulses visible at 100Hz update rate)
 static volatile uint16_t g_pulse_led_stretch[2] = {0, 0};
 
+// Clock tick coordination between audio ISR (Core1) and scheduler service
+static volatile uint32_t g_clock_ticks_pending = 0;
+static volatile uint32_t g_timer_ticks_pending = 0;
+
 // Pulse input state tracking (read from hardware, cached for Lua access)
 static volatile bool g_pulsein_state[2] = {false, false};
 
@@ -186,6 +191,8 @@ static constexpr double kProcessSampleRateHz = PROCESS_SAMPLE_RATE_HZ_DOUBLE;
 static constexpr double kProcessSampleBudgetUs = 1000000.0 / kProcessSampleRateHz;  // 8kHz sample rate
 static constexpr uint32_t kProcessSampleOverrunThresholdUs =
     static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~100us)
+static constexpr uint32_t kProcessSamplePeriodUsInt = 125;
+static constexpr uint32_t kTimerServiceIntervalUs = 667;  // matches previous ~1.5kHz budget
 // ProcessSample (Core 1 audio thread) performance
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
@@ -346,9 +353,56 @@ extern "C" void L_handle_asl_done_safe(event_t* e);
 
 // Forward declaration for pulse input connection check (defined after BlackbirdCrow class)
 static bool is_pulse_input_connected(int pulse_idx);
+static void service_clock_from_core1(void);
+static void service_timer_from_core1(void);
+static void blackbird_core1_background_service(void);
+
+static void service_clock_from_core1(void) {
+    uint32_t ticks = 0;
+    uint32_t irq_state = save_and_disable_interrupts();
+    if (g_clock_ticks_pending) {
+        ticks = g_clock_ticks_pending;
+        g_clock_ticks_pending = 0;
+    }
+    restore_interrupts(irq_state);
+
+    if (ticks == 0) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < ticks; i++) {
+        uint32_t time_now_ms = to_ms_since_boot(get_absolute_time());
+        clock_update(time_now_ms);
+    }
+}
+
+static void service_timer_from_core1(void) {
+    uint32_t ticks = 0;
+    uint32_t irq_state = save_and_disable_interrupts();
+    if (g_timer_ticks_pending) {
+        ticks = g_timer_ticks_pending;
+        g_timer_ticks_pending = 0;
+    }
+    restore_interrupts(irq_state);
+
+    if (ticks == 0) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < ticks; i++) {
+        Timer_Process();
+    }
+}
+
+static void blackbird_core1_background_service(void) {
+    S_slope_buffer_background_service();
+    service_timer_from_core1();
+    service_clock_from_core1();
+}
 static int bb_connected_index(lua_State* L);
 extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event);
 extern "C" void L_handle_metro_lockfree(metro_event_lockfree_t* event);
+extern "C" void L_handle_clock_resume_lockfree(clock_event_lockfree_t* event);
 
 // Forward declaration of output batching functions
 extern "C" void output_batch_begin();
@@ -2091,6 +2145,18 @@ static void process_usb_byte(char c) {
 // ============================================================================
 #define USB_SERVICE_INTERVAL_US 1000
 static struct repeating_timer g_usb_service_timer;
+static constexpr uint32_t kUsbFlushIntervalUs = 2000; // Matches crow's 2ms cadence
+
+static inline void usb_flush_if_due(void) {
+    static uint32_t last_flush_us = 0;
+    uint32_t now_us = time_us_32();
+    if ((now_us - last_flush_us) >= kUsbFlushIntervalUs) {
+        if (tud_cdc_connected()) {
+            tud_cdc_write_flush();
+        }
+        last_flush_us = now_us;
+    }
+}
 
 // ISR-safe USB service callback - runs at 1kHz (1ms intervals)
 static bool __isr __time_critical_func(usb_service_callback)(struct repeating_timer *t) {
@@ -2107,8 +2173,10 @@ static bool __isr __time_critical_func(usb_service_callback)(struct repeating_ti
             usb_rx_lockfree_post((char*)buf, count);
         }
     }
-    // NOTE: TX processing happens in usb_process_tx() on main loop to avoid
-    // concurrent access to TinyUSB CDC functions.
+    // NOTE: Bulk TX writes still happen in usb_process_tx() on the main loop to
+    // avoid contention with other TinyUSB calls, but we handle periodic flush
+    // here so host transfers continue even if Lua work stalls the loop.
+    usb_flush_if_due();
     
     return true;  // Keep timer running
 }
@@ -2429,7 +2497,7 @@ public:
         
         // Initialize slopes system for crow-style output processing
         S_init(4); // Initialize 4 output channels
-        ComputerCard::RegisterCore1BackgroundHook(S_slope_buffer_background_service);
+        ComputerCard::RegisterCore1BackgroundHook(blackbird_core1_background_service);
         
         // Initialize AShaper system for output quantization (pass-through mode)
         AShaper_init(4); // Initialize 4 output channels
@@ -2553,15 +2621,6 @@ public:
             lua_manager->evaluate_safe(zero_cmd);
         }
         
-        // Timer processing state - moved from ISR!
-        static uint32_t last_timer_process_us = 0;
-        
-        const uint32_t timer_interval_us = 667; // ~1.5kHz timer processing
-        
-        // USB TX batching timer (matches crow's 2ms interval)
-        static uint32_t last_usb_tx_us = 0;
-        const uint32_t usb_tx_interval_us = 2000; // 2ms like crow
-
         // LED visualization cadence (~60Hz)
         static uint32_t last_led_update_us = 0;
         const uint32_t led_update_interval_us = 16667; // ~60Hz
@@ -2652,26 +2711,12 @@ public:
             
             // Update stream-equivalent values for .volts queries (always maintained)
             update_input_stream_values();
-            
-            // *** CRITICAL: Process timer/slopes updates at ~1.5kHz (OUTSIDE ISR!) ***
-            if (now_us - last_timer_process_us >= timer_interval_us) {
-                Timer_Process();  // Safe here - not in ISR context!
-                last_timer_process_us = now_us;
+
+            // Process lock-free clock resume events before anything else can stall them
+            clock_event_lockfree_t clock_event;
+            while (clock_lockfree_get(&clock_event)) {
+                L_handle_clock_resume_lockfree(&clock_event);
             }
-            
-            // *** CRITICAL: Update clock BEFORE event processing ***
-            // Ensures clock coroutines are scheduled even if event processing takes time
-            uint32_t time_now_ms = to_ms_since_boot(get_absolute_time());
-            clock_update(time_now_ms);
-            
-            // *** USB TX BATCHING: Flush every 2ms (matches crow's behavior) ***
-            if (now_us - last_usb_tx_us >= usb_tx_interval_us) {
-                if (tud_cdc_connected()) {
-                    tud_cdc_write_flush();
-                }
-                last_usb_tx_us = now_us;
-            }
-            
             // Process lock-free metro events first (highest priority)
             metro_event_lockfree_t metro_event;
             while (metro_lockfree_get(&metro_event)) {
@@ -2687,11 +2732,6 @@ public:
             while (input_lockfree_get(&input_event) && input_events_processed < max_input_events_per_loop) {
                 L_handle_input_lockfree(&input_event);
                 input_events_processed++;
-                
-                // Update clock after EACH input event to prevent starvation
-                // Input callbacks can take milliseconds in Lua
-                time_now_ms = to_ms_since_boot(get_absolute_time());
-                clock_update(time_now_ms);
             }
             
             // Process regular events (lower priority - system events, clock resumes, etc.)
@@ -3214,6 +3254,22 @@ public:
         
         // Keep clock system synchronized (lightweight)
         clock_increment_sample_counter();
+
+        // Derive 1kHz scheduler ticks from the 8kHz audio ISR
+        static uint8_t clock_tick_accumulator = 0;
+        clock_tick_accumulator++;
+        if (clock_tick_accumulator >= 8) {
+            clock_tick_accumulator = 0;
+            g_clock_ticks_pending++;
+        }
+
+        // Derive ~1.5kHz timer/metro service ticks with deterministic spacing
+        static uint32_t timer_tick_accumulator_us = 0;
+        timer_tick_accumulator_us += kProcessSamplePeriodUsInt;
+        if (timer_tick_accumulator_us >= kTimerServiceIntervalUs) {
+            timer_tick_accumulator_us -= kTimerServiceIntervalUs;
+            g_timer_ticks_pending++;
+        }
         
         // === SLOPE PROCESSING: Sample-accurate output generation ===
         // Moved from Core 0 Timer_Process for zero-jitter, sample-accurate output
