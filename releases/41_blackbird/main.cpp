@@ -2173,10 +2173,8 @@ static bool __isr __time_critical_func(usb_service_callback)(struct repeating_ti
             usb_rx_lockfree_post((char*)buf, count);
         }
     }
-    // NOTE: Bulk TX writes still happen in usb_process_tx() on the main loop to
-    // avoid contention with other TinyUSB calls, but we handle periodic flush
-    // here so host transfers continue even if Lua work stalls the loop.
-    usb_flush_if_due();
+    // NOTE: ALL TX processing (including flush) happens in usb_process_tx() on the main loop
+    // to avoid race conditions with TinyUSB CDC functions being called from both ISR and main loop.
     
     return true;  // Keep timer running
 }
@@ -2194,6 +2192,9 @@ static inline void usb_process_tx() {
         }
         (void)written; // We currently rely on queue sizing; partial writes are dropped.
     }
+    
+    // Periodic flush to ensure data goes out even if queue is quiet
+    usb_flush_if_due();
 }
 
 // ============================================================================
@@ -2795,11 +2796,10 @@ public:
                                 printf("bb.asap error: %s\n", err ? err : "(unknown)");
                                 asap_error_reported = true;
                             }
+                            lua_pop(lua_manager->L, 1); // pop error message
                             // Clear bb.asap to prevent repeated errors
-                            lua_getglobal(lua_manager->L, "bb"); // @3
-                            lua_pushnil(lua_manager->L);           // @4
-                            lua_setfield(lua_manager->L, -2, "asap");
-                            lua_pop(lua_manager->L, 2); // pop error + bb
+                            lua_pushnil(lua_manager->L);           // @2
+                            lua_setfield(lua_manager->L, -2, "asap"); // bb.asap = nil, pops nil
                         }
                     } else {
                         lua_pop(lua_manager->L, 1); // pop non-function asap
