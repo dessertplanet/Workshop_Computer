@@ -13,7 +13,7 @@ typedef struct {
     timer_callback_t callback;
     float period_seconds;
     bool active;
-    uint32_t period_samples;      // Period in 12kHz samples
+    uint32_t period_samples;      // Period in 6kHz samples
     uint64_t next_trigger_sample; // When to trigger next (64-bit for long-running systems)
     float period_error;           // Accumulated fractional sample error for precision
 } timer_t;
@@ -22,8 +22,10 @@ static timer_t* timers = NULL;
 static int max_timers = 0;
 volatile uint64_t global_sample_counter = 0; // Incremented in ProcessSample() ISR - 64-bit for precision
 
+#define TIMER_SAMPLE_RATE 6000.0f
+
 // Runtime-adjustable block size (defaults to 'timing')
-int g_timer_block_size = 480; // default mapping for bb.priority='timing'
+int g_timer_block_size = 240; // default mapping for bb.priority='timing'
 
 // Block processing state - aligned with audio blocks for consistent timing
 static int sample_accumulator = 0; // Count samples until next block processing
@@ -56,8 +58,9 @@ void Timer_Init(int num_timers) {
         timers[i].callback = NULL;
         timers[i].period_seconds = 1.0f;
         timers[i].active = false;
-        timers[i].period_samples = 48000; // Default 1 second at 48kHz
+        timers[i].period_samples = (uint32_t)TIMER_SAMPLE_RATE; // Default 1 second at 6kHz
         timers[i].next_trigger_sample = 0;
+        timers[i].period_error = 0.0f;
     }
     global_sample_counter = 0;
     printf("Timer: Init %d timers\n", num_timers);
@@ -93,8 +96,8 @@ void Timer_Set_Params(int timer_id, float seconds) {
     }
     
     timers[timer_id].period_seconds = seconds;
-    // Convert seconds to samples at 12kHz with precise fractional handling
-    float precise_samples = seconds * 12000.0f;
+    // Convert seconds to samples at 6kHz with precise fractional handling
+    float precise_samples = seconds * TIMER_SAMPLE_RATE;
     timers[timer_id].period_samples = (uint32_t)precise_samples;
     timers[timer_id].period_error = precise_samples - (float)timers[timer_id].period_samples;
     

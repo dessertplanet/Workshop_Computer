@@ -133,7 +133,7 @@ static volatile bool g_pulsein_callback_active[2] = {false, false};
 static volatile bool g_pulsein_clock_edge_pending[2] = {false, false};
 
 // ============================================================================
-// AUDIO-RATE NOISE GENERATOR (12kHz)
+// AUDIO-RATE NOISE GENERATOR (6kHz)
 // ============================================================================
 // Noise generator state for audio-rate output
 static volatile bool g_noise_active[4] = {false, false, false, false};
@@ -181,6 +181,8 @@ static void process_slope_action_callbacks() {
 // ============================================================================
 // PERFORMANCE MONITORING
 // ============================================================================
+static constexpr double kProcessSampleBudgetUs = 1000000.0 / 6000.0;  // 6kHz sample rate
+static constexpr uint32_t kProcessSampleWarnThresholdUs = 145;        // ~87% of budget
 // ProcessSample (Core 1 audio thread) performance
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
@@ -2766,7 +2768,7 @@ public:
             }
             
             // Check for pulse input changes and fire callbacks
-            // Edge detection happens at 12kHz in ProcessSample(), we just check flags here
+            // Edge detection happens at 6kHz in ProcessSample(), we just check flags here
             // REENTRANCY PROTECTION: Skip callback if one is already running (prevents crashes from fast clocks)
             for (int i = 0; i < 2; i++) {
                 if (g_pulsein_edge_detected[i] && !g_pulsein_callback_active[i]) {
@@ -3245,7 +3247,7 @@ public:
         Detect_process_sample(0, cv1);
         Detect_process_sample(1, cv2);
         
-        // Pulse input edge detection (12kHz) - catches even very short pulses
+        // Pulse input edge detection (6kHz) - catches even very short pulses
         // Check for edges when change or clock mode is enabled, respecting direction filter
         // mode: 0=none, 1=change, 2=clock
         if (g_pulsein_mode[0] == 1) {
@@ -3281,7 +3283,7 @@ public:
         g_pulsein_state[0] = PulseIn1();
         g_pulsein_state[1] = PulseIn2();
         
-        // === AUDIO-RATE NOISE GENERATION (12kHz) - INTEGER MATH ONLY ===
+        // === AUDIO-RATE NOISE GENERATION (6kHz) - INTEGER MATH ONLY ===
         // Generate and output noise for any active channels
         // OPTIMIZATION: Fast check if ANY noise is active before iterating channels
         if (g_noise_active_mask) {
@@ -3321,7 +3323,7 @@ public:
         
         // === PERFORMANCE MONITORING (low-cost) ===
         // Check if ProcessSample exceeded time budget
-        // At 12kHz, each sample has ~83.3us budget. Warn at 72us (87% utilization)
+        // At 6kHz, each sample has ~166.7us budget. Warn at 145us (~87% utilization)
         uint32_t elapsed = time_us_32() - start_time;
         
         // Always track worst-case execution time (available via perf_stats())
@@ -3330,7 +3332,7 @@ public:
         }
         
         // Warn if exceeding budget threshold
-        if (elapsed > 72) {  // Threshold: 72 microseconds (87% of 83.3us budget at 12kHz)
+        if (elapsed > kProcessSampleWarnThresholdUs) {  // Threshold: 145 microseconds (~87% of 166.7us budget at 6kHz)
             g_overrun_count++;
             
             static uint32_t last_report_time = 0;
@@ -4956,19 +4958,24 @@ int LuaManager::lua_perf_stats(lua_State* L) {
     } else {
         // Default mode: print formatted output via TinyUSB CDC
         if (tud_cdc_connected()) {
+            const double utilization = (kProcessSampleBudgetUs > 0.0)
+                ? (static_cast<double>(worst) / kProcessSampleBudgetUs) * 100.0
+                : 0.0;
             char msg[512];
             snprintf(msg, sizeof(msg), 
                      "ProcessSample Performance (Core 1):\n\r"
                      "  Worst case: %lu microseconds\n\r"
-                     "  Budget: 83.3us (12kHz sample rate)\n\r"
+                     "  Budget: %.1fus (6kHz sample rate)\n\r"
                      "  Utilization: %.1f%%\n\r"
-                     "  Overruns (>18us): %lu\n\r"
+                     "  Overruns (>%.0fus): %lu\n\r"
                      "\n\r"
                      "MainControlLoop Performance (Core 0):\n\r"
                      "  Worst case: %lu microseconds\n\r"
                      "  Total iterations: %lu\n\r",
                      (unsigned long)worst,
-                     (worst / 20.8f) * 100.0f,
+                     kProcessSampleBudgetUs,
+                     utilization,
+                     static_cast<double>(kProcessSampleWarnThresholdUs),
                      (unsigned long)overruns,
                      (unsigned long)loop_worst,
                      (unsigned long)loop_count);

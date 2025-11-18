@@ -45,11 +45,11 @@ static int _lua_void_function( lua_State* L ){
 // ---- bb.priority implementation (file-scope) ----
 // Behavior:
 //  - bb.priority()            -> returns 'timing', 'balanced', 'accuracy', or current custom block size (int)
-//  - bb.priority('timing')    -> sets size 480 (if still safe) and returns 'timing'
-//  - bb.priority('balanced')  -> sets size 240 (if still safe) and returns 'balanced'
-//  - bb.priority('accuracy')  -> sets size 4 (if safe) and returns 'accuracy'
+//  - bb.priority('timing')    -> sets size 240 (if still safe) and returns 'timing'
+//  - bb.priority('balanced')  -> sets size 120 (if still safe) and returns 'balanced'
+//  - bb.priority('accuracy')  -> sets size 2 (if safe) and returns 'accuracy'
 //  - bb.priority(N)           -> sets size N (clamped to [1,MAX]) if safe;
-//                                returns mapped string for 4/240/480 else the applied integer size
+//                                returns mapped string for 2/120/240 else the applied integer size
 //  - After processing starts (guard active) requests are ignored; current descriptor returned.
 int l_bb_priority(lua_State* L) {
     int nargs = lua_gettop(L);
@@ -61,15 +61,15 @@ int l_bb_priority(lua_State* L) {
             (void)Timer_Set_Block_Size(requested); // deferred
         } else if (lua_isstring(L, 1)) {
             const char* requested = lua_tostring(L, 1);
-            if (strcmp(requested, "accuracy") == 0) {
-                (void)Timer_Set_Block_Size(4);
-            } else if (strcmp(requested, "balanced") == 0) {
-                (void)Timer_Set_Block_Size(240);
-            } else if (strcmp(requested, "timing") == 0) {
-                (void)Timer_Set_Block_Size(480);
+                if (strcmp(requested, "accuracy") == 0) {
+                    (void)Timer_Set_Block_Size(2);
+                } else if (strcmp(requested, "balanced") == 0) {
+                    (void)Timer_Set_Block_Size(120);
+                } else if (strcmp(requested, "timing") == 0) {
+                    (void)Timer_Set_Block_Size(240);
             } else {
                 // Unrecognized string: treat as 'timing' (default)
-                (void)Timer_Set_Block_Size(480);
+                    (void)Timer_Set_Block_Size(240);
             }
         } else {
             // Ignore other types
@@ -83,11 +83,11 @@ int l_bb_priority(lua_State* L) {
         int pending = Timer_Get_Block_Size(); // current still old; we don't expose internal pending value
         // We can't directly read pending here without extra API; keep reporting current classification
     }
-    if (current == 4) {
+        if (current == 2) {
         lua_pushstring(L, "accuracy");
-    } else if (current == 240) {
+        } else if (current == 120) {
         lua_pushstring(L, "balanced");
-    } else if (current == 480) {
+        } else if (current == 240) {
         lua_pushstring(L, "timing");
     } else {
         lua_pushinteger(L, current);
@@ -289,12 +289,12 @@ void l_crowlib_init(lua_State* L){
     // Forward declare function
     extern int l_bb_priority(lua_State* L);
     // Ensure default value is set before first use
-    Timer_Set_Block_Size(480);
+    Timer_Set_Block_Size(240);
     lua_getglobal(L, "bb"); // @1
     lua_pushcfunction(L, l_bb_priority);
     lua_setfield(L, -2, "priority"); // bb.priority
     // Initialize block size to default 'timing' explicitly
-    Timer_Set_Block_Size(480);
+    Timer_Set_Block_Size(240);
     lua_pop(L, 1); // pop bb
 }
 

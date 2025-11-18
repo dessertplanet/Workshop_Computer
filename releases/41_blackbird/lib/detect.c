@@ -22,13 +22,13 @@ static int detector_count = 0;
 #define DETECT_CANARY 0xD37EC7u
 
 // Detection processing sample rate (matches audio engine)
-#define DETECT_SAMPLE_RATE 12000.0f
+#define DETECT_SAMPLE_RATE 6000.0f
 // Crow evaluates detectors once per 32-sample audio block. We still call
 // Detect_process_sample() every sample for edge fidelity, but interval-based
 // modes (stream / volume / peak) should interpret the user-specified interval
 // the same way crow does: in units of 32-sample blocks. So we scale the
 // interval by (sample_rate / block_size) rather than raw sample_rate.
-#define DETECT_BLOCK_SIZE 32.0f
+#define DETECT_BLOCK_SIZE 16.0f
 #define DETECT_BLOCK_RATE (DETECT_SAMPLE_RATE / DETECT_BLOCK_SIZE)
 
 // VU Meter implementation
@@ -571,7 +571,7 @@ static void scale_bounds(Detect_t* self, int ix, int oct) {
 
 // ========================================================================
 // ULTRA-FAST ISR Processing - INTEGER ONLY, NO FLOATING POINT!
-// Runs on Core 1 at 12kHz - must complete in ~60µs worst case
+// Runs on Core 1 at 6kHz - must complete in ~150µs worst case
 // Only tracks state changes, defers callbacks to Core 0
 // ========================================================================
 void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
