@@ -8,6 +8,8 @@
 
 #define DETECT_DEBUG 0
 
+extern volatile uint64_t global_sample_counter;
+
 // ARM CORTEX-M0+ MEMORY BARRIERS FOR CACHE COHERENCY
 // These are ESSENTIAL for reliable multicore communication on RP2040
 // DMB (Data Memory Barrier) ensures all memory operations complete before proceeding
@@ -110,6 +112,7 @@ void Detect_init(int channels) {
         detectors[i].canary = DETECT_CANARY;
         detectors[i].change_rise_count = 0;
         detectors[i].change_fall_count = 0;
+        detectors[i].stream.last_sample_counter = 0;
         
         // CRITICAL: Initialize all detectors to "none" mode like real crow
         Detect_none(&detectors[i]);
@@ -177,6 +180,7 @@ void Detect_stream(Detect_t* self, Detect_callback_t cb, float interval) {
     self->stream.blocks = (int)(interval * DETECT_BLOCK_RATE);
     if (self->stream.blocks <= 0) self->stream.blocks = 1;
     self->stream.countdown = self->stream.blocks;
+    self->stream.last_sample_counter = global_sample_counter;
     
     // Clear any pending events
     self->state_changed = false;
@@ -599,12 +603,16 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
     }
     
     // ===============================================
-    // INTEGER-ONLY BLOCK TRACKING (~0.5µs)
+    // INTEGER-ONLY BLOCK TRACKING (~0.5µs) FOR MODES THAT NEED IT
     // ===============================================
-    detector->sample_counter++;
-    bool block_boundary = (detector->sample_counter >= (uint32_t)DETECT_BLOCK_SIZE);
-    if (block_boundary) {
-        detector->sample_counter = 0;
+    Detect_mode_fn_t mode = detector->modefn;
+    bool block_boundary = false;
+    if (mode == d_volume || mode == d_peak) {
+        detector->sample_counter++;
+        if (detector->sample_counter >= (uint32_t)DETECT_BLOCK_SIZE) {
+            detector->sample_counter = 0;
+            block_boundary = true;
+        }
     }
     
     // ===============================================
@@ -614,23 +622,13 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
     // ===============================================
     
     // STREAM MODE: Just count blocks, queue event on boundary
-    if (detector->modefn == d_stream) {
-        if (block_boundary) {
-            detector->stream.countdown--;
-            if (detector->stream.countdown <= 0) {
-                detector->stream.countdown = detector->stream.blocks;
-                // Queue event for Core 0
-                detector->state_changed = true;
-                detector->event_raw_value = raw_adc;
-                DMB();  // Ensure Core 0 sees the flag
-            }
-        }
+    if (mode == d_stream) {
         detector->last_raw_adc = raw_adc;
-        return; // EXIT: ~2µs total
+        return; // Core 0 handles countdown entirely
     }
     
     // CHANGE MODE: Integer threshold comparison
-    if (detector->modefn == d_change) {
+    if (mode == d_change) {
         if (detector->state) { // high to low
             if (raw_adc < (detector->threshold_raw - detector->hysteresis_raw)) {
                 detector->state = 0;
@@ -661,7 +659,7 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
     }
     
     // VOLUME/PEAK MODE: Skip per-sample, only process blocks
-    if (detector->modefn == d_volume || detector->modefn == d_peak) {
+    if (mode == d_volume || mode == d_peak) {
         if (block_boundary) {
             // Queue event for Core 0 (it will do VU meter processing)
             detector->state_changed = true;
@@ -674,7 +672,7 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
     
     // WINDOW/SCALE MODE: Integer-only bounds checking in ISR
     // Only signal Core 0 when bounds are crossed (not every sample!)
-    if (detector->modefn == d_window || detector->modefn == d_scale) {
+    if (mode == d_window || mode == d_scale) {
         // CRITICAL: Memory barrier before reading volatile bounds
         DMB();  // Ensure we see latest bounds from scale_bounds()
         
@@ -714,6 +712,38 @@ void Detect_process_events_core0(void) {
         
         // CRITICAL: Memory barrier before reading event flag
         DMB();  // Ensure we see latest state_changed from ISR
+
+        if (detector->modefn == d_stream) {
+            const uint32_t block_samples = (uint32_t)DETECT_BLOCK_SIZE;
+
+            // Protect against wraparound or uninitialized state
+            uint64_t current_samples = global_sample_counter;
+            uint64_t last_samples = detector->stream.last_sample_counter;
+            if (current_samples < last_samples) {
+                detector->stream.last_sample_counter = current_samples;
+                continue;
+            }
+
+            uint64_t delta_samples = current_samples - last_samples;
+            if (delta_samples < block_samples) {
+                continue; // No full blocks elapsed since last check
+            }
+
+            uint64_t blocks_elapsed = delta_samples / block_samples;
+            detector->stream.last_sample_counter += blocks_elapsed * block_samples;
+
+            float level_volts = (float)detector->last_raw_adc * ADC_TO_VOLTS;
+            while (blocks_elapsed--) {
+                detector->stream.countdown--;
+                if (detector->stream.countdown <= 0) {
+                    detector->stream.countdown = detector->stream.blocks;
+                    if (detector->action) {
+                        detector->action(ch, level_volts);
+                    }
+                }
+            }
+            continue;
+        }
         
         // Check if this channel has a pending event
         if (!detector->state_changed) continue;

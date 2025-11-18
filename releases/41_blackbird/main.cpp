@@ -3287,36 +3287,29 @@ public:
         // Generate and output noise for any active channels
         // OPTIMIZATION: Fast check if ANY noise is active before iterating channels
         if (g_noise_active_mask) {
+            // Generate one shared noise sample and scale per-channel by gain (OK if identical spectra)
+            int32_t base_noise_mv = generate_audio_noise_mv(6000);
             for (int ch = 0; ch < 4; ch++) {
                 if (g_noise_active_mask & (1 << ch)) {
-                    // Generate noise in millivolts (-6000 to +6000) using integer math only
-                    int32_t noise_mv = generate_audio_noise_mv(g_noise_gain[ch]);
-                
-                // Update state for queries
-                g_output_state_mv[ch] = noise_mv;
-                
-                // Output directly to hardware (all integer math)
-                switch (ch) {
-                    case 0: CVOut1Millivolts(noise_mv); break;
-                    case 1: CVOut2Millivolts(noise_mv); break;
-                    case 2: {
-                        // Convert mV to 12-bit DAC value: (noise_mv * 2048) / 6000
-                        // Optimize: (noise_mv * 2048) / 6000 ≈ (noise_mv * 341) >> 10
-                        // Exact: multiply by 2048/6000 = 0.34133... ≈ 349/1024
-                        int16_t dac_value = (int16_t)((noise_mv * 349) >> 10);
-                        AudioOut1(dac_value);
-                        break;
-                    }
-                    case 3: {
-                        // Same calculation for audio output 2
-                        int16_t dac_value = (int16_t)((noise_mv * 349) >> 10);
-                        AudioOut2(dac_value);
-                        break;
+                    int32_t scaled_noise_mv = (base_noise_mv * g_noise_gain[ch]) / 6000;
+                    g_output_state_mv[ch] = scaled_noise_mv;
+                    switch (ch) {
+                        case 0: CVOut1Millivolts(scaled_noise_mv); break;
+                        case 1: CVOut2Millivolts(scaled_noise_mv); break;
+                        case 2: {
+                            int16_t dac_value = (int16_t)((scaled_noise_mv * 349) >> 10);
+                            AudioOut1(dac_value);
+                            break;
+                        }
+                        case 3: {
+                            int16_t dac_value = (int16_t)((scaled_noise_mv * 349) >> 10);
+                            AudioOut2(dac_value);
+                            break;
+                        }
                     }
                 }
             }
-        } 
-     } // end if (g_noise_active_mask)
+          }
         
         // === PULSE OUTPUT 2: Controlled by Lua (no default behavior) ===
         // Users can control by calling bb.pulseout[2]:clock() or setting bb.pulseout[2].action
