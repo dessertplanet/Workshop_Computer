@@ -132,13 +132,8 @@ static volatile bool g_pulsein_callback_active[2] = {false, false};
 // Clock edge pending flags (deferred from ISR to Core 0 to avoid FP math in ISR)
 static volatile bool g_pulsein_clock_edge_pending[2] = {false, false};
 
-// LED update coordination between cores
-static volatile bool g_led_update_pending = false;
-static volatile int32_t g_led_output_snapshot[4] = {0, 0, 0, 0};
-static volatile bool g_led_pulse_snapshot[2] = {false, false};
-
 // ============================================================================
-// AUDIO-RATE NOISE GENERATOR (48kHz)
+// AUDIO-RATE NOISE GENERATOR (12kHz)
 // ============================================================================
 // Noise generator state for audio-rate output
 static volatile bool g_noise_active[4] = {false, false, false, false};
@@ -2735,43 +2730,8 @@ public:
                 lua_settop(lua_manager->L, 0); // clean stack
             }
             
-            // *** LED UPDATE: Process LED updates from Core 1 snapshot (240Hz) ***
-            if (g_led_update_pending) {
-                g_led_update_pending = false;
-                
-                // Read snapshot atomically (Core 1 writes these together)
-                int32_t cv1_mv = g_led_output_snapshot[0];
-                int32_t cv2_mv = g_led_output_snapshot[1];
-                int32_t audio1_mv = g_led_output_snapshot[2];
-                int32_t audio2_mv = g_led_output_snapshot[3];
-                bool pulse1 = g_led_pulse_snapshot[0];
-                bool pulse2 = g_led_pulse_snapshot[1];
-                
-                // Clamp to positive values only (negative values = LED off)
-                int32_t cv1_pos = (cv1_mv < 0) ? 0 : cv1_mv;
-                int32_t cv2_pos = (cv2_mv < 0) ? 0 : cv2_mv;
-                int32_t audio1_pos = (audio1_mv < 0) ? 0 : audio1_mv;
-                int32_t audio2_pos = (audio2_mv < 0) ? 0 : audio2_mv;
-                
-                // Convert mV to LED brightness (0-4095)
-                // Clamp to +6V range (6000mV), normalize to 0-4095
-                // Using fixed-point: (pos_mv * 682) >> 10 ≈ pos_mv * (4095/6000)
-                uint16_t led0_brightness = (audio1_pos > 6000) ? 4095 : (uint16_t)((audio1_pos * 682) >> 10);
-                uint16_t led1_brightness = (audio2_pos > 6000) ? 4095 : (uint16_t)((audio2_pos * 682) >> 10);
-                uint16_t led2_brightness = (cv1_pos > 6000) ? 4095 : (uint16_t)((cv1_pos * 682) >> 10);
-                uint16_t led3_brightness = (cv2_pos > 6000) ? 4095 : (uint16_t)((cv2_pos * 682) >> 10);
-                
-                // Update LEDs (now safe on Core 0, no ISR timing impact)
-                LedBrightness(0, led0_brightness);  // LED 0 - Audio1 amplitude
-                LedBrightness(1, led1_brightness);  // LED 1 - Audio2 amplitude
-                LedBrightness(2, led2_brightness);  // LED 2 - CV1 amplitude
-                LedBrightness(3, led3_brightness);  // LED 3 - CV2 amplitude
-                LedOn(4, pulse1);  // LED 4 - Pulse1
-                LedOn(5, pulse2);  // LED 5 - Pulse2
-            }
-            
             // Check for pulse input changes and fire callbacks
-            // Edge detection happens at 24kHz in ProcessSample(), we just check flags here
+            // Edge detection happens at 12kHz in ProcessSample(), we just check flags here
             // REENTRANCY PROTECTION: Skip callback if one is already running (prevents crashes from fast clocks)
             for (int i = 0; i < 2; i++) {
                 if (g_pulsein_edge_detected[i] && !g_pulsein_callback_active[i]) {
@@ -3251,7 +3211,7 @@ public:
         Detect_process_sample(0, cv1);
         Detect_process_sample(1, cv2);
         
-        // Pulse input edge detection (24kHz) - catches even very short pulses
+        // Pulse input edge detection (12kHz) - catches even very short pulses
         // Check for edges when change or clock mode is enabled, respecting direction filter
         // mode: 0=none, 1=change, 2=clock
         if (g_pulsein_mode[0] == 1) {
@@ -3287,7 +3247,7 @@ public:
         g_pulsein_state[0] = PulseIn1();
         g_pulsein_state[1] = PulseIn2();
         
-        // === AUDIO-RATE NOISE GENERATION (24kHz) - INTEGER MATH ONLY ===
+        // === AUDIO-RATE NOISE GENERATION (12kHz) - INTEGER MATH ONLY ===
         // Generate and output noise for any active channels
         // OPTIMIZATION: Fast check if ANY noise is active before iterating channels
         if (g_noise_active_mask) {
@@ -3325,28 +3285,47 @@ public:
         // === PULSE OUTPUT 2: Controlled by Lua (no default behavior) ===
         // Users can control by calling bb.pulseout[2]:clock() or setting bb.pulseout[2].action
         
-        // === LED OUTPUT VISUALIZATION ===
-        // Snapshot values for Core 0 LED update (every 200 samples = 120Hz at 24kHz)
-        // 120Hz eliminates flicker on phone cameras (which run at 30-60fps)
+        // === LED OUTPUT VISUALIZATION (Direct on Core 1, 60Hz @ 12kHz) ===
+        // Update LEDs directly on Core 1 - safe since LED writes are just PWM register updates
+        // 60Hz eliminates flicker on phone cameras (which run at 30-60fps)
         static int led_update_counter = 0;
         if (++led_update_counter >= 200) {
             led_update_counter = 0;
             
-            // Take atomic snapshot of output states for Core 0 to process
-            g_led_output_snapshot[0] = g_output_state_mv[0];
-            g_led_output_snapshot[1] = g_output_state_mv[1];
-            g_led_output_snapshot[2] = g_output_state_mv[2];
-            g_led_output_snapshot[3] = g_output_state_mv[3];
-            g_led_pulse_snapshot[0] = g_pulse_out_state[0];
-            g_led_pulse_snapshot[1] = g_pulse_out_state[1];
+            // Read current output states
+            int32_t cv1_mv = g_output_state_mv[0];
+            int32_t cv2_mv = g_output_state_mv[1];
+            int32_t audio1_mv = g_output_state_mv[2];
+            int32_t audio2_mv = g_output_state_mv[3];
+            bool pulse1 = g_pulse_out_state[0];
+            bool pulse2 = g_pulse_out_state[1];
             
-            // Signal Core 0 to update LEDs
-            g_led_update_pending = true;
+            // Clamp to positive values only (negative values = LED off)
+            int32_t cv1_pos = (cv1_mv < 0) ? 0 : cv1_mv;
+            int32_t cv2_pos = (cv2_mv < 0) ? 0 : cv2_mv;
+            int32_t audio1_pos = (audio1_mv < 0) ? 0 : audio1_mv;
+            int32_t audio2_pos = (audio2_mv < 0) ? 0 : audio2_mv;
+            
+            // Convert mV to LED brightness (0-4095)
+            // Clamp to +6V range (6000mV), normalize to 0-4095
+            // Using fixed-point: (pos_mv * 682) >> 10 ≈ pos_mv * (4095/6000)
+            uint16_t led0_brightness = (audio1_pos > 6000) ? 4095 : (uint16_t)((audio1_pos * 682) >> 10);
+            uint16_t led1_brightness = (audio2_pos > 6000) ? 4095 : (uint16_t)((audio2_pos * 682) >> 10);
+            uint16_t led2_brightness = (cv1_pos > 6000) ? 4095 : (uint16_t)((cv1_pos * 682) >> 10);
+            uint16_t led3_brightness = (cv2_pos > 6000) ? 4095 : (uint16_t)((cv2_pos * 682) >> 10);
+            
+            // Update LEDs directly (safe on Core 1 - just PWM register writes)
+            LedBrightness(0, led0_brightness);  // LED 0 - Audio1 amplitude
+            LedBrightness(1, led1_brightness);  // LED 1 - Audio2 amplitude
+            LedBrightness(2, led2_brightness);  // LED 2 - CV1 amplitude
+            LedBrightness(3, led3_brightness);  // LED 3 - CV2 amplitude
+            LedOn(4, pulse1);  // LED 4 - Pulse1
+            LedOn(5, pulse2);  // LED 5 - Pulse2
         }
         
         // === PERFORMANCE MONITORING (low-cost) ===
         // Check if ProcessSample exceeded time budget
-        // At 24kHz, each sample has ~41.6us budget. Warn at 36us (87% utilization)
+        // At 12kHz, each sample has ~83.3us budget. Warn at 72us (87% utilization)
         uint32_t elapsed = time_us_32() - start_time;
         
         // Always track worst-case execution time (available via perf_stats())
@@ -3355,7 +3334,7 @@ public:
         }
         
         // Warn if exceeding budget threshold
-        if (elapsed > 36) {  // Threshold: 36 microseconds (87% of 41.6us budget at 24kHz)
+        if (elapsed > 72) {  // Threshold: 72 microseconds (87% of 83.3us budget at 12kHz)
             g_overrun_count++;
             
             static uint32_t last_report_time = 0;
@@ -4985,7 +4964,7 @@ int LuaManager::lua_perf_stats(lua_State* L) {
             snprintf(msg, sizeof(msg), 
                      "ProcessSample Performance (Core 1):\n\r"
                      "  Worst case: %lu microseconds\n\r"
-                     "  Budget: 41.6us (24kHz sample rate)\n\r"
+                     "  Budget: 83.3us (12kHz sample rate)\n\r"
                      "  Utilization: %.1f%%\n\r"
                      "  Overruns (>18us): %lu\n\r"
                      "\n\r"

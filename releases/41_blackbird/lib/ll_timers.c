@@ -13,7 +13,7 @@ typedef struct {
     timer_callback_t callback;
     float period_seconds;
     bool active;
-    uint32_t period_samples;      // Period in 24kHz samples
+    uint32_t period_samples;      // Period in 12kHz samples
     uint64_t next_trigger_sample; // When to trigger next (64-bit for long-running systems)
     float period_error;           // Accumulated fractional sample error for precision
 } timer_t;
@@ -93,8 +93,8 @@ void Timer_Set_Params(int timer_id, float seconds) {
     }
     
     timers[timer_id].period_seconds = seconds;
-    // Convert seconds to samples at 24kHz with precise fractional handling
-    float precise_samples = seconds * 24000.0f;
+    // Convert seconds to samples at 12kHz with precise fractional handling
+    float precise_samples = seconds * 12000.0f;
     timers[timer_id].period_samples = (uint32_t)precise_samples;
     timers[timer_id].period_error = precise_samples - (float)timers[timer_id].period_samples;
     
