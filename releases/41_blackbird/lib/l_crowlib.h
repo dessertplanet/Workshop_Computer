@@ -21,12 +21,12 @@ int l_crowlib_hztovolts(lua_State *L);
 // L_queue_* functions for event posting
 void L_queue_metro( int id, int state );
 void L_queue_clock_resume( int coro_id );
-void L_queue_clock_start( void );
-void L_queue_clock_stop( void );
+// L_queue_clock_start and L_queue_clock_stop removed - using direct calls instead
 
 // Lock-free event handler functions
 void L_handle_metro_lockfree( metro_event_lockfree_t* event );
 void L_handle_input_lockfree( input_event_lockfree_t* event );
+void L_handle_asl_done_lockfree( asl_done_event_lockfree_t* event );
 
 // Expose bb.priority binding so other C code (main.cpp) can attach it
 int l_bb_priority(lua_State* L);

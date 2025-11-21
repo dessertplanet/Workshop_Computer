@@ -52,7 +52,6 @@ extern "C" {
 #include "lib/slopes.h"
 #include "lib/casl.h"
 #include "lib/detect.h"
-#include "lib/events.h"
 #include "lib/l_crowlib.h"
 #include "lib/l_bootstrap.h"
 #include "lib/ll_timers.h"
@@ -345,11 +344,6 @@ void core1_entry(); // defined after BlackbirdCrow - non-static so flash_storage
 extern "C" void hardware_output_set_voltage(int channel, float voltage);
 extern "C" void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
 extern "C" void hardware_pulse_output_set(int channel, bool state);
-
-// Forward declaration of safe event handlers
-extern "C" void L_handle_change_safe(event_t* e);
-extern "C" void L_handle_stream_safe(event_t* e);
-extern "C" void L_handle_asl_done_safe(event_t* e);
 
 // Forward declaration for pulse input connection check (defined after BlackbirdCrow class)
 static bool is_pulse_input_connected(int pulse_idx);
@@ -2516,10 +2510,7 @@ public:
         // Initialize simple output state storage
         // (No special initialization needed for simple volatile array)
         
-        // Initialize event system - CRITICAL for processing input events
-        events_init();
-        
-        // Initialize lock-free event queues for timing-critical events
+    // Initialize lock-free event queues for timing-critical events
         events_lockfree_init();
         
         // Initialize timer system for metro support (8 timers for full crow compatibility)
@@ -2742,12 +2733,10 @@ public:
                 input_events_processed++;
             }
             
-            // Process regular events (lower priority - system events, clock resumes, etc.)
-            // IMPORTANT: Process multiple events per loop to prevent clock resume starvation
-            // Clock resumes are queued via event_post(), so we need to drain them quickly
-            const int max_events_per_loop = 16;  // Process up to 16 events per loop
-            for (int i = 0; i < max_events_per_loop; i++) {
-                event_next();  // Processes one event (or none if queue empty)
+            // Process lock-free ASL done events (medium priority)
+            asl_done_event_lockfree_t asl_done_event;
+            while (asl_done_lockfree_get(&asl_done_event)) {
+                L_handle_asl_done_lockfree(&asl_done_event);
             }
             
             // Check for switch changes and fire callback
@@ -2984,10 +2973,7 @@ public:
                         S_toward(i, 0.0, 0.0, SHAPE_Linear, NULL);
                     }
                     
-                    // 4. Clear event queue
-                    events_clear();
-                    
-                    // 5. Cancel all clock coroutines
+                    // 4. Cancel all clock coroutines
                     clock_cancel_coro_all();
                     
                     // 6. Reset crow modules to defaults (calls crow.reset() in Lua)
@@ -3056,10 +3042,16 @@ public:
                     }
                     g_noise_active_mask = 0;  // Clear all bits in mask
                     
-                    // 4. Clear event queue
-                    events_clear();
+                    // 4. Cancel all clock coroutines
+                    // 3b. Stop all noise modes
+                    for (int i = 0; i < 4; i++) {
+                        g_noise_active[i] = false;
+                        g_noise_gain[i] = 0;
+                        g_noise_lock_counter[i] = 0;
+                    }
+                    g_noise_active_mask = 0;  // Clear all bits in mask
                     
-                    // 5. Cancel all clock coroutines
+                    // 4. Cancel all clock coroutines
                     clock_cancel_coro_all();
                     
                     // Run script in RAM (temporary) - matches crow's REPL_upload(0)
@@ -4188,126 +4180,11 @@ extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
     }
 }
 
-// Core-safe stream event handler - NO BLOCKING CALLS, NO SLEEP!
-extern "C" void L_handle_stream_safe(event_t* e) {
-    // CRITICAL: This function can be called from either core
-    // Must be thread-safe and never block!
-    
-    static volatile uint32_t callback_counter = 0;
-    callback_counter++;
-    
-    // LED 3: Stream event handler called
-    if (g_blackbird_instance) {
-        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(3);
-    }
-    
-    LuaManager* lua_mgr = LuaManager::getInstance();
-    if (!lua_mgr) {
-        if (g_blackbird_instance) {
-            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(3);
-        }
-        return;
-    }
-    
-    int channel = e->index.i + 1; // Convert to 1-based
-    float value = e->data.f;
-    
-    // Use crow-style global stream_handler dispatching
-    char lua_call[128];
-    snprintf(lua_call, sizeof(lua_call),
-        "if stream_handler then stream_handler(%d, %.6f) end",
-        channel, value);
-    
-    // Safe to use blocking safe evaluation (runs on control core)
-    lua_mgr->evaluate_safe(lua_call);
-    
-    if (g_blackbird_instance) {
-        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(3);
-    }
-}
-
-// Core-safe change event handler - NO BLOCKING CALLS, NO SLEEP!
-extern "C" void L_handle_change_safe(event_t* e) {
-    // CRITICAL: This function can be called from either core
-    // Must be thread-safe and never block!
-    
-    static volatile uint32_t callback_counter = 0;
-    callback_counter++;
-    
-    // LED 0: Event handler called (proves event system works)
-    // Use non-blocking LED control only
-    if (g_blackbird_instance) {
-        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(0);
-    }
-    
-    LuaManager* lua_mgr = LuaManager::getInstance();
-    if (!lua_mgr) {
-        if (g_blackbird_instance) {
-            ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
-        }
-        return;
-    }
-    
-    int channel = e->index.i + 1; // Convert to 1-based
-    bool state = (e->data.f > 0.5f);
-    
-    // Use crow-style global change_handler dispatching for error isolation
-    char lua_call[128];
-    // Pass numeric 0/1 like original crow firmware (Input.lua expects number, not boolean)
-    snprintf(lua_call, sizeof(lua_call),
-        "if change_handler then change_handler(%d, %d) end",
-        channel, state ? 1 : 0);
-    
-    // LED 1: About to call Lua (proves we reach Lua execution attempt)
-    if (g_blackbird_instance) {
-        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(1);
-    }
-    
-    // Now safe to use blocking safe evaluation (runs on control core, outside real-time audio path)
-    lua_mgr->evaluate_safe(lua_call);
-    // LED 2: Lua callback completed successfully (proves no crash/hang)
-    if (g_blackbird_instance) {
-        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_on(2);
-        // Turn off other LEDs now that we're done (non-blocking)
-        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(0);
-        ((BlackbirdCrow*)g_blackbird_instance)->debug_led_off(1);
-    }
-}
-
-// Core-safe ASL done event handler - triggers Lua "done" callbacks
-extern "C" void L_handle_asl_done_safe(event_t* e) {
-    // CRITICAL: This function can be called from either core
-    // Must be thread-safe and never block!
-    
-    LuaManager* lua_mgr = LuaManager::getInstance();
-    if (!lua_mgr) {
-        return;
-    }
-    
-    int channel = e->index.i + 1; // Convert to 1-based
-    
-    // Use crow-style ASL completion callback dispatching
-    char lua_call[128];
-    snprintf(lua_call, sizeof(lua_call),
-        "if output and output[%d] and output[%d].done then output[%d].done() end",
-        channel, channel, channel);
-    
-    // Safe to use blocking safe evaluation (runs on control core)
-    lua_mgr->evaluate_safe(lua_call);
-}
-
-// L_queue_asl_done function - queues ASL completion event
+// L_queue_asl_done function - queues ASL completion event using lock-free queue
 extern "C" void L_queue_asl_done(int channel) {
-    event_t e = { 
-        .handler = L_handle_asl_done_safe,
-        .index = { .i = channel }, // 0-based channel index
-        .data = { .f = 0.0f },
-        .type = EVENT_TYPE_CHANGE, // Reuse change event type
-        .timestamp = to_ms_since_boot(get_absolute_time())
-    };
-    
-    if (!event_post(&e)) {
-        printf("Failed to post ASL done event for channel %d\n\r", channel + 1);
+    // Use lock-free queue for Core 1 -> Core 0 communication (called from slope callback)
+    if (!asl_done_lockfree_post(channel)) {
+        printf("Warning: ASL done lock-free queue full for channel %d\n\r", channel + 1);
     }
 }
 

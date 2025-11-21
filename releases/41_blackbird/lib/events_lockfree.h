@@ -43,6 +43,12 @@ typedef struct {
     } extra;
 } input_event_lockfree_t;
 
+// ASL done event structure for lock-free queue
+typedef struct {
+    int channel;        // ASL channel (0-based)
+    uint32_t timestamp_us;
+} asl_done_event_lockfree_t;
+
 // Lock-free SPSC (Single Producer Single Consumer) ring buffer
 typedef struct {
     volatile uint32_t write_idx;  // Only Core 1 writes this
@@ -69,10 +75,17 @@ typedef struct {
     volatile input_event_lockfree_t events[LOCKFREE_QUEUE_SIZE];
 } input_lockfree_queue_t;
 
+// Complete lock-free ASL done queue
+typedef struct {
+    lockfree_queue_header_t header;
+    volatile asl_done_event_lockfree_t events[LOCKFREE_QUEUE_SIZE];
+} asl_done_lockfree_queue_t;
+
 // Global lock-free queues
 extern metro_lockfree_queue_t g_metro_lockfree_queue;
 extern input_lockfree_queue_t g_input_lockfree_queue;
 extern clock_lockfree_queue_t g_clock_lockfree_queue;
+extern asl_done_lockfree_queue_t g_asl_done_lockfree_queue;
 
 // Lock-free queue operations
 
@@ -94,6 +107,11 @@ bool input_lockfree_post(int channel, float value, int detection_type);
 bool input_lockfree_post_extended(const input_event_lockfree_t* event);
 bool input_lockfree_get(input_event_lockfree_t* event);
 uint32_t input_lockfree_queue_depth(void);
+
+// ASL done queue functions (Core 1 = producer, Core 0 = consumer)
+bool asl_done_lockfree_post(int channel);
+bool asl_done_lockfree_get(asl_done_event_lockfree_t* event);
+uint32_t asl_done_lockfree_queue_depth(void);
 
 // Statistics and monitoring
 void events_lockfree_print_stats(void);

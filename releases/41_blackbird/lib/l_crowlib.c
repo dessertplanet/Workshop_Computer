@@ -11,7 +11,6 @@
 // #include "lib/io.h"         // IO_GetADC() - not used in emulator
 // Declare get_input_state_simple function for compatibility (implemented in main.cpp)
 extern float get_input_state_simple(int channel); // returns input voltage in volts
-#include "lib/events.h"     // event_t, event_post()
 #include "lib/events_lockfree.h"  // Lock-free event queues
 #include "lib/slopes.h"     // S_reset()
 #include "ll_timers.h"       // Timer_Set_Block_Size()
@@ -30,11 +29,7 @@ static int _lua_void_function( lua_State* L );
 static int _delay( lua_State* L );
 
 // Forward declarations for L_handle_* functions
-void L_handle_metro( event_t* e );
-void L_handle_clock_resume( event_t* e );
 void L_handle_clock_resume_lockfree(clock_event_lockfree_t* event);
-void L_handle_clock_start( event_t* e );
-void L_handle_clock_stop( event_t* e );
 
 // function() end
 // useful as a do-nothing callback
@@ -760,21 +755,17 @@ int chan = luaL_checknumber(L, -1);
     return 0;
 }
 
-// Lock-free metro queuing function - replaces old mutex-based version
+// Lock-free metro queuing function
 void L_queue_metro( int id, int state )
 {
-    // Try lock-free queue first (much faster, never blocks Core 1)
-    if (metro_lockfree_post(id, state)) {
-        return; // Success - event queued without blocking
+    // Queue via lock-free system (never blocks Core 1)
+    if (!metro_lockfree_post(id, state)) {
+        // Queue full - drop event (should never happen with proper queue sizing)
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            printf("Warning: Metro queue full, dropped %lu events\n", (unsigned long)drop_count);
+        }
     }
-    
-    // Lock-free queue full - fallback to mutex queue (rare case)
-    printf("Warning: Lock-free metro queue full, using fallback\n");
-    event_t e = { .handler = L_handle_metro
-                , .index.i = id
-                , .data.i  = state
-                };
-    event_post(&e);
 }
 
 // Forward declarations for output batching (defined in main.cpp)
@@ -825,61 +816,17 @@ void L_handle_metro_lockfree( metro_event_lockfree_t* event )
 
 void L_queue_clock_resume( int coro_id )
 {
-    if (clock_lockfree_post(coro_id)) {
-        return;
-    }
-
-    event_t e = { .handler = L_handle_clock_resume
-                , .index.i = coro_id
-                };
-    event_post(&e);
-}
-
-void L_queue_clock_start( void )
-{
-    event_t e = { .handler = L_handle_clock_start };
-    event_post(&e);
-}
-
-void L_queue_clock_stop( void )
-{
-    event_t e = { .handler = L_handle_clock_stop };
-    event_post(&e);
-}
-
-// Handler functions - L_handle_metro calls Lua metro_handler function
-void L_handle_metro( event_t* e )
-{
-    // This function is called from the event system when a timer fires
-    // It needs to call the Lua metro_handler function safely
-    
-    extern lua_State* get_lua_state(void); // Forward declaration
-    lua_State* L = get_lua_state();
-    
-    if (!L) {
-        return;
-    }
-    
-    int metro_id = e->index.i;
-    int stage = e->data.i;
-    
-    // Call the global metro_handler function in Lua like real crow
-    lua_getglobal(L, "metro_handler");
-    if (lua_isfunction(L, -1)) {
-        lua_pushinteger(L, metro_id);  // First argument: metro ID
-        lua_pushinteger(L, stage);     // Second argument: stage/count
-        
-        // Protected call to prevent crashes
-        if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("metro_handler error: %s\n", error ? error : "unknown");
-            lua_pop(L, 1);
+    if (!clock_lockfree_post(coro_id)) {
+        // Queue full - drop event (should never happen with proper queue sizing)
+        static uint32_t drop_count = 0;
+        if (++drop_count % 100 == 0) {
+            printf("Warning: Clock resume queue full, dropped %lu events\n", (unsigned long)drop_count);
         }
-    } else {
-        // metro_handler not defined - this is normal if no metros are active
-        lua_pop(L, 1);
     }
 }
+
+// L_queue_clock_start and L_queue_clock_stop removed - clock start/stop now use direct calls
+// (Core 0 -> Core 0, no inter-core communication needed)
 
 static void handle_clock_resume_common(int coro_id) {
     extern lua_State* get_lua_state(void);
@@ -903,60 +850,33 @@ static void handle_clock_resume_common(int coro_id) {
     }
 }
 
-void L_handle_clock_resume( event_t* e )
-{
-    handle_clock_resume_common(e->index.i);
-}
-
 void L_handle_clock_resume_lockfree(clock_event_lockfree_t* event)
 {
     handle_clock_resume_common(event->coro_id);
 }
 
-void L_handle_clock_start( event_t* e )
+void L_handle_asl_done_lockfree( asl_done_event_lockfree_t* event )
 {
     extern lua_State* get_lua_state(void);
     lua_State* L = get_lua_state();
     
     if (!L) {
-        printf("L_handle_clock_start: no Lua state available\n");
+        printf("L_handle_asl_done_lockfree: no Lua state available\n");
         return;
     }
     
-    // Call the global clock_start_handler function in Lua
-    lua_getglobal(L, "clock_start_handler");
-    if (lua_isfunction(L, -1)) {
-        // Protected call to prevent crashes
-        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("clock_start_handler error: %s\n", error ? error : "unknown");
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
-}
-
-void L_handle_clock_stop( event_t* e )
-{
-    extern lua_State* get_lua_state(void);
-    lua_State* L = get_lua_state();
+    int channel = event->channel + 1; // Convert to 1-based for Lua
     
-    if (!L) {
-        printf("L_handle_clock_stop: no Lua state available\n");
-        return;
-    }
+    // Use crow-style ASL completion callback: output[channel].done()
+    char lua_call[128];
+    snprintf(lua_call, sizeof(lua_call),
+        "if output and output[%d] and output[%d].done then output[%d].done() end",
+        channel, channel, channel);
     
-    // Call the global clock_stop_handler function in Lua
-    lua_getglobal(L, "clock_stop_handler");
-    if (lua_isfunction(L, -1)) {
-        // Protected call to prevent crashes
-        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("clock_stop_handler error: %s\n", error ? error : "unknown");
-            lua_pop(L, 1);
-        }
-    } else {
+    // Execute Lua callback
+    if (luaL_dostring(L, lua_call) != LUA_OK) {
+        const char* error = lua_tostring(L, -1);
+        printf("ASL done callback error: %s\n", error ? error : "unknown");
         lua_pop(L, 1);
     }
 }

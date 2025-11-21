@@ -11,6 +11,7 @@
 metro_lockfree_queue_t g_metro_lockfree_queue;
 input_lockfree_queue_t g_input_lockfree_queue;
 clock_lockfree_queue_t g_clock_lockfree_queue;
+asl_done_lockfree_queue_t g_asl_done_lockfree_queue;
 
 // Statistics
 static volatile uint32_t metro_events_posted = 0;
@@ -22,6 +23,9 @@ static volatile uint32_t input_events_dropped = 0;
 static volatile uint32_t clock_events_posted = 0;
 static volatile uint32_t clock_events_processed = 0;
 static volatile uint32_t clock_events_dropped = 0;
+static volatile uint32_t asl_done_events_posted = 0;
+static volatile uint32_t asl_done_events_processed = 0;
+static volatile uint32_t asl_done_events_dropped = 0;
 
 // Initialize lock-free event system
 void events_lockfree_init(void) {
@@ -43,6 +47,12 @@ void events_lockfree_init(void) {
     g_clock_lockfree_queue.header.size = LOCKFREE_QUEUE_SIZE;
     g_clock_lockfree_queue.header.mask = LOCKFREE_QUEUE_MASK;
     
+    // Initialize ASL done queue
+    g_asl_done_lockfree_queue.header.write_idx = 0;
+    g_asl_done_lockfree_queue.header.read_idx = 0;
+    g_asl_done_lockfree_queue.header.size = LOCKFREE_QUEUE_SIZE;
+    g_asl_done_lockfree_queue.header.mask = LOCKFREE_QUEUE_MASK;
+    
     // Reset statistics
     metro_events_posted = 0;
     metro_events_processed = 0;
@@ -53,6 +63,9 @@ void events_lockfree_init(void) {
     clock_events_posted = 0;
     clock_events_processed = 0;
     clock_events_dropped = 0;
+    asl_done_events_posted = 0;
+    asl_done_events_processed = 0;
+    asl_done_events_dropped = 0;
     
     DEBUG_LF_PRINT("Lock-free event queues initialized (metro=%d, input=%d slots)\n", 
                    LOCKFREE_QUEUE_SIZE, LOCKFREE_QUEUE_SIZE);
@@ -279,6 +292,77 @@ uint32_t input_lockfree_queue_depth(void) {
     }
 }
 
+// ASL done queue functions
+
+// Post ASL done event from Core 1 (audio callback) - NEVER BLOCKS!
+bool asl_done_lockfree_post(int channel) {
+    asl_done_lockfree_queue_t* queue = &g_asl_done_lockfree_queue;
+    
+    // Load current write index
+    uint32_t current_write = queue->header.write_idx;
+    uint32_t next_write = (current_write + 1) & queue->header.mask;
+    
+    // Check if queue has space
+    if (next_write == queue->header.read_idx) {
+        // Queue full - drop event (don't block audio core!)
+        asl_done_events_dropped++;
+        return false;
+    }
+    
+    // Store event data
+    queue->events[current_write].channel = channel;
+    queue->events[current_write].timestamp_us = time_us_32();
+    
+    // Memory barrier - ensure event data is written before updating index
+    DMB();
+    
+    // Commit the write
+    queue->header.write_idx = next_write;
+    
+    asl_done_events_posted++;
+    return true;
+}
+
+// Get ASL done event from Core 0 (control) - NEVER BLOCKS!
+bool asl_done_lockfree_get(asl_done_event_lockfree_t* event) {
+    asl_done_lockfree_queue_t* queue = &g_asl_done_lockfree_queue;
+    
+    // Load current read index
+    uint32_t current_read = queue->header.read_idx;
+    
+    // Check if queue has data
+    if (current_read == queue->header.write_idx) {
+        // Queue empty
+        return false;
+    }
+    
+    // Copy event data
+    *event = queue->events[current_read];
+    
+    // Memory barrier - ensure event data is read before updating index
+    DMB();
+    
+    // Commit the read
+    uint32_t next_read = (current_read + 1) & queue->header.mask;
+    queue->header.read_idx = next_read;
+    
+    asl_done_events_processed++;
+    return true;
+}
+
+// Get ASL done queue depth (for monitoring)
+uint32_t asl_done_lockfree_queue_depth(void) {
+    asl_done_lockfree_queue_t* queue = &g_asl_done_lockfree_queue;
+    uint32_t write_idx = queue->header.write_idx;
+    uint32_t read_idx = queue->header.read_idx;
+    
+    if (write_idx >= read_idx) {
+        return write_idx - read_idx;
+    } else {
+        return (queue->header.size - read_idx) + write_idx;
+    }
+}
+
 // Statistics and monitoring
 
 void events_lockfree_print_stats(void) {
@@ -289,16 +373,18 @@ void events_lockfree_print_stats(void) {
     DEBUG_LF_PRINT("Clock Queue: depth=%lu/%d\n", clock_lockfree_queue_depth(), LOCKFREE_QUEUE_SIZE);
     DEBUG_LF_PRINT("  Posted: %lu, Processed: %lu, Dropped: %lu\n", 
                    clock_events_posted, clock_events_processed, clock_events_dropped);
-    
     DEBUG_LF_PRINT("Input Queue: depth=%lu/%d\n", input_lockfree_queue_depth(), LOCKFREE_QUEUE_SIZE);
     DEBUG_LF_PRINT("  Posted: %lu, Processed: %lu, Dropped: %lu\n", 
                    input_events_posted, input_events_processed, input_events_dropped);
+    DEBUG_LF_PRINT("ASL Done Queue: depth=%lu/%d\n", asl_done_lockfree_queue_depth(), LOCKFREE_QUEUE_SIZE);
+    DEBUG_LF_PRINT("  Posted: %lu, Processed: %lu, Dropped: %lu\n", 
+                   asl_done_events_posted, asl_done_events_processed, asl_done_events_dropped);
     
-    DEBUG_LF_PRINT("Health: Metro=%s, Input=%s\n", 
+    DEBUG_LF_PRINT("Health: Metro=%s, Clock=%s, Input=%s, ASL=%s\n", 
                    (metro_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE/2) ? "OK" : "OVERLOADED",
-                   (input_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE/2) ? "OK" : "OVERLOADED");
-    DEBUG_LF_PRINT("Clock Health: %s\n",
-                   (clock_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE/2) ? "OK" : "OVERLOADED");
+                   (clock_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE/2) ? "OK" : "OVERLOADED",
+                   (input_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE/2) ? "OK" : "OVERLOADED",
+                   (asl_done_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE/2) ? "OK" : "OVERLOADED");
     DEBUG_LF_PRINT("=======================================\n");
 }
 
@@ -306,7 +392,9 @@ bool events_lockfree_are_healthy(void) {
     return (metro_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
            (input_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
            (clock_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
+           (asl_done_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
            (metro_events_dropped == 0) &&
            (input_events_dropped == 0) &&
-           (clock_events_dropped == 0);
+           (clock_events_dropped == 0) &&
+           (asl_done_events_dropped == 0);
 }

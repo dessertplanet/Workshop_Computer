@@ -170,14 +170,38 @@ void clock_update_reference_from(double beats, double beat_duration, clock_sourc
 void clock_start_from( clock_source_t source )
 {
     if( clock_source == source ){
-        L_queue_clock_start();
+        // Call global clock_start_handler in Lua (matches crow behavior)
+        extern lua_State* get_lua_state(void);
+        lua_State* L = get_lua_state();
+        if (L) {
+            lua_getglobal(L, "clock_start_handler");
+            if (lua_isfunction(L, -1)) {
+                if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+        }
     }
 }
 
 void clock_stop_from( clock_source_t source )
 {
     if( clock_source == source ){
-        L_queue_clock_stop();
+        // Call global clock_stop_handler in Lua (matches crow behavior)
+        extern lua_State* get_lua_state(void);
+        lua_State* L = get_lua_state();
+        if (L) {
+            lua_getglobal(L, "clock_stop_handler");
+            if (lua_isfunction(L, -1)) {
+                if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+        }
     }
 }
 
