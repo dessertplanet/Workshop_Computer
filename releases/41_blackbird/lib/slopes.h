@@ -69,14 +69,23 @@ typedef struct{
     
     Shape_t     shape;
     Callback_t  action;
+    
+    // Deferred parameter update system - avoids buffer flushing
+    bool        has_pending_update;
+    int         parameter_update_delay;  // Samples to wait before applying pending params
+    q16_t       pending_dest_q16;
+    int64_t     pending_duration_q16;
+    Shape_t     pending_shape;
+    Callback_t  pending_action;
 } Slope_t;
 
 #define SLOPE_CHANNELS 4
 
 // Sample buffering configuration for Core 1 block renderer
-#define SLOPE_BUFFER_CAPACITY 32
-#define SLOPE_BUFFER_LOW_WATER 8
-#define SLOPE_RENDER_CHUNK 8
+// 5ms latency @ 8kHz = 40 samples
+#define SLOPE_BUFFER_CAPACITY 40
+#define SLOPE_BUFFER_LOW_WATER 10
+#define SLOPE_RENDER_CHUNK 10
 
 // refactor for dynamic SLOPE_CHANNELS
 // refactor for dynamic SAMPLE_RATE
