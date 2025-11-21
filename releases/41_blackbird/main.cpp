@@ -931,6 +931,13 @@ static int pulseout_call(lua_State* L) {
     
     // No argument - execute the current action
     lua_getfield(L, 1, "_action");
+    
+    // If no action is set, silently do nothing (matches output[n]() behavior)
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return 0;
+    }
+    
     if (lua_istable(L, -1)) {
         // It's an ASL action table - execute via _c.tell
         lua_getglobal(L, "_c");
