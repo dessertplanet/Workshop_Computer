@@ -2239,11 +2239,32 @@ static void output_batch_queue(int channel, float volts) {
 extern "C" void output_batch_flush() {
     if (!g_output_batch.batch_mode_active) return;
     
+    // STEP 1: Find the maximum delay across all pending outputs
+    // This ensures all channels update simultaneously (critical for multi-channel synchronization)
+    extern Slope_t* slopes;
+    int max_delay = 0;
+    
+    for (int i = 0; i < 4; i++) {
+        if (g_output_batch.outputs[i].pending && slopes[i].has_pending_update) {
+            if (slopes[i].parameter_update_delay > max_delay) {
+                max_delay = slopes[i].parameter_update_delay;
+            }
+        }
+    }
+    
+    // STEP 2: Apply all changes AND synchronize their delays
     for (int i = 0; i < 4; i++) {
         if (g_output_batch.outputs[i].pending) {
             // Call actual hardware function once per changed output
             extern void hardware_output_set_voltage(int channel, float voltage);
             hardware_output_set_voltage(i + 1, g_output_batch.outputs[i].target_volts);
+            
+            // SYNCHRONIZE: Set all channels to use max_delay
+            // This ensures they all apply at the same time despite different buffer fill levels
+            if (slopes[i].has_pending_update) {
+                slopes[i].parameter_update_delay = max_delay;
+            }
+            
             g_output_batch.outputs[i].pending = false;
         }
     }
