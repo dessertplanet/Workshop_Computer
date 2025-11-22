@@ -18,5 +18,5 @@ Blackbird has some limitations with relationship to crow (audio rate scripts wil
 - [seqswitch_bb.lua](seqswitch_bb.lua): route an input to 1 of 4 outputs with optional 'hold'
 - [shiftregister_bb.lua](shiftregister_bb.lua): output the last 4 captured voltages
 - [timeline.lua](timeline.lua): timeline sequencer
-
+- [turing.lua](turing.lua: a 5 step turing machine (this one is new to blackbird, but it is idiomatic to the Workshop System to include a turing machine)
 learn how to upload scripts to blackbird using [***stage one*** of the crow scripting tutorial](https://monome.org/docs/crow/scripting)
