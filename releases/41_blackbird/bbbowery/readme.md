@@ -1,4 +1,4 @@
-# bbbbowery
+# bbbowery
 [druid](https://github.com/monome/druid) script collection, specific to the "blackbird" variant of crow for use with the [MTM Workshop System Computer module](https://www.musicthing.co.uk/Computer_Program_Cards/).
 
 Info on blackbird and how to install can be found on the [MTM Github](https://github.com/TomWhitwell/Workshop_Computer/tree/main/releases/41_blackbird).  
