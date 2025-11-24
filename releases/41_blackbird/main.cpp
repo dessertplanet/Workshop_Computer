@@ -8,7 +8,6 @@ I have also added the bb namespace with some Blackbird-specific functionality:
  - use the knobs, switches, audio inputs & pulse i/o of the Workshop Computer
  (and for advanced users)
  - bb.asap function that runs as fast as possible in the control thread with no detection
- - Use bb.priority() for balancing accurate timing with accurate output (effectively configuring the failure mode when overloaded)
 
 Tested with druid, norns, MAX/MSP, pyserial- works with ANY serial host that sends compatible strings.
 
@@ -1530,14 +1529,6 @@ public:
         
         // Create Workshop Computer namespace table with knob and switch
         create_bb_table(L);
-
-        // Attach bb.priority after bb table creation (may not yet exist when l_crowlib_init ran)
-        lua_getglobal(L, "bb");
-        if(!lua_isnil(L, -1)) {
-            lua_pushcfunction(L, l_bb_priority);
-            lua_setfield(L, -2, "priority");
-        }
-        lua_settop(L, 0);
         
         // Print Lua memory usage for diagnostics
         int lua_mem_kb = lua_gc(L, LUA_GCCOUNT, 0);

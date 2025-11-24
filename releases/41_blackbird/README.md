@@ -166,12 +166,14 @@ bb.asap = function()
 end
 ```
 
-### Choose your priorities (advanced/dangerous-living users only)
-`bb.priority()` - Balance accurate timing with accurate output (configures failure mode when overloaded). the default priority is `'timing'`, meaning that maintaining the schedule of output events is more important than either reproducing the requested signal as accuractely as possible or as early as possible. For most situations this will work perfectly.
+### Performance characteristics
 
-However, if you find the latency between input and output is too high (do try using output gates/envelopes at a free output before using this) OR you just like the sound of a computer breaking down (I do!) you can read on. You can try running `bb.priority('balanced')` which will be faster than the default but less stable. For those who want to more accurately render (probably only one, only up to about 1kHz) audio-rate waveform and are OK with the trade off that too much load WILL cause clocks and LFOs and everything to slowwwwwww dooowwwwwwn while processing any medium-heavy load there is `bb.priority('accuracy')` which causes the system to prioritize getting the output right, even if the clock get's all rubbery in order to get there. The good news is it shouldn't crash, and the lack of crash CAN be the fun part.
+Blackbird uses a dual-core architecture optimized for responsive, jitter-free output:
+- **Core 1 (audio thread)**: Outputs CV slopes sample-by-sample at 8kHz for zero-jitter precision
+- **Core 0 (control thread)**: Processes Lua scripts, metros, and ASL actions with ~1ms latency
+- Timer callbacks (metros, ASL triggers) are processed in 8-sample blocks for optimal balance between responsiveness and CPU efficiency
 
-This trade-off is inherent to the RP2040 version of the crow firmware since the original crow runs on a more powerful STM32F microcontroller. I have done my best to make the constraints here a feature and not a limitation.
+This architecture provides excellent timing accuracy for musical applications while maintaining stability even under heavy scripting loads.
 
 ## Credits & Thank yous
 
