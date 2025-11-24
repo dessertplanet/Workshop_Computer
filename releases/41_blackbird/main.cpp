@@ -150,33 +150,65 @@ static uint32_t g_noise_state = 0xDEADBEEF;
 
 // Slope action callback queue (Core 1 → Core 0)
 // When slopes complete and have action callbacks, Core 1 queues them here
-#define SLOPE_ACTION_QUEUE_SIZE 16
-static volatile uint8_t g_slope_action_queue[SLOPE_ACTION_QUEUE_SIZE];
+// CRITICAL: Store callback pointer in queue to prevent race condition
+// when rapid triggers start new slopes before callbacks are processed
+#define SLOPE_ACTION_QUEUE_SIZE 64
+typedef struct {
+    uint8_t channel;
+    Callback_t callback;
+} slope_action_entry_t;
+static volatile slope_action_entry_t g_slope_action_queue[SLOPE_ACTION_QUEUE_SIZE];
 static volatile uint32_t g_slope_action_write_idx = 0;
 static volatile uint32_t g_slope_action_read_idx = 0;
+static volatile uint32_t g_slope_action_drop_count = 0;
+static volatile uint32_t g_slope_action_null_callback_count = 0;
 
 // Queue slope action callback from Core 1 (called in ISR)
-extern "C" void queue_slope_action_callback(int channel) {
+// IMPORTANT: Callback pointer is captured here to avoid race with new S_toward calls
+extern "C" void queue_slope_action_callback(int channel, Callback_t callback) {
+    if (callback == NULL) {
+        g_slope_action_null_callback_count++;
+        return;  // Don't queue NULL callbacks
+    }
+    
     uint32_t next_write = (g_slope_action_write_idx + 1) % SLOPE_ACTION_QUEUE_SIZE;
     if (next_write != g_slope_action_read_idx) {
-        g_slope_action_queue[g_slope_action_write_idx] = (uint8_t)channel;
+        g_slope_action_queue[g_slope_action_write_idx].channel = (uint8_t)channel;
+        g_slope_action_queue[g_slope_action_write_idx].callback = callback;
         g_slope_action_write_idx = next_write;
+    } else {
+        // Queue full - track drops for diagnostic reporting
+        g_slope_action_drop_count++;
     }
-    // If queue full, drop the callback (shouldn't happen in practice)
 }
 
 // Process slope action callbacks on Core 0 (called from MainControlLoop)
 static void process_slope_action_callbacks() {
-    extern Slope_t* slopes;
+    // Report diagnostics if drops detected
+    static uint32_t last_reported_drops = 0;
+    static uint32_t last_reported_nulls = 0;
+    if (g_slope_action_drop_count != last_reported_drops) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "[SLOPE] Queue drops: %lu\n\r", (unsigned long)g_slope_action_drop_count);
+        tud_cdc_write_str(msg);
+        last_reported_drops = g_slope_action_drop_count;
+    }
+    if (g_slope_action_null_callback_count != last_reported_nulls) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "[SLOPE] NULL callbacks: %lu\n\r", (unsigned long)g_slope_action_null_callback_count);
+        tud_cdc_write_str(msg);
+        last_reported_nulls = g_slope_action_null_callback_count;
+    }
     
     while (g_slope_action_read_idx != g_slope_action_write_idx) {
-        uint8_t channel = g_slope_action_queue[g_slope_action_read_idx];
-        g_slope_action_read_idx = (g_slope_action_read_idx + 1) % SLOPE_ACTION_QUEUE_SIZE;
+        // Read volatile struct members individually to avoid copy issues
+        uint32_t read_idx = g_slope_action_read_idx;
+        uint8_t channel = g_slope_action_queue[read_idx].channel;
+        Callback_t callback = g_slope_action_queue[read_idx].callback;
+        g_slope_action_read_idx = (read_idx + 1) % SLOPE_ACTION_QUEUE_SIZE;
         
-        // Fire the action callback if it's still set
-        if (slopes && channel < 4 && slopes[channel].action != NULL) {
-            Callback_t callback = slopes[channel].action;
-            slopes[channel].action = NULL; // Clear before calling to prevent re-trigger
+        // Execute the queued callback
+        if (callback != NULL) {
             callback((int)channel);
         }
     }

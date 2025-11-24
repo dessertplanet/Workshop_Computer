@@ -255,6 +255,7 @@ Slope_t* slopes = NULL; // Exported for ll_timers.c conditional processing
 typedef struct {
     q16_t value_q16;
     uint8_t action_due;
+    Callback_t callback;  // Captured atomically to prevent race conditions
 } slope_buffer_entry_t;
 
 static slope_buffer_entry_t slope_output_buffers[SLOPE_CHANNELS][SLOPE_BUFFER_CAPACITY];
@@ -363,9 +364,9 @@ q16_t S_consume_buffered_sample_q16(int index) {
     if (!slope_buffer_pop(index, &entry)) {
         entry = S_render_one_sample_q16(index);
     }
-    if (entry.action_due) {
-        extern void queue_slope_action_callback(int channel);
-        queue_slope_action_callback(index);
+    if (entry.action_due && entry.callback != NULL) {
+        extern void queue_slope_action_callback(int channel, Callback_t callback);
+        queue_slope_action_callback(index, entry.callback);
     }
     return entry.value_q16;
 }
@@ -554,7 +555,7 @@ float S_get_state( int index )
 __attribute__((section(".time_critical.S_render_one_sample_q16")))
 static slope_buffer_entry_t S_render_one_sample_q16(int index)
 {
-    slope_buffer_entry_t entry = { .value_q16 = 0, .action_due = 0 };
+    slope_buffer_entry_t entry = { .value_q16 = 0, .action_due = 0, .callback = NULL };
     if( index < 0 || index >= SLOPE_CHANNELS || slopes == NULL ){ return entry; }
     Slope_t* self = &slopes[index];
     
@@ -622,7 +623,12 @@ static slope_buffer_entry_t S_render_one_sample_q16(int index)
     q16_t quantized_q16 = AShaper_quantize_single_q16(index, voltage_q16);
     entry.value_q16 = quantized_q16;
     
+    // CRITICAL: Atomically capture and clear callback when action becomes due
+    // This prevents race condition where new S_toward could overwrite action
+    // between checking and queuing
     if( self->countdown_q16 == 0 && self->action != NULL ) {
+        entry.callback = self->action;
+        self->action = NULL;  // Clear immediately after capturing
         entry.action_due = 1;
     }
     
@@ -637,9 +643,9 @@ q16_t S_step_one_sample_q16(int index)
     slope_buffer_entry_t entry = S_render_one_sample_q16(index);
     extern void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
     hardware_output_set_voltage_q16(index + 1, entry.value_q16);
-    if (entry.action_due) {
-        extern void queue_slope_action_callback(int channel);
-        queue_slope_action_callback(index);
+    if (entry.action_due && entry.callback != NULL) {
+        extern void queue_slope_action_callback(int channel, Callback_t callback);
+        queue_slope_action_callback(index, entry.callback);
     }
     return entry.value_q16;
 }
@@ -656,10 +662,10 @@ void S_toward_q16( int        index
     if( index < 0 || index >= SLOPE_CHANNELS ){ return; }
     Slope_t* self = &slopes[index]; // safe pointer
 
-    // update destination
+    // update destination and shape
     self->dest_q16  = destination_q16;
     self->shape     = shape;
-    self->action    = cb;
+    
     slope_buffer_flush_request[index] = 1; // ensure buffered samples are discarded on Core 1
 
     // direct update & callback if ms = 0 (ie instant)
@@ -670,10 +676,15 @@ void S_toward_q16( int        index
         self->here_q16      = Q16_ONE; // 1.0 in Q16 - end of range
         self->duration_q16  = 0;
         self->elapsed_q16   = 0;
+        
+        // Cancel any pending slope
         if(self->countdown_q16 > 0){
-            // only happens when assynchronously updating S_toward
-            self->countdown_q16 = 0; // inactive
+            self->countdown_q16 = 0;
         }
+        
+        // Set action for instant transitions
+        self->action = cb;
+        
         // Immediate hardware update for zero-time (instant) transitions
         // Apply quantization before hardware output
         extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
@@ -681,8 +692,7 @@ void S_toward_q16( int        index
         extern void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
         hardware_output_set_voltage_q16(index+1, quantized_q16);  // Direct Q16, no conversion!
         
-        // Schedule callback for instant transitions
-        // Fire on next audio cycle to allow ASL sequences to continue
+        // Schedule callback for instant transitions if callback provided
         if(self->action){
             self->countdown_q16 = Q16_ONE; // Fire callback after 1 sample
         }
@@ -699,9 +709,9 @@ void S_toward_q16( int        index
         const int64_t threshold_1023_q16 = ((int64_t)1023 << Q16_SHIFT); // 1023.0 in Q16
 
         if( self->countdown_q16 > 0 && self->countdown_q16 < threshold_100_q16 ){
-            // Pending instant callback - clear it and use as overflow
+            // Pending instant callback - use as overflow but DON'T clear action yet
+            // Action will be set below after we've handled the old callback
             overflow_q16 = (q16_t)self->countdown_q16;
-            self->action = NULL;  // Clear pending action since we're starting a new slope
         } else if( self->countdown_q16 < 0 && self->countdown_q16 > -threshold_1023_q16 ){
             overflow_q16 = (q16_t)(-self->countdown_q16);
         }
@@ -718,6 +728,9 @@ void S_toward_q16( int        index
         self->countdown_q16 = samples_q16;
         self->elapsed_q16   = 0;
         self->here_q16      = 0; // start of slope
+        
+        // NOW it's safe to update the action pointer for the new slope
+        self->action = cb;
 
         if( overflow_q16 > 0 ){
             slope_advance(self, (int64_t)overflow_q16);
