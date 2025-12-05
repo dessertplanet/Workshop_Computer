@@ -222,7 +222,7 @@ static constexpr double kProcessSampleBudgetUs = 1000000.0 / kProcessSampleRateH
 static constexpr uint32_t kProcessSampleOverrunThresholdUs =
     static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~100us)
 static constexpr uint32_t kProcessSamplePeriodUsInt = 125;
-static constexpr uint32_t kTimerServiceIntervalSamples = 6;  // 6 * 125us = 750us (~1.33kHz) stable cadence
+static constexpr uint32_t kTimerServiceIntervalUs = 667;  // ~1.5kHz target (crow-compatible cadence)
 // ProcessSample (Core 1 audio thread) performance
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
@@ -2165,10 +2165,14 @@ static void process_usb_byte(char c) {
 }
 
 // ============================================================================
-// USB IRQ TIMER - Services USB stack and queues at 1kHz
+// USB IRQ TIMERS - RX (TinyUSB task) and TX (flush) at 1kHz
 // ============================================================================
+static inline void usb_process_tx_bounded(void);
+
 #define USB_SERVICE_INTERVAL_US 1000
+#define USB_TX_INTERVAL_US 1000
 static struct repeating_timer g_usb_service_timer;
+static struct repeating_timer g_usb_tx_timer;
 static constexpr uint32_t kUsbFlushIntervalUs = 2000; // Matches crow's 2ms cadence
 
 static inline void usb_flush_if_due(void) {
@@ -2197,20 +2201,27 @@ static bool __isr __time_critical_func(usb_service_callback)(struct repeating_ti
             usb_rx_lockfree_post((char*)buf, count);
         }
     }
-    // NOTE: ALL TX processing (including flush) happens in usb_process_tx() on the main loop
-    // to avoid race conditions with TinyUSB CDC functions being called from both ISR and main loop.
-    
     return true;  // Keep timer running
+}
+
+// ISR-safe USB TX callback - runs at 1kHz (1ms intervals), bounded work to avoid long ISRs
+static bool __isr __time_critical_func(usb_tx_service_callback)(struct repeating_timer *t) {
+    (void)t;
+    usb_process_tx_bounded();
+    return true;
 }
 
 // Non-ISR USB TX processing
 // Drains lock-free TX queue and performs conditional flushes.
-static inline void usb_process_tx() {
+// Bounded by message count to keep SOF handler short while avoiding drops.
+static inline void usb_process_tx_bounded(void) {
     if (!tud_cdc_connected()) return;
     usb_tx_message_t msg;
-    while (usb_tx_lockfree_get(&msg)) {
+    const int kMaxMsgsPerTick = 8;
+    int sent_msgs = 0;
+    while (sent_msgs < kMaxMsgsPerTick && usb_tx_lockfree_get(&msg)) {
+        sent_msgs++;
         uint32_t written = tud_cdc_write(msg.data, msg.length);
-        // Flush either when explicitly requested or when buffer space is low.
         if (msg.needs_flush || tud_cdc_write_available() < 128) {
             tud_cdc_write_flush();
         }
@@ -2220,6 +2231,7 @@ static inline void usb_process_tx() {
     // Periodic flush to ensure data goes out even if queue is quiet
     usb_flush_if_due();
 }
+
 
 // ============================================================================
 // OUTPUT BATCHING SYSTEM
@@ -2624,12 +2636,20 @@ public:
         g_rx_buffer_pos = 0;
         memset(g_rx_buffer, 0, USB_RX_BUFFER_SIZE);
         
-        // Start USB service timer (1kHz IRQ for stack + RX only; TX now handled in main loop)
+        // Start USB service timer (1kHz IRQ for stack + RX)
         if (!add_repeating_timer_us(-USB_SERVICE_INTERVAL_US, 
                                      usb_service_callback, 
                                      NULL, 
                                      &g_usb_service_timer)) {
             printf("Failed to start USB service timer!\n");
+        }
+
+        // Start USB TX timer (1kHz IRQ for deterministic flush cadence)
+        if (!add_repeating_timer_us(-USB_TX_INTERVAL_US,
+                                     usb_tx_service_callback,
+                                     NULL,
+                                     &g_usb_tx_timer)) {
+            printf("Failed to start USB TX timer!\n");
         }
         
         // Welcome message timing - send 1.5s after startup
@@ -2672,9 +2692,6 @@ public:
                     }
                 }
             }
-
-            // NEW: Drain USB TX queue outside ISR (eliminates reentrancy races)
-            usb_process_tx();
 
             uint32_t now_us = time_us_32();
             if ((now_us - last_led_update_us) >= led_update_interval_us) {
@@ -3286,10 +3303,10 @@ public:
         }
 
         // Derive ~1.5kHz timer/metro service ticks with deterministic spacing
-        static uint32_t timer_tick_accumulator_samples = 0;
-        timer_tick_accumulator_samples += 1;
-        if (timer_tick_accumulator_samples >= kTimerServiceIntervalSamples) {
-            timer_tick_accumulator_samples -= kTimerServiceIntervalSamples;
+        static uint32_t timer_tick_accumulator_us = 0;
+        timer_tick_accumulator_us += kProcessSamplePeriodUsInt; // 125us per sample
+        while (timer_tick_accumulator_us >= kTimerServiceIntervalUs) {
+            timer_tick_accumulator_us -= kTimerServiceIntervalUs;
             g_timer_ticks_pending++;
         }
         
