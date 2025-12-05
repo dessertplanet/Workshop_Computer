@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "hardware/sync.h"
+#include "pico/multicore.h"
 
 // TODO: Port STM32 dependencies to RP2040
 // #include "stm32f7xx.h" // STM32-specific, removed
@@ -265,6 +266,73 @@ static volatile uint8_t slope_buffer_flush_request[SLOPE_CHANNELS];
 static volatile uint32_t slope_fill_request_mask = 0;
 
 static slope_buffer_entry_t S_render_one_sample_q16(int index);
+static void S_toward_q16_apply( int        index
+                              , q16_t      destination_q16
+                              , q16_t      ms_q16
+                              , Shape_t    shape
+                              , Callback_t cb
+                              );
+
+// ========================================================================
+// Cross-core slope command queue (Core0 -> Core1)
+// Eliminates races on 64-bit slope state (countdown/duration/etc).
+// ========================================================================
+
+typedef struct {
+    int8_t index;        // slope channel (0-based)
+    q16_t dest_q16;
+    q16_t ms_q16;
+    Shape_t shape;
+    Callback_t cb;
+} slope_cmd_t;
+
+#define SLOPE_CMD_QUEUE_SIZE 32
+static volatile slope_cmd_t slope_cmd_queue[SLOPE_CMD_QUEUE_SIZE];
+static volatile uint32_t slope_cmd_write_idx = 0;
+static volatile uint32_t slope_cmd_read_idx = 0;
+static volatile uint32_t slope_cmd_drop_count = 0;
+
+static inline bool slope_cmd_enqueue(const slope_cmd_t* cmd) {
+    uint32_t irq_state = save_and_disable_interrupts();
+    uint32_t next_write = (slope_cmd_write_idx + 1) % SLOPE_CMD_QUEUE_SIZE;
+    if (next_write == slope_cmd_read_idx) {
+        restore_interrupts(irq_state);
+        slope_cmd_drop_count++;
+        return false; // queue full
+    }
+    slope_cmd_queue[slope_cmd_write_idx] = *cmd; // struct copy (volatile)
+    slope_cmd_write_idx = next_write;
+    restore_interrupts(irq_state);
+    return true;
+}
+
+uint32_t S_get_cmd_drop_count(void) {
+    return slope_cmd_drop_count;
+}
+
+static inline bool slope_cmd_dequeue(slope_cmd_t* out) {
+    uint32_t irq_state = save_and_disable_interrupts();
+    if (slope_cmd_read_idx == slope_cmd_write_idx) {
+        restore_interrupts(irq_state);
+        return false; // empty
+    }
+    uint32_t read = slope_cmd_read_idx;
+    *out = slope_cmd_queue[read];
+    slope_cmd_read_idx = (read + 1) % SLOPE_CMD_QUEUE_SIZE;
+    restore_interrupts(irq_state);
+    return true;
+}
+
+// Process queued commands (Core1 only). Limit per call to bound latency.
+void S_process_pending_commands(void) {
+    const int kMaxPerCall = 4;
+    slope_cmd_t cmd;
+    int processed = 0;
+    while (processed < kMaxPerCall && slope_cmd_dequeue(&cmd)) {
+        S_toward_q16_apply(cmd.index, cmd.dest_q16, cmd.ms_q16, cmd.shape, cmd.cb);
+        processed++;
+    }
+}
 
 static inline void slope_buffer_clear_channel(int index) {
     slope_buffer_head[index] = 0;
@@ -376,6 +444,9 @@ void S_slope_buffer_background_service(void) {
     if (!slopes) {
         return;
     }
+
+    // Apply any queued cross-core slope commands first
+    S_process_pending_commands();
 
     // Service explicit refill requests first (set by ProcessSample when buffers dip)
     int requested_channel = -1;
@@ -652,12 +723,13 @@ q16_t S_step_one_sample_q16(int index)
 
 // Q16.16 Fixed-Point Slope Engine - Core Implementation
 // All arithmetic in integer math for 5-6x performance improvement on RP2040
-void S_toward_q16( int        index
-                 , q16_t      destination_q16
-                 , q16_t      ms_q16
-                 , Shape_t    shape
-                 , Callback_t cb
-                 )
+// Internal apply (must run on Core1 with interrupts disabled to avoid preemption by ISR)
+static void S_toward_q16_apply( int        index
+                              , q16_t      destination_q16
+                              , q16_t      ms_q16
+                              , Shape_t    shape
+                              , Callback_t cb
+                              )
 {
     if( index < 0 || index >= SLOPE_CHANNELS ){ return; }
     Slope_t* self = &slopes[index]; // safe pointer
@@ -741,6 +813,40 @@ void S_toward_q16( int        index
                 self->here_q16 = Q16_ONE; // set to destination
             }
         }
+    }
+}
+
+// Public API: route to Core1 if invoked from Core0 to avoid cross-core races on 64-bit state
+void S_toward_q16( int        index
+                 , q16_t      destination_q16
+                 , q16_t      ms_q16
+                 , Shape_t    shape
+                 , Callback_t cb
+                 )
+{
+    // If slopes not initialized, ignore
+    if (!slopes) { return; }
+
+    // Core1 (audio engine): apply immediately with interrupts disabled to avoid ISR preemption
+    if (get_core_num() == 1) {
+        uint32_t irq = save_and_disable_interrupts();
+        S_toward_q16_apply(index, destination_q16, ms_q16, shape, cb);
+        restore_interrupts(irq);
+        return;
+    }
+
+    // Core0 (Lua/control): enqueue command for Core1 to apply safely
+    slope_cmd_t cmd = { .index = (int8_t)index,
+                        .dest_q16 = destination_q16,
+                        .ms_q16 = ms_q16,
+                        .shape = shape,
+                        .cb = cb };
+    if (!slope_cmd_enqueue(&cmd)) {
+        // As a fallback (should be rare), apply locally with interrupts disabled
+        // This may introduce a tiny race but avoids dropping envelopes completely
+        uint32_t irq = save_and_disable_interrupts();
+        S_toward_q16_apply(index, destination_q16, ms_q16, shape, cb);
+        restore_interrupts(irq);
     }
 }
 

@@ -124,15 +124,16 @@ static volatile uint32_t g_timer_ticks_pending = 0;
 // Pulse input state tracking (read from hardware, cached for Lua access)
 static volatile bool g_pulsein_state[2] = {false, false};
 
-// Pulse input edge detection flags (set at 8kHz, cleared in main loop)
-static volatile bool g_pulsein_edge_detected[2] = {false, false};
+// Pulse input edge detection counters (set at 8kHz, drained in main loop)
+// Counters prevent loss of back-to-back edges between loop iterations.
+static volatile uint8_t g_pulsein_edge_count[2] = {0, 0};
 static volatile bool g_pulsein_edge_state[2] = {false, false};
 
 // Reentrancy protection for pulsein callbacks (prevents crashes from fast clocks)
 static volatile bool g_pulsein_callback_active[2] = {false, false};
 
-// Clock edge pending flags (deferred from ISR to Core 0 to avoid FP math in ISR)
-static volatile bool g_pulsein_clock_edge_pending[2] = {false, false};
+// Clock edge pending counters (deferred from ISR to Core 0 to avoid FP math in ISR)
+static volatile uint8_t g_pulsein_clock_edge_count[2] = {0, 0};
 
 // ============================================================================
 // AUDIO-RATE NOISE GENERATOR (8kHz)
@@ -196,6 +197,16 @@ static void process_slope_action_callbacks() {
         snprintf(msg, sizeof(msg), "[SLOPE] NULL callbacks: %lu\n\r", (unsigned long)g_slope_action_null_callback_count);
         tud_cdc_write_str(msg);
         last_reported_nulls = g_slope_action_null_callback_count;
+    }
+
+    // Report slope command queue drops (Core0->Core1)
+    static uint32_t last_reported_cmd_drops = 0;
+    uint32_t cmd_drops = S_get_cmd_drop_count();
+    if (cmd_drops != last_reported_cmd_drops) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "[SLOPE] Cmd drops: %lu\n\r", (unsigned long)cmd_drops);
+        tud_cdc_write_str(msg);
+        last_reported_cmd_drops = cmd_drops;
     }
     
     while (g_slope_action_read_idx != g_slope_action_write_idx) {
@@ -2782,8 +2793,8 @@ public:
             
             // Process clock edges deferred from ISR (avoids FP math in ISR)
             for (int i = 0; i < 2; i++) {
-                if (g_pulsein_clock_edge_pending[i]) {
-                    g_pulsein_clock_edge_pending[i] = false;
+                while (g_pulsein_clock_edge_count[i] > 0) {
+                    g_pulsein_clock_edge_count[i]--;
                     clock_crow_handle_clock();  // Safe on Core 0
                 }
             }
@@ -2820,12 +2831,12 @@ public:
             // Edge detection happens at 8kHz in ProcessSample(), we just check flags here
             // REENTRANCY PROTECTION: Skip callback if one is already running (prevents crashes from fast clocks)
             for (int i = 0; i < 2; i++) {
-                if (g_pulsein_edge_detected[i] && !g_pulsein_callback_active[i]) {
+                if (g_pulsein_edge_count[i] > 0 && !g_pulsein_callback_active[i]) {
                     // Mark callback as active FIRST to prevent reentrancy
                     g_pulsein_callback_active[i] = true;
                     
-                    // Clear the edge flag AFTER marking active (prevents race)
-                    g_pulsein_edge_detected[i] = false;
+                    // Clear one edge AFTER marking active (prevents race)
+                    g_pulsein_edge_count[i]--;
                     
                     // Cache the edge state before calling Lua (in case it changes)
                     bool edge_state = g_pulsein_edge_state[i];
@@ -3326,20 +3337,24 @@ public:
                 bool falling = PulseIn1FallingEdge();
                 // direction: 0=both, 1=rising only, -1=falling only
                 if ((rising && g_pulsein_direction[0] != -1) || (falling && g_pulsein_direction[0] != 1)) {
-                    g_pulsein_edge_detected[0] = true;
+                    if (g_pulsein_edge_count[0] < 0xFF) {
+                        g_pulsein_edge_count[0]++;
+                    }
                     g_pulsein_edge_state[0] = PulseIn1();
                 }
             } else if (g_pulsein_mode[0] == 2) {
                 // Clock mode - only rising edges
                 if (PulseIn1RisingEdge()) {
-                    g_pulsein_clock_edge_pending[0] = true;  // Defer to Core 0 (avoids FP math in ISR)
+                    if (g_pulsein_clock_edge_count[0] < 0xFF) {
+                        g_pulsein_clock_edge_count[0]++;
+                    }
                 }
             }
             g_pulsein_state[0] = PulseIn1();
         } else {
             // Clear any stale edge flags while disconnected
-            g_pulsein_edge_detected[0] = false;
-            g_pulsein_clock_edge_pending[0] = false;
+            g_pulsein_edge_count[0] = 0;
+            g_pulsein_clock_edge_count[0] = 0;
             g_pulsein_state[0] = false;
         }
 
@@ -3349,19 +3364,23 @@ public:
                 bool falling = PulseIn2FallingEdge();
                 // direction: 0=both, 1=rising only, -1=falling only
                 if ((rising && g_pulsein_direction[1] != -1) || (falling && g_pulsein_direction[1] != 1)) {
-                    g_pulsein_edge_detected[1] = true;
+                    if (g_pulsein_edge_count[1] < 0xFF) {
+                        g_pulsein_edge_count[1]++;
+                    }
                     g_pulsein_edge_state[1] = PulseIn2();
                 }
             } else if (g_pulsein_mode[1] == 2) {
                 // Clock mode - only rising edges
                 if (PulseIn2RisingEdge()) {
-                    g_pulsein_clock_edge_pending[1] = true;  // Defer to Core 0 (avoids FP math in ISR)
+                    if (g_pulsein_clock_edge_count[1] < 0xFF) {
+                        g_pulsein_clock_edge_count[1]++;
+                    }
                 }
             }
             g_pulsein_state[1] = PulseIn2();
         } else {
-            g_pulsein_edge_detected[1] = false;
-            g_pulsein_clock_edge_pending[1] = false;
+            g_pulsein_edge_count[1] = 0;
+            g_pulsein_clock_edge_count[1] = 0;
             g_pulsein_state[1] = false;
         }
         

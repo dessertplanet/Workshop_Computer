@@ -114,6 +114,13 @@ void S_request_slope_buffer_fill(int index);
 q16_t S_consume_buffered_sample_q16(int index);
 void S_slope_buffer_background_service(void);
 
+// Process any queued cross-core slope commands (Core1 only).
+// This avoids cross-core races on 64-bit slope state.
+void S_process_pending_commands(void);
+
+// Diagnostics
+uint32_t S_get_cmd_drop_count(void);
+
 float* S_step_v( int     index
                , float*  out
                , int     size
