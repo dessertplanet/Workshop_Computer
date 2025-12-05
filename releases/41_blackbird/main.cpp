@@ -128,6 +128,8 @@ static volatile bool g_pulsein_state[2] = {false, false};
 // Counters prevent loss of back-to-back edges between loop iterations.
 static volatile uint8_t g_pulsein_edge_count[2] = {0, 0};
 static volatile bool g_pulsein_edge_state[2] = {false, false};
+static volatile uint16_t g_pulsein_edge_overflow_count[2] = {0, 0};
+static volatile uint16_t g_pulsein_clock_overflow_count[2] = {0, 0};
 
 // Reentrancy protection for pulsein callbacks (prevents crashes from fast clocks)
 static volatile bool g_pulsein_callback_active[2] = {false, false};
@@ -207,6 +209,24 @@ static void process_slope_action_callbacks() {
         snprintf(msg, sizeof(msg), "[SLOPE] Cmd drops: %lu\n\r", (unsigned long)cmd_drops);
         tud_cdc_write_str(msg);
         last_reported_cmd_drops = cmd_drops;
+    }
+
+    // Pulsein overflow diagnostics (8kHz edge coalescing)
+    static uint16_t last_pulsein_overflow[2] = {0,0};
+    static uint16_t last_pulsein_clock_overflow[2] = {0,0};
+    for (int i = 0; i < 2; i++) {
+        if (g_pulsein_edge_overflow_count[i] != last_pulsein_overflow[i]) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "[PULSEIN%d] edge overflows: %u\n\r", i+1, g_pulsein_edge_overflow_count[i]);
+            tud_cdc_write_str(msg);
+            last_pulsein_overflow[i] = g_pulsein_edge_overflow_count[i];
+        }
+        if (g_pulsein_clock_overflow_count[i] != last_pulsein_clock_overflow[i]) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "[PULSEIN%d] clock overflows: %u\n\r", i+1, g_pulsein_clock_overflow_count[i]);
+            tud_cdc_write_str(msg);
+            last_pulsein_clock_overflow[i] = g_pulsein_clock_overflow_count[i];
+        }
     }
     
     while (g_slope_action_read_idx != g_slope_action_write_idx) {
@@ -3337,16 +3357,20 @@ public:
                 bool falling = PulseIn1FallingEdge();
                 // direction: 0=both, 1=rising only, -1=falling only
                 if ((rising && g_pulsein_direction[0] != -1) || (falling && g_pulsein_direction[0] != 1)) {
-                    if (g_pulsein_edge_count[0] < 0xFF) {
-                        g_pulsein_edge_count[0]++;
+                    if (g_pulsein_edge_count[0] == 0) {
+                        g_pulsein_edge_count[0] = 1;
+                    } else {
+                        g_pulsein_edge_overflow_count[0]++;
                     }
                     g_pulsein_edge_state[0] = PulseIn1();
                 }
             } else if (g_pulsein_mode[0] == 2) {
                 // Clock mode - only rising edges
                 if (PulseIn1RisingEdge()) {
-                    if (g_pulsein_clock_edge_count[0] < 0xFF) {
-                        g_pulsein_clock_edge_count[0]++;
+                    if (g_pulsein_clock_edge_count[0] == 0) {
+                        g_pulsein_clock_edge_count[0] = 1;
+                    } else {
+                        g_pulsein_clock_overflow_count[0]++;
                     }
                 }
             }
@@ -3364,16 +3388,20 @@ public:
                 bool falling = PulseIn2FallingEdge();
                 // direction: 0=both, 1=rising only, -1=falling only
                 if ((rising && g_pulsein_direction[1] != -1) || (falling && g_pulsein_direction[1] != 1)) {
-                    if (g_pulsein_edge_count[1] < 0xFF) {
-                        g_pulsein_edge_count[1]++;
+                    if (g_pulsein_edge_count[1] == 0) {
+                        g_pulsein_edge_count[1] = 1;
+                    } else {
+                        g_pulsein_edge_overflow_count[1]++;
                     }
                     g_pulsein_edge_state[1] = PulseIn2();
                 }
             } else if (g_pulsein_mode[1] == 2) {
                 // Clock mode - only rising edges
                 if (PulseIn2RisingEdge()) {
-                    if (g_pulsein_clock_edge_count[1] < 0xFF) {
-                        g_pulsein_clock_edge_count[1]++;
+                    if (g_pulsein_clock_edge_count[1] == 0) {
+                        g_pulsein_clock_edge_count[1] = 1;
+                    } else {
+                        g_pulsein_clock_overflow_count[1]++;
                     }
                 }
             }
