@@ -96,9 +96,7 @@ static volatile int16_t g_audioin_raw[2] = {0, 0};
 
 // Stream-equivalent values: Always maintained for .volts queries (matches crow behavior)
 static float g_input_stream_volts[2] = {0.0f, 0.0f};
-static uint32_t g_input_stream_last_update[2] = {0, 0};
 static float g_audioin_stream_volts[2] = {0.0f, 0.0f};
-static uint32_t g_audioin_stream_last_update[2] = {0, 0};
 
 // Pulse I/O State
 static volatile bool g_pulse_out_state[2] = {false, false};
@@ -275,46 +273,20 @@ static void set_input_state_simple(int channel, int16_t rawValue) {
 }
 
 // Update stream-equivalent values (called from main loop, not ISR)
-// Uses same denoising logic as stream callback: 10mV threshold + 5ms timeout
+// Mirror crow behavior: forward the latest smoothed ADC readings without extra gating
 static void update_input_stream_values() {
-    uint32_t now = time_us_32();
-    
     // Update CV inputs
     for (int ch = 0; ch < 2; ch++) {
         // Get current raw value
         float current_volts = (float) g_input_state_q12[ch] * (6.0f / 2047.0f);
-        
-        // Apply same denoising as stream callback
-        float delta = fabsf(current_volts - g_input_stream_volts[ch]);
-        uint32_t time_since_update = now - g_input_stream_last_update[ch];
-        
-        // Update if significant change (>10mV) OR timeout (10ms) OR first run
-        bool significant_change = (delta > 0.01f);  // 10mV threshold
-        bool timeout = (time_since_update > 5000); // 5ms timeout
-        
-        if (significant_change || timeout || g_input_stream_last_update[ch] == 0) {
-            g_input_stream_volts[ch] = current_volts;
-            g_input_stream_last_update[ch] = now;
-        }
+        g_input_stream_volts[ch] = current_volts;
     }
     
     // Update audio inputs
     for (int ch = 0; ch < 2; ch++) {
         // Get current raw value
         float current_volts = (float) g_audioin_raw[ch] * (6.0f / 2047.0f);
-        
-        // Apply same denoising as stream callback
-        float delta = fabsf(current_volts - g_audioin_stream_volts[ch]);
-        uint32_t time_since_update = now - g_audioin_stream_last_update[ch];
-        
-        // Update if significant change (>10mV) OR timeout (5ms) OR first run
-        bool significant_change = (delta > 0.01f);  // 10mV threshold
-        bool timeout = (time_since_update > 5000); // 5ms timeout
-        
-        if (significant_change || timeout || g_audioin_stream_last_update[ch] == 0) {
-            g_audioin_stream_volts[ch] = current_volts;
-            g_audioin_stream_last_update[ch] = now;
-        }
+        g_audioin_stream_volts[ch] = current_volts;
     }
 }
 
@@ -4004,8 +3976,7 @@ static constexpr bool kDetectionDebug = false;
 
 // Lock-free stream callback - posts stream-equivalent values (always maintained)
 static void stream_callback(int channel, float value) {
-    // Use stream-equivalent value (already denoised by update_input_stream_values)
-    // This ensures stream callbacks and .volts queries always see the same value
+    // Use stream-equivalent value so stream callbacks and .volts queries align
     float stream_value = (channel >= 0 && channel < 2) ? g_input_stream_volts[channel] : value;
     
     // Post to lock-free queue
