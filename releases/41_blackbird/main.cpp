@@ -131,6 +131,12 @@ static volatile bool g_pulsein_edge_state[2] = {false, false};
 static volatile uint16_t g_pulsein_edge_overflow_count[2] = {0, 0};
 static volatile uint16_t g_pulsein_clock_overflow_count[2] = {0, 0};
 
+// Change detection coalescing for CV inputs 1/2 (avoid lock-free queue backlog)
+static volatile uint8_t g_change_pending[2] = {0, 0};
+static volatile bool g_change_state[2] = {false, false};
+static volatile uint16_t g_change_overflow_count[2] = {0, 0};
+static bool g_change_callback_active[2] = {false, false};
+
 // Reentrancy protection for pulsein callbacks (prevents crashes from fast clocks)
 static volatile bool g_pulsein_callback_active[2] = {false, false};
 
@@ -202,32 +208,15 @@ static void process_slope_action_callbacks() {
     }
 
     // Report slope command queue drops (Core0->Core1)
-    static uint32_t last_reported_cmd_drops = 0;
-    uint32_t cmd_drops = S_get_cmd_drop_count();
-    if (cmd_drops != last_reported_cmd_drops) {
-        char msg[64];
-        snprintf(msg, sizeof(msg), "[SLOPE] Cmd drops: %lu\n\r", (unsigned long)cmd_drops);
-        tud_cdc_write_str(msg);
-        last_reported_cmd_drops = cmd_drops;
-    }
+    // static uint32_t last_reported_cmd_drops = 0;
+    // uint32_t cmd_drops = S_get_cmd_drop_count();
+    // if (cmd_drops != last_reported_cmd_drops) {
+    //     char msg[64];
+    //     snprintf(msg, sizeof(msg), "[SLOPE] Cmd drops: %lu\n\r", (unsigned long)cmd_drops);
+    //     tud_cdc_write_str(msg);
+    //     last_reported_cmd_drops = cmd_drops;
+    // }
 
-    // Pulsein overflow diagnostics (8kHz edge coalescing)
-    static uint16_t last_pulsein_overflow[2] = {0,0};
-    static uint16_t last_pulsein_clock_overflow[2] = {0,0};
-    for (int i = 0; i < 2; i++) {
-        if (g_pulsein_edge_overflow_count[i] != last_pulsein_overflow[i]) {
-            char msg[64];
-            snprintf(msg, sizeof(msg), "[PULSEIN%d] edge overflows: %u\n\r", i+1, g_pulsein_edge_overflow_count[i]);
-            tud_cdc_write_str(msg);
-            last_pulsein_overflow[i] = g_pulsein_edge_overflow_count[i];
-        }
-        if (g_pulsein_clock_overflow_count[i] != last_pulsein_clock_overflow[i]) {
-            char msg[64];
-            snprintf(msg, sizeof(msg), "[PULSEIN%d] clock overflows: %u\n\r", i+1, g_pulsein_clock_overflow_count[i]);
-            tud_cdc_write_str(msg);
-            last_pulsein_clock_overflow[i] = g_pulsein_clock_overflow_count[i];
-        }
-    }
     
     while (g_slope_action_read_idx != g_slope_action_write_idx) {
         // Read volatile struct members individually to avoid copy issues
@@ -2775,6 +2764,25 @@ public:
                 L_handle_input_lockfree(&input_event);
                 input_events_processed++;
             }
+
+            // Drain coalesced change events for inputs 1/2 (avoid backlog)
+            for (int i = 0; i < 2; i++) {
+                if (g_change_pending[i] > 0 && !g_change_callback_active[i]) {
+                    g_change_callback_active[i] = true;
+                    g_change_pending[i]--; // consume one
+                    bool state = g_change_state[i];
+
+                    char lua_call[128];
+                    snprintf(lua_call, sizeof(lua_call),
+                        "if input and input[%d] and input[%d].change then input[%d].change(%s) end",
+                        i + 1, i + 1, i + 1, state ? "true" : "false");
+                    output_batch_begin();
+                    lua_manager->evaluate_safe(lua_call);
+                    output_batch_flush();
+
+                    g_change_callback_active[i] = false;
+                }
+            }
             
             // Process lock-free ASL done events (medium priority)
             asl_done_event_lockfree_t asl_done_event;
@@ -4051,11 +4059,19 @@ static void reset_change_callback_state(int channel) {
 static void change_callback(int channel, float value) {
     bool state = (value > 0.5f);
     
-    if (channel >= 0 && channel < 8) {
+    // Coalesce for CV inputs 1/2 (channels 0/1) to avoid backlog when slammed at audio rate
+    if (channel >= 0 && channel < 2) {
+        if (g_change_pending[channel] == 0) {
+            g_change_pending[channel] = 1;
+        } else {
+            g_change_overflow_count[channel]++;
+        }
+        g_change_state[channel] = state;
         g_change_last_reported_state[channel] = (int8_t)state;
+        return; // Don't post to lock-free queue for coalesced channels
     }
-    
-    // Post to lock-free input queue - NEVER BLOCKS!
+
+    // Fallback for any future channels: post to lock-free queue
     if (!input_lockfree_post(channel, value, 0)) {  // type=0 for change
         static uint32_t drop_count = 0;
         if (++drop_count % 100 == 0) {
