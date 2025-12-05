@@ -51,14 +51,17 @@ void ll_insert_idle(clock_node_t* node){
 }
 
 // schedule an event & place it in the provided LL (sync / sleep) in order
-bool ll_insert_event(clock_node_t** head, int coro_id, double seconds_or_beats){
+// wakeup is interpreted as:
+//   sleep list: absolute ms tick (HAL_GetTick)
+//   sync list:  beats in Q16.16
+bool ll_insert_event(clock_node_t** head, int coro_id, uint32_t wakeup){
     // take a node from the idle list
     clock_node_t* new_node = ll_pop(&idle_head);
     if(!new_node) return false;
 
     clock_node_t* previous = NULL;
     clock_node_t* compare = *head; // will be NULL for an empty list
-    while(compare && seconds_or_beats >= compare->wakeup){
+    while(compare && wakeup >= compare->wakeup){
         // node exists & our new_node should come *later*
         previous = compare;
         compare = compare->next;
@@ -67,7 +70,7 @@ bool ll_insert_event(clock_node_t** head, int coro_id, double seconds_or_beats){
     // fill in the node
     new_node->next    = compare; // can be = NULL if new_node at end of the list
     new_node->coro_id = coro_id;
-    new_node->wakeup  = seconds_or_beats;
+    new_node->wakeup  = wakeup;
 
     // link from previous to new_node
     if(previous){
