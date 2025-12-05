@@ -31,16 +31,20 @@ P.unwrap = function(name) return P._params[ P._names[name] ] end
 
 P._chain = {
     -- all fns must return p for method chaining
-    __index = { range   = function(p,m,x) p.min, p.max = m, x; return p end
-              , xrange  = function(p,m,x) p.min, p.max, p.tipe = m, x, 'exp'; return p end
-              , options = function(p,os)
-                    p.tipe, p.option, p.noitpo = 'option', os, {}
-                    for i=1,#os do p.noitpo[os[i]] = i end -- reverse-lookup
-                    return p
-                end
-              , type    = function(p,t) p.tipe = t; return p end
-              , action  = function(p,f) p.act = f; return p end
-              }
+        __index = { range   = function(p,m,x) p.min, p.max = m, x; return p end
+                            , xrange  = function(p,m,x) p.min, p.max, p.tipe = m, x, 'exp'; return p end
+                            , options = function(p,os)
+                                        p.tipe, p.option, p.noitpo = 'option', os, {}
+                                        for i=1,#os do p.noitpo[os[i]] = i end -- reverse-lookup
+                                        return p
+                                end
+                            , type    = function(p,t) p.tipe = t; return p end
+                            , action  = function(p,f)
+                                        p.act = f
+                                        P.doact(p, p.v) -- run immediately when assigning an action
+                                        return p
+                                end
+                            }
 }
 
 P.add = function(name, default, typ, action)
@@ -63,11 +67,12 @@ P.add = function(name, default, typ, action)
         p._index = p.v.ix
     end
   -- register type metadata
-    if typ then
-        local t = type(typ)
-      -- register action
-        if action then p.act = action end
-        if t == 'function' then p.act = typ
+        local assigned_act = false
+        if typ then
+                local t = type(typ)
+            -- register action
+                if action then p.act = action; assigned_act = true end
+                if t == 'function' then p.act = typ; assigned_act = true
       -- string in typ position means literal with special external handling
         elseif t == 'string' then p.tipe = typ
       -- table of metadata
@@ -84,6 +89,7 @@ P.add = function(name, default, typ, action)
             end
         end
     end
+    if assigned_act then P.doact(p, p.v) end
     return setmetatable(p, P._chain) -- return a reference to the new public table entry
 end
 
