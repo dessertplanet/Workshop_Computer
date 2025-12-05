@@ -684,6 +684,32 @@ float S_get_state( int index )
     return Q16_TO_FLOAT(slopes[index].shaped_q16);
 }
 
+// ------------------------------------------------------------------
+// Live state accessors (control-plane; non-atomic reads on RP2040)
+// These are best-effort snapshots for features like live ASL dyn retargeting.
+// ------------------------------------------------------------------
+int64_t S_get_countdown_q16(int index)
+{
+    if( index < 0 || index >= SLOPE_CHANNELS ){ return 0; }
+    return slopes[index].countdown_q16;
+}
+
+int64_t S_get_duration_q16(int index)
+{
+    if( index < 0 || index >= SLOPE_CHANNELS ){ return 0; }
+    return slopes[index].duration_q16;
+}
+
+q16_t S_get_remaining_ms_q16(int index)
+{
+    if( index < 0 || index >= SLOPE_CHANNELS ){ return 0; }
+    int64_t countdown_q16 = slopes[index].countdown_q16;
+    if(countdown_q16 <= 0){ return 0; }
+    // countdown_q16 is samples in Q16; divide by SAMPLES_PER_MS_Q16 (Q16)
+    // Use 64-bit numerator to preserve range: (countdown_q16 / samples_per_ms)
+    return (q16_t)((countdown_q16 << Q16_SHIFT) / (int64_t)SAMPLES_PER_MS_Q16);
+}
+
 __attribute__((section(".time_critical.S_render_one_sample_q16")))
 static slope_buffer_entry_t S_render_one_sample_q16(int index)
 {

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h> // floorf
+#include <stdint.h>
 
 // TODO
 // add sequins data type
@@ -32,6 +33,9 @@ Casl* casl_init( int index )
 
     self->holding = false;
     self->locked = false;
+
+    self->active_to = NULL;
+    self->active_dyn_mask = 0;
 
     return self;
 }
@@ -88,6 +92,10 @@ void casl_describe( int index, lua_State* L )
 
     // enter first sequence
     seq_enter(self);
+
+    // reset active slope tracking
+    self->active_to = NULL;
+    self->active_dyn_mask = 0;
 
     parse_table(self, L);
     // seq_exit(self)? // i think we want to start inside the first Seq anyway
@@ -319,6 +327,7 @@ static void seq_down( Casl* self, int s_ix )
 }
 
 static void next_action( int index );
+static void elem_collect_dyns(Casl* self, Elem* e, uint64_t* mask);
 static bool find_control( Casl* self, ToControl ctrl, bool full_search );
 static ElemO resolve( Casl* self, Elem* e );
 
@@ -359,6 +368,10 @@ static void next_action( int index )
     if(index < 0 || index >= SELVES_COUNT){ return; }
     Casl* self = _selves[index];
 
+    // Clear any prior active slope tracking when we begin emitting a new stage
+    self->active_to = NULL;
+    self->active_dyn_mask = 0;
+
     while(true){ // repeat until halt
         To* t = seq_advance(self);
         if(t){ // To is valid
@@ -375,7 +388,15 @@ static void next_action( int index )
                                 , resolve(self, &t->c).shape
                                 , (ms_q16 > 0) ? &next_action : NULL // callback only if there's a time delay
                                 );
-                    if(ms_q16 > 0){ return; } // wait for DSP callback before proceeding
+                    if(ms_q16 > 0){
+                        // Track active slope and its dynamic dependencies for live updates
+                        self->active_to = t;
+                        self->active_dyn_mask = 0;
+                        elem_collect_dyns(self, &t->a, &self->active_dyn_mask);
+                        elem_collect_dyns(self, &t->b, &self->active_dyn_mask);
+                        elem_collect_dyns(self, &t->c, &self->active_dyn_mask);
+                        return; // wait for DSP callback before proceeding
+                    }
                     break;}
 
                 case ToIf:{
@@ -462,6 +483,53 @@ static ElemO _resolve( Casl* self, Elem* e )
         default: return e->obj;
     }
 }
+
+// -------------------------------------------------------------------
+// Dynamic dependency scanning
+// Collect all dynamic indices referenced by an Elem expression tree.
+// Uses the `dynamics` array as a general element pool (not just user dyns).
+// -------------------------------------------------------------------
+static void elem_collect_dyns(Casl* self, Elem* e, uint64_t* mask)
+{
+    if (!e || !mask) { return; }
+    switch (e->type) {
+        case ElemT_Dynamic:
+            if (e->obj.dyn >= 0 && e->obj.dyn < DYN_COUNT) {
+                *mask |= ((uint64_t)1u << e->obj.dyn);
+            }
+            break;
+        case ElemT_Mutable:
+        case ElemT_Mutate:
+        case ElemT_Negate:
+        case ElemT_Add:
+        case ElemT_Sub:
+        case ElemT_Mul:
+        case ElemT_Div:
+        case ElemT_Mod: {
+            int var_count = 0;
+            switch (e->type) {
+                case ElemT_Mutable:
+                case ElemT_Mutate:
+                case ElemT_Negate: var_count = 1; break;
+                case ElemT_Add:
+                case ElemT_Sub:
+                case ElemT_Mul:
+                case ElemT_Div:
+                case ElemT_Mod: var_count = 2; break;
+                default: break;
+            }
+            for (int i = 0; i < var_count; i++) {
+                int ix = e->obj.var[i];
+                if (ix >= 0 && ix < DYN_COUNT) {
+                    elem_collect_dyns(self, &self->dynamics[ix], mask);
+                }
+            }
+            break; }
+        default:
+            break; // Literal/shape types contain no dyn refs
+    }
+}
+
 #undef RESOLVE_VAR_Q16
 
 // wrap _resolve with mutable resolution
@@ -501,6 +569,54 @@ void casl_cleardynamics( int index )
     Casl* self = _selves[index];
 
     self->dyn_ix = 0;
+    self->active_to = NULL;
+    self->active_dyn_mask = 0;
+}
+
+// Forward decl for slope state helpers
+// Implemented in slopes.c; exposed via slopes.h
+extern int64_t S_get_countdown_q16(int index);
+extern q16_t  S_get_remaining_ms_q16(int index);
+
+// If the currently running slope for this ASL references the dynamic index, retarget it in-place.
+// We recompute the destination/seconds/shape from the active To and retarget the slope with the
+// remaining time (clamped to the newly requested duration if shorter).
+static void casl_refresh_active_slope_if_uses_dynamic(Casl* self, int index, int dynamic_ix)
+{
+    if(!self || dynamic_ix < 0 || dynamic_ix >= DYN_COUNT){ return; }
+    if(!self->active_to){ return; }
+    if(((self->active_dyn_mask >> dynamic_ix) & 1u) == 0){ return; }
+
+    // Check if slope is still running
+    int64_t countdown_q16 = S_get_countdown_q16(index);
+    if(countdown_q16 <= 0){ return; }
+
+    q16_t rem_ms_q16 = S_get_remaining_ms_q16(index);
+    if(rem_ms_q16 < 0){ rem_ms_q16 = 0; }
+
+    // Re-resolve expressions with the updated dynamics
+    q16_t volts_q16   = resolve(self, &self->active_to->a).q;
+    q16_t seconds_q16 = resolve(self, &self->active_to->b).q;
+    q16_t ms_q16      = Q16_MUL(seconds_q16, FLOAT_TO_Q16(1000.0));
+    Shape_t shape     = resolve(self, &self->active_to->c).shape;
+
+    // Clamp remaining time to the newly requested total duration if shortened
+    q16_t use_ms_q16 = rem_ms_q16;
+    if(ms_q16 > 0 && ms_q16 < rem_ms_q16){ use_ms_q16 = ms_q16; }
+
+    // Update dynamic dependency mask in case the expression tree changed shape
+    self->active_dyn_mask = 0;
+    elem_collect_dyns(self, &self->active_to->a, &self->active_dyn_mask);
+    elem_collect_dyns(self, &self->active_to->b, &self->active_dyn_mask);
+    elem_collect_dyns(self, &self->active_to->c, &self->active_dyn_mask);
+
+    // Retarget the running slope with the remaining duration
+    S_toward_q16( index
+                , volts_q16
+                , use_ms_q16
+                , shape
+                , (use_ms_q16 > 0) ? &next_action : &next_action
+                );
 }
 
 void casl_setdynamic( int index, int dynamic_ix, float val )
@@ -510,6 +626,9 @@ void casl_setdynamic( int index, int dynamic_ix, float val )
 
     self->dynamics[dynamic_ix].obj.q = FLOAT_TO_Q16(val);  // Convert float to Q16
     self->dynamics[dynamic_ix].type  = ElemT_Fixed;
+
+    // If a slope is currently running and references this dynamic, retarget it live
+    casl_refresh_active_slope_if_uses_dynamic(self, index, dynamic_ix);
 }
 
 float casl_getdynamic( int index, int dynamic_ix )

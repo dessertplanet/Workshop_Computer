@@ -121,6 +121,11 @@ void S_process_pending_commands(void);
 // Diagnostics
 uint32_t S_get_cmd_drop_count(void);
 
+// Live state accessors (non-atomic; best-effort for control-plane logic)
+int64_t S_get_countdown_q16(int index);
+int64_t S_get_duration_q16(int index);
+q16_t  S_get_remaining_ms_q16(int index);
+
 float* S_step_v( int     index
                , float*  out
                , int     size
