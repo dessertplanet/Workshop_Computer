@@ -460,7 +460,7 @@ static ElemO _resolve( Casl* self, Elem* e )
         case ElemT_Negate: return (ElemO){.q = -RESOLVE_VAR_Q16(self,e,0)};
         case ElemT_Add: return (ElemO){.q = RESOLVE_VAR_Q16(self,e,0) + RESOLVE_VAR_Q16(self,e,1)};
         case ElemT_Sub: return (ElemO){.q = RESOLVE_VAR_Q16(self,e,0) - RESOLVE_VAR_Q16(self,e,1)};
-        case ElemT_Mul: return (ElemO){.q = Q16_MUL(RESOLVE_VAR_Q16(self,e,0), RESOLVE_VAR_Q16(self,e,1))};
+        case ElemT_Mul: return (ElemO){.q = Q16_MUL_SMALL(RESOLVE_VAR_Q16(self,e,0), RESOLVE_VAR_Q16(self,e,1))};
         case ElemT_Div: return (ElemO){.q = Q16_DIV(RESOLVE_VAR_Q16(self,e,0), RESOLVE_VAR_Q16(self,e,1))};
         case ElemT_Mod:{
             // Q16.16 modulo operation
@@ -471,7 +471,7 @@ static ElemO _resolve( Casl* self, Elem* e )
             // Floor: extract integer part by shifting down and back up
             q16_t floored = (div_result >> Q16_SHIFT) << Q16_SHIFT;
             // Multiply: floor * wrap
-            q16_t mul_result = Q16_MUL(wrap_q16, floored);
+            q16_t mul_result = Q16_MUL_SMALL(wrap_q16, floored);
             return (ElemO){.q = val_q16 - mul_result};}
         case ElemT_Mutate:{
             ElemO mutated = (ElemO){.q = RESOLVE_VAR_Q16(self,e,0)};

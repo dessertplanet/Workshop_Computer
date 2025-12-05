@@ -29,6 +29,32 @@ typedef int32_t q16_t;
 // Wide variant keeps full precision for intermediate values larger than 32-bit
 #define Q16_MUL_WIDE(a, b) (((int64_t)(a) * (int64_t)(b)) >> Q16_SHIFT)
 
+// Optional bounded fast-path helpers (avoid 64-bit ops when operands are small)
+#define Q16_MUL_SMALL_LIMIT 46340  // sqrt(INT32_MAX) ≈ 46340 → safe 32-bit mul
+static inline bool q16_can_mul_small(q16_t a, q16_t b) {
+    return (a <= Q16_MUL_SMALL_LIMIT && a >= -Q16_MUL_SMALL_LIMIT &&
+            b <= Q16_MUL_SMALL_LIMIT && b >= -Q16_MUL_SMALL_LIMIT);
+}
+static inline q16_t Q16_MUL_SMALL(q16_t a, q16_t b) {
+    if (q16_can_mul_small(a, b)) {
+        int32_t prod = ((int32_t)a * (int32_t)b); // safe 32-bit mul
+        return (q16_t)(prod >> Q16_SHIFT);
+    }
+    return Q16_MUL(a, b);
+}
+
+#define Q16_DIV_SMALL_LIMIT 32767  // |a| << 16 must stay within int32_t
+static inline bool q16_can_div_small(q16_t a) {
+    return (a <= Q16_DIV_SMALL_LIMIT && a >= -Q16_DIV_SMALL_LIMIT);
+}
+static inline q16_t Q16_DIV_SMALL(q16_t a, q16_t b) {
+    if (q16_can_div_small(a) && b != 0) {
+        int32_t num = ((int32_t)a) << Q16_SHIFT;
+        return (q16_t)(num / (int32_t)b);
+    }
+    return Q16_DIV(a, b);
+}
+
 // Q16 to Q12 conversion for 12-bit DAC output (±2048 range)
 #define Q16_TO_Q12(q) ((int16_t)((q) >> (Q16_SHIFT - 12)))
 #define Q12_TO_Q16(q) ((q16_t)((q) << (Q16_SHIFT - 12)))
@@ -93,6 +119,20 @@ void S_toward_q16( int        index
                  , Shape_t    shape
                  , Callback_t cb
                  );
+// Samples-based duration (Q16 samples) to avoid ms→samples conversion overhead
+void S_toward_samples_q16( int        index
+                         , q16_t      destination_q16
+                         , int64_t    samples_q16
+                         , Shape_t    shape
+                         , Callback_t cb
+                         );
+// Float wrapper for samples-based duration
+void S_toward_samples( int        index
+                     , float      destination
+                     , int32_t    samples
+                     , Shape_t    shape
+                     , Callback_t cb
+                     );
 q16_t S_get_state_q16( int index );
 
 // Float API (legacy, wraps Q16 internally for backward compatibility)

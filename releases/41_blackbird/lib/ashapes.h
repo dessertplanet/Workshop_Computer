@@ -21,6 +21,9 @@ typedef struct{
     q16_t  modulo_q16;
     q16_t  scaling_q16;
     q16_t  offset_q16;
+    // Precomputed reciprocals to avoid runtime divisions in hot paths
+    q16_t  inv_modulo_q16;
+    q16_t  inv_scaling_q16;
 } AShape_t;
 
 void AShaper_init( int channels );

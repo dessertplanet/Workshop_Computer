@@ -24,6 +24,9 @@ void AShaper_init( int channels )
         ashapers[j].offset  = 0.0;
         ashapers[j].active  = false;  // Default to pass-through mode
         ashapers[j].state   = 0.0;
+
+        ashapers[j].inv_modulo_q16 = 0;
+        ashapers[j].inv_scaling_q16 = 0;
     }
 }
 
@@ -56,6 +59,11 @@ void AShaper_set_scale( int    index
         self->modulo_q16 = FLOAT_TO_Q16(1.0);
         self->scaling = scaling / modulo;
         self->scaling_q16 = FLOAT_TO_Q16(scaling / modulo);
+        // precompute reciprocals (avoid division in hot path)
+        self->inv_modulo_q16 = Q16_ONE; // 1 / 1.0
+        self->inv_scaling_q16 = (self->scaling_q16 != 0)
+                    ? Q16_DIV(Q16_ONE, self->scaling_q16)
+                    : 0;
     } else {
         for( int i=0; i<(self->dlLen); i++ ){
             self->divlist[i] = divlist[i];
@@ -65,6 +73,13 @@ void AShaper_set_scale( int    index
         self->modulo_q16 = FLOAT_TO_Q16(modulo);
         self->scaling = scaling;
         self->scaling_q16 = FLOAT_TO_Q16(scaling);
+        // precompute reciprocals (avoid division in hot path)
+        self->inv_modulo_q16 = (self->modulo_q16 != 0)
+                               ? Q16_DIV(Q16_ONE, self->modulo_q16)
+                               : 0;
+        self->inv_scaling_q16 = (self->scaling_q16 != 0)
+                                ? Q16_DIV(Q16_ONE, self->scaling_q16)
+                                : 0;
     }
 
     self->offset = 0.5 * self->scaling / self->modulo;
@@ -157,7 +172,12 @@ q16_t AShaper_quantize_single_q16( int index, q16_t voltage_q16 )
     q16_t samp_q16 = voltage_q16 + self->offset_q16;  // Q16 + Q16
     
     // Normalize: n_samp = samp / scaling (Q16 division)
-    q16_t n_samp_q16 = Q16_DIV(samp_q16, self->scaling_q16);
+    q16_t n_samp_q16;
+    if (self->inv_scaling_q16) {
+        n_samp_q16 = Q16_MUL(samp_q16, self->inv_scaling_q16);
+    } else {
+        n_samp_q16 = Q16_DIV(samp_q16, self->scaling_q16);
+    }
     
     // Extract integer and fractional parts
     // divs = floor(n_samp) - get integer part by shifting right
@@ -166,7 +186,8 @@ q16_t AShaper_quantize_single_q16( int index, q16_t voltage_q16 )
     
     // Map phase to note index: note = (int)(phase * dlLen)
     // Multiply phase by dlLen, then take integer part
-    int32_t note_scaled = (int64_t)phase_q16 * (int64_t)self->dlLen;
+    // phase_q16 ∈ [0,1.0) and dlLen <= 24 → product < 1.6e6, fits in 32-bit
+    int32_t note_scaled = phase_q16 * self->dlLen;
     int note = (int)(note_scaled >> Q16_SHIFT);
     
     // Bounds check for note index
@@ -174,7 +195,12 @@ q16_t AShaper_quantize_single_q16( int index, q16_t voltage_q16 )
     if( note >= self->dlLen ) note = self->dlLen - 1;
     
     // Lookup and remap: note_map = divlist[note] / modulo
-    q16_t note_map_q16 = Q16_DIV(self->divlist_q16[note], self->modulo_q16);
+    q16_t note_map_q16;
+    if (self->inv_modulo_q16) {
+        note_map_q16 = Q16_MUL(self->divlist_q16[note], self->inv_modulo_q16);
+    } else {
+        note_map_q16 = Q16_DIV(self->divlist_q16[note], self->modulo_q16);
+    }
     
     // Final result: scaling * (divs + note_map)
     q16_t divs_q16 = divs << Q16_SHIFT;  // Convert integer back to Q16

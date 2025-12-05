@@ -297,6 +297,8 @@ static void S_toward_q16_apply( int        index
                               , q16_t      ms_q16
                               , Shape_t    shape
                               , Callback_t cb
+                              , uint8_t    use_samples_q16
+                              , int64_t    duration_q16_override
                               );
 
 // ========================================================================
@@ -307,9 +309,11 @@ static void S_toward_q16_apply( int        index
 typedef struct {
     int8_t index;        // slope channel (0-based)
     q16_t dest_q16;
-    q16_t ms_q16;
+    q16_t ms_q16;        // milliseconds in Q16 (when use_samples_q16==0)
     Shape_t shape;
     Callback_t cb;
+    uint8_t use_samples_q16; // 1 when duration_q16 holds samples (Q16), 0 for ms_q16
+    int64_t duration_q16;    // samples in Q16 when use_samples_q16==1
 } slope_cmd_t;
 
 #define SLOPE_CMD_QUEUE_SIZE 32
@@ -355,7 +359,8 @@ void S_process_pending_commands(void) {
     slope_cmd_t cmd;
     int processed = 0;
     while (processed < kMaxPerCall && slope_cmd_dequeue(&cmd)) {
-        S_toward_q16_apply(cmd.index, cmd.dest_q16, cmd.ms_q16, cmd.shape, cmd.cb);
+        S_toward_q16_apply(cmd.index, cmd.dest_q16, cmd.ms_q16, cmd.shape, cmd.cb,
+                   cmd.use_samples_q16, cmd.duration_q16);
         processed++;
     }
 }
@@ -837,6 +842,8 @@ static void S_toward_q16_apply( int        index
                               , q16_t      ms_q16
                               , Shape_t    shape
                               , Callback_t cb
+                              , uint8_t    use_samples_q16
+                              , int64_t    duration_q16_override
                               )
 {
     if( index < 0 || index >= SLOPE_CHANNELS ){ return; }
@@ -899,8 +906,9 @@ static void S_toward_q16_apply( int        index
         }
 
         // Convert ms to samples: ms * SAMPLES_PER_MS
-        // Use wide math so we can support multi-second slews without overflow
-        int64_t samples_q16 = Q16_MUL_WIDE(ms_q16, SAMPLES_PER_MS_Q16);
+        // If caller provided samples directly, use them to avoid wide multiply
+        int64_t samples_q16 = use_samples_q16 ? duration_q16_override
+                             : Q16_MUL_WIDE(ms_q16, SAMPLES_PER_MS_Q16);
 
         // Preserve fractional-sample durations for true timing (no rounding)
         if( samples_q16 <= 0 ){
@@ -941,7 +949,7 @@ void S_toward_q16( int        index
     // Core1 (audio engine): apply immediately with interrupts disabled to avoid ISR preemption
     if (get_core_num() == 1) {
         uint32_t irq = save_and_disable_interrupts();
-        S_toward_q16_apply(index, destination_q16, ms_q16, shape, cb);
+        S_toward_q16_apply(index, destination_q16, ms_q16, shape, cb, 0, 0);
         restore_interrupts(irq);
         return;
     }
@@ -951,12 +959,14 @@ void S_toward_q16( int        index
                         .dest_q16 = destination_q16,
                         .ms_q16 = ms_q16,
                         .shape = shape,
-                        .cb = cb };
+                        .cb = cb,
+                        .use_samples_q16 = 0,
+                        .duration_q16 = 0 };
     if (!slope_cmd_enqueue(&cmd)) {
         // As a fallback (should be rare), apply locally with interrupts disabled
         // This may introduce a tiny race but avoids dropping envelopes completely
         uint32_t irq = save_and_disable_interrupts();
-        S_toward_q16_apply(index, destination_q16, ms_q16, shape, cb);
+        S_toward_q16_apply(index, destination_q16, ms_q16, shape, cb, 0, 0);
         restore_interrupts(irq);
     }
 }
@@ -974,6 +984,51 @@ void S_toward( int        index
                  FLOAT_TO_Q16(ms), 
                  shape, 
                  cb);
+}
+
+// Samples-based API: duration provided in samples (integer), avoids ms→samples conversion
+void S_toward_samples_q16( int        index
+                         , q16_t      destination_q16
+                         , int64_t    samples_q16
+                         , Shape_t    shape
+                         , Callback_t cb
+                         )
+{
+    // If slopes not initialized, ignore
+    if (!slopes) { return; }
+
+    // Core1 fast path
+    if (get_core_num() == 1) {
+        uint32_t irq = save_and_disable_interrupts();
+        S_toward_q16_apply(index, destination_q16, /*ms_q16*/0, shape, cb, 1, samples_q16);
+        restore_interrupts(irq);
+        return;
+    }
+
+    // Core0 enqueue
+    slope_cmd_t cmd = { .index = (int8_t)index,
+                        .dest_q16 = destination_q16,
+                        .ms_q16 = 0,
+                        .shape = shape,
+                        .cb = cb,
+                        .use_samples_q16 = 1,
+                        .duration_q16 = samples_q16 };
+    if (!slope_cmd_enqueue(&cmd)) {
+        uint32_t irq = save_and_disable_interrupts();
+        S_toward_q16_apply(index, destination_q16, 0, shape, cb, 1, samples_q16);
+        restore_interrupts(irq);
+    }
+}
+
+void S_toward_samples( int        index
+                     , float      destination
+                     , int32_t    samples
+                     , Shape_t    shape
+                     , Callback_t cb
+                     )
+{
+    int64_t samples_q16 = ((int64_t)samples) << Q16_SHIFT; // integer samples → Q16
+    S_toward_samples_q16(index, FLOAT_TO_Q16(destination), samples_q16, shape, cb);
 }
 
 // CRITICAL: Place in RAM - called from Timer_Process_Block at high frequency
