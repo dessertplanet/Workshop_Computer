@@ -65,7 +65,7 @@ end
 function ar(a, r, level, shape)
     a = a or 0.05
     r = r or 0.5
-    level = level or 7
+    level = level or 6
     shape = shape or 'log'
 
     return{ to(level, a, shape)
@@ -79,7 +79,7 @@ function adsr(a, d, s, r, shape)
     s = s or 2
     r = r or 2
 
-    return{ held{ to(7.0, a, shape)
+    return{ held{ to(6.0, a, shape)
                 , to(s, d, shape)
                 }
           , to(0, r, shape)
