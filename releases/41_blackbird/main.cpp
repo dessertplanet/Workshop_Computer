@@ -222,7 +222,7 @@ static constexpr double kProcessSampleBudgetUs = 1000000.0 / kProcessSampleRateH
 static constexpr uint32_t kProcessSampleOverrunThresholdUs =
     static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~100us)
 static constexpr uint32_t kProcessSamplePeriodUsInt = 125;
-static constexpr uint32_t kTimerServiceIntervalUs = 667;  // matches previous ~1.5kHz budget
+static constexpr uint32_t kTimerServiceIntervalSamples = 6;  // 6 * 125us = 750us (~1.33kHz) stable cadence
 // ProcessSample (Core 1 audio thread) performance
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
@@ -3286,10 +3286,10 @@ public:
         }
 
         // Derive ~1.5kHz timer/metro service ticks with deterministic spacing
-        static uint32_t timer_tick_accumulator_us = 0;
-        timer_tick_accumulator_us += kProcessSamplePeriodUsInt;
-        if (timer_tick_accumulator_us >= kTimerServiceIntervalUs) {
-            timer_tick_accumulator_us -= kTimerServiceIntervalUs;
+        static uint32_t timer_tick_accumulator_samples = 0;
+        timer_tick_accumulator_samples += 1;
+        if (timer_tick_accumulator_samples >= kTimerServiceIntervalSamples) {
+            timer_tick_accumulator_samples -= kTimerServiceIntervalSamples;
             g_timer_ticks_pending++;
         }
         
