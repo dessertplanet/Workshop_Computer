@@ -6,8 +6,13 @@
 // Lock-free event queues for timing-critical events in dual-core systems
 // Core 1 (audio) = single producer, Core 0 (control) = single consumer
 
-#define LOCKFREE_QUEUE_SIZE 64  // Must be power of 2 for efficient wrapping
+// Default queue size for most queues (metro, input, ASL done)
+#define LOCKFREE_QUEUE_SIZE 128  // Must be power of 2 for efficient wrapping
 #define LOCKFREE_QUEUE_MASK (LOCKFREE_QUEUE_SIZE - 1)
+
+// Clock queue can be bursty; allow a larger ring independently if needed
+#define CLOCK_QUEUE_SIZE 128
+#define CLOCK_QUEUE_MASK (CLOCK_QUEUE_SIZE - 1)
 
 // Metro event structure for lock-free queue
 typedef struct {
@@ -66,7 +71,7 @@ typedef struct {
 // Complete lock-free clock resume queue
 typedef struct {
     lockfree_queue_header_t header;
-    volatile clock_event_lockfree_t events[LOCKFREE_QUEUE_SIZE];
+    volatile clock_event_lockfree_t events[CLOCK_QUEUE_SIZE];
 } clock_lockfree_queue_t;
 
 // Complete lock-free input queue
@@ -80,6 +85,12 @@ typedef struct {
     lockfree_queue_header_t header;
     volatile asl_done_event_lockfree_t events[LOCKFREE_QUEUE_SIZE];
 } asl_done_lockfree_queue_t;
+
+// Clock queue statistics accessors
+uint32_t clock_events_posted_count(void);
+uint32_t clock_events_processed_count(void);
+uint32_t clock_events_dropped_count(void);
+void clock_lockfree_reset_stats(void);
 
 // Global lock-free queues
 extern metro_lockfree_queue_t g_metro_lockfree_queue;

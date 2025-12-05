@@ -9,6 +9,7 @@
 
 #include "clock_ll.h" // linked list for clocks
 #include "l_crowlib.h" // L_queue_clock_* functions
+#include "events_lockfree.h" // for clock_lockfree_reset_stats & stats
 
 // External functions to control pulse outputs
 extern void hardware_pulse_output_set(int channel, bool state);
@@ -68,6 +69,20 @@ static clock_reference_t reference;
 // fp64 representation of beat count with a floating sub-beat count
 static double precise_beat_now = 0;
 
+// Monitoring counters
+static uint32_t clock_schedule_successes = 0;
+static uint32_t clock_schedule_failures = 0;
+static uint32_t clock_active_max = 0;
+static uint32_t clock_pool_capacity = 0;
+
+static inline void clock_update_active_max(void) {
+    extern int sleep_count, sync_count;
+    uint32_t active = (uint32_t)(sleep_count + sync_count);
+    if (active > clock_active_max) {
+        clock_active_max = active;
+    }
+}
+
 /////////////////////////////////////////////
 // private declarations
 
@@ -79,6 +94,8 @@ static void clock_internal_run(uint32_t ms);
 void clock_init( int max_clocks )
 {
     ll_init(max_clocks); // init linked-list for managing clock threads
+
+    clock_pool_capacity = (uint32_t)max_clocks;
 
     clock_set_source( CLOCK_SOURCE_INTERNAL );
     clock_update_reference(0, 0.5); // set to zero beats, at 120bpm (0.5s/beat)
@@ -112,6 +129,8 @@ sleep_next:
     if(sleep_head // list is not empty
     && sleep_head->wakeup < dtime_now){ // time to awaken
         L_queue_clock_resume(sleep_head->coro_id); // event!
+        extern int sleep_count;
+        if (sleep_count > 0) sleep_count--;
         ll_insert_idle(ll_pop(&sleep_head)); // return to idle list
         goto sleep_next; // check the next sleeper too!
     }
@@ -119,6 +138,8 @@ sync_next:
     if(sync_head // list is not empty
     && sync_head->wakeup < precise_beat_now){ // time to awaken
         L_queue_clock_resume(sync_head->coro_id); // event!
+        extern int sync_count;
+        if (sync_count > 0) sync_count--;
         ll_insert_idle(ll_pop(&sync_head)); // return to idle list
         goto sync_next; // check the next syncer too!
     }
@@ -127,7 +148,16 @@ sync_next:
 bool clock_schedule_resume_sleep( int coro_id, float seconds )
 {
     double wakeup = (double)HAL_GetTick() + (double)seconds * (double)1000.0;
-    return ll_insert_event(&sleep_head, coro_id, wakeup);
+    bool ok = ll_insert_event(&sleep_head, coro_id, wakeup);
+    if (ok) {
+        extern int sleep_count;
+        sleep_count++;
+        clock_schedule_successes++;
+        clock_update_active_max();
+    } else {
+        clock_schedule_failures++;
+    }
+    return ok;
 }
 
 bool clock_schedule_resume_sync( int coro_id, float beats ){
@@ -144,7 +174,16 @@ bool clock_schedule_resume_sync( int coro_id, float beats ){
         awaken += dbeats;
     }
 
-    return ll_insert_event(&sync_head, coro_id, awaken);
+    bool ok = ll_insert_event(&sync_head, coro_id, awaken);
+    if (ok) {
+        extern int sync_count;
+        sync_count++;
+        clock_schedule_successes++;
+        clock_update_active_max();
+    } else {
+        clock_schedule_failures++;
+    }
+    return ok;
 }
 
 // this function directly sleeps for an amount of beats (not sync'd to the beat)
@@ -235,6 +274,26 @@ void clock_cancel_coro( int coro_id )
 void clock_cancel_coro_all( void )
 {
     ll_cleanup();
+    extern int sleep_count, sync_count;
+    sleep_count = 0;
+    sync_count = 0;
+}
+
+// Stats accessors
+uint32_t clock_get_schedule_failures(void)  { return clock_schedule_failures; }
+uint32_t clock_get_schedule_successes(void) { return clock_schedule_successes; }
+uint32_t clock_get_max_active_threads(void) { return clock_active_max; }
+uint32_t clock_get_pool_capacity(void)      { return clock_pool_capacity; }
+
+void clock_reset_stats(void)
+{
+    clock_schedule_failures = 0;
+    clock_schedule_successes = 0;
+    // current active is a baseline for max after reset
+    extern int sleep_count, sync_count;
+    clock_active_max = (uint32_t)(sleep_count + sync_count);
+    // reset clock resume queue stats too
+    clock_lockfree_reset_stats();
 }
 
 

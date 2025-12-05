@@ -44,8 +44,8 @@ void events_lockfree_init(void) {
     // Initialize clock queue
     g_clock_lockfree_queue.header.write_idx = 0;
     g_clock_lockfree_queue.header.read_idx = 0;
-    g_clock_lockfree_queue.header.size = LOCKFREE_QUEUE_SIZE;
-    g_clock_lockfree_queue.header.mask = LOCKFREE_QUEUE_MASK;
+    g_clock_lockfree_queue.header.size = CLOCK_QUEUE_SIZE;
+    g_clock_lockfree_queue.header.mask = CLOCK_QUEUE_MASK;
     
     // Initialize ASL done queue
     g_asl_done_lockfree_queue.header.write_idx = 0;
@@ -67,8 +67,8 @@ void events_lockfree_init(void) {
     asl_done_events_processed = 0;
     asl_done_events_dropped = 0;
     
-    DEBUG_LF_PRINT("Lock-free event queues initialized (metro=%d, input=%d slots)\n", 
-                   LOCKFREE_QUEUE_SIZE, LOCKFREE_QUEUE_SIZE);
+    DEBUG_LF_PRINT("Lock-free event queues initialized (metro=%d, input=%d, clock=%d slots)\n", 
+                   LOCKFREE_QUEUE_SIZE, LOCKFREE_QUEUE_SIZE, CLOCK_QUEUE_SIZE);
 }
 
 // Metro queue functions
@@ -148,6 +148,16 @@ uint32_t clock_lockfree_queue_depth(void) {
     } else {
         return (queue->header.size - read_idx) + write_idx;
     }
+}
+
+// Clock stats accessors
+uint32_t clock_events_posted_count(void)   { return clock_events_posted; }
+uint32_t clock_events_processed_count(void){ return clock_events_processed; }
+uint32_t clock_events_dropped_count(void)  { return clock_events_dropped; }
+void clock_lockfree_reset_stats(void) {
+    clock_events_posted = 0;
+    clock_events_processed = 0;
+    clock_events_dropped = 0;
 }
 
 // Get metro event from Core 0 (control) - NEVER BLOCKS!
@@ -370,7 +380,7 @@ void events_lockfree_print_stats(void) {
     DEBUG_LF_PRINT("Metro Queue: depth=%lu/%d\n", metro_lockfree_queue_depth(), LOCKFREE_QUEUE_SIZE);
     DEBUG_LF_PRINT("  Posted: %lu, Processed: %lu, Dropped: %lu\n", 
                    metro_events_posted, metro_events_processed, metro_events_dropped);
-    DEBUG_LF_PRINT("Clock Queue: depth=%lu/%d\n", clock_lockfree_queue_depth(), LOCKFREE_QUEUE_SIZE);
+    DEBUG_LF_PRINT("Clock Queue: depth=%lu/%d\n", clock_lockfree_queue_depth(), CLOCK_QUEUE_SIZE);
     DEBUG_LF_PRINT("  Posted: %lu, Processed: %lu, Dropped: %lu\n", 
                    clock_events_posted, clock_events_processed, clock_events_dropped);
     DEBUG_LF_PRINT("Input Queue: depth=%lu/%d\n", input_lockfree_queue_depth(), LOCKFREE_QUEUE_SIZE);
@@ -382,17 +392,17 @@ void events_lockfree_print_stats(void) {
     
     DEBUG_LF_PRINT("Health: Metro=%s, Clock=%s, Input=%s, ASL=%s\n", 
                    (metro_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE/2) ? "OK" : "OVERLOADED",
-                   (clock_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE/2) ? "OK" : "OVERLOADED",
+                   (clock_lockfree_queue_depth() < CLOCK_QUEUE_SIZE/2) ? "OK" : "OVERLOADED",
                    (input_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE/2) ? "OK" : "OVERLOADED",
                    (asl_done_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE/2) ? "OK" : "OVERLOADED");
     DEBUG_LF_PRINT("=======================================\n");
 }
 
 bool events_lockfree_are_healthy(void) {
-    return (metro_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
-           (input_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
-           (clock_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
-           (asl_done_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
+        return (metro_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
+            (input_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
+            (clock_lockfree_queue_depth() < CLOCK_QUEUE_SIZE * 3 / 4) &&
+            (asl_done_lockfree_queue_depth() < LOCKFREE_QUEUE_SIZE * 3 / 4) &&
            (metro_events_dropped == 0) &&
            (input_events_dropped == 0) &&
            (clock_events_dropped == 0) &&

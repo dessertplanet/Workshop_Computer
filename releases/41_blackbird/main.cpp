@@ -1041,6 +1041,7 @@ private:
     static int lua_unique_id(lua_State* L);
     static int lua_memstats(lua_State* L);
     static int lua_perf_stats(lua_State* L);
+    static int lua_clock_stats(lua_State* L);
     static int lua_pub_view_in(lua_State* L);
     static int lua_pub_view_out(lua_State* L);
     static int lua_tell(lua_State* L);
@@ -1254,6 +1255,7 @@ public:
     
     // Add performance statistics function for monitoring
     lua_register(L, "perf_stats", lua_perf_stats);
+    lua_register(L, "clock_stats", lua_clock_stats);
     
     // Add public view functions for norns integration
     lua_register(L, "pub_view_in", lua_pub_view_in);
@@ -2554,8 +2556,8 @@ public:
         // Initialize metro system (depends on timer system)
         Metro_Init(8);
         
-        // Initialize clock system for coroutine scheduling (8 max clock threads)
-        clock_init(8);
+        // Initialize clock system for coroutine scheduling (16 max clock threads)
+        clock_init(16);
         
         // Initialize flash storage system
         FlashStorage::init();
@@ -5057,6 +5059,45 @@ int LuaManager::lua_perf_stats(lua_State* L) {
         
         return 0;  // No return value in print mode
     }
+}
+
+// Implementation of lua_clock_stats
+// Usage: stats = clock_stats()       -- returns table of counters and does not reset by default
+//        stats = clock_stats(true)   -- returns table and resets counters
+int LuaManager::lua_clock_stats(lua_State* L) {
+    bool reset = false;
+    int nargs = lua_gettop(L);
+    if (nargs >= 1) {
+        reset = lua_toboolean(L, 1);
+    }
+
+    // Gather stats
+    uint32_t sched_fail = clock_get_schedule_failures();
+    uint32_t sched_succ = clock_get_schedule_successes();
+    uint32_t max_active = clock_get_max_active_threads();
+    uint32_t pool_cap   = clock_get_pool_capacity();
+    uint32_t posted     = clock_events_posted_count();
+    uint32_t processed  = clock_events_processed_count();
+    uint32_t dropped    = clock_events_dropped_count();
+    uint32_t depth      = clock_lockfree_queue_depth();
+    extern int sleep_count, sync_count;
+    uint32_t active_now = (uint32_t)(sleep_count + sync_count);
+
+    lua_newtable(L);
+    lua_pushstring(L, "schedule_failures"); lua_pushinteger(L, sched_fail); lua_settable(L, -3);
+    lua_pushstring(L, "schedule_successes"); lua_pushinteger(L, sched_succ); lua_settable(L, -3);
+    lua_pushstring(L, "max_active_threads"); lua_pushinteger(L, max_active); lua_settable(L, -3);
+    lua_pushstring(L, "pool_capacity"); lua_pushinteger(L, pool_cap); lua_settable(L, -3);
+    lua_pushstring(L, "active_now"); lua_pushinteger(L, active_now); lua_settable(L, -3);
+    lua_pushstring(L, "lockfree_posted"); lua_pushinteger(L, posted); lua_settable(L, -3);
+    lua_pushstring(L, "lockfree_processed"); lua_pushinteger(L, processed); lua_settable(L, -3);
+    lua_pushstring(L, "lockfree_dropped"); lua_pushinteger(L, dropped); lua_settable(L, -3);
+    lua_pushstring(L, "lockfree_depth"); lua_pushinteger(L, depth); lua_settable(L, -3);
+
+    if (reset) {
+        clock_reset_stats();
+    }
+    return 1;
 }
 
 // ============================================================================

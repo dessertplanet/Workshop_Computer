@@ -7,6 +7,10 @@
 
 static clock_node_t* clock_pool; // storage for the nodes
 
+// Exposed counters for monitoring
+int sleep_count = 0;
+int sync_count = 0;
+
 // clock_pool elements are moved between these 3 lists
 clock_node_t* idle_head = NULL;
 clock_node_t* sleep_head = NULL;
@@ -76,6 +80,7 @@ bool ll_insert_event(clock_node_t** head, int coro_id, double seconds_or_beats){
 
 // remove the node referenced by coro_id
 void ll_remove_by_id(int coro_id){
+    extern int sleep_count, sync_count;
     for(int i=0; i<2; i++){
         clock_node_t* previous = NULL;
         clock_node_t** head = i==0 ? &sleep_head : &sync_head; // save for removal
@@ -91,6 +96,13 @@ void ll_remove_by_id(int coro_id){
                 }
                 // push it to the idle list
                 ll_insert_idle(compare);
+
+                // update counts
+                if (head == &sleep_head) {
+                    if (sleep_count > 0) sleep_count--;
+                } else {
+                    if (sync_count > 0) sync_count--;
+                }
                 break; // assume only 1 match can exist
             }
             // node exists but not a match

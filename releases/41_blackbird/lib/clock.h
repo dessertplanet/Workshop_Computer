@@ -32,6 +32,13 @@ float clock_get_tempo(void);
 void clock_cancel_coro( int coro_id );
 void clock_cancel_coro_all( void );
 
+// Stats
+uint32_t clock_get_schedule_failures(void);
+uint32_t clock_get_schedule_successes(void);
+uint32_t clock_get_max_active_threads(void);
+uint32_t clock_get_pool_capacity(void);
+void clock_reset_stats(void);
+
 // Sample-based timing functions for improved precision
 void clock_set_sample_counter(uint64_t samples);
 uint64_t clock_get_sample_counter(void);
