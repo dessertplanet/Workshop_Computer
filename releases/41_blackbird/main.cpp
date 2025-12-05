@@ -1294,6 +1294,10 @@ public:
     // Register audio-rate noise functions
     lua_register(L, "LL_set_noise", lua_LL_set_noise);
     lua_register(L, "LL_clear_noise", lua_LL_clear_noise);
+
+    // Register audio-rate oscillator functions
+    lua_register(L, "LL_set_oscillator", lua_LL_set_oscillator);
+    lua_register(L, "LL_clear_oscillator", lua_LL_clear_oscillator);
     
     // Register Just Intonation functions
     lua_register(L, "justvolts", lua_justvolts);
@@ -1913,6 +1917,10 @@ public:
     // Audio-rate noise functions
     static int lua_LL_set_noise(lua_State* L);
     static int lua_LL_clear_noise(lua_State* L);
+
+    // Oscillator (audio-rate) functions
+    static int lua_LL_set_oscillator(lua_State* L);
+    static int lua_LL_clear_oscillator(lua_State* L);
     
     // Just Intonation functions
     static int lua_justvolts(lua_State* L);
@@ -3675,6 +3683,39 @@ int LuaManager::lua_LL_clear_noise(lua_State* L) {
     g_noise_gain[ch_idx] = 0;  // Clear integer gain
     g_noise_lock_counter[ch_idx] = 0;  // Clear lock
     
+    return 0;
+}
+
+// LL_set_oscillator(channel, freq_hz, [level], [shape]) - Enable audio-rate oscillator
+int LuaManager::lua_LL_set_oscillator(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);  // 1-based channel from Lua
+    float freq = luaL_checknumber(L, 2);    // Frequency in Hz
+    float level = (float)luaL_optnumber(L, 3, 5.0); // Peak volts (default 5V)
+    const char* shape_str = luaL_optstring(L, 4, "sine");
+
+    // Validate channel
+    if (channel < 1 || channel > 4) {
+        return luaL_error(L, "Invalid channel: %d (must be 1-4)", channel);
+    }
+    if (freq <= 0.0f) {
+        return luaL_error(L, "freq must be > 0");
+    }
+
+    Shape_t shape = S_str_to_shape(shape_str);
+
+    if (!S_set_oscillator(channel - 1, freq, level, shape)) {
+        return luaL_error(L, "Failed to set oscillator on channel %d", channel);
+    }
+    return 0;
+}
+
+// LL_clear_oscillator(channel) - Disable oscillator on a channel
+int LuaManager::lua_LL_clear_oscillator(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);  // 1-based channel from Lua
+    if (channel < 1 || channel > 4) {
+        return luaL_error(L, "Invalid channel: %d (must be 1-4)", channel);
+    }
+    S_clear_oscillator(channel - 1);
     return 0;
 }
 

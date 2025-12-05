@@ -120,6 +120,21 @@ static float lut_lookup_q11(const q11_t* lut, float in) {
     return (float)result / Q11_SCALE;
 }
 
+// Oscillator shape evaluator (matches slope shapes for oscillate)
+static inline float osc_shape_eval(Shape_t shape, float in) {
+    switch (shape) {
+        case SHAPE_Sine:
+            return lut_lookup_q11(lut_sin_ptr ? lut_sin_ptr : lut_sin, in);
+        case SHAPE_Log:
+            return lut_lookup_q11(lut_log_ptr ? lut_log_ptr : lut_log, in);
+        case SHAPE_Expo:
+            return lut_lookup_q11(lut_exp_ptr ? lut_exp_ptr : lut_exp, in);
+        case SHAPE_Linear:
+        default:
+            return in;
+    }
+}
+
 // Q16-native LUT lookup - eliminates redundant float conversions in hot path
 // Directly converts Q16 input to Q16 output via Q11 LUT
 // Performance: Same as lut_lookup_q11 but saves 2 float conversions per call
@@ -252,6 +267,17 @@ static float* shapes_v_log(float* in, int size) {
 
 static uint8_t slope_count = 0;
 Slope_t* slopes = NULL; // Exported for ll_timers.c conditional processing
+
+// Simple fractional-phase oscillator for audio-friendly oscillate()
+typedef struct {
+    bool    active;
+    float   phase;      // 0..1
+    float   phase_inc;  // freq / sample_rate
+    float   level;      // volts
+    Shape_t shape;      // currently only SHAPE_Sine supported
+} oscillator_state_t;
+
+static oscillator_state_t g_oscillators[SLOPE_CHANNELS];
 
 typedef struct {
     q16_t value_q16;
@@ -564,8 +590,37 @@ void S_init( int channels )
         slopes[j].countdown_q16 = -(int64_t)Q16_ONE;  // -1.0 in Q16
         slopes[j].duration_q16  = 0;
         slopes[j].elapsed_q16   = 0;
+
+        // reset oscillator state for this channel
+        g_oscillators[j].active = false;
+        g_oscillators[j].phase = 0.0f;
+        g_oscillators[j].phase_inc = 0.0f;
+        g_oscillators[j].level = 0.0f;
+        g_oscillators[j].shape = SHAPE_Sine;
     }
     S_slope_buffer_reset();
+}
+
+bool S_set_oscillator(int index, float freq_hz, float level_volts, Shape_t shape)
+{
+    if (index < 0 || index >= SLOPE_CHANNELS) { return false; }
+    if (freq_hz <= 0.0f) { return false; }
+
+    oscillator_state_t* osc = &g_oscillators[index];
+    bool was_active = osc->active;
+    osc->active = true;
+    osc->phase_inc = freq_hz / (float)SAMPLE_RATE;
+    osc->level = level_volts;
+    osc->shape = shape;
+    // keep phase continuity if already active; else start at 0
+    if (!was_active) { osc->phase = 0.0f; }
+    return true;
+}
+
+void S_clear_oscillator(int index)
+{
+    if (index < 0 || index >= SLOPE_CHANNELS) { return; }
+    g_oscillators[index].active = false;
 }
 
 void S_reset(void)
@@ -584,6 +639,12 @@ void S_reset(void)
         slopes[j].countdown_q16 = -(int64_t)Q16_ONE;  // -1.0 in Q16
         slopes[j].duration_q16 = 0;
         slopes[j].elapsed_q16 = 0;
+
+        g_oscillators[j].active = false;
+        g_oscillators[j].phase = 0.0f;
+        g_oscillators[j].phase_inc = 0.0f;
+        g_oscillators[j].level = 0.0f;
+        g_oscillators[j].shape = SHAPE_Sine;
     }
 
     for (int j = 0; j < slope_count; j++) {
@@ -630,6 +691,27 @@ static slope_buffer_entry_t S_render_one_sample_q16(int index)
     if( index < 0 || index >= SLOPE_CHANNELS || slopes == NULL ){ return entry; }
     Slope_t* self = &slopes[index];
     
+    // Oscillator fast-path (audio-friendly fractional phase accumulator)
+    oscillator_state_t* osc = &g_oscillators[index];
+    if (osc->active) {
+        float ph = osc->phase;
+        // split phase into rising/falling halves to match ASL lfo semantics
+        bool rising = (ph < 0.5f);
+        float half = rising ? (ph * 2.0f) : ((ph - 0.5f) * 2.0f);
+        float shaped = osc_shape_eval(osc->shape, half);
+        float sample = rising
+            ? (-osc->level + 2.0f * osc->level * shaped)
+            : ( osc->level - 2.0f * osc->level * shaped);
+
+        osc->phase += osc->phase_inc;
+        if (osc->phase >= 1.0f) { osc->phase -= floorf(osc->phase); }
+
+        q16_t sample_q16 = FLOAT_TO_Q16(sample);
+        extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
+        entry.value_q16 = AShaper_quantize_single_q16(index, sample_q16);
+        return entry;
+    }
+
     // If slope inactive, just return last shaped value
     if( self->countdown_q16 <= 0 ) {
         entry.value_q16 = self->shaped_q16;
@@ -732,6 +814,8 @@ static void S_toward_q16_apply( int        index
                               )
 {
     if( index < 0 || index >= SLOPE_CHANNELS ){ return; }
+    // If an oscillator is active on this channel, disable it when a slope is requested
+    S_clear_oscillator(index);
     Slope_t* self = &slopes[index]; // safe pointer
 
     // update destination and shape
@@ -791,13 +875,16 @@ static void S_toward_q16_apply( int        index
         // Convert ms to samples: ms * SAMPLES_PER_MS
         // Use wide math so we can support multi-second slews without overflow
         int64_t samples_q16 = Q16_MUL_WIDE(ms_q16, SAMPLES_PER_MS_Q16);
-        if( samples_q16 <= 0 ){
-            // Never allow zero or negative sample windows (would div/0)
-            samples_q16 = (int64_t)Q16_ONE; // minimum of 1 sample
+
+        // Quantize to the nearest whole sample to minimize bias at high frequencies
+        int64_t samples_int = (samples_q16 + (int64_t)Q16_HALF) >> Q16_SHIFT; // round
+        if( samples_int <= 0 ){
+            samples_int = 1; // Never allow zero or negative sample windows (would div/0)
         }
 
-        self->duration_q16  = samples_q16;
-        self->countdown_q16 = samples_q16;
+        int64_t duration_q16 = samples_int << Q16_SHIFT;
+        self->duration_q16  = duration_q16;
+        self->countdown_q16 = duration_q16;
         self->elapsed_q16   = 0;
         self->here_q16      = 0; // start of slope
         

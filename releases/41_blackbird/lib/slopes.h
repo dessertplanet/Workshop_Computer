@@ -127,3 +127,8 @@ float* S_step_v( int     index
                );
 
 void S_reset(void);
+
+// Dedicated oscillator (audio-friendly; fractional phase accumulator)
+// Returns true on success. Channel index is 0-based.
+bool S_set_oscillator(int index, float freq_hz, float level_volts, Shape_t shape);
+void S_clear_oscillator(int index);
