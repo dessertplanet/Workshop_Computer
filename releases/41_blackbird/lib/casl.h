@@ -1,7 +1,6 @@
 #pragma once
 
 #include <stdbool.h>
-#include <stdint.h>
 
 // lua libs for destructuring lua tables in C
 #include "../lua/src/lua.h"
@@ -82,13 +81,6 @@ typedef struct{
 
     bool holding;
     bool locked;
-
-    // Live slope tracking for dynamic updates
-    // active_to points to the currently running ToLiteral (if any)
-    // active_dyn_mask is a bitset of dynamics referenced by that To
-    // (DYN_COUNT <= 64, so uint64_t is sufficient)
-    To* active_to;
-    uint64_t active_dyn_mask;
 } Casl;
 
 Casl* casl_init( int index );
