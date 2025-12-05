@@ -828,8 +828,14 @@ static void S_toward_q16_apply( int        index
 
     // direct update & callback if ms = 0 (ie instant)
     if( ms_q16 <= 0 ){
-        self->last_q16      = self->dest_q16;
-        self->shaped_q16    = self->dest_q16;
+        // Immediate transition: quantize once and store quantized state
+        // so subsequent reads (LL_get_state) and future slopes start from
+        // the quantized voltage.
+        extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
+        q16_t quantized_q16 = AShaper_quantize_single_q16(index, self->dest_q16);
+
+        self->last_q16      = quantized_q16;
+        self->shaped_q16    = quantized_q16;
         self->scale_q16     = 0;
         self->here_q16      = Q16_ONE; // 1.0 in Q16 - end of range
         self->duration_q16  = 0;
@@ -844,9 +850,7 @@ static void S_toward_q16_apply( int        index
         self->action = cb;
         
         // Immediate hardware update for zero-time (instant) transitions
-        // Apply quantization before hardware output
-        extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
-        q16_t quantized_q16 = AShaper_quantize_single_q16(index, self->shaped_q16);
+        // We already quantized above; just emit the quantized value
         extern void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
         hardware_output_set_voltage_q16(index+1, quantized_q16);  // Direct Q16, no conversion!
         
