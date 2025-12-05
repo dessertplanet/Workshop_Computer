@@ -4355,14 +4355,9 @@ int LuaManager::lua_set_input_change(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        // Check if CV input is connected (prevents spurious triggers from normalization probe noise)
-        if (!is_input_connected(channel)) {
-            // Input not connected - set mode to none instead of change detection
-            Detect_none(detector);
-        } else {
-            int8_t dir = Detect_str_to_dir(direction);
-            Detect_change(detector, change_callback, threshold, hysteresis, dir);
-        }
+        // Always configure detection; normalization probe already zeroes disconnected inputs
+        int8_t dir = Detect_str_to_dir(direction);
+        Detect_change(detector, change_callback, threshold, hysteresis, dir);
     }
     return 0;
 }
@@ -4391,13 +4386,8 @@ int LuaManager::lua_set_input_window(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        // Check if CV input is connected (prevents spurious triggers from normalization probe noise)
-        if (!is_input_connected(channel)) {
-            // Input not connected - set mode to none instead of window detection
-            Detect_none(detector);
-        } else {
-            Detect_window(detector, window_callback, windows, wLen, hysteresis);
-        }
+        // Always configure detection; normalization probe already zeroes disconnected inputs
+        Detect_window(detector, window_callback, windows, wLen, hysteresis);
     }
     return 0;
 }
@@ -4425,13 +4415,8 @@ int LuaManager::lua_set_input_scale(lua_State* L) {
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        // Check if CV input is connected (prevents spurious triggers from normalization probe noise)
-        if (!is_input_connected(channel)) {
-            // Input not connected - set mode to none instead of scale detection
-            Detect_none(detector);
-        } else {
-            Detect_scale(detector, scale_callback, scale, sLen, temp, scaling);
-        }
+        // Always configure detection; normalization probe already zeroes disconnected inputs
+        Detect_scale(detector, scale_callback, scale, sLen, temp, scaling);
     }
     return 0;
 }
@@ -4479,18 +4464,13 @@ int LuaManager::lua_set_input_clock(lua_State* L) {
     // Clock mode is a specialized change detection
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
-        // Check if CV input is connected (prevents spurious clock triggers from normalization probe noise)
-        if (!is_input_connected(channel)) {
-            // Input not connected - set mode to none instead of clock detection
-            Detect_none(detector);
-        } else {
-            // Set clock to external input source and configure division
-            clock_set_source(CLOCK_SOURCE_CROW);
-            clock_crow_in_div(div);
-            
-            // Use clock_input_handler instead of generic change_callback
-            Detect_change(detector, clock_input_handler, threshold, hysteresis, 1); // Rising edge
-        }
+        // Always configure detection; normalization probe already zeroes disconnected inputs
+        // Set clock to external input source and configure division
+        clock_set_source(CLOCK_SOURCE_CROW);
+        clock_crow_in_div(div);
+        
+        // Use clock_input_handler instead of generic change_callback
+        Detect_change(detector, clock_input_handler, threshold, hysteresis, 1); // Rising edge
     }
     return 0;
 }
