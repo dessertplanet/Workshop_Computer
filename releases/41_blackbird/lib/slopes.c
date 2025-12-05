@@ -876,15 +876,13 @@ static void S_toward_q16_apply( int        index
         // Use wide math so we can support multi-second slews without overflow
         int64_t samples_q16 = Q16_MUL_WIDE(ms_q16, SAMPLES_PER_MS_Q16);
 
-        // Quantize to the nearest whole sample to minimize bias at high frequencies
-        int64_t samples_int = (samples_q16 + (int64_t)Q16_HALF) >> Q16_SHIFT; // round
-        if( samples_int <= 0 ){
-            samples_int = 1; // Never allow zero or negative sample windows (would div/0)
+        // Preserve fractional-sample durations for true timing (no rounding)
+        if( samples_q16 <= 0 ){
+            samples_q16 = (int64_t)Q16_ONE; // minimum of 1 sample
         }
 
-        int64_t duration_q16 = samples_int << Q16_SHIFT;
-        self->duration_q16  = duration_q16;
-        self->countdown_q16 = duration_q16;
+        self->duration_q16  = samples_q16;
+        self->countdown_q16 = samples_q16;
         self->elapsed_q16   = 0;
         self->here_q16      = 0; // start of slope
         
