@@ -235,8 +235,8 @@ static void process_slope_action_callbacks() {
 // ============================================================================
 // PERFORMANCE MONITORING
 // ============================================================================
-static constexpr double kProcessSampleRateHz = PROCESS_SAMPLE_RATE_HZ_DOUBLE;
-static constexpr double kProcessSampleBudgetUs = 1000000.0 / kProcessSampleRateHz;  // 8kHz sample rate
+static constexpr float kProcessSampleRateHz = PROCESS_SAMPLE_RATE_HZ_DOUBLE;
+static constexpr float kProcessSampleBudgetUs = 1000000.0f / kProcessSampleRateHz;  // 8kHz sample rate
 static constexpr uint32_t kProcessSampleOverrunThresholdUs =
     static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~100us)
 static constexpr uint32_t kProcessSamplePeriodUsInt = 125;
@@ -5025,8 +5025,8 @@ int LuaManager::lua_perf_stats(lua_State* L) {
     } else {
         // Default mode: print formatted output via TinyUSB CDC
         if (tud_cdc_connected()) {
-            const double utilization = (kProcessSampleBudgetUs > 0.0)
-                ? (static_cast<double>(worst) / kProcessSampleBudgetUs) * 100.0
+            const float utilization = (kProcessSampleBudgetUs > 0.0f)
+                ? (static_cast<float>(worst) / kProcessSampleBudgetUs) * 100.0f
                 : 0.0;
             char msg[512];
             snprintf(msg, sizeof(msg), 

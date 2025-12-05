@@ -132,7 +132,6 @@ void clock_update(uint32_t time_now)
 
     // TODO can we use <= for time comparison or does it create double-trigs?
     // this should reduce latency by 1ms if it works.
-    double dtime_now = (double)time_now;
 sleep_next:
     if(sleep_head // list is not empty
     && sleep_head->wakeup <= time_now){ // time to awaken
@@ -221,11 +220,11 @@ bool clock_schedule_resume_beatsync( int coro_id, float beats ){
     return ok;
 }
 
-void clock_update_reference(double beats, double beat_duration)
+void clock_update_reference(float beats, float beat_duration)
 {
     // Convert to fixed point
-    reference.beat_q16 = (uint32_t)(beats * (double)Q16_ONE + 0.5);
-    uint32_t beat_ms = (uint32_t)(beat_duration * 1000.0 + 0.5);
+    reference.beat_q16 = (uint32_t)(beats * (float)Q16_ONE + 0.5f);
+    uint32_t beat_ms = (uint32_t)(beat_duration * 1000.0f + 0.5f);
     if (beat_ms == 0) {
         beat_ms = 1; // avoid division by zero
     }
@@ -234,7 +233,7 @@ void clock_update_reference(double beats, double beat_duration)
     reference.last_beat_time_ms = clock_now_ms();
 }
 
-void clock_update_reference_from(double beats, double beat_duration, clock_source_t source)
+void clock_update_reference_from(float beats, float beat_duration, clock_source_t source)
 {
     if( clock_source == source ){
         clock_update_reference( beats, beat_duration );
@@ -291,9 +290,9 @@ float clock_get_time_beats(void)
     return (float)precise_beat_q16 * (1.0f / (float)Q16_ONE);
 }
 
-double clock_get_time_seconds(void)
+float clock_get_time_seconds(void)
 {
-    return (double)clock_now_ms() * 0.001;
+    return (float)clock_now_ms() * 0.001f;
 }
 
 float clock_get_tempo(void)
@@ -350,18 +349,18 @@ void clock_internal_set_tempo( float bpm )
 {
     if (bpm <= 0.0f) bpm = 120.0f;
     // interval in ms as Q16.16: (60000 / bpm) * 2^16
-    double interval_ms = 60000.0 / (double)bpm;
+    float interval_ms = 60000.0f / bpm;
     internal_interval_ms = (uint32_t)(interval_ms + 0.5);
     internal_interval_ms_q16 = (uint32_t)(interval_ms * (double)Q16_ONE + 0.5);
-    clock_internal_start( (float)(internal.beat_q16 * (1.0 / (double)Q16_ONE)), false );
+    clock_internal_start( (float)(internal.beat_q16 * (1.0f / (float)Q16_ONE)), false );
 }
 
 void clock_internal_start( float new_beat, bool transport_start )
 {
     // Initialize internal beat state
     internal.beat_q16 = (uint64_t)(new_beat * (float)Q16_ONE + 0.5f);
-    clock_update_reference_from( (double)new_beat
-                               , (double)internal_interval_ms / 1000.0
+    clock_update_reference_from( (float)new_beat
+                               , (float)internal_interval_ms / 1000.0f
                                , CLOCK_SOURCE_INTERNAL );
 
     if( transport_start ){
@@ -395,11 +394,11 @@ static void clock_internal_run(uint32_t ms)
             internal.beat_q16 += Q16_ONE;
 
             // Use reference tempo if clock source is external, otherwise use internal tempo
-            double beat_interval_sec = (clock_source == CLOCK_SOURCE_CROW)
-                                     ? ((double)reference.beat_duration_ms / 1000.0)
-                                     : ((double)internal_interval_ms / 1000.0);
+            float beat_interval_sec = (clock_source == CLOCK_SOURCE_CROW)
+                                    ? ((float)reference.beat_duration_ms / 1000.0f)
+                                    : ((float)internal_interval_ms / 1000.0f);
 
-            clock_update_reference_from( (double)internal.beat_q16 / (double)Q16_ONE
+            clock_update_reference_from( (float)internal.beat_q16 / (float)Q16_ONE
                                        , beat_interval_sec
                                        , CLOCK_SOURCE_INTERNAL );
 
@@ -420,24 +419,26 @@ static void clock_internal_run(uint32_t ms)
 
 static bool clock_crow_last_time_set;
 static int clock_crow_counter;
-static double clock_crow_last_time;
+static uint32_t clock_crow_last_time_ms;
 
 #define DURATION_BUFFER_LENGTH 4
 
-static float duration_buf[DURATION_BUFFER_LENGTH] = {0};
+static uint32_t duration_buf[DURATION_BUFFER_LENGTH] = {0}; // beat durations in ms
 static uint8_t beat_duration_buf_pos = 0;
 static uint8_t beat_duration_buf_len = 0;
-static float mean_sum;
-static float mean_scale;
+static uint32_t mean_sum_ms;
 
-static float crow_in_div = 4.0;
+static uint32_t crow_in_div_q16 = (4u << Q16_SHIFT); // beats per pulse (Q16.16)
 
 
 void clock_crow_init(void)
 {
     clock_crow_counter = 0;
     clock_crow_last_time_set = false;
-    mean_sum = 0;
+    mean_sum_ms = 0;
+    beat_duration_buf_len = 0;
+    beat_duration_buf_pos = 0;
+    for (int i = 0; i < DURATION_BUFFER_LENGTH; ++i) duration_buf[i] = 0;
 }
 
 // called by an event received on input
@@ -448,39 +449,46 @@ void clock_input_handler( int id, float freq )
 }
 void clock_crow_handle_clock(void)
 {
-    float beat_duration;
-    double current_time = clock_get_time_seconds();
+    uint32_t current_time_ms = clock_now_ms();
 
     if( clock_crow_last_time_set == false ){
         clock_crow_last_time_set = true;
-        clock_crow_last_time = current_time;
+        clock_crow_last_time_ms = current_time_ms;
     } else {
-        beat_duration = (float)(current_time - clock_crow_last_time)
-                            * crow_in_div;
-        if( beat_duration > 4.0 ){ // assume clock stopped
-            clock_crow_last_time = current_time;
+        uint32_t elapsed_ms = current_time_ms - clock_crow_last_time_ms;
+
+        // Compute beat duration in ms: elapsed_ms * crow_in_div_q16 >> 16
+        uint32_t beat_duration_ms = (uint32_t)(((uint64_t)elapsed_ms * (uint64_t)crow_in_div_q16) >> Q16_SHIFT);
+
+        if( beat_duration_ms > 4000u ){ // assume clock stopped (>4s per beat)
+            clock_crow_last_time_ms = current_time_ms;
         } else {
+            // Ring buffer average (simple sum/len)
             if( beat_duration_buf_len < DURATION_BUFFER_LENGTH ){
                 beat_duration_buf_len++;
-                mean_scale = 1.0 / beat_duration_buf_len;
             }
 
-            float a = beat_duration * mean_scale;
-            mean_sum = mean_sum + a;
-            mean_sum = mean_sum - duration_buf[beat_duration_buf_pos];
-            duration_buf[beat_duration_buf_pos] = a;
+            // Subtract the old value at pos and add new
+            uint32_t old = duration_buf[beat_duration_buf_pos];
+            mean_sum_ms += beat_duration_ms;
+            mean_sum_ms -= old;
+            duration_buf[beat_duration_buf_pos] = beat_duration_ms;
             beat_duration_buf_pos = (beat_duration_buf_pos + 1) % DURATION_BUFFER_LENGTH;
 
             clock_crow_counter++;
-            clock_crow_last_time = current_time;
+            clock_crow_last_time_ms = current_time_ms;
 
-            double beat = clock_crow_counter / crow_in_div;
-            clock_update_reference_from(beat, (double)mean_sum, CLOCK_SOURCE_CROW);
+            // Compute beats and average duration in float for API compatibility
+            uint64_t beat_q16 = (uint64_t)clock_crow_counter * (uint64_t)crow_in_div_q16;
+            float beat = (float)beat_q16 / (float)Q16_ONE;
+            float beat_duration_sec = (beat_duration_buf_len == 0) ? 0.0f : ((float)mean_sum_ms / (float)beat_duration_buf_len) * 0.001f;
+            clock_update_reference_from(beat, beat_duration_sec, CLOCK_SOURCE_CROW);
         }
     }
 }
 
 void clock_crow_in_div( float div )
 {
-    crow_in_div = 1.0/div;
+    if (div <= 0.0f) div = 1.0f;
+    crow_in_div_q16 = (uint32_t)((1.0f / div) * (float)Q16_ONE + 0.5f);
 }

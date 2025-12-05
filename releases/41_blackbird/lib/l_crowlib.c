@@ -659,7 +659,7 @@ static int _ii_follow_reset( lua_State* L ){
 // C.tell( 'output', channel, get_state( channel ))
 static int _tell_get_out( lua_State* L ){
 	int chan = luaL_checknumber(L, -1);
-    Caw_printf( "^^output(%i,%f)", chan, (double)AShaper_get_state(chan-1));
+    Caw_printf( "^^output(%i,%f)", chan, (float)AShaper_get_state(chan-1));
     lua_settop(L, 0);
     return 0;
 }
