@@ -177,7 +177,16 @@ void Detect_stream(Detect_t* self, Detect_callback_t cb, float interval) {
     
     self->modefn = d_stream;
     self->action = cb;
-    // Crow semantics: interval (seconds) * (sample_rate / 32)
+
+    // Sample-accurate interval (seconds -> samples)
+    // Preserve crow-style block semantics for compatibility, but prefer sample timing for fidelity
+    uint32_t samples = (uint32_t)(interval * DETECT_SAMPLE_RATE + 0.5f);
+    if (samples == 0) samples = 1;
+
+    self->stream.interval_samples = samples;
+    self->stream.sample_countdown = samples;
+
+    // Legacy block-based fields (kept for compatibility/fallback in Core0)
     self->stream.blocks = (int)(interval * DETECT_BLOCK_RATE);
     if (self->stream.blocks <= 0) self->stream.blocks = 1;
     self->stream.countdown = self->stream.blocks;
@@ -622,10 +631,22 @@ void __not_in_flash_func(Detect_process_sample)(int channel, int16_t raw_adc) {
     // NO floating-point operations!
     // ===============================================
     
-    // STREAM MODE: Just count blocks, queue event on boundary
+    // STREAM MODE: sample-accurate countdown in ISR
     if (mode == d_stream) {
         detector->last_raw_adc = raw_adc;
-        return; // Core 0 handles countdown entirely
+
+        // Protect against zero/invalid intervals
+        if (detector->stream.interval_samples == 0) {
+            detector->stream.interval_samples = 1;
+        }
+
+        if (--detector->stream.sample_countdown == 0) {
+            detector->stream.sample_countdown = detector->stream.interval_samples;
+            detector->event_raw_value = raw_adc; // capture the exact sample
+            detector->state_changed = true;
+            DMB(); // Ensure Core 0 sees the flag and sample value
+        }
+        return;
     }
     
     // CHANGE MODE: Integer threshold comparison
@@ -715,6 +736,21 @@ void Detect_process_events_core0(void) {
         DMB();  // Ensure we see latest state_changed from ISR
 
         if (detector->modefn == d_stream) {
+            // Preferred path: ISR-generated sample-accurate events
+            if (detector->state_changed) {
+                detector->state_changed = false;
+                DMB(); // ensure clear visible to ISR
+
+                int16_t raw_value = detector->event_raw_value;
+                float level_volts = (float)raw_value * ADC_TO_VOLTS;
+                detector->last_sample = level_volts;
+                if (detector->action) {
+                    detector->action(ch, level_volts);
+                }
+                continue;
+            }
+
+            // Fallback: legacy block-based scheduling (kept for compatibility)
             const uint32_t block_samples = (uint32_t)DETECT_BLOCK_SIZE;
 
             // Protect against wraparound or uninitialized state

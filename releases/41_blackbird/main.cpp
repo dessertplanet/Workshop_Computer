@@ -3974,13 +3974,15 @@ int LuaManager::lua_io_get_input(lua_State* L) {
 // Mode-specific detection callbacks - OPTIMIZED for direct execution
 static constexpr bool kDetectionDebug = false;
 
-// Lock-free stream callback - posts stream-equivalent values (always maintained)
+// Lock-free stream callback - posts sample-accurate values
 static void stream_callback(int channel, float value) {
-    // Use stream-equivalent value so stream callbacks and .volts queries align
-    float stream_value = (channel >= 0 && channel < 2) ? g_input_stream_volts[channel] : value;
-    
-    // Post to lock-free queue
-    if (!input_lockfree_post(channel, stream_value, 1)) {  // type=1 for stream
+    // Keep .volts queries aligned with the last streamed sample
+    if (channel >= 0 && channel < 2) {
+        g_input_stream_volts[channel] = value;
+    }
+
+    // Post to lock-free queue with the provided value
+    if (!input_lockfree_post(channel, value, 1)) {  // type=1 for stream
         static uint32_t drop_count = 0;
         if (++drop_count % 100 == 0) {
             queue_debug_message("Stream lock-free queue full, dropped %lu events", drop_count);
