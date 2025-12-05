@@ -15,14 +15,9 @@
 // TODO: Port wrDsp dependency to RP2040  
 // #include "submodules/wrDsp/wrBlocks.h" // wrDsp dependency, need to stub
 
-// TODO: Implement RP2040-specific audio sample rate constants
-#ifndef SAMPLES_PER_MS
-#define SAMPLES_PER_MS 48.0f // TODO: Define proper sample rate for RP2040
-#endif
-
-#ifndef SLOPE_CHANNELS  
-#define SLOPE_CHANNELS 4 // TODO: Define proper channel count for Workshop Computer
-#endif
+// Sample-rate & channel count are centralized in `sample_rate.h` / `slopes.h`
+// (SAMPLES_PER_MS, SAMPLES_PER_MS_Q16, SLOPE_CHANNELS). Remove local fallbacks
+// to guarantee consistency with the actual ISR rate (8kHz).
 
 // ========================================================================
 // Q11 Fixed-Point LUT System for RP2040 (Cortex-M0+ has no FPU)
