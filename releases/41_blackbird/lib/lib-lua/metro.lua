@@ -164,4 +164,20 @@ metro_handler = function(idx, stage)
    end
 end
 
+-- Reset metro state (called from crow.reset)
+Metro.reset = function()
+    for i=1,Metro.num_metros do
+        Metro.available[i] = true
+        Metro.assigned[i] = false
+        local m = Metro.metros[i]
+        if m then
+            m.is_running = false
+            m.event = nil
+            m.props.time = 1
+            m.props.count = -1
+            m.props.init_stage = 1
+        end
+    end
+end
+
 return Metro

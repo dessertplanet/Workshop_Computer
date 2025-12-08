@@ -27,3 +27,14 @@ void L_queue_clock_resume( int coro_id );
 void L_handle_metro_lockfree( metro_event_lockfree_t* event );
 void L_handle_input_lockfree( input_event_lockfree_t* event );
 void L_handle_asl_done_lockfree( asl_done_event_lockfree_t* event );
+void L_handle_clock_resume_lockfree( clock_event_lockfree_t* event );
+
+// Diagnostics for high-frequency scheduling callbacks
+uint32_t metro_cb_worst_us(void);
+uint32_t metro_cb_overrun_count(void);
+uint32_t metro_cb_last_us(void);
+void metro_cb_reset_stats(void);
+
+uint32_t clock_resume_cb_worst_us(void);
+uint32_t clock_resume_cb_last_us(void);
+void clock_resume_cb_reset_stats(void);

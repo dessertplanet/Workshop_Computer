@@ -139,6 +139,17 @@ bool clock_lockfree_get(clock_event_lockfree_t* event) {
     return true;
 }
 
+// Peek at next clock event without removing it (single-consumer safe)
+bool clock_lockfree_peek(clock_event_lockfree_t* event) {
+    clock_lockfree_queue_t* queue = &g_clock_lockfree_queue;
+    uint32_t current_read = queue->header.read_idx;
+    if (current_read == queue->header.write_idx) {
+        return false;
+    }
+    *event = queue->events[current_read];
+    return true;
+}
+
 uint32_t clock_lockfree_queue_depth(void) {
     clock_lockfree_queue_t* queue = &g_clock_lockfree_queue;
     uint32_t write_idx = queue->header.write_idx;
@@ -159,6 +170,29 @@ void clock_lockfree_reset_stats(void) {
     clock_events_processed = 0;
     clock_events_dropped = 0;
 }
+
+// Reset all queue stats
+void events_lockfree_reset_stats(void) {
+    metro_events_posted = metro_events_processed = metro_events_dropped = 0;
+    input_events_posted = input_events_processed = input_events_dropped = 0;
+    clock_events_posted = clock_events_processed = clock_events_dropped = 0;
+    asl_done_events_posted = asl_done_events_processed = asl_done_events_dropped = 0;
+}
+
+// Metro stats accessors
+uint32_t metro_events_posted_count(void)    { return metro_events_posted; }
+uint32_t metro_events_processed_count(void) { return metro_events_processed; }
+uint32_t metro_events_dropped_count(void)   { return metro_events_dropped; }
+
+// Input stats accessors
+uint32_t input_events_posted_count(void)    { return input_events_posted; }
+uint32_t input_events_processed_count(void) { return input_events_processed; }
+uint32_t input_events_dropped_count(void)   { return input_events_dropped; }
+
+// ASL done stats accessors
+uint32_t asl_done_events_posted_count(void)    { return asl_done_events_posted; }
+uint32_t asl_done_events_processed_count(void) { return asl_done_events_processed; }
+uint32_t asl_done_events_dropped_count(void)   { return asl_done_events_dropped; }
 
 // Get metro event from Core 0 (control) - NEVER BLOCKS!
 bool metro_lockfree_get(metro_event_lockfree_t* event) {
@@ -184,6 +218,17 @@ bool metro_lockfree_get(metro_event_lockfree_t* event) {
     queue->header.read_idx = next_read;
     
     metro_events_processed++;
+    return true;
+}
+
+// Peek at next metro event without removing it (single-consumer safe)
+bool metro_lockfree_peek(metro_event_lockfree_t* event) {
+    metro_lockfree_queue_t* queue = &g_metro_lockfree_queue;
+    uint32_t current_read = queue->header.read_idx;
+    if (current_read == queue->header.write_idx) {
+        return false; // empty
+    }
+    *event = queue->events[current_read];
     return true;
 }
 

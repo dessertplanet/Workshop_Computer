@@ -13,3 +13,6 @@ void Metro_stop_all( void );
 void Metro_set_time( int ix, float sec );
 void Metro_set_count( int ix, int count );
 void Metro_set_stage( int ix, int stage );
+
+// Diagnostics
+float Metro_get_period_seconds(int ix);

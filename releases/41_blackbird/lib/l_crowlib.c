@@ -8,6 +8,8 @@
 #include "lib/ii.h"         // ii_*()
 #include "lib/ashapes.h"    // AShaper_get_state
 #include "lib/caw.h"        // Caw_printf()
+#include "lib/metro.h"       // Metro_get_period_seconds
+#include "pico/time.h"       // time_us_32 for diagnostics
 // #include "lib/io.h"         // IO_GetADC() - not used in emulator
 // Declare get_input_state_simple function for compatibility (implemented in main.cpp)
 extern float get_input_state_simple(int channel); // returns input voltage in volts
@@ -685,6 +687,32 @@ void L_queue_metro( int id, int state )
     }
 }
 
+// =============================================================================
+// Diagnostics for metro and clock callbacks
+// =============================================================================
+static uint32_t g_metro_cb_worst_us = 0;
+static uint32_t g_metro_cb_last_us = 0;
+static uint32_t g_metro_cb_overruns = 0;
+
+uint32_t metro_cb_worst_us(void)      { return g_metro_cb_worst_us; }
+uint32_t metro_cb_last_us(void)       { return g_metro_cb_last_us; }
+uint32_t metro_cb_overrun_count(void) { return g_metro_cb_overruns; }
+void metro_cb_reset_stats(void) {
+    g_metro_cb_worst_us = 0;
+    g_metro_cb_last_us = 0;
+    g_metro_cb_overruns = 0;
+}
+
+static uint32_t g_clock_resume_cb_worst_us = 0;
+static uint32_t g_clock_resume_cb_last_us = 0;
+
+uint32_t clock_resume_cb_worst_us(void) { return g_clock_resume_cb_worst_us; }
+uint32_t clock_resume_cb_last_us(void)  { return g_clock_resume_cb_last_us; }
+void clock_resume_cb_reset_stats(void) {
+    g_clock_resume_cb_worst_us = 0;
+    g_clock_resume_cb_last_us = 0;
+}
+
 // Forward declarations for output batching (defined in main.cpp)
 extern void output_batch_begin(void);
 extern void output_batch_flush(void);
@@ -709,6 +737,8 @@ void L_handle_metro_lockfree( metro_event_lockfree_t* event )
     int stage = event->stage;
     
     // Call the global metro_handler function in Lua like real crow
+    uint32_t start_us = time_us_32();
+
     lua_getglobal(L, "metro_handler");
     if (lua_isfunction(L, -1)) {
         lua_pushinteger(L, metro_id);  // First argument: metro ID
@@ -729,6 +759,22 @@ void L_handle_metro_lockfree( metro_event_lockfree_t* event )
     // OPTIMIZATION 2: Flush batched outputs
     // ===============================================
     output_batch_flush();
+
+    // Diagnostics: measure callback duration and flag overruns
+    uint32_t elapsed_us = time_us_32() - start_us;
+    g_metro_cb_last_us = elapsed_us;
+    if (elapsed_us > g_metro_cb_worst_us) {
+        g_metro_cb_worst_us = elapsed_us;
+    }
+
+    // Overrun detection: compare to configured metro period if available
+    float period_s = Metro_get_period_seconds(metro_id);
+    if (period_s > 0.0f) {
+        uint32_t period_us = (uint32_t)(period_s * 1e6f + 0.5f);
+        if (elapsed_us > period_us) {
+            g_metro_cb_overruns++;
+        }
+    }
 }
 
 void L_queue_clock_resume( int coro_id )
@@ -754,6 +800,8 @@ static void handle_clock_resume_common(int coro_id) {
         return;
     }
 
+    uint32_t start_us = time_us_32();
+
     lua_getglobal(L, "clock_resume_handler");
     if (lua_isfunction(L, -1)) {
         lua_pushinteger(L, coro_id);
@@ -764,6 +812,12 @@ static void handle_clock_resume_common(int coro_id) {
         }
     } else {
         lua_pop(L, 1);
+    }
+
+    uint32_t elapsed_us = time_us_32() - start_us;
+    g_clock_resume_cb_last_us = elapsed_us;
+    if (elapsed_us > g_clock_resume_cb_worst_us) {
+        g_clock_resume_cb_worst_us = elapsed_us;
     }
 }
 

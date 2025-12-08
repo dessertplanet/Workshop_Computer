@@ -31,7 +31,7 @@ end
 -- Note: 5ms metro ticks were overwhelming the control loop on hardware.
 -- Use a slightly slower tick to keep Lua responsive while still producing
 -- a smooth 2 Hz ramp (50 steps per cycle at 10ms).
-TICK_MS   = 10       -- scheduler tick in ms
+TICK_MS   = 18     -- scheduler tick in ms
 PERIOD_MS = 500        -- 2 Hz
 STEPS     = PERIOD_MS // TICK_MS
 HALF      = STEPS // 2
@@ -48,6 +48,7 @@ function tick()
     mv = idx * DELTA_MV
     -- Convert to volts once at the boundary (float here is acceptable)
     output[1].volts = mv / 1000.0
+    -- print(idx)
 end
 
 function init()

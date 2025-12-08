@@ -241,6 +241,9 @@ static constexpr uint32_t kProcessSampleOverrunThresholdUs =
     static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~100us)
 static constexpr uint32_t kProcessSamplePeriodUsInt = 125;
 static constexpr uint32_t kTimerServiceIntervalUs = 667;  // ~1.5kHz target (crow-compatible cadence)
+static constexpr int kLuaGcStepSize = 2; // small incremental GC step per main loop
+static constexpr uint32_t kMainLoopSoftBudgetUs = 8000; // soft budget per loop to reduce stalls
+static constexpr int kMaxLogMessagesPerLoop = 4; // cap logs per loop to avoid large spikes
 // ProcessSample (Core 1 audio thread) performance
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
@@ -478,20 +481,22 @@ static bool queue_message(bool is_debug, const char* fmt, ...) {
 }
 
 // Process queued messages on Core0
-static void process_queued_messages() {
-    while (g_message_read_idx != g_message_write_idx) {
+static void process_queued_messages_limited(int max_messages) {
+    int processed = 0;
+    while (g_message_read_idx != g_message_write_idx && processed < max_messages) {
         // Cast away volatile for local use
         const queued_message_t* msg = (const queued_message_t*)&g_message_queue[g_message_read_idx];
-        
+
         // Output message
         printf("%s", msg->message);
         if (!strstr(msg->message, "\n") && !strstr(msg->message, "\r")) {
             printf("\n\r"); // Add line ending if not present
         }
         fflush(stdout);
-        
+
         // Update read index
         g_message_read_idx = (g_message_read_idx + 1) % MESSAGE_QUEUE_SIZE;
+        processed++;
     }
 }
 
@@ -2738,8 +2743,8 @@ public:
                 // Note: Don't reset g_worst_case_us here - let user query via perf_stats()
             }
             
-            // Process queued messages from audio thread
-            process_queued_messages();
+            // Process queued messages from audio thread (bounded to avoid stalls)
+            process_queued_messages_limited(kMaxLogMessagesPerLoop);
             
             // Process slope action callbacks from Core 1
             process_slope_action_callbacks();
@@ -2754,14 +2759,41 @@ public:
             update_input_stream_values();
 
             // Process lock-free clock resume events before anything else can stall them
+            const int max_clock_events_per_loop = 32;  // allow higher rates, still bounded
             clock_event_lockfree_t clock_event;
-            while (clock_lockfree_get(&clock_event)) {
+            int clock_events_processed = 0;
+            while (clock_events_processed < max_clock_events_per_loop && clock_lockfree_get(&clock_event)) {
+                // Coalesce consecutive events for the same coro to prevent flooding
+                clock_event_lockfree_t peek_event;
+                while (clock_lockfree_peek(&peek_event) && peek_event.coro_id == clock_event.coro_id) {
+                    // Discard older event in favor of latest resume
+                    clock_lockfree_get(&clock_event);
+                }
                 L_handle_clock_resume_lockfree(&clock_event);
+                clock_events_processed++;
+                // Budget guard: break if over soft budget
+                if ((int32_t)(time_us_32() - loop_start_time) > (int32_t)kMainLoopSoftBudgetUs) {
+                    break;
+                }
             }
-            // Process lock-free metro events first (highest priority)
+
+            // Process lock-free metro events (high priority but bounded per loop)
+            const int max_metro_events_per_loop = 32;
             metro_event_lockfree_t metro_event;
-            while (metro_lockfree_get(&metro_event)) {
+            int metro_events_processed = 0;
+            while (metro_events_processed < max_metro_events_per_loop && metro_lockfree_get(&metro_event)) {
+                // Coalesce consecutive events for the same metro ID to avoid flooding
+                metro_event_lockfree_t peek_event;
+                while (metro_lockfree_peek(&peek_event) && peek_event.metro_id == metro_event.metro_id) {
+                    // Discard older event in favor of latest stage
+                    metro_lockfree_get(&metro_event);
+                }
                 L_handle_metro_lockfree(&metro_event);
+                metro_events_processed++;
+                // Budget guard: break if over soft budget
+                if ((int32_t)(time_us_32() - loop_start_time) > (int32_t)kMainLoopSoftBudgetUs) {
+                    break;
+                }
             }
             
             // Process lock-free input detection events (high priority)
@@ -2773,6 +2805,9 @@ public:
             while (input_lockfree_get(&input_event) && input_events_processed < max_input_events_per_loop) {
                 L_handle_input_lockfree(&input_event);
                 input_events_processed++;
+                if ((int32_t)(time_us_32() - loop_start_time) > (int32_t)kMainLoopSoftBudgetUs) {
+                    break;
+                }
             }
 
             // Drain coalesced change events for inputs 1/2 (avoid backlog)
@@ -2794,10 +2829,16 @@ public:
                 }
             }
             
-            // Process lock-free ASL done events (medium priority)
+            // Process lock-free ASL done events (medium priority, bounded)
+            const int max_asl_done_events_per_loop = 32;
             asl_done_event_lockfree_t asl_done_event;
-            while (asl_done_lockfree_get(&asl_done_event)) {
+            int asl_events_processed = 0;
+            while (asl_events_processed < max_asl_done_events_per_loop && asl_done_lockfree_get(&asl_done_event)) {
                 L_handle_asl_done_lockfree(&asl_done_event);
+                asl_events_processed++;
+                if ((int32_t)(time_us_32() - loop_start_time) > (int32_t)kMainLoopSoftBudgetUs) {
+                    break;
+                }
             }
             
             // Check for switch changes and fire callback
@@ -2892,11 +2933,18 @@ public:
                 }
             }
             
-            // Update public view monitoring (~15fps)
+            // Smooth Lua GC to avoid long pauses; tiny step each loop
+            if (lua_manager && lua_manager->L) {
+                lua_gc(lua_manager->L, LUA_GCSTEP, kLuaGcStepSize);
+            }
+
+            // Update public view monitoring (~15fps), but skip if we've blown budget
             static uint32_t last_pubview_time = 0;
             if (now - last_pubview_time >= 66) { // ~15fps (66ms = 1000/15)
-                last_pubview_time = now;
-                public_update();
+                if ((time_us_32() - loop_start_time) < kMainLoopSoftBudgetUs) {
+                    last_pubview_time = now;
+                    public_update();
+                }
             }
             
             // === PERFORMANCE MONITORING: Track loop worst-case time ===
@@ -5027,6 +5075,45 @@ int LuaManager::lua_perf_stats(lua_State* L) {
                      (unsigned long)loop_worst,
                      (unsigned long)loop_count);
             tud_cdc_write_str(msg);
+
+            // Event queue stats
+            char qmsg[512];
+            snprintf(qmsg, sizeof(qmsg),
+                     "Queues:\n\r"
+                     "  Metro: depth=%lu posted=%lu processed=%lu dropped=%lu\n\r"
+                     "  Clock: depth=%lu posted=%lu processed=%lu dropped=%lu\n\r"
+                     "  Input: depth=%lu posted=%lu processed=%lu dropped=%lu\n\r"
+                     "  ASL  : depth=%lu posted=%lu processed=%lu dropped=%lu\n\r",
+                     (unsigned long)metro_lockfree_queue_depth(),
+                     (unsigned long)metro_events_posted_count(),
+                     (unsigned long)metro_events_processed_count(),
+                     (unsigned long)metro_events_dropped_count(),
+                     (unsigned long)clock_lockfree_queue_depth(),
+                     (unsigned long)clock_events_posted_count(),
+                     (unsigned long)clock_events_processed_count(),
+                     (unsigned long)clock_events_dropped_count(),
+                     (unsigned long)input_lockfree_queue_depth(),
+                     (unsigned long)input_events_posted_count(),
+                     (unsigned long)input_events_processed_count(),
+                     (unsigned long)input_events_dropped_count(),
+                     (unsigned long)asl_done_lockfree_queue_depth(),
+                     (unsigned long)asl_done_events_posted_count(),
+                     (unsigned long)asl_done_events_processed_count(),
+                     (unsigned long)asl_done_events_dropped_count());
+            tud_cdc_write_str(qmsg);
+
+            // Callback timing stats (metros & clock resumes)
+            char cbmsg[256];
+            snprintf(cbmsg, sizeof(cbmsg),
+                     "Callbacks:\n\r"
+                     "  Metro: last=%luus worst=%luus overruns=%lu\n\r"
+                     "  Clock: last=%luus worst=%luus\n\r",
+                     (unsigned long)metro_cb_last_us(),
+                     (unsigned long)metro_cb_worst_us(),
+                     (unsigned long)metro_cb_overrun_count(),
+                     (unsigned long)clock_resume_cb_last_us(),
+                     (unsigned long)clock_resume_cb_worst_us());
+            tud_cdc_write_str(cbmsg);
             
         }
         
@@ -5035,6 +5122,9 @@ int LuaManager::lua_perf_stats(lua_State* L) {
             g_worst_case_us = 0;
             g_loop_worst_case_us = 0;
             g_loop_iteration_count = 0;
+            events_lockfree_reset_stats();
+            metro_cb_reset_stats();
+            clock_resume_cb_reset_stats();
         }
         
         return 0;  // No return value in print mode

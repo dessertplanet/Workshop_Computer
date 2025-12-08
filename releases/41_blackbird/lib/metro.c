@@ -74,6 +74,7 @@ void Metro_set_time( int ix, float sec )
      || ix >= max_num_metros ){ printf("metro_set_time: bad index\n"); return; }
 
     Timer_Set_Params( ix, sec ); // only using struct accessor
+    metros[ix].seconds = sec;    // track configured period for diagnostics
 }
 
 void Metro_set_count( int ix, int count )
@@ -92,6 +93,13 @@ void Metro_set_stage( int ix, int stage )
 
     Metro_t* t = &(metros[ix]);
     t->stage = stage;
+}
+
+// Diagnostic accessor for current metro period (seconds)
+float Metro_get_period_seconds(int ix)
+{
+    if (ix < 0 || ix >= max_num_metros) { return 0.0f; }
+    return metros[ix].seconds;
 }
 
 static void Metro_bang( int ix )

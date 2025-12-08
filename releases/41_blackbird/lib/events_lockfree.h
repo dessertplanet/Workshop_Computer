@@ -7,11 +7,13 @@
 // Core 1 (audio) = single producer, Core 0 (control) = single consumer
 
 // Default queue size for most queues (metro, input, ASL done)
-#define LOCKFREE_QUEUE_SIZE 128  // Must be power of 2 for efficient wrapping
+// Increased to 256 to better absorb high-frequency scheduling bursts
+#define LOCKFREE_QUEUE_SIZE 256  // Must be power of 2 for efficient wrapping
 #define LOCKFREE_QUEUE_MASK (LOCKFREE_QUEUE_SIZE - 1)
 
 // Clock queue can be bursty; allow a larger ring independently if needed
-#define CLOCK_QUEUE_SIZE 128
+// Match metro queue for consistency
+#define CLOCK_QUEUE_SIZE 256
 #define CLOCK_QUEUE_MASK (CLOCK_QUEUE_SIZE - 1)
 
 // Metro event structure for lock-free queue
@@ -92,6 +94,24 @@ uint32_t clock_events_processed_count(void);
 uint32_t clock_events_dropped_count(void);
 void clock_lockfree_reset_stats(void);
 
+// Reset all queues' stats
+void events_lockfree_reset_stats(void);
+
+// Metro queue statistics accessors
+uint32_t metro_events_posted_count(void);
+uint32_t metro_events_processed_count(void);
+uint32_t metro_events_dropped_count(void);
+
+// Input queue statistics accessors
+uint32_t input_events_posted_count(void);
+uint32_t input_events_processed_count(void);
+uint32_t input_events_dropped_count(void);
+
+// ASL done queue statistics accessors
+uint32_t asl_done_events_posted_count(void);
+uint32_t asl_done_events_processed_count(void);
+uint32_t asl_done_events_dropped_count(void);
+
 // Global lock-free queues
 extern metro_lockfree_queue_t g_metro_lockfree_queue;
 extern input_lockfree_queue_t g_input_lockfree_queue;
@@ -106,11 +126,13 @@ void events_lockfree_init(void);
 // Metro queue functions (Core 1 = producer, Core 0 = consumer)
 bool metro_lockfree_post(int metro_id, int stage);
 bool metro_lockfree_get(metro_event_lockfree_t* event);
+bool metro_lockfree_peek(metro_event_lockfree_t* event);
 uint32_t metro_lockfree_queue_depth(void);
 
 // Clock resume queue functions
 bool clock_lockfree_post(int coro_id);
 bool clock_lockfree_get(clock_event_lockfree_t* event);
+bool clock_lockfree_peek(clock_event_lockfree_t* event);
 uint32_t clock_lockfree_queue_depth(void);
 
 // Input queue functions (Core 1 = producer, Core 0 = consumer)  
