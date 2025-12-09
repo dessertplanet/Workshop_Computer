@@ -7,13 +7,14 @@
 // Core 1 (audio) = single producer, Core 0 (control) = single consumer
 
 // Default queue size for most queues (metro, input, ASL done)
-// Increased to 256 to better absorb high-frequency scheduling bursts
-#define LOCKFREE_QUEUE_SIZE 256  // Must be power of 2 for efficient wrapping
+// NOTE: keeping this at 128 preserves ~7.5KB of BSS for Lua heap on RP2040.
+// If you need deeper buffers for stress testing, make this configurable at build time.
+#define LOCKFREE_QUEUE_SIZE 128  // Must be power of 2 for efficient wrapping
 #define LOCKFREE_QUEUE_MASK (LOCKFREE_QUEUE_SIZE - 1)
 
 // Clock queue can be bursty; allow a larger ring independently if needed
-// Match metro queue for consistency
-#define CLOCK_QUEUE_SIZE 256
+// Keep aligned with LOCKFREE_QUEUE_SIZE to avoid extra BSS cost by default
+#define CLOCK_QUEUE_SIZE 128
 #define CLOCK_QUEUE_MASK (CLOCK_QUEUE_SIZE - 1)
 
 // Metro event structure for lock-free queue
