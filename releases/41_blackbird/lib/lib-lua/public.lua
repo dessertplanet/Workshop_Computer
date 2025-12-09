@@ -40,8 +40,8 @@ P._chain = {
                                 end
                             , type    = function(p,t) p.tipe = t; return p end
                             , action  = function(p,f)
+                                        -- monome/crow behavior: do not auto-execute actions on assignment
                                         p.act = f
-                                        P.doact(p, p.v) -- run immediately when assigning an action
                                         return p
                                 end
                             }
@@ -89,7 +89,7 @@ P.add = function(name, default, typ, action)
             end
         end
     end
-    if assigned_act then P.doact(p, p.v) end
+    -- Crow does not auto-run actions on add/chain; defer until value changes
     return setmetatable(p, P._chain) -- return a reference to the new public table entry
 end
 
