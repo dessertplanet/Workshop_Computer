@@ -71,6 +71,19 @@ void events_lockfree_init(void) {
                    LOCKFREE_QUEUE_SIZE, LOCKFREE_QUEUE_SIZE, CLOCK_QUEUE_SIZE);
 }
 
+// Clear all queues (for reset)
+void events_lockfree_clear(void) {
+    // Reset indices to effectively clear the queues
+    // Note: This is safe only if we are sure no producer is writing, 
+    // or if we accept that we might lose a concurrent write.
+    // In crow.reset(), we are resetting the world, so losing events is desired.
+    
+    g_metro_lockfree_queue.header.read_idx = g_metro_lockfree_queue.header.write_idx;
+    g_input_lockfree_queue.header.read_idx = g_input_lockfree_queue.header.write_idx;
+    g_clock_lockfree_queue.header.read_idx = g_clock_lockfree_queue.header.write_idx;
+    g_asl_done_lockfree_queue.header.read_idx = g_asl_done_lockfree_queue.header.write_idx;
+}
+
 // Metro queue functions
 
 // Post metro event from Core 1 (audio) - NEVER BLOCKS!

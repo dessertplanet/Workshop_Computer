@@ -89,7 +89,10 @@ void casl_describe( int index, lua_State* L )
     // enter first sequence
     seq_enter(self);
 
-    parse_table(self, L);
+    // Check if table is empty before parsing
+    if (lua_rawlen(L, -1) > 0) {
+        parse_table(self, L);
+    }
     // seq_exit(self)? // i think we want to start inside the first Seq anyway
 }
 

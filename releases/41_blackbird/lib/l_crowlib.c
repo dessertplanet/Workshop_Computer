@@ -16,6 +16,8 @@ extern float get_input_state_simple(int channel); // returns input voltage in vo
 #include "lib/events_lockfree.h"  // Lock-free event queues
 #include "lib/slopes.h"     // S_reset()
 #include "ll_timers.h"       // Timer_Set_Block_Size()
+#include "clock_ll.h"        // ll_cleanup()
+#include "lib/events_lockfree.h" // events_lockfree_clear()
 #include <string.h>
 
 #define L_CL_MIDDLEC 		(261.63f)
@@ -236,9 +238,26 @@ void l_crowlib_emptyinit(lua_State* L){
     lua_setglobal(L, "init");
 }
 
-
 int l_crowlib_crow_reset( lua_State* L ){
     S_reset();
+    
+    // Clean up C-side clock list to prevent "cant resume cancelled clock" errors
+    ll_cleanup();
+    
+    // Clear any pending events (clock resumes, etc) that might trigger errors
+    events_lockfree_clear();
+
+    // Clean up Lua-side clock state (clears threads, resets tempo)
+    lua_getglobal(L, "clock");
+    if (!lua_isnil(L, -1)) {
+        lua_getfield(L, -1, "cleanup");
+        if (lua_isfunction(L, -1)) {
+            lua_call(L, 0, 0);
+        } else {
+            lua_pop(L, 1); // pop non-function
+        }
+    }
+    lua_pop(L, 1); // pop clock or nil
 
     lua_getglobal(L, "input"); // @1
 for(int i=1; i<=2; i++){
@@ -311,6 +330,11 @@ lua_gettable(L, 1); // replace @2 with: input[n]
         // output[n].done = function() end
         lua_getglobal(L, "nop_fn"); // @3
         lua_setfield(L, 2, "done"); // pops nop_fn -> @2
+        
+        // output[n].action = nil (clear ASL action)
+        lua_pushnil(L);
+        lua_setfield(L, 2, "action");
+
         // output[n]:clock('none')
         lua_getfield(L, 2, "clock"); // @3
         lua_pushvalue(L, 2); // @4 copy of output[n]
@@ -362,16 +386,6 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     }
     lua_settop(L, 0);
 
-    // clock.cleanup() - only if clock exists
-    lua_getglobal(L, "clock"); // @1
-    if(!lua_isnil(L, 1)){
-        lua_getfield(L, 1, "cleanup");
-        if(!lua_isnil(L, 2)){
-            lua_call(L, 0, 0);
-        }
-    }
-    lua_settop(L, 0);
-
     // hotswap.cleanup() - only if hotswap exists
     lua_getglobal(L, "hotswap"); // @1
     if(!lua_isnil(L, 1)){
@@ -411,14 +425,11 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     }
     lua_settop(L, 0);
 
+    // Force garbage collection to reclaim memory from previous script
+    lua_gc(L, LUA_GCCOLLECT, 0);
+
     return 0;
 }
-
-
-/////// static declarations
-
-// Just Intonation calculators
-// included in lualink.c as global lua functions
 
 static int justvolts(lua_State* L, float mul);
 

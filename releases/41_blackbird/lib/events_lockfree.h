@@ -98,6 +98,9 @@ void clock_lockfree_reset_stats(void);
 // Reset all queues' stats
 void events_lockfree_reset_stats(void);
 
+// Clear all queues (for reset)
+void events_lockfree_clear(void);
+
 // Metro queue statistics accessors
 uint32_t metro_events_posted_count(void);
 uint32_t metro_events_processed_count(void);

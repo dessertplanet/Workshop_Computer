@@ -51,6 +51,10 @@ end
 -- setters
 Output.__newindex = function(self, ix, val)
     if ix == 'action' then
+        if val == nil then
+            self.asl:describe({}) -- Clear with empty table
+            return
+        end
         if type(val) == 'string' then -- resolve string ASL to datastructure
             val = assert(load('return '..val))()
         end
