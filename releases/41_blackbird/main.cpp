@@ -1139,6 +1139,29 @@ static void print_table_recursive(lua_State* L, int index, int depth) {
     tud_cdc_write_str("}");
     flush_if_needed();  // Check buffer after closing brace
 }    // Lua panic handler - called when Lua encounters an unrecoverable error
+    static int lua_panic_handler(lua_State* L) {
+        const char* msg = lua_tostring(L, -1);
+        if (msg == NULL) msg = "error object is not a string";
+        
+        tud_cdc_write_str("\n\r[PANIC] Blackbird has crashed, RIP. Please push reset button.\n\r");
+        
+        // Also print the actual error message
+        char buffer[256];
+        snprintf(buffer, sizeof(buffer), "Lua Panic: %s\n\r", msg);
+        tud_cdc_write_str(buffer);
+        
+        // Force flush and wait for transmission
+        tud_cdc_write_flush();
+        uint32_t timeout = 0;
+        while (tud_cdc_write_available() < 256 && timeout < 100000) {
+            tud_task();
+            sleep_us(100);
+            timeout++;
+        }
+        
+        exit(1); // Call _exit to halt system
+        return 0; // return to Lua to abort
+    }
     
     // Custom allocator with memory tracking and diagnostics
     static void* lua_custom_alloc(void* ud, void* ptr, size_t osize, size_t nsize) {
@@ -1231,6 +1254,9 @@ public:
             printf("Error: Could not create Lua state\n\r");
             return;
         }
+        
+        // Register panic handler
+        lua_atpanic(L, lua_panic_handler);
         
         
         // Load basic Lua libraries
@@ -3097,6 +3123,9 @@ public:
                         "end "
                         "_G._user = {}"
                     );
+
+                    // 8. Reset init() to nop_fn to prevent errors if new script doesn't define it
+                    lua_manager->evaluate_safe("init = nop_fn");
                     
                     // 8. Reset init() to empty function
                     lua_manager->evaluate_safe("_G.init = function() end");
@@ -5351,6 +5380,25 @@ extern "C" {
             return size;
         }
         return -1;
+    }
+
+    // Override _exit to ensure message flushing on panic/abort
+    void __attribute__((noreturn)) _exit(int status) {
+        tud_cdc_write_str("\n\r[BLACKBIRD CRASH] RIP. Please reset.\n\r");
+        tud_cdc_write_flush();
+        
+        // Force flush loop - keep servicing USB tasks to push data out
+        uint32_t timeout = 0;
+        while (tud_cdc_write_available() < 256 && timeout < 100000) {
+            tud_task();
+            sleep_us(100);
+            timeout++;
+        }
+        
+        while(1) {
+            // Hang
+            sleep_ms(100);
+        }
     }
 }
 
