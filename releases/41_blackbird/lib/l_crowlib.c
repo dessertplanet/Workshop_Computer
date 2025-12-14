@@ -18,6 +18,7 @@ extern float get_input_state_simple(int channel); // returns input voltage in vo
 #include "ll_timers.h"       // Timer_Set_Block_Size()
 #include "clock_ll.h"        // ll_cleanup()
 #include "lib/events_lockfree.h" // events_lockfree_clear()
+#include "fastmath.h"
 #include <string.h>
 
 #define L_CL_MIDDLEC 		(261.63f)
@@ -189,6 +190,10 @@ void l_crowlib_init(lua_State* L){
 
 
 	//////// RANDOM
+
+    // Install fast math overrides (LUT + integer core) and patch math.*
+    // Saves originals as math.ssin/scos/satan/sexp/slog/spow
+    fastmath_lua_install(L, 1);
 
 	// hook existing math.random into math.srandom
 	lua_getglobal(L, "math"); // 1

@@ -50,6 +50,8 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/random.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/wrblocks.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/mailbox.c
+                ${CMAKE_CURRENT_LIST_DIR}/lib/fastmath.c
+                ${CMAKE_CURRENT_LIST_DIR}/lib/fastmath_lut.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/flash_storage.cpp
       )
       target_compile_definitions(${_name} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)

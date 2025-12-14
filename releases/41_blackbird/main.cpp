@@ -30,6 +30,8 @@ License is GPLv3 or later- see LICENSE file for details.
 #include "hardware/irq.h"
 #include "hardware/sync.h"
 #include "tusb.h"
+
+#include "lib/fastmath.h"
 #include "class/cdc/cdc_device.h"
 #include "lib/debug.h"
 #include "lib/usb_lockfree.h"
@@ -1261,6 +1263,10 @@ public:
         
         // Load basic Lua libraries
         luaL_openlibs(L);
+
+        // Install fast math overrides early so scripts that cache locals
+        // (e.g. `local sin = math.sin`) bind to the fast versions.
+        fastmath_lua_install(L, 1);
         
         // CRITICAL: Set aggressive garbage collection like crow does
         // Without this, Lua will run out of memory on embedded systems!
