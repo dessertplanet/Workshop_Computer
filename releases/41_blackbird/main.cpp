@@ -1321,6 +1321,7 @@ public:
     
     // Register crow backend functions for Output.lua compatibility
     lua_register(L, "LL_get_state", lua_LL_get_state);
+    lua_register(L, "LL_set_volts", lua_LL_set_volts);
     lua_register(L, "set_output_scale", lua_set_output_scale);
     lua_register(L, "soutput_handler", lua_soutput_handler);
     
@@ -1943,6 +1944,7 @@ public:
     
     // Crow backend functions for Output.lua compatibility
     static int lua_LL_get_state(lua_State* L);
+    static int lua_LL_set_volts(lua_State* L);
     static int lua_set_output_scale(lua_State* L);
     static int lua_c_tell(lua_State* L);
     static int lua_soutput_handler(lua_State* L);
@@ -3715,6 +3717,53 @@ int LuaManager::lua_LL_get_state(lua_State* L) {
     float volts = S_get_state(channel - 1);  // Convert to 0-based for C
     lua_pushnumber(L, volts);
     return 1;
+}
+
+// LL_set_volts(channel, volts, [slew_seconds], [shape]) - Fast path for output[n].volts
+// Uses CASL directly to preserve slew/shape behavior and output[n].done() callbacks.
+int LuaManager::lua_LL_set_volts(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);  // 1-based channel from Lua
+    float volts = (float)luaL_checknumber(L, 2);
+    float slew_seconds = (float)luaL_optnumber(L, 3, 0.0);
+    const char* shape_str = luaL_optstring(L, 4, "linear");
+
+    if (channel < 1 || channel > 4) {
+        return luaL_error(L, "Invalid channel: %d (must be 1-4)", channel);
+    }
+    if (slew_seconds < 0.0f) {
+        slew_seconds = 0.0f;
+    }
+
+    const int idx = channel - 1;
+
+    // Match Asl:describe behavior for output.volts (clears dynamics on that channel)
+    casl_cleardynamics(idx);
+
+    Shape_t shape = S_str_to_shape(shape_str);
+    casl_describe_to_literal_q16(idx,
+                                FLOAT_TO_Q16(volts),
+                                FLOAT_TO_Q16(slew_seconds),
+                                shape);
+
+    // Match lua_casl_action noise-clearing behavior (LL_set_volts bypasses lua_casl_action).
+    if (idx >= 0 && idx < 4 && g_noise_active[idx]) {
+        // If lock counter is 10, noise was just set in describe phase, don't clear.
+        // (Not expected for LL_set_volts, but keep behavior identical.)
+        if (g_noise_lock_counter[idx] != 10) {
+            g_noise_active[idx] = false;
+            g_noise_active_mask &= ~(1 << idx);
+            g_noise_gain[idx] = 0;
+            g_noise_lock_counter[idx] = 0;
+        }
+    }
+
+    casl_action(idx, 1);
+
+    // Mirror lua_casl_action post-action lock-counter adjustment.
+    if (idx >= 0 && idx < 4 && g_noise_active[idx] && g_noise_lock_counter[idx] == 10) {
+        g_noise_lock_counter[idx] = 2;
+    }
+    return 0;
 }
 
 // LL_set_noise(channel, gain) - Enable audio-rate noise output

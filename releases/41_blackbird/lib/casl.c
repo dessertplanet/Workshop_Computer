@@ -70,6 +70,7 @@ static void seq_append( Casl* self, To* t )
 }
 
 static void parse_table( Casl* self, lua_State* L );
+static To* to_alloc( Casl* self );
 void casl_describe( int index, lua_State* L )
 {
     if(index < 0 || index >= SELVES_COUNT){
@@ -94,6 +95,40 @@ void casl_describe( int index, lua_State* L )
         parse_table(self, L);
     }
     // seq_exit(self)? // i think we want to start inside the first Seq anyway
+}
+
+void casl_describe_to_literal_q16( int index, q16_t volts_q16, q16_t seconds_q16, Shape_t shape )
+{
+    if(index < 0 || index >= SELVES_COUNT){
+        printf("casl_describe_to_literal_q16: invalid index %d (valid 0..%d)\n", index, SELVES_COUNT-1);
+        return;
+    }
+    Casl* self = _selves[index];
+
+    // deallocate everything (match casl_describe behavior, but without Lua parsing)
+    self->to_ix  = 0;
+    self->seq_ix = 0;
+    self->seq_select = -1;
+    self->seq_current = &self->seqs[0];
+    for(int i=0; i<SEQ_COUNT; i++){ self->seqs[i].pc = 0; }
+
+    // enter first sequence
+    seq_enter(self);
+
+    To* t = to_alloc(self);
+    if(t == NULL){
+        printf("ERROR: not enough To slots left (fast describe)\n");
+        return;
+    }
+    t->ctrl = ToLiteral;
+    t->a.type = ElemT_Fixed;
+    t->a.obj.q = volts_q16;
+    t->b.type = ElemT_Fixed;
+    t->b.obj.q = seconds_q16;
+    t->c.type = ElemT_Shape;
+    t->c.obj.shape = shape;
+
+    seq_append(self, t);
 }
 
 // suite of functions for unwrapping elements of Lua tables

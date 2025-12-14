@@ -61,8 +61,14 @@ Output.__newindex = function(self, ix, val)
         self.asl:describe(val)
     elseif ix == 'volts' then
         -- print(string.format("[OUT] volts request channel=%d val=%.4f slew=%.4f shape=%s", self.channel, val, self.slew or -1, tostring(self.shape)))
-        self.asl:describe(to(val, self.slew, self.shape))
-        self.asl:action()
+        if LL_set_volts then
+            -- Match Asl:describe behavior: clear local dyn name mappings
+            if self.asl and self.asl.dyn then self.asl.dyn._names = {} end
+            LL_set_volts(self.channel, val, self.slew, self.shape)
+        else
+            self.asl:describe(to(val, self.slew, self.shape))
+            self.asl:action()
+        end
     elseif ix == 'scale' then
         set_output_scale(self.channel, self.ji and just12(val) or val)
     else

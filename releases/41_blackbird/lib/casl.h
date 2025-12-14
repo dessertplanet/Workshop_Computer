@@ -85,6 +85,7 @@ typedef struct{
 
 Casl* casl_init( int index );
 void casl_describe( int index, lua_State* L );
+void casl_describe_to_literal_q16( int index, q16_t volts_q16, q16_t seconds_q16, Shape_t shape );
 void casl_action( int index, int action );
 
 // dynamic vars
