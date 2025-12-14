@@ -10,8 +10,6 @@
 #include "lua.h"
 #include "lauxlib.h"
 
-#include "tusb.h"
-
 // --- Fixed-point helpers ---
 
 #define FM_Q16_ONE  (1 << 16)
@@ -255,14 +253,6 @@ static inline float fm_pow_f(float a, float b) {
 // --- Lua bindings ---
 
 static int l_fast_sin(lua_State *L) {
-    static uint32_t s_trace = 0;
-    if (s_trace < 8) {
-        tud_cdc_write_str("[fastmath] sin\n\r");
-        s_trace++;
-        if (s_trace == 8) {
-            tud_cdc_write_str("[fastmath] sin trace muted\n\r");
-        }
-    }
     float x = (float)luaL_checknumber(L, 1);
     lua_pushnumber(L, (lua_Number)fm_sin_f(x));
     return 1;
