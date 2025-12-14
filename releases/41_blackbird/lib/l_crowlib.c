@@ -456,6 +456,29 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     }
     lua_settop(L, 0);
 
+    // Clear user globals using Crow's _user table approach.
+    // This prevents user scripts from retaining references across script reload cycles
+    // when the host only calls crow.reset() between uploads.
+    lua_getglobal(L, "_user"); // @1
+    if (lua_istable(L, 1)) {
+        lua_pushnil(L); // @2 (first key for lua_next)
+        while (lua_next(L, 1) != 0) {
+            // stack: _user (1), key (2), value (3)
+            const char* key = lua_tostring(L, 2);
+            if (key) {
+                lua_pushnil(L);
+                lua_setglobal(L, key); // _G[key] = nil
+            }
+            lua_pop(L, 1); // pop value, keep key
+        }
+    }
+    lua_settop(L, 0);
+
+    // Reset _user tracking table
+    lua_newtable(L);
+    lua_setglobal(L, "_user");
+    lua_settop(L, 0);
+
     // Force garbage collection to reclaim memory from previous script
     // Do two full cycles (mirrors existing reload behavior elsewhere).
     lua_gc(L, LUA_GCCOLLECT, 0);

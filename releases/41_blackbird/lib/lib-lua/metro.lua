@@ -51,7 +51,12 @@ function Metro.init (arg, arg_time, arg_count)
 end
 
 function Metro.free(id)
-    Metro.metros[id]:stop()
+        local m = Metro.metros[id]
+        if m then
+            m:stop()
+            -- Release event closure immediately (prevents memory retention across script cycles)
+            m.event = nil
+        end
     Metro.available[id] = true
     Metro.assigned[id] = false
 end

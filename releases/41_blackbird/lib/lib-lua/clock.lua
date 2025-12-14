@@ -94,11 +94,22 @@ clock.resume = function(coro_id, ...)
 end
 
 clock.cleanup = function()
+  -- Do not mutate clock.threads while iterating it.
+  -- (pairs() iteration + deletions can skip entries, leaving coroutines referenced.)
+  local ids = {}
   for id, coro in pairs(clock.threads) do
-    if coro then
+    if coro then ids[#ids+1] = id end
+  end
+  for i = 1, #ids do
+    local id = ids[i]
+    if clock.threads[id] then
       clock.cancel(id)
     end
   end
+
+  -- Hard reset of coroutine bookkeeping
+  clock.threads = {}
+  clock.id = 0
   clock.tempo = 120
   clock.transport.start = nil
   clock.transport.stop = nil
