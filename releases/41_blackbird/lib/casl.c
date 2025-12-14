@@ -371,13 +371,30 @@ static void next_action( int index )
                     q16_t seconds_q16 = resolve(self, &t->b).q;   // Q16.16 seconds
                     // Convert seconds to milliseconds: seconds * 1000
                     q16_t ms_q16 = Q16_MUL(seconds_q16, FLOAT_TO_Q16(1000.0));
+
+                    // Coalesce only the simplest possible ASL: a single-stage `to(...)`.
+                    // This is what `output[n].volts = x` generates, and it is safe to treat
+                    // rapid updates as “last value wins” to avoid queue backlog.
+                    bool coalescable = false;
+                    if (self->seq_ix == 1 && self->seqs[0].length == 1 && self->seqs[0].stage[0] == t) {
+                        coalescable = true;
+                    }
                     
-                    S_toward_q16( index              // Use Q16 API directly
-                                , volts_q16
-                                , ms_q16
-                                , resolve(self, &t->c).shape
-                                , (ms_q16 > 0) ? &next_action : NULL // callback only if there's a time delay
-                                );
+                    if (coalescable) {
+                        S_toward_q16_coalescable( index
+                                                , volts_q16
+                                                , ms_q16
+                                                , resolve(self, &t->c).shape
+                                                , (ms_q16 > 0) ? &next_action : NULL
+                                                );
+                    } else {
+                        S_toward_q16( index
+                                    , volts_q16
+                                    , ms_q16
+                                    , resolve(self, &t->c).shape
+                                    , (ms_q16 > 0) ? &next_action : NULL
+                                    );
+                    }
                     if(ms_q16 > 0){ return; } // wait for DSP callback before proceeding
                     break;}
 

@@ -27,11 +27,7 @@ function lcg_loc(seed)
     return sd
 end
 
--- Example: 2 Hz triangle LFO using integer math (milli-volts & milli-seconds)
--- Note: 5ms metro ticks were overwhelming the control loop on hardware.
--- Use a slightly slower tick to keep Lua responsive while still producing
--- a smooth 2 Hz ramp (50 steps per cycle at 10ms).
-TICK_MS   = 18     -- scheduler tick in ms
+TICK_MS   = 1     -- scheduler tick in ms
 PERIOD_MS = 500        -- 2 Hz
 STEPS     = PERIOD_MS // TICK_MS
 HALF      = STEPS // 2

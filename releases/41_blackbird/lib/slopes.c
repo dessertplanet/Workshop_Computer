@@ -307,6 +307,7 @@ typedef struct {
     q16_t ms_q16;        // milliseconds in Q16 (when use_samples_q16==0)
     Shape_t shape;
     Callback_t cb;
+    uint8_t coalesce;    // 1 if safe to overwrite older pending cmds for same index
     uint8_t use_samples_q16; // 1 when duration_q16 holds samples (Q16), 0 for ms_q16
     int64_t duration_q16;    // samples in Q16 when use_samples_q16==1
 } slope_cmd_t;
@@ -316,9 +317,33 @@ static volatile slope_cmd_t slope_cmd_queue[SLOPE_CMD_QUEUE_SIZE];
 static volatile uint32_t slope_cmd_write_idx = 0;
 static volatile uint32_t slope_cmd_read_idx = 0;
 static volatile uint32_t slope_cmd_drop_count = 0;
+static volatile uint32_t slope_cmd_coalesce_count = 0;
 
 static inline bool slope_cmd_enqueue(const slope_cmd_t* cmd) {
     uint32_t irq_state = save_and_disable_interrupts();
+
+    // Optional coalescing: if a prior coalescable command for the same channel
+    // is still pending in the queue, overwrite it with the latest request.
+    if (cmd->coalesce) {
+        bool found = false;
+        uint32_t found_pos = 0;
+        uint32_t pos = slope_cmd_read_idx;
+        while (pos != slope_cmd_write_idx) {
+            // Only coalesce against other coalescable commands for same channel
+            if (slope_cmd_queue[pos].coalesce && slope_cmd_queue[pos].index == cmd->index) {
+                found = true;
+                found_pos = pos; // keep the last one we see
+            }
+            pos = (pos + 1) % SLOPE_CMD_QUEUE_SIZE;
+        }
+        if (found) {
+            slope_cmd_queue[found_pos] = *cmd; // struct copy (volatile)
+            slope_cmd_coalesce_count++;
+            restore_interrupts(irq_state);
+            return true;
+        }
+    }
+
     uint32_t next_write = (slope_cmd_write_idx + 1) % SLOPE_CMD_QUEUE_SIZE;
     if (next_write == slope_cmd_read_idx) {
         restore_interrupts(irq_state);
@@ -933,11 +958,46 @@ void S_toward_q16( int        index
                         .ms_q16 = ms_q16,
                         .shape = shape,
                         .cb = cb,
+                        .coalesce = 0,
                         .use_samples_q16 = 0,
                         .duration_q16 = 0 };
     if (!slope_cmd_enqueue(&cmd)) {
         // As a fallback (should be rare), apply locally with interrupts disabled
         // This may introduce a tiny race but avoids dropping envelopes completely
+        uint32_t irq = save_and_disable_interrupts();
+        S_toward_q16_apply(index, destination_q16, ms_q16, shape, cb, 0, 0);
+        restore_interrupts(irq);
+    }
+}
+
+void S_toward_q16_coalescable( int        index
+                            , q16_t      destination_q16
+                            , q16_t      ms_q16
+                            , Shape_t    shape
+                            , Callback_t cb
+                            )
+{
+    // If slopes not initialized, ignore
+    if (!slopes) { return; }
+
+    // Core1 (audio engine): apply immediately with interrupts disabled
+    if (get_core_num() == 1) {
+        uint32_t irq = save_and_disable_interrupts();
+        S_toward_q16_apply(index, destination_q16, ms_q16, shape, cb, 0, 0);
+        restore_interrupts(irq);
+        return;
+    }
+
+    // Core0 (Lua/control): enqueue with coalescing enabled
+    slope_cmd_t cmd = { .index = (int8_t)index,
+                        .dest_q16 = destination_q16,
+                        .ms_q16 = ms_q16,
+                        .shape = shape,
+                        .cb = cb,
+                        .coalesce = 1,
+                        .use_samples_q16 = 0,
+                        .duration_q16 = 0 };
+    if (!slope_cmd_enqueue(&cmd)) {
         uint32_t irq = save_and_disable_interrupts();
         S_toward_q16_apply(index, destination_q16, ms_q16, shape, cb, 0, 0);
         restore_interrupts(irq);
@@ -984,6 +1044,38 @@ void S_toward_samples_q16( int        index
                         .ms_q16 = 0,
                         .shape = shape,
                         .cb = cb,
+                        .coalesce = 0,
+                        .use_samples_q16 = 1,
+                        .duration_q16 = samples_q16 };
+    if (!slope_cmd_enqueue(&cmd)) {
+        uint32_t irq = save_and_disable_interrupts();
+        S_toward_q16_apply(index, destination_q16, 0, shape, cb, 1, samples_q16);
+        restore_interrupts(irq);
+    }
+}
+
+void S_toward_samples_q16_coalescable( int        index
+                                    , q16_t      destination_q16
+                                    , int64_t    samples_q16
+                                    , Shape_t    shape
+                                    , Callback_t cb
+                                    )
+{
+    if (!slopes) { return; }
+
+    if (get_core_num() == 1) {
+        uint32_t irq = save_and_disable_interrupts();
+        S_toward_q16_apply(index, destination_q16, /*ms_q16*/0, shape, cb, 1, samples_q16);
+        restore_interrupts(irq);
+        return;
+    }
+
+    slope_cmd_t cmd = { .index = (int8_t)index,
+                        .dest_q16 = destination_q16,
+                        .ms_q16 = 0,
+                        .shape = shape,
+                        .cb = cb,
+                        .coalesce = 1,
                         .use_samples_q16 = 1,
                         .duration_q16 = samples_q16 };
     if (!slope_cmd_enqueue(&cmd)) {

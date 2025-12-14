@@ -119,6 +119,14 @@ void S_toward_q16( int        index
                  , Shape_t    shape
                  , Callback_t cb
                  );
+// Coalescable variant: when invoked from Core0, the latest pending command for
+// the same channel may overwrite older not-yet-applied commands to avoid backlog.
+void S_toward_q16_coalescable( int        index
+                            , q16_t      destination_q16
+                            , q16_t      ms_q16
+                            , Shape_t    shape
+                            , Callback_t cb
+                            );
 // Samples-based duration (Q16 samples) to avoid ms→samples conversion overhead
 void S_toward_samples_q16( int        index
                          , q16_t      destination_q16
@@ -126,6 +134,13 @@ void S_toward_samples_q16( int        index
                          , Shape_t    shape
                          , Callback_t cb
                          );
+// Coalescable samples-based variant
+void S_toward_samples_q16_coalescable( int        index
+                                    , q16_t      destination_q16
+                                    , int64_t    samples_q16
+                                    , Shape_t    shape
+                                    , Callback_t cb
+                                    );
 // Float wrapper for samples-based duration
 void S_toward_samples( int        index
                      , float      destination
