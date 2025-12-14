@@ -9,6 +9,7 @@
 #include "lib/ashapes.h"    // AShaper_get_state
 #include "lib/caw.h"        // Caw_printf()
 #include "lib/metro.h"       // Metro_get_period_seconds
+#include "lib/clock.h"       // clock_cancel_coro_all()
 #include "pico/time.h"       // time_us_32 for diagnostics
 // #include "lib/io.h"         // IO_GetADC() - not used in emulator
 // Declare get_input_state_simple function for compatibility (implemented in main.cpp)
@@ -248,6 +249,13 @@ int l_crowlib_crow_reset( lua_State* L ){
     
     // Clean up C-side clock list to prevent "cant resume cancelled clock" errors
     ll_cleanup();
+
+    // Cancel any scheduled clock wakeups and reset internal counters
+    // (independent of Lua's clock.cleanup implementation)
+    clock_cancel_coro_all();
+
+    // Stop all metros at the C level to ensure no timer callbacks continue
+    Metro_stop_all();
     
     // Clear any pending events (clock resumes, etc) that might trigger errors
     events_lockfree_clear();
@@ -261,6 +269,15 @@ int l_crowlib_crow_reset( lua_State* L ){
         } else {
             lua_pop(L, 1); // pop non-function
         }
+
+        // Hard reset clock tables to drop any lingering coroutine references.
+        // Avoid relying on Lua-side iteration semantics during mutation.
+        lua_newtable(L);
+        lua_setfield(L, -2, "threads");
+        lua_pushinteger(L, 0);
+        lua_setfield(L, -2, "id");
+        lua_newtable(L);
+        lua_setfield(L, -2, "transport");
     }
     lua_pop(L, 1); // pop clock or nil
 
@@ -378,6 +395,15 @@ lua_gettable(L, 1); // replace @2 with: input[n]
         if(!lua_isnil(L, 2)){
             lua_call(L, 0, 0);
         }
+
+        // Also call metro.reset() (if present) to clear event closures and defaults.
+        // metro.free_all() stops metros but does not clear Metro.metros[i].event.
+        lua_getfield(L, 1, "reset");
+        if (lua_isfunction(L, -1)) {
+            lua_call(L, 0, 0);
+        } else {
+            lua_pop(L, 1);
+        }
     }
     lua_settop(L, 0);
 
@@ -431,6 +457,8 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     lua_settop(L, 0);
 
     // Force garbage collection to reclaim memory from previous script
+    // Do two full cycles (mirrors existing reload behavior elsewhere).
+    lua_gc(L, LUA_GCCOLLECT, 0);
     lua_gc(L, LUA_GCCOLLECT, 0);
 
     return 0;
