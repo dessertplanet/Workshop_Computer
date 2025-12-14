@@ -91,6 +91,46 @@ extern const unsigned int clock_len;
 // GLOBAL VARIABLES
 // ============================================================================
 
+// ============================================================================
+// HARDFAULT CAPTURE (GDB-friendly)
+// Stores stacked registers and active vector, then BKPTs.
+// NOTE: Avoids any USB/stdio calls in fault context.
+// ============================================================================
+extern "C" {
+static volatile uint32_t g_hardfault_stack[8]; // r0,r1,r2,r3,r12,lr,pc,xpsr
+static volatile uint32_t g_hardfault_lr = 0;
+static volatile uint32_t g_hardfault_sp = 0;
+static volatile uint32_t g_hardfault_icsr = 0;
+}
+
+extern "C" void hardfault_capture_c(uint32_t *sp) {
+    g_hardfault_sp = (uint32_t)sp;
+    // Active vector number in ICSR[8:0]
+    g_hardfault_icsr = *((volatile uint32_t*)0xE000ED04);
+    // Stacked registers
+    g_hardfault_stack[0] = sp[0];  // r0
+    g_hardfault_stack[1] = sp[1];  // r1
+    g_hardfault_stack[2] = sp[2];  // r2
+    g_hardfault_stack[3] = sp[3];  // r3
+    g_hardfault_stack[4] = sp[4];  // r12
+    g_hardfault_stack[5] = sp[5];  // lr
+    g_hardfault_stack[6] = sp[6];  // pc
+    g_hardfault_stack[7] = sp[7];  // xpsr
+    __asm volatile("mov %0, lr" : "=r"(g_hardfault_lr));
+
+    __asm volatile("bkpt #0");
+    while (1) {
+        __asm volatile("nop");
+    }
+}
+
+extern "C" __attribute__((naked)) void HardFault_Handler(void) {
+    __asm volatile(
+        "mov r0, sp\n"
+        "b hardfault_capture_c\n"
+    );
+}
+
 // CV Output & Input State
 static volatile int32_t g_output_state_mv[4] = {0, 0, 0, 0};
 static volatile int32_t g_input_state_q12[2] = {0, 0};
@@ -2216,6 +2256,11 @@ static struct repeating_timer g_usb_service_timer;
 static struct repeating_timer g_usb_tx_timer;
 static constexpr uint32_t kUsbFlushIntervalUs = 2000; // Matches crow's 2ms cadence
 
+// These are tick flags set from repeating-timer IRQs.
+// TinyUSB itself is NOT called from IRQ context to avoid reentrancy/stack issues.
+static volatile uint32_t g_usb_service_tick = 0;
+static volatile uint32_t g_usb_tx_tick = 0;
+
 static inline void usb_flush_if_due(void) {
     static uint32_t last_flush_us = 0;
     uint32_t now_us = time_us_32();
@@ -2227,29 +2272,41 @@ static inline void usb_flush_if_due(void) {
     }
 }
 
-// ISR-safe USB service callback - runs at 1kHz (1ms intervals)
+// USB service tick callback - runs at 1kHz (1ms intervals)
+// IMPORTANT: Do not call TinyUSB from this IRQ.
 static bool __isr __time_critical_func(usb_service_callback)(struct repeating_timer *t) {
-    // Service TinyUSB stack (safe in non-RTOS mode per TinyUSB docs)
-    tud_task();
-    
-    // RX: Read available data and queue for main loop processing
-    if (tud_cdc_available()) {
-        uint8_t buf[64];
-        uint32_t count = tud_cdc_read(buf, sizeof(buf));
-        
-        if (count > 0) {
-            // Post to lock-free RX queue (IRQ → main loop)
+    (void)t;
+    g_usb_service_tick++;
+    return true;
+}
+
+// USB TX tick callback - runs at 1kHz (1ms intervals)
+// IMPORTANT: Do not call TinyUSB from this IRQ.
+static bool __isr __time_critical_func(usb_tx_service_callback)(struct repeating_timer *t) {
+    (void)t;
+    g_usb_tx_tick++;
+    return true;
+}
+
+static inline void usb_service_poll_from_main(void) {
+    // Coalesce ticks to bounded work per loop iteration
+    if (g_usb_service_tick) {
+        g_usb_service_tick = 0;
+        tud_task();
+
+        // RX: Read available data and queue for main loop processing
+        while (tud_cdc_available()) {
+            uint8_t buf[64];
+            uint32_t count = tud_cdc_read(buf, sizeof(buf));
+            if (count == 0) break;
             usb_rx_lockfree_post((char*)buf, count);
         }
     }
-    return true;  // Keep timer running
-}
 
-// ISR-safe USB TX callback - runs at 1kHz (1ms intervals), bounded work to avoid long ISRs
-static bool __isr __time_critical_func(usb_tx_service_callback)(struct repeating_timer *t) {
-    (void)t;
-    usb_process_tx_bounded();
-    return true;
+    if (g_usb_tx_tick) {
+        g_usb_tx_tick = 0;
+        usb_process_tx_bounded();
+    }
 }
 
 // Non-ISR USB TX processing
@@ -2711,6 +2768,9 @@ public:
         while (1) {
             // === PERFORMANCE MONITORING: Track loop iteration time ===
             uint32_t loop_start_time = time_us_32();
+
+            // Service USB from main loop (timer IRQs only set tick flags)
+            usb_service_poll_from_main();
             
             // Process USB RX messages from lock-free queue
             usb_rx_message_t rx_msg;
@@ -2991,6 +3051,7 @@ public:
 
         }
     }
+
     // Accumulate script data during upload (REPL_reception mode)
     void receive_script_data(const char* buf, uint32_t len) {
         if (g_repl_mode != REPL_reception) {
