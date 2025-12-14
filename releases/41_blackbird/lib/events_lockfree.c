@@ -17,12 +17,14 @@ asl_done_lockfree_queue_t g_asl_done_lockfree_queue;
 static volatile uint32_t metro_events_posted = 0;
 static volatile uint32_t metro_events_processed = 0;
 static volatile uint32_t metro_events_dropped = 0;
+static volatile uint32_t metro_events_coalesced = 0;
 static volatile uint32_t input_events_posted = 0;
 static volatile uint32_t input_events_processed = 0;
 static volatile uint32_t input_events_dropped = 0;
 static volatile uint32_t clock_events_posted = 0;
 static volatile uint32_t clock_events_processed = 0;
 static volatile uint32_t clock_events_dropped = 0;
+static volatile uint32_t clock_events_coalesced = 0;
 static volatile uint32_t asl_done_events_posted = 0;
 static volatile uint32_t asl_done_events_processed = 0;
 static volatile uint32_t asl_done_events_dropped = 0;
@@ -57,12 +59,14 @@ void events_lockfree_init(void) {
     metro_events_posted = 0;
     metro_events_processed = 0;
     metro_events_dropped = 0;
+    metro_events_coalesced = 0;
     input_events_posted = 0;
     input_events_processed = 0;
     input_events_dropped = 0;
     clock_events_posted = 0;
     clock_events_processed = 0;
     clock_events_dropped = 0;
+    clock_events_coalesced = 0;
     asl_done_events_posted = 0;
     asl_done_events_processed = 0;
     asl_done_events_dropped = 0;
@@ -96,7 +100,32 @@ bool metro_lockfree_post(int metro_id, int stage) {
     
     // Check if queue has space (leave one slot empty to distinguish full from empty)
     if (next_write == queue->header.read_idx) {
-        // Queue full - drop event (don't block audio core!)
+        // Queue full - avoid backlog by overwriting the newest pending event for this metro.
+        // This is only used under overload; steady-state behavior is unchanged.
+        uint32_t read_idx = queue->header.read_idx;
+        uint32_t pos = read_idx;
+        bool found = false;
+        uint32_t found_pos = 0;
+        while (pos != current_write) {
+            if (queue->events[pos].metro_id == metro_id) {
+                found = true;
+                found_pos = pos; // keep last match
+            }
+            pos = (pos + 1) & queue->header.mask;
+        }
+        if (found) {
+            // Write timestamp first, then stage last (best-effort coherence)
+            queue->events[found_pos].timestamp_us = time_us_32();
+            DMB();
+            queue->events[found_pos].stage = stage;
+            DMB();
+
+            metro_events_posted++;
+            metro_events_coalesced++;
+            return true;
+        }
+
+        // No matching pending event to overwrite: drop (don't block audio core!)
         metro_events_dropped++;
         return false;
     }
@@ -123,6 +152,27 @@ bool clock_lockfree_post(int coro_id) {
     uint32_t current_write = queue->header.write_idx;
     uint32_t next_write = (current_write + 1) & queue->header.mask;
     if (next_write == queue->header.read_idx) {
+        // Queue full - overwrite newest pending resume for this coroutine.
+        uint32_t read_idx = queue->header.read_idx;
+        uint32_t pos = read_idx;
+        bool found = false;
+        uint32_t found_pos = 0;
+        while (pos != current_write) {
+            if (queue->events[pos].coro_id == coro_id) {
+                found = true;
+                found_pos = pos;
+            }
+            pos = (pos + 1) & queue->header.mask;
+        }
+        if (found) {
+            queue->events[found_pos].timestamp_us = time_us_32();
+            DMB();
+            // coro_id is unchanged (same coro), only timestamp updates
+            DMB();
+            clock_events_posted++;
+            clock_events_coalesced++;
+            return true;
+        }
         clock_events_dropped++;
         return false;
     }
@@ -178,17 +228,21 @@ uint32_t clock_lockfree_queue_depth(void) {
 uint32_t clock_events_posted_count(void)   { return clock_events_posted; }
 uint32_t clock_events_processed_count(void){ return clock_events_processed; }
 uint32_t clock_events_dropped_count(void)  { return clock_events_dropped; }
+uint32_t clock_events_coalesced_count(void){ return clock_events_coalesced; }
 void clock_lockfree_reset_stats(void) {
     clock_events_posted = 0;
     clock_events_processed = 0;
     clock_events_dropped = 0;
+    clock_events_coalesced = 0;
 }
 
 // Reset all queue stats
 void events_lockfree_reset_stats(void) {
     metro_events_posted = metro_events_processed = metro_events_dropped = 0;
+    metro_events_coalesced = 0;
     input_events_posted = input_events_processed = input_events_dropped = 0;
     clock_events_posted = clock_events_processed = clock_events_dropped = 0;
+    clock_events_coalesced = 0;
     asl_done_events_posted = asl_done_events_processed = asl_done_events_dropped = 0;
 }
 
@@ -196,6 +250,7 @@ void events_lockfree_reset_stats(void) {
 uint32_t metro_events_posted_count(void)    { return metro_events_posted; }
 uint32_t metro_events_processed_count(void) { return metro_events_processed; }
 uint32_t metro_events_dropped_count(void)   { return metro_events_dropped; }
+uint32_t metro_events_coalesced_count(void) { return metro_events_coalesced; }
 
 // Input stats accessors
 uint32_t input_events_posted_count(void)    { return input_events_posted; }
@@ -438,9 +493,11 @@ void events_lockfree_print_stats(void) {
     DEBUG_LF_PRINT("Metro Queue: depth=%lu/%d\n", metro_lockfree_queue_depth(), LOCKFREE_QUEUE_SIZE);
     DEBUG_LF_PRINT("  Posted: %lu, Processed: %lu, Dropped: %lu\n", 
                    metro_events_posted, metro_events_processed, metro_events_dropped);
+    DEBUG_LF_PRINT("  Coalesced(on overflow): %lu\n", metro_events_coalesced);
     DEBUG_LF_PRINT("Clock Queue: depth=%lu/%d\n", clock_lockfree_queue_depth(), CLOCK_QUEUE_SIZE);
     DEBUG_LF_PRINT("  Posted: %lu, Processed: %lu, Dropped: %lu\n", 
                    clock_events_posted, clock_events_processed, clock_events_dropped);
+    DEBUG_LF_PRINT("  Coalesced(on overflow): %lu\n", clock_events_coalesced);
     DEBUG_LF_PRINT("Input Queue: depth=%lu/%d\n", input_lockfree_queue_depth(), LOCKFREE_QUEUE_SIZE);
     DEBUG_LF_PRINT("  Posted: %lu, Processed: %lu, Dropped: %lu\n", 
                    input_events_posted, input_events_processed, input_events_dropped);

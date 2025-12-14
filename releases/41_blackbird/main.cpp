@@ -5109,18 +5109,20 @@ int LuaManager::lua_perf_stats(lua_State* L) {
             char qmsg[512];
             snprintf(qmsg, sizeof(qmsg),
                      "Queues:\n\r"
-                     "  Metro: depth=%lu posted=%lu processed=%lu dropped=%lu\n\r"
-                     "  Clock: depth=%lu posted=%lu processed=%lu dropped=%lu\n\r"
+                     "  Metro: depth=%lu posted=%lu processed=%lu dropped=%lu coalesced=%lu\n\r"
+                     "  Clock: depth=%lu posted=%lu processed=%lu dropped=%lu coalesced=%lu\n\r"
                      "  Input: depth=%lu posted=%lu processed=%lu dropped=%lu\n\r"
                      "  ASL  : depth=%lu posted=%lu processed=%lu dropped=%lu\n\r",
                      (unsigned long)metro_lockfree_queue_depth(),
                      (unsigned long)metro_events_posted_count(),
                      (unsigned long)metro_events_processed_count(),
                      (unsigned long)metro_events_dropped_count(),
+                     (unsigned long)metro_events_coalesced_count(),
                      (unsigned long)clock_lockfree_queue_depth(),
                      (unsigned long)clock_events_posted_count(),
                      (unsigned long)clock_events_processed_count(),
                      (unsigned long)clock_events_dropped_count(),
+                     (unsigned long)clock_events_coalesced_count(),
                      (unsigned long)input_lockfree_queue_depth(),
                      (unsigned long)input_events_posted_count(),
                      (unsigned long)input_events_processed_count(),
@@ -5143,6 +5145,9 @@ int LuaManager::lua_perf_stats(lua_State* L) {
                      (unsigned long)clock_resume_cb_last_us(),
                      (unsigned long)clock_resume_cb_worst_us());
             tud_cdc_write_str(cbmsg);
+
+            // Ensure all stats are transmitted promptly
+            tud_cdc_write_flush();
             
         }
         

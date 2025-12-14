@@ -93,6 +93,8 @@ typedef struct {
 uint32_t clock_events_posted_count(void);
 uint32_t clock_events_processed_count(void);
 uint32_t clock_events_dropped_count(void);
+// Count of events merged due to queue overflow (overwrote an older pending event).
+uint32_t clock_events_coalesced_count(void);
 void clock_lockfree_reset_stats(void);
 
 // Reset all queues' stats
@@ -105,6 +107,8 @@ void events_lockfree_clear(void);
 uint32_t metro_events_posted_count(void);
 uint32_t metro_events_processed_count(void);
 uint32_t metro_events_dropped_count(void);
+// Count of events merged due to queue overflow (overwrote an older pending event).
+uint32_t metro_events_coalesced_count(void);
 
 // Input queue statistics accessors
 uint32_t input_events_posted_count(void);
