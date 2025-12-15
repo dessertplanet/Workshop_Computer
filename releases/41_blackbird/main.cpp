@@ -166,7 +166,7 @@ static volatile uint32_t g_timer_ticks_pending = 0;
 // Pulse input state tracking (read from hardware, cached for Lua access)
 static volatile bool g_pulsein_state[2] = {false, false};
 
-// Pulse input edge detection counters (set at 8kHz, drained in main loop)
+// Pulse input edge detection counters (set at ProcessSample rate, drained in main loop)
 // Counters prevent loss of back-to-back edges between loop iterations.
 static volatile uint8_t g_pulsein_edge_count[2] = {0, 0};
 static volatile bool g_pulsein_edge_state[2] = {false, false};
@@ -186,7 +186,7 @@ static volatile bool g_pulsein_callback_active[2] = {false, false};
 static volatile uint8_t g_pulsein_clock_edge_count[2] = {0, 0};
 
 // ============================================================================
-// AUDIO-RATE NOISE GENERATOR (8kHz)
+// AUDIO-RATE NOISE GENERATOR (ProcessSample rate)
 // ============================================================================
 // Noise generator state for audio-rate output
 static volatile bool g_noise_active[4] = {false, false, false, false};
@@ -3015,7 +3015,7 @@ public:
             }
             
             // Check for pulse input changes and fire callbacks
-            // Edge detection happens at 8kHz in ProcessSample(), we just check flags here
+            // Edge detection happens at the ProcessSample() rate, we just check flags here
             // REENTRANCY PROTECTION: Skip callback if one is already running (prevents crashes from fast clocks)
             for (int i = 0; i < 2; i++) {
                 if (g_pulsein_edge_count[i] > 0 && !g_pulsein_callback_active[i]) {
@@ -3513,7 +3513,7 @@ public:
         Detect_process_sample(0, cv1);
         Detect_process_sample(1, cv2);
         
-        // Pulse input edge detection (8kHz) - catches even very short pulses
+        // Pulse input edge detection at ProcessSample rate - catches even very short pulses
         // Only process edges for physical jacks that the normalization probe reports as connected
         bool pulse1_connected = Connected(ComputerCard::Input::Pulse1);
         bool pulse2_connected = Connected(ComputerCard::Input::Pulse2);
@@ -3579,7 +3579,7 @@ public:
             g_pulsein_state[1] = false;
         }
         
-        // === AUDIO-RATE NOISE GENERATION (8kHz) - INTEGER MATH ONLY ===
+        // === AUDIO-RATE NOISE GENERATION (ProcessSample rate) - INTEGER MATH ONLY ===
         // Generate and output noise for any active channels
         // OPTIMIZATION: Fast check if ANY noise is active before iterating channels
         if (g_noise_active_mask) {
@@ -3612,7 +3612,7 @@ public:
         
         // === PERFORMANCE MONITORING (low-cost) ===
         // Check if ProcessSample exceeded time budget
-        // At 8kHz, each sample has a 125us budget; only >=100% counts as an overrun
+        // Each sample has a budget of kProcessSampleBudgetUs (≈83us at 12kHz); only >=100% counts as an overrun
         uint32_t elapsed = time_us_32() - start_time;
         
         // Always track worst-case execution time (available via perf_stats())
@@ -3620,7 +3620,7 @@ public:
             g_worst_case_us = elapsed;
         }
         
-        // Only flag overruns when we actually exceed the entire 8kHz budget (~125us)
+        // Only flag overruns when we actually exceed the entire per-sample budget
         if (elapsed >= kProcessSampleOverrunThresholdUs) {
             g_overrun_count++;
             
@@ -5208,7 +5208,7 @@ int LuaManager::lua_perf_stats(lua_State* L) {
             snprintf(msg, sizeof(msg), 
                      "ProcessSample Performance (Core 1):\n\r"
                      "  Worst case: %lu microseconds\n\r"
-                     "  Budget: %.1fus (8kHz sample rate)\n\r"
+                     "  Budget: %.1fus (%.0fHz sample rate)\n\r"
                      "  Utilization: %.1f%%\n\r"
                      "  Overruns (>=%.1fus): %lu\n\r"
                      "\n\r"
@@ -5217,6 +5217,7 @@ int LuaManager::lua_perf_stats(lua_State* L) {
                      "  Total iterations: %lu\n\r",
                      (unsigned long)worst,
                      kProcessSampleBudgetUs,
+                     kProcessSampleRateHz,
                      utilization,
                      kProcessSampleBudgetUs,
                      (unsigned long)overruns,

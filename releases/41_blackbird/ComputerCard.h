@@ -13,7 +13,7 @@ System Computer.
 
 It aims to present a very simple C++ interface for card programmers 
 to use the jacks, knobs, switch and LEDs, for programs running at
-a fixed 8kHz audio sample rate.
+a fixed PROCESS_SAMPLE_RATE_HZ audio sample rate (currently 12kHz).
 
 See examples/ directory
 */
@@ -73,7 +73,7 @@ public:
 	static ComputerCard *ThisPtr() {return thisptr;}
 
 protected:
-	/// Callback, called once per sample at 8kHz
+	/// Callback, called once per sample at PROCESS_SAMPLE_RATE_HZ
 	virtual void ProcessSample() = 0;
 	static Core1BackgroundHook core1_background_hook;
 
@@ -709,13 +709,13 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 			np = (np<<1)+(normprobe&0x1);
 		}
 
-		// CV sampled at 8kHz comes in over two successive samples
+		// CV sampled at the ProcessSample rate (~12kHz) comes in over two successive samples
 		if (norm_probe_count == 14 || norm_probe_count == 15)
 		{
 			plug_state[2+cvi] = (plug_state[2+cvi]<<1)+(ADC_Buffer[cpuPhase][7]<1800);
 		}
 
-		// Audio and pulse measured every sample at 8kHz
+		// Audio and pulse measured every sample at the ProcessSample rate (~12kHz)
 		if (norm_probe_count == 15)
 		{
 			plug_state[Input::Audio1] = (plug_state[Input::Audio1]<<1)+(ADC_Buffer[cpuPhase][5]<1800);
