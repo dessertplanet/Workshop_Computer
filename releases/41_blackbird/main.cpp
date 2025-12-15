@@ -1,5 +1,5 @@
 /*
-Blackbird Crow Emulator version 1.0
+Blackbird Crow Emulator version 1.1
 
 A fully crow-compatible program card for the Music Thing Modular Workshop Computer.
 It does everything crow can do and works with all (?) existing crow scripts. 
@@ -2819,7 +2819,7 @@ public:
                 char card_id_str[48];
                 
                 tud_cdc_write_str("\n\r");
-                tud_cdc_write_str(" Blackbird-v1.0\n\r");
+                tud_cdc_write_str(" Blackbird-v1.1\n\r");
                 tud_cdc_write_str(" Music Thing Modular Workshop Computer\n\r");
 
                 tud_cdc_write_flush(); // flush manually due to long welcome string
@@ -3121,7 +3121,7 @@ public:
         switch (cmd) {
             case C_version: {
                 // Embed build date/time and debug format so a late serial connection can verify firmware
-                tud_cdc_write_str("^^version('blackbird-1.0')\n\r");
+                tud_cdc_write_str("^^version('blackbird-1.1')\n\r");
                 
                 break; }
                 

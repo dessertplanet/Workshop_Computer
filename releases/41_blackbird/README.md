@@ -1,4 +1,4 @@
-# Blackbird v1.0
+# Blackbird v1.1
 
 A fully monome-crow-compatible program card for the Music Thing Modular Workshop Computer.
 
@@ -169,7 +169,7 @@ end
 ### Performance characteristics
 
 Blackbird uses a dual-core architecture optimized for responsive, jitter-free output:
-- **Core 1 (audio thread)**: Outputs CV slopes sample-by-sample at 8kHz for zero-jitter precision
+- **Core 1 (audio thread)**: Outputs CV slopes sample-by-sample at 12kHz for zero-jitter precision
 - **Core 0 (control thread)**: Processes Lua scripts, metros, and ASL actions with ~1ms latency
 - Timer callbacks (metros, ASL triggers) are processed in 8-sample blocks for optimal balance between responsiveness and CPU efficiency
 
@@ -194,8 +194,7 @@ GPLv3 or later - see [LICENSE](LICENSE.txt) file for details.
 
 A few things that are on the radar but that I don't plan to fix (at least not now). If you think any of them are dealbreakers please file a github issue and we can debate!
 
-- Setting `clock.tempo` above 500 bpm can cause crashes. Slow down, man!
+- Setting `clock.tempo` above 500 bpm can cause crashes. Slow down!
 - Running scripts with references to the `ii` table produces harmless (but chatty) lua nil global errors. Ideally these would be silent until/unless i2c support is somehow added/defined for an alleged eurorack-computer-only-future-module.
 - System does not prevent receipt of serial comms during startup that are known to cause issues. This is doc'd in the overview but could be prevented in code entirely in a future version.
-- Running `crow.reset()` or `^^k` doesn't clear callback functions so they can still be called if triggers continue until they are manually cleared or redefined.
 - Wobblewobble norns script doesn't play nice with blackbird as is. I think the solution is to turn down the frequency that supercollider is triggering output.volts message dispatch in the norns-side code but this is untested.
