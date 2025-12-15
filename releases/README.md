@@ -20,6 +20,8 @@
 | 25_utility_pair | 25 small utilities, which can be combined in pairs | 1.0 | C++ (ComputerCard) | Chris Johnson |  | Utility Pair | Released |
 | 28_eighties_bass | Bass-oriented complete monosynth voice consisting of five detuned saw wave oscillators with mixable white noise and adjustable resonant filter. | 0.1 | arduino-pico core and Mozzi 2 library | @todbot / Tod Kurt |  |  | Functional but WIP |
 | 30_cirpy_wavetable | Wavetable oscillator that using wavetables from Plaits, Braids, and Microwave, | 0.1 | Circuit Python | @todbot / Tod Kurt |  |  | Functional but WIP |
+| 31_esp | A MS-20-style External Signal Processor that includes a preamp, bandpass filter, envelope follower, gate, and 1v/oct pitch outs. | 1.0 | C++(ComputerCard) | Ben Regnier |  |  | Released |
+| 32_vink | Dual delay loops with sigmoid saturation for Jaap Vink / Roland Kayn style feedback patching | 0.8 | C++(ComputerCard) | Ben Regnier |  |  | Functional but WIP |
 | 37_compulidean | Generative Euclidean drum + sample player. | (see source repo) | C++/Arduino, with vscode+platformio. | Tristan Rowley |  |  | Functional, but WIP |
 | 38_od | Loopable chaotic Lorenz attractor trajectories and zero-crossings as CV and pulses, with sensitivity to initial conditions. | 1.0 | MicroPython | M. John Mills |  |  | Released |
 | 41_blackbird | A scriptable, live-codable, USB-serial-to-CV device implementing monome crow's protocol | 1.0 | Pico SDK + Lua | Dune Desormeaux |  |  | Released |

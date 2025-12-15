@@ -1,0 +1,5 @@
+Description: Dual delay loops with sigmoid saturation for Jaap Vink / Roland Kayn style feedback patching
+Language: C++(ComputerCard)
+Creator: Ben Regnier
+Version: 0.8
+Status: Functional but WIP
