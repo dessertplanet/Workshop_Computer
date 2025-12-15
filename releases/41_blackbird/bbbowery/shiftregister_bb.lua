@@ -1,4 +1,5 @@
---- digital analog shift register
+-- shiftregister_bb.lua
+-- digital analog shift register
 -- four stages of delay for an incoming cv
 -- in1: cv to delay
 -- in2: trigger to capture input & shift

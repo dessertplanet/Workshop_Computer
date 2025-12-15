@@ -1,4 +1,4 @@
---- clock divider
+-- clockdiv_bb.lua
 -- in1: clock input
 -- main knob: division selector
 -- in2: division selector (see divs) when patched
@@ -36,7 +36,7 @@ function getdiv()
   else
     selector = bb.knob.main
   end
-  newdiv(windows(tableindex(selector,#windows))) 
+  newdiv(windows[tableindex(selector,#windows)]) 
 end
 
 function init()

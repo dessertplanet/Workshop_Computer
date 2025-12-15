@@ -1,4 +1,5 @@
---- sequential switch
+-- seqswitch_bb.lua
+--  sequential switch
 -- in1: signal
 -- in2: switch
 -- out1-4: i1 sent through sequentially

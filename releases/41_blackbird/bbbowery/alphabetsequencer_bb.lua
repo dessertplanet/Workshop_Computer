@@ -1,4 +1,4 @@
----alphabet sequencer
+---alphabetsequencer_bb.lua
 --start playback for outputs with start_playing() 
 --stop playback on outputs with stop_playing()
 --each channel is vertical - pitch on cv out, envelope on audio out, trigger on pulse out

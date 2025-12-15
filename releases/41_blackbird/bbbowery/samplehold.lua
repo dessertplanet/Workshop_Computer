@@ -1,4 +1,4 @@
---- sample & hold
+--- samplehold.lua
 -- in1: sampling clock
 -- in2: input to sample
 -- out1: random sample

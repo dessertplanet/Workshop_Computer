@@ -1,4 +1,4 @@
---- boolean logic
+--- booleans_bb.lua
 -- output logic transfer functions are dynamically selected per channel
 -- a state change on any input triggers update of all outputs
 
