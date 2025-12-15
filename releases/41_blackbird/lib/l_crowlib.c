@@ -245,6 +245,23 @@ void l_crowlib_emptyinit(lua_State* L){
 }
 
 int l_crowlib_crow_reset( lua_State* L ){
+    // Optional debug: print Lua heap usage around reset.
+    // Enable at runtime by setting: bb.debug_reset_mem = true
+    bool debug_reset_mem = false;
+    lua_getglobal(L, "bb");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "debug_reset_mem");
+        debug_reset_mem = lua_toboolean(L, -1);
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+
+    if (debug_reset_mem) {
+        int kb = lua_gc(L, LUA_GCCOUNT, 0);
+        int b = lua_gc(L, LUA_GCCOUNTB, 0);
+        printf("[reset] lua heap before: %d.%03d KB\n", kb, b);
+    }
+
     S_reset();
     
     // Clean up C-side clock list to prevent "cant resume cancelled clock" errors
@@ -456,6 +473,17 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     }
     lua_settop(L, 0);
 
+    // Clear callback globals that are installed via the C API (lua_setglobal) and therefore
+    // bypass the _G __newindex tracer used for _user tracking.
+    // If left uncleared, these can retain closures (and their upvalues) across script runs.
+    lua_pushnil(L);
+    lua_setglobal(L, "_switch_change_callback");
+    lua_pushnil(L);
+    lua_setglobal(L, "_pulsein1_change_callback");
+    lua_pushnil(L);
+    lua_setglobal(L, "_pulsein2_change_callback");
+    lua_settop(L, 0);
+
     // Clear user globals using Crow's _user table approach.
     // This prevents user scripts from retaining references across script reload cycles
     // when the host only calls crow.reset() between uploads.
@@ -483,6 +511,12 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     // Do two full cycles (mirrors existing reload behavior elsewhere).
     lua_gc(L, LUA_GCCOLLECT, 0);
     lua_gc(L, LUA_GCCOLLECT, 0);
+
+    if (debug_reset_mem) {
+        int kb = lua_gc(L, LUA_GCCOUNT, 0);
+        int b = lua_gc(L, LUA_GCCOUNTB, 0);
+        printf("[reset] lua heap after:  %d.%03d KB\n", kb, b);
+    }
 
     return 0;
 }

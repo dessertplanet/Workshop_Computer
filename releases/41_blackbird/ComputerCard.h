@@ -524,9 +524,10 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 
 
 	// ADC clock runs at 48MHz
-	// 48MHz ÷ (749+1) = 64kHz ADC sample rate
-	//                 = 8×8kHz ProcessSample rate
-	adc_set_clkdiv(749);
+	// 48MHz ÷ (clkdiv+1) = (PROCESS_SAMPLE_RATE_HZ_INT*8) ADC sample rate
+	//                     = 8× ProcessSample rate (2 sets of 4 inputs per ProcessSample)
+	const uint32_t adc_clkdiv = (48000000u / (PROCESS_SAMPLE_RATE_HZ_INT * 8u)) - 1u;
+	adc_set_clkdiv((float)adc_clkdiv);
 
 	// claim and setup DMAs for reading to ADC, and writing to SPI DAC
 	adc_dma = dma_claim_unused_channel(true);

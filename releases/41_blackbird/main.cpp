@@ -278,11 +278,11 @@ static void process_slope_action_callbacks() {
 // PERFORMANCE MONITORING
 // ============================================================================
 static constexpr float kProcessSampleRateHz = PROCESS_SAMPLE_RATE_HZ_DOUBLE;
-static constexpr float kProcessSampleBudgetUs = 1000000.0f / kProcessSampleRateHz;  // 8kHz sample rate
+static constexpr float kProcessSampleBudgetUs = 1000000.0f / kProcessSampleRateHz;  // ProcessSample() rate
 static constexpr uint32_t kProcessSampleOverrunThresholdUs =
     static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~100us)
-static constexpr uint32_t kProcessSamplePeriodUsInt = 125;
-static constexpr uint32_t kTimerServiceIntervalUs = 667;  // ~1.5kHz target (crow-compatible cadence)
+static constexpr uint32_t kClockServiceRateHz = 1000;      // crow-compatible cadence
+static constexpr uint32_t kTimerServiceRateHz = 1500;      // ~1.5kHz target (crow-compatible cadence)
 static constexpr int kLuaGcStepSize = 2; // small incremental GC step per main loop
 static constexpr uint32_t kMainLoopSoftBudgetUs = 8000; // soft budget per loop to reduce stalls
 static constexpr int kMaxLogMessagesPerLoop = 4; // cap logs per loop to avoid large spikes
@@ -3461,19 +3461,19 @@ public:
         // Keep clock system synchronized (lightweight)
         clock_increment_sample_counter();
 
-        // Derive 1kHz scheduler ticks from the 8kHz audio ISR
-        static uint8_t clock_tick_accumulator = 0;
-        clock_tick_accumulator++;
-        if (clock_tick_accumulator >= 8) {
-            clock_tick_accumulator = 0;
+        // Derive service ticks from ProcessSample() rate with deterministic spacing.
+        // This avoids hard-coded assumptions (e.g. 8kHz) when changing PROCESS_SAMPLE_RATE_HZ.
+        static uint32_t clock_tick_phase = 0;
+        clock_tick_phase += kClockServiceRateHz;
+        if (clock_tick_phase >= PROCESS_SAMPLE_RATE_HZ_INT) {
+            clock_tick_phase -= PROCESS_SAMPLE_RATE_HZ_INT;
             g_clock_ticks_pending++;
         }
 
-        // Derive ~1.5kHz timer/metro service ticks with deterministic spacing
-        static uint32_t timer_tick_accumulator_us = 0;
-        timer_tick_accumulator_us += kProcessSamplePeriodUsInt; // 125us per sample
-        while (timer_tick_accumulator_us >= kTimerServiceIntervalUs) {
-            timer_tick_accumulator_us -= kTimerServiceIntervalUs;
+        static uint32_t timer_tick_phase = 0;
+        timer_tick_phase += kTimerServiceRateHz;
+        if (timer_tick_phase >= PROCESS_SAMPLE_RATE_HZ_INT) {
+            timer_tick_phase -= PROCESS_SAMPLE_RATE_HZ_INT;
             g_timer_ticks_pending++;
         }
         
