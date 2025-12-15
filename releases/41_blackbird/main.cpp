@@ -1441,6 +1441,20 @@ public:
         
         // Load and execute embedded ASL libraries
         load_embedded_asl();
+
+        // Track user-created globals so crow.reset() can clear them reliably
+        if (luaL_dostring(L, R"(
+            _user = {}
+            local function __bb_trace(t, k, v)
+                _user[k] = true
+                rawset(t, k, v)
+            end
+            setmetatable(_G, { __newindex = __bb_trace })
+        )") != LUA_OK) {
+            const char* error = lua_tostring(L, -1);
+            printf("Error setting up _user tracking: %s\n\r", error ? error : "unknown error");
+            lua_pop(L, 1);
+        }
     }
     
     // Load embedded ASL libraries from compiled bytecode
@@ -3263,17 +3277,6 @@ public:
                     
                     // Run script in RAM (temporary) - matches crow's REPL_upload(0)
                     if (lua_manager->evaluate_safe(g_new_script)) {
-                        
-                        // Clear user globals using Crow's _user table approach
-                        lua_manager->evaluate_safe(
-                            "if _user then "
-                            "  for k,_ in pairs(_user) do "
-                            "    _G[k] = nil "
-                            "  end "
-                            "end "
-                            "_G._user = {}"
-                        );
-                        
                         // Garbage collect for cleanup
                         lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
                         

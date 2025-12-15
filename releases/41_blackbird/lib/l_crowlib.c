@@ -507,6 +507,19 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     lua_setglobal(L, "_user");
     lua_settop(L, 0);
 
+    // Reinstall _G tracer so future globals are tracked and can be cleared
+    if (luaL_dostring(L,
+        "local function __bb_trace(t, k, v)\n"
+        "  _user[k] = true\n"
+        "  rawset(t, k, v)\n"
+        "end\n"
+        "local mt = getmetatable(_G) or {}\n"
+        "mt.__newindex = __bb_trace\n"
+        "setmetatable(_G, mt)\n"
+    )) {
+        lua_pop(L, 1);
+    }
+
     // Force garbage collection to reclaim memory from previous script
     // Do two full cycles (mirrors existing reload behavior elsewhere).
     lua_gc(L, LUA_GCCOLLECT, 0);
