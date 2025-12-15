@@ -169,7 +169,7 @@ end
 ### Performance characteristics
 
 Blackbird uses a dual-core architecture optimized for responsive, jitter-free output:
-- **Core 1 (audio thread)**: Outputs CV slopes sample-by-sample at 12kHz for zero-jitter precision
+- **Core 1 (audio thread)**: Outputs CV slopes sample-by-sample at 9.6kHz for zero-jitter precision
 - **Core 0 (control thread)**: Processes Lua scripts, metros, and ASL actions with ~1ms latency
 - Timer callbacks (metros, ASL triggers) are processed in 8-sample blocks for optimal balance between responsiveness and CPU efficiency
 

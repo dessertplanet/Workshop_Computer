@@ -3470,7 +3470,7 @@ public:
         clock_increment_sample_counter();
 
         // Derive service ticks from ProcessSample() rate with deterministic spacing.
-        // This avoids hard-coded assumptions (e.g. 12kHz) when changing PROCESS_SAMPLE_RATE_HZ.
+        // This avoids hard-coded assumptions (e.g. 9.6kHz) when changing PROCESS_SAMPLE_RATE_HZ.
         static uint32_t clock_tick_phase = 0;
         clock_tick_phase += kClockServiceRateHz;
         if (clock_tick_phase >= PROCESS_SAMPLE_RATE_HZ_INT) {
@@ -3617,7 +3617,7 @@ public:
         
         // === PERFORMANCE MONITORING (low-cost) ===
         // Check if ProcessSample exceeded time budget
-        // Each sample has a budget of kProcessSampleBudgetUs (≈83us at 12kHz); only >=100% counts as an overrun
+        // Each sample has a budget of kProcessSampleBudgetUs (≈104us at 9.6kHz); only >=100% counts as an overrun
         uint32_t elapsed = time_us_32() - start_time;
         
         // Always track worst-case execution time (available via perf_stats())
