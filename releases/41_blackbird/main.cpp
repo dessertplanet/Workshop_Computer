@@ -3465,7 +3465,7 @@ public:
         clock_increment_sample_counter();
 
         // Derive service ticks from ProcessSample() rate with deterministic spacing.
-        // This avoids hard-coded assumptions (e.g. 8kHz) when changing PROCESS_SAMPLE_RATE_HZ.
+        // This avoids hard-coded assumptions (e.g. 12kHz) when changing PROCESS_SAMPLE_RATE_HZ.
         static uint32_t clock_tick_phase = 0;
         clock_tick_phase += kClockServiceRateHz;
         if (clock_tick_phase >= PROCESS_SAMPLE_RATE_HZ_INT) {
