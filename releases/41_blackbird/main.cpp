@@ -293,6 +293,10 @@ static volatile uint32_t g_overrun_count = 0;
 // Suppress perf warnings during/after flash write/clear operations.
 // These flows prompt the user to reset, so the warning is noise.
 static volatile uint32_t g_suppress_perf_warnings_until_us = 0;
+// Keep all LEDs lit for a while after operations that ask the user to reset.
+static volatile uint32_t g_force_all_leds_on_until_us = 0;
+static constexpr uint32_t kResetIndicatorHoldUs = 30000000u; // 30s
+static constexpr uint32_t kResetIndicatorBlinkHalfPeriodUs = 1000000u; // 1s on, 1s off => 0.5 Hz
 
 static inline bool u32_time_before(uint32_t a, uint32_t b) {
     return (int32_t)(a - b) < 0;
@@ -2500,6 +2504,19 @@ public:
     void IndicatorLedOn(uint32_t index, bool state) { this->LedOn(index, state); }
     void IndicatorLedOff(uint32_t index) { this->LedOff(index); }
     void UpdateOutputLeds() {
+        uint32_t now_us = time_us_32();
+        if (u32_time_before(now_us, g_force_all_leds_on_until_us)) {
+            bool on = ((now_us / kResetIndicatorBlinkHalfPeriodUs) & 1u) == 0u;
+            uint16_t level = on ? 4095 : 0;
+            LedBrightness(0, level);
+            LedBrightness(1, level);
+            LedBrightness(2, level);
+            LedBrightness(3, level);
+            LedOn(4, on);
+            LedOn(5, on);
+            return;
+        }
+
         int32_t cv1_mv = g_output_state_mv[0];
         int32_t cv2_mv = g_output_state_mv[1];
         int32_t audio1_mv = g_output_state_mv[2];
@@ -3313,7 +3330,7 @@ public:
             case C_flashupload: {
                 // Suppress perf warnings caused by upload/flash write stalls.
                 // Druid flow instructs user to reset after completion.
-                g_suppress_perf_warnings_until_us = time_us_32() + 30000000u; // 30s
+                g_suppress_perf_warnings_until_us = time_us_32() + kResetIndicatorHoldUs;
                 g_performance_warning = false;
 
                 if (g_repl_mode == REPL_discard) {
@@ -3349,15 +3366,10 @@ public:
                         tud_cdc_write_str("on your Workshop Computer to load your script.\n\r");
                         tud_cdc_write_str("========================================\n\r");
                         tud_cdc_write_str("\n\r");
-                        
-                        
-                        // Light up all LEDs to indicate upload complete
-                        this->LedOn(0);
-                        this->LedOn(1);
-                        this->LedOn(2);
-                        this->LedOn(3);
-                        this->LedOn(4);
-                        this->LedOn(5);
+
+                        // Light up all LEDs (and keep them lit) to indicate upload complete
+                        g_force_all_leds_on_until_us = time_us_32() + kResetIndicatorHoldUs;
+                        UpdateOutputLeds();
                     } else {
                         tud_cdc_write_str("flash write failed\n\r");
                         
@@ -3376,7 +3388,7 @@ public:
             case C_flashclear:
                 // Suppress perf warnings caused by flash erase/program stalls.
                 // Clear flow instructs user to reset after completion.
-                g_suppress_perf_warnings_until_us = time_us_32() + 30000000u; // 30s
+                g_suppress_perf_warnings_until_us = time_us_32() + kResetIndicatorHoldUs;
                 g_performance_warning = false;
 
                 // Output status BEFORE flash operation (which disables interrupts)
@@ -3403,16 +3415,13 @@ public:
                     }
                     
                     tud_cdc_write_str("========================================\n\r");
+                    tud_cdc_write_str("Press the RESET button (next to card slot)\n\r");
+                    tud_cdc_write_str("on your Workshop Computer to finalize.\n\r");
                     tud_cdc_write_str("\n\r");
-                    
-                    
-                    // Light up all LEDs to indicate operation complete
-                    this->LedOn(0);
-                    this->LedOn(1);
-                    this->LedOn(2);
-                    this->LedOn(3);
-                    this->LedOn(4);
-                    this->LedOn(5);
+
+                    // Light up all LEDs (and keep them lit) to indicate operation complete
+                    g_force_all_leds_on_until_us = time_us_32() + kResetIndicatorHoldUs;
+                    UpdateOutputLeds();
 
                 } else {
                     tud_cdc_write_str("flash write failed\n\r");
@@ -5561,6 +5570,19 @@ extern "C" {
 
     // Override _exit to ensure message flushing on panic/abort
     void __attribute__((noreturn)) _exit(int status) {
+        (void)status;
+
+        // If we can, flash all LEDs so the user sees the fault state.
+        // (Main loop is no longer running, so we blink from here.)
+        BlackbirdCrow* card = g_blackbird_instance ? (BlackbirdCrow*)g_blackbird_instance : nullptr;
+        bool on = true;
+        uint32_t last_toggle_us = time_us_32();
+        if (card) {
+            for (uint32_t i = 0; i < 6; i++) {
+                card->IndicatorLedOn(i, on);
+            }
+        }
+
         tud_cdc_write_str("\n\r[BLACKBIRD CRASH] RIP. Please reset.\n\r");
         tud_cdc_write_flush();
         
@@ -5572,9 +5594,19 @@ extern "C" {
             timeout++;
         }
         
-        while(1) {
-            // Hang
-            sleep_ms(100);
+        while (1) {
+            // Hang, but keep blinking LEDs at 0.5 Hz.
+            uint32_t now_us = time_us_32();
+            if ((now_us - last_toggle_us) >= kResetIndicatorBlinkHalfPeriodUs) {
+                last_toggle_us = now_us;
+                on = !on;
+                if (card) {
+                    for (uint32_t i = 0; i < 6; i++) {
+                        card->IndicatorLedOn(i, on);
+                    }
+                }
+            }
+            sleep_ms(10);
         }
     }
 }
