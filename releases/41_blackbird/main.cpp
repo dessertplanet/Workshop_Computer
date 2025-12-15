@@ -1092,6 +1092,8 @@ private:
     static int lua_pub_view_in(lua_State* L);
     static int lua_pub_view_out(lua_State* L);
     static int lua_tell(lua_State* L);
+    static int lua_get_out(lua_State* L);
+    static int lua_get_cv(lua_State* L);
     static int lua_hardware_pulse(lua_State* L);
     static int lua_pulse_coro_check(lua_State* L);
     
@@ -1340,6 +1342,10 @@ public:
     
     // Add tell function for ^^event messages (critical for input.stream/change)
     lua_register(L, "tell", lua_tell);
+
+    // Crow compatibility helpers: druid/norns sometimes call these at boot
+    lua_register(L, "get_out", lua_get_out);
+    lua_register(L, "get_cv", lua_get_cv);
     
     // Add hardware pulse output control
     lua_register(L, "hardware_pulse", lua_hardware_pulse);
@@ -2843,8 +2849,7 @@ public:
                 g_performance_warning = false;  // Clear flag
                 char perf_msg[256];
                 snprintf(perf_msg, sizeof(perf_msg), 
-                         "\n\r[PERF WARNING] ProcessSample exceeded budget: worst=%luus, overruns=%lu\n\r"
-                         "  Use perf_stats() in Lua to query/reset worst case timing.\n\r",
+                         "\n\r[PERF WARNING] ProcessSample exceeded budget: worst=%luus, overruns=%lu\n\r",
                          (unsigned long)g_worst_case_us, (unsigned long)g_overrun_count);
                 tud_cdc_write_str(perf_msg);
                 
@@ -5008,6 +5013,33 @@ int LuaManager::lua_tell(lua_State* L) {
     }
     
     lua_pop(L, nargs);
+    lua_settop(L, 0);
+    return 0;
+}
+
+// get_out(channel) - Emit a crow-style ^^output(channel,value) message
+// Used by some hosts to query current output state at boot.
+int LuaManager::lua_get_out(lua_State* L) {
+    int chan = luaL_checkinteger(L, 1);
+    if (chan < 1 || chan > 4) {
+        lua_settop(L, 0);
+        return 0;
+    }
+    // In this firmware outputs are driven by the slopes system; use its state.
+    Caw_printf("^^output(%i,%f)", chan, (float)S_get_state(chan - 1));
+    lua_settop(L, 0);
+    return 0;
+}
+
+// get_cv(channel) - Emit a crow-style ^^stream(channel,value) message
+// Used by some hosts to query current input (stream-equivalent) state at boot.
+int LuaManager::lua_get_cv(lua_State* L) {
+    int chan = luaL_checkinteger(L, 1);
+    if (chan < 1 || chan > 2) {
+        lua_settop(L, 0);
+        return 0;
+    }
+    Caw_printf("^^stream(%i,%f)", chan, get_input_state_simple(chan - 1));
     lua_settop(L, 0);
     return 0;
 }
