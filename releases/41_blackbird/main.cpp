@@ -290,6 +290,13 @@ static constexpr int kMaxLogMessagesPerLoop = 4; // cap logs per loop to avoid l
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
 static volatile uint32_t g_overrun_count = 0;
+// Suppress perf warnings during/after flash write/clear operations.
+// These flows prompt the user to reset, so the warning is noise.
+static volatile uint32_t g_suppress_perf_warnings_until_us = 0;
+
+static inline bool u32_time_before(uint32_t a, uint32_t b) {
+    return (int32_t)(a - b) < 0;
+}
 
 // MainControlLoop (Core 0) performance
 static volatile uint32_t g_loop_worst_case_us = 0;
@@ -2847,11 +2854,14 @@ public:
             // Check for performance warnings from ProcessSample
             if (g_performance_warning) {
                 g_performance_warning = false;  // Clear flag
-                char perf_msg[256];
-                snprintf(perf_msg, sizeof(perf_msg), 
-                         "\n\r[PERF WARNING] ProcessSample exceeded budget: worst=%luus, overruns=%lu\n\r",
-                         (unsigned long)g_worst_case_us, (unsigned long)g_overrun_count);
-                tud_cdc_write_str(perf_msg);
+                uint32_t now_us = time_us_32();
+                if (!u32_time_before(now_us, g_suppress_perf_warnings_until_us)) {
+                    char perf_msg[256];
+                    snprintf(perf_msg, sizeof(perf_msg),
+                             "\n\r[PERF WARNING] ProcessSample exceeded budget: worst=%luus, overruns=%lu\n\r",
+                             (unsigned long)g_worst_case_us, (unsigned long)g_overrun_count);
+                    tud_cdc_write_str(perf_msg);
+                }
                 
                 // Note: Don't reset g_worst_case_us here - let user query via perf_stats()
             }
@@ -3301,6 +3311,11 @@ public:
                 break;
                 
             case C_flashupload: {
+                // Suppress perf warnings caused by upload/flash write stalls.
+                // Druid flow instructs user to reset after completion.
+                g_suppress_perf_warnings_until_us = time_us_32() + 30000000u; // 30s
+                g_performance_warning = false;
+
                 if (g_repl_mode == REPL_discard) {
                     tud_cdc_write_str("upload failed, discard mode\n\r");
                     
@@ -3359,6 +3374,11 @@ public:
             }
                 
             case C_flashclear:
+                // Suppress perf warnings caused by flash erase/program stalls.
+                // Clear flow instructs user to reset after completion.
+                g_suppress_perf_warnings_until_us = time_us_32() + 30000000u; // 30s
+                g_performance_warning = false;
+
                 // Output status BEFORE flash operation (which disables interrupts)
                 
                 tud_cdc_write_str("\n\r");
