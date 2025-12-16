@@ -156,6 +156,11 @@ static volatile int8_t g_pulsein_direction[2] = {0, 0};
 // Pulse input clock division (for clock mode)
 static volatile float g_pulsein_clock_div[2] = {1.0f, 1.0f};
 
+// CV input clock mode tracking (input[1]/input[2] via Detect clock mode)
+// Used to automatically fall back to internal clock when the clock jack is disconnected.
+static volatile bool g_input_clock_mode[2] = {false, false};
+static volatile float g_input_clock_div[2] = {1.0f, 1.0f};
+
 // LED pulse stretching counters (to make 10ms pulses visible at 100Hz update rate)
 static volatile uint16_t g_pulse_led_stretch[2] = {0, 0};
 
@@ -429,6 +434,10 @@ static bool is_pulse_input_connected(int pulse_idx);
 static void service_clock_from_core1(void);
 static void service_timer_from_core1(void);
 static void blackbird_core1_background_service(void);
+
+// Chooses between internal and external clock based on clock-mode inputs and normalization probe connectivity.
+// Implemented later in the file (after the card helpers are available).
+static void auto_update_clock_source_from_connections(void);
 
 static void service_clock_from_core1(void) {
     uint32_t ticks = 0;
@@ -3009,6 +3018,10 @@ public:
                 last_switch = current_switch;
                 first_switch_check = false;
             }
+
+            // Auto-select internal vs external clock based on normalization probe connectivity.
+            // This prevents getting "stuck" on external clock after disconnect.
+            auto_update_clock_source_from_connections();
             
             // Process clock edges deferred from ISR (avoids FP math in ISR)
             for (int i = 0; i < 2; i++) {
@@ -3699,6 +3712,52 @@ static bool is_pulse_input_connected(int pulse_idx) {
     ComputerCard::Input pulse_input = (pulse_idx == 0) ? ComputerCard::Input::Pulse1 : ComputerCard::Input::Pulse2;
     
     return card->IsInputConnected(pulse_input);
+}
+
+// Automatically choose clock source based on whether a clock-mode jack is physically connected.
+// If any clock-mode input is enabled *and* the normalization probe reports it connected, use external (CROW) clock.
+// Otherwise, fall back to internal clock so clock.tempo / internal timing works again.
+static void auto_update_clock_source_from_connections(void) {
+    static bool using_external = false;
+
+    BlackbirdCrow* card = (BlackbirdCrow*)g_blackbird_instance;
+    if (!card) {
+        return;
+    }
+
+    bool want_external = false;
+    float want_div = 1.0f;
+
+    // Prefer CV clock inputs first (input[1]/input[2])
+    if (g_input_clock_mode[0] && card->IsInputConnected(ComputerCard::Input::CV1)) {
+        want_external = true;
+        want_div = g_input_clock_div[0];
+    } else if (g_input_clock_mode[1] && card->IsInputConnected(ComputerCard::Input::CV2)) {
+        want_external = true;
+        want_div = g_input_clock_div[1];
+    } else if (g_pulsein_mode[0] == 2 && card->IsInputConnected(ComputerCard::Input::Pulse1)) {
+        want_external = true;
+        want_div = g_pulsein_clock_div[0];
+    } else if (g_pulsein_mode[1] == 2 && card->IsInputConnected(ComputerCard::Input::Pulse2)) {
+        want_external = true;
+        want_div = g_pulsein_clock_div[1];
+    }
+
+    if (want_external) {
+        clock_crow_in_div(want_div);
+        if (!using_external) {
+            clock_set_source(CLOCK_SOURCE_CROW);
+            using_external = true;
+        }
+    } else {
+        if (using_external) {
+            clock_set_source(CLOCK_SOURCE_INTERNAL);
+            // Rebase immediately so scripts see internal tempo right away.
+            // Otherwise, reference tempo won't update until the next internal beat tick.
+            clock_internal_start(clock_get_time_beats(), false);
+            using_external = false;
+        }
+    }
 }
 
 // __index metamethod for bb.connected table
@@ -4566,6 +4625,10 @@ static bool is_input_connected(int channel) {
 int LuaManager::lua_set_input_stream(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
     float time = (float)luaL_checknumber(L, 2);
+
+    if (channel >= 1 && channel <= 2) {
+        g_input_clock_mode[channel - 1] = false;
+    }
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
@@ -4579,6 +4642,10 @@ int LuaManager::lua_set_input_change(lua_State* L) {
     float threshold = (float)luaL_checknumber(L, 2);
     float hysteresis = (float)luaL_checknumber(L, 3);
     const char* direction = luaL_checkstring(L, 4);
+
+    if (channel >= 1 && channel <= 2) {
+        g_input_clock_mode[channel - 1] = false;
+    }
     
     // CRITICAL FIX: Reset callback state when mode changes to allow new callbacks to fire
     reset_change_callback_state(channel - 1);
@@ -4594,6 +4661,10 @@ int LuaManager::lua_set_input_change(lua_State* L) {
 
 int LuaManager::lua_set_input_window(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
+
+    if (channel >= 1 && channel <= 2) {
+        g_input_clock_mode[channel - 1] = false;
+    }
     
     // Extract windows array from Lua table
     if (!lua_istable(L, 2)) {
@@ -4624,6 +4695,10 @@ int LuaManager::lua_set_input_window(lua_State* L) {
 
 int LuaManager::lua_set_input_scale(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
+
+    if (channel >= 1 && channel <= 2) {
+        g_input_clock_mode[channel - 1] = false;
+    }
     
     // Extract scale array from Lua table
     float scale[SCALE_MAX_COUNT];
@@ -4654,6 +4729,10 @@ int LuaManager::lua_set_input_scale(lua_State* L) {
 int LuaManager::lua_set_input_volume(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
     float time = (float)luaL_checknumber(L, 2);
+
+    if (channel >= 1 && channel <= 2) {
+        g_input_clock_mode[channel - 1] = false;
+    }
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
@@ -4666,6 +4745,10 @@ int LuaManager::lua_set_input_peak(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
     float threshold = (float)luaL_checknumber(L, 2);
     float hysteresis = (float)luaL_checknumber(L, 3);
+
+    if (channel >= 1 && channel <= 2) {
+        g_input_clock_mode[channel - 1] = false;
+    }
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
@@ -4677,6 +4760,10 @@ int LuaManager::lua_set_input_peak(lua_State* L) {
 int LuaManager::lua_set_input_freq(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
     float time = (float)luaL_checknumber(L, 2);
+
+    if (channel >= 1 && channel <= 2) {
+        g_input_clock_mode[channel - 1] = false;
+    }
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
@@ -4690,6 +4777,11 @@ int LuaManager::lua_set_input_clock(lua_State* L) {
     float div = (float)luaL_checknumber(L, 2);
     float threshold = (float)luaL_checknumber(L, 3);
     float hysteresis = (float)luaL_checknumber(L, 4);
+
+    if (channel >= 1 && channel <= 2) {
+        g_input_clock_mode[channel - 1] = true;
+        g_input_clock_div[channel - 1] = (div > 0.0f) ? div : 1.0f;
+    }
     
     // Clock mode is a specialized change detection
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
@@ -4707,6 +4799,10 @@ int LuaManager::lua_set_input_clock(lua_State* L) {
 
 int LuaManager::lua_set_input_none(lua_State* L) {
     int channel = luaL_checkinteger(L, 1);
+
+    if (channel >= 1 && channel <= 2) {
+        g_input_clock_mode[channel - 1] = false;
+    }
     
     Detect_t* detector = Detect_ix_to_p(channel - 1); // Convert to 0-based
     if (detector) {
