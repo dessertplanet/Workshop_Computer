@@ -2987,13 +2987,35 @@ public:
                     g_change_pending[i]--; // consume one
                     bool state = g_change_state[i];
 
-                    char lua_call[128];
-                    snprintf(lua_call, sizeof(lua_call),
-                        "if input and input[%d] and input[%d].change then input[%d].change(%s) end",
-                        i + 1, i + 1, i + 1, state ? "true" : "false");
-                    output_batch_begin();
-                    lua_manager->evaluate_safe(lua_call);
-                    output_batch_flush();
+                    // Avoid luaL_loadstring() here (can allocate heavily over time)
+                    // Call input[i].change(state) directly.
+                    if (lua_manager && lua_manager->L) {
+                        lua_State* L = lua_manager->L;
+                        output_batch_begin();
+                        lua_getglobal(L, "input");
+                        if (lua_istable(L, -1)) {
+                            lua_rawgeti(L, -1, i + 1);
+                            if (lua_istable(L, -1)) {
+                                lua_getfield(L, -1, "change");
+                                if (lua_isfunction(L, -1)) {
+                                    lua_pushboolean(L, state);
+                                    if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                                        const char* err = lua_tostring(L, -1);
+                                        tud_cdc_write_str("lua runtime error: ");
+                                        tud_cdc_write_str(err ? err : "unknown error");
+                                        tud_cdc_write_str("\n\r");
+                                        tud_cdc_write_flush();
+                                        lua_pop(L, 1);
+                                    }
+                                } else {
+                                    lua_pop(L, 1); // pop non-function
+                                }
+                            }
+                            lua_pop(L, 1); // pop input[i]
+                        }
+                        lua_pop(L, 1); // pop input
+                        output_batch_flush();
+                    }
 
                     g_change_callback_active[i] = false;
                 }
@@ -3026,14 +3048,25 @@ public:
                 if (!first_switch_check && current_switch != last_switch) {
                     const char* pos_str = (current_switch == ComputerCard::Switch::Down) ? "down" :
                                          (current_switch == ComputerCard::Switch::Middle) ? "middle" : "up";
-                    
-                    // Call Lua switch.change callback
-                    char lua_call[128];
-                    snprintf(lua_call, sizeof(lua_call),
-                        "if _switch_change_callback then _switch_change_callback('%s') end",
-                        pos_str);
-                    
-                    lua_manager->evaluate_safe(lua_call);
+
+                    // Call Lua switch.change callback without compiling a chunk.
+                    if (lua_manager && lua_manager->L) {
+                        lua_State* L = lua_manager->L;
+                        lua_getglobal(L, "_switch_change_callback");
+                        if (lua_isfunction(L, -1)) {
+                            lua_pushstring(L, pos_str);
+                            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                                const char* err = lua_tostring(L, -1);
+                                tud_cdc_write_str("lua runtime error: ");
+                                tud_cdc_write_str(err ? err : "unknown error");
+                                tud_cdc_write_str("\n\r");
+                                tud_cdc_write_flush();
+                                lua_pop(L, 1);
+                            }
+                        } else {
+                            lua_pop(L, 1);
+                        }
+                    }
                 }
                 
                 last_switch = current_switch;
@@ -3093,14 +3126,27 @@ public:
                     
                     // Cache the edge state before calling Lua (in case it changes)
                     bool edge_state = g_pulsein_edge_state[i];
-                    
-                    // Edge was detected at audio rate - fire callback
-                    char lua_call[128];
-                    snprintf(lua_call, sizeof(lua_call),
-                        "if _pulsein%d_change_callback then _pulsein%d_change_callback(%s) end",
-                        i + 1, i + 1, edge_state ? "true" : "false");
-                    
-                    lua_manager->evaluate_safe(lua_call);
+
+                    // Edge was detected at audio rate - fire callback without compiling a chunk.
+                    if (lua_manager && lua_manager->L) {
+                        lua_State* L = lua_manager->L;
+                        char cb_name[32];
+                        snprintf(cb_name, sizeof(cb_name), "_pulsein%d_change_callback", i + 1);
+                        lua_getglobal(L, cb_name);
+                        if (lua_isfunction(L, -1)) {
+                            lua_pushboolean(L, edge_state);
+                            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                                const char* err = lua_tostring(L, -1);
+                                tud_cdc_write_str("lua runtime error: ");
+                                tud_cdc_write_str(err ? err : "unknown error");
+                                tud_cdc_write_str("\n\r");
+                                tud_cdc_write_flush();
+                                lua_pop(L, 1);
+                            }
+                        } else {
+                            lua_pop(L, 1);
+                        }
+                    }
                     
                     // Mark callback as complete
                     g_pulsein_callback_active[i] = false;
@@ -4523,6 +4569,7 @@ static void freq_callback(int channel, float freq) {
 extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
     LuaManager* lua_mgr = LuaManager::getInstance();
     if (!lua_mgr) return;
+    if (!lua_mgr->L) return;
     
     // ===============================================
     // OPTIMIZATION 2: Enable batching for input callbacks
@@ -4541,65 +4588,108 @@ extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
     // Call appropriate Lua handler based on detection type
     // IMPORTANT: Call input[n].stream() / input[n].change() / input[n].window() etc. methods
     // which internally call _c.tell() to send ^^stream, ^^change, ^^window messages to druid/norns
-    char lua_call[256];
-    if (detection_type == 1) {
-        // Stream mode - call input[n].stream(value)
-        snprintf(lua_call, sizeof(lua_call),
-            "if input and input[%d] and input[%d].stream then input[%d].stream(%.6f) end",
-            channel, channel, channel, value);
-    } else if (detection_type == 0) {
-        // Change mode - call input[n].change(state)
-        // IMPORTANT: Pass true/false not 1/0, because in Lua 0 is truthy!
-        bool state = (value > 0.5f);
-        snprintf(lua_call, sizeof(lua_call),
-            "if input and input[%d] and input[%d].change then input[%d].change(%s) end",
-            channel, channel, channel, state ? "true" : "false");
-    } else if (detection_type == 2) {
-        // Window mode
-        // value is the window index (1-based) if positive, or negative index if moving down
-        // Call input[n].window(win, dir) where dir indicates direction (positive=up, negative=down)
-        int win = (int)fabsf(value);
-        bool dir = (value > 0);
-        snprintf(lua_call, sizeof(lua_call),
-            "if input and input[%d] and input[%d].window then input[%d].window(%d, %s) end",
-            channel, channel, channel, win, dir ? "true" : "false");
-    } else if (detection_type == 3) {
-        // Scale mode - call input[n].scale({index=i, octave=o, note=n, volts=v})
-        // Build a table with all scale data
-        snprintf(lua_call, sizeof(lua_call),
-            "if input and input[%d] and input[%d].scale then "
-            "input[%d].scale({index=%d,octave=%d,note=%.6f,volts=%.6f}) end",
-            channel, channel, channel,
-            event->extra.scale.index + 1, // Convert to 1-based
-            event->extra.scale.octave,
-            event->extra.scale.note,
-            event->extra.scale.volts);
-    } else if (detection_type == 4) {
-        // Volume mode - call input[n].volume(level)
-        snprintf(lua_call, sizeof(lua_call),
-            "if input and input[%d] and input[%d].volume then input[%d].volume(%.6f) end",
-            channel, channel, channel, value);
-    } else if (detection_type == 5) {
-        // Peak mode - call input[n].peak() - no arguments
-        snprintf(lua_call, sizeof(lua_call),
-            "if input and input[%d] and input[%d].peak then input[%d].peak() end",
-            channel, channel, channel);
-    } else if (detection_type == 6) {
-        // Freq mode - call input[n].freq(freq)
-        snprintf(lua_call, sizeof(lua_call),
-            "if input and input[%d] and input[%d].freq then input[%d].freq(%.6f) end",
-            channel, channel, channel, value);
-    } else {
-        // Unknown detection type - skip
-        snprintf(lua_call, sizeof(lua_call), "-- unknown detection_type=%d", detection_type);
+    // NOTE: Avoid luaL_loadstring() here (it allocates heavily and can lead to long-run OOM).
+    lua_State* L = lua_mgr->L;
+    lua_getglobal(L, "input");
+    if (lua_istable(L, -1)) {
+        lua_rawgeti(L, -1, channel);
+        if (lua_istable(L, -1)) {
+            const char* method = nullptr;
+            int nargs = 0;
+            bool pushed_method_value = false;
+
+            if (detection_type == 1) {
+                method = "stream";
+                lua_getfield(L, -1, method);
+                pushed_method_value = true;
+                if (lua_isfunction(L, -1)) {
+                    lua_pushnumber(L, value);
+                    nargs = 1;
+                }
+            } else if (detection_type == 0) {
+                method = "change";
+                bool state = (value > 0.5f);
+                lua_getfield(L, -1, method);
+                pushed_method_value = true;
+                if (lua_isfunction(L, -1)) {
+                    lua_pushboolean(L, state);
+                    nargs = 1;
+                }
+            } else if (detection_type == 2) {
+                method = "window";
+                int win = (int)fabsf(value);
+                bool dir = (value > 0);
+                lua_getfield(L, -1, method);
+                pushed_method_value = true;
+                if (lua_isfunction(L, -1)) {
+                    lua_pushinteger(L, win);
+                    lua_pushboolean(L, dir);
+                    nargs = 2;
+                }
+            } else if (detection_type == 3) {
+                method = "scale";
+                lua_getfield(L, -1, method);
+                pushed_method_value = true;
+                if (lua_isfunction(L, -1)) {
+                    lua_createtable(L, 0, 4);
+                    lua_pushinteger(L, event->extra.scale.index + 1); // Convert to 1-based
+                    lua_setfield(L, -2, "index");
+                    lua_pushinteger(L, event->extra.scale.octave);
+                    lua_setfield(L, -2, "octave");
+                    lua_pushnumber(L, event->extra.scale.note);
+                    lua_setfield(L, -2, "note");
+                    lua_pushnumber(L, event->extra.scale.volts);
+                    lua_setfield(L, -2, "volts");
+                    nargs = 1;
+                }
+            } else if (detection_type == 4) {
+                method = "volume";
+                lua_getfield(L, -1, method);
+                pushed_method_value = true;
+                if (lua_isfunction(L, -1)) {
+                    lua_pushnumber(L, value);
+                    nargs = 1;
+                }
+            } else if (detection_type == 5) {
+                method = "peak";
+                lua_getfield(L, -1, method);
+                pushed_method_value = true;
+                if (lua_isfunction(L, -1)) {
+                    nargs = 0;
+                }
+            } else if (detection_type == 6) {
+                method = "freq";
+                lua_getfield(L, -1, method);
+                pushed_method_value = true;
+                if (lua_isfunction(L, -1)) {
+                    lua_pushnumber(L, value);
+                    nargs = 1;
+                }
+            }
+
+            if (pushed_method_value) {
+                if (lua_isfunction(L, -1)) {
+                    if (lua_pcall(L, nargs, 0, 0) != LUA_OK) {
+                        const char* err = lua_tostring(L, -1);
+                        tud_cdc_write_str("lua runtime error: ");
+                        tud_cdc_write_str(err ? err : "unknown error");
+                        tud_cdc_write_str("\n\r");
+                        tud_cdc_write_flush();
+                        lua_pop(L, 1);
+                    }
+                } else {
+                    lua_pop(L, 1); // pop non-function (or missing method)
+                }
+            }
+        }
+        lua_pop(L, 1); // pop input[channel]
     }
+    lua_pop(L, 1); // pop input
     
     if (kDetectionDebug) {
         printf("LOCKFREE INPUT: ch%d type=%d value=%.3f\n\r",
                channel, detection_type, value);
     }
-    
-    lua_mgr->evaluate_safe(lua_call);
     
     // Flush batched outputs after Lua callback execution
     output_batch_flush();
