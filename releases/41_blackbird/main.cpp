@@ -1674,6 +1674,27 @@ public:
             printf("  ERROR defining delay() function: %s\n\r", lua_tostring(L, -1));
             lua_pop(L, 1);
         }
+
+                // ii is optional / not implemented in the emulator; ensure scripts that
+                // reference ii.* in init() don't crash and abort initialization.
+                if (luaL_dostring(L, R"(
+                        if ii == nil then
+                            local function __bb_ii_stub()
+                                return setmetatable({}, {
+                                    __index = function(t, k)
+                                        local v = __bb_ii_stub()
+                                        rawset(t, k, v)
+                                        return v
+                                    end,
+                                    __call = function(...) end,
+                                })
+                            end
+                            ii = __bb_ii_stub()
+                        end
+                )") != LUA_OK) {
+                        printf("  ERROR installing ii stub: %s\n\r", lua_tostring(L, -1));
+                        lua_pop(L, 1);
+                }
         
         // Create Workshop Computer namespace table with knob and switch
         create_bb_table(L);

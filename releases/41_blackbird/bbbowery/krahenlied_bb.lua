@@ -1,5 +1,5 @@
 ---krahenlied_bb.lua
---a poetry sequencer for crow, just friends, and w/tape
+--a poetry sequencer for crow
 --input 1: clock
 --outputs 1 & 3: v/8
 --outputs 2 & 4: AR envelopes

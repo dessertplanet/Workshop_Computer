@@ -33,6 +33,10 @@ static int _tell_get_out( lua_State* L );
 static int _tell_get_cv( lua_State* L );
 static int _lua_void_function( lua_State* L );
 static int _delay( lua_State* L );
+static void _install_ii_stub(lua_State* L);
+
+static int _ii_stub_call(lua_State* L);
+static int _ii_stub_index(lua_State* L);
 
 // Forward declarations for L_handle_* functions
 void L_handle_clock_resume_lockfree(clock_event_lockfree_t* event);
@@ -42,6 +46,42 @@ void L_handle_clock_resume_lockfree(clock_event_lockfree_t* event);
 static int _lua_void_function( lua_State* L ){
 	lua_settop(L, 0);
 	return 0;
+}
+
+// no-op callable table for environments without ii support
+static int _ii_stub_call(lua_State* L) {
+    lua_settop(L, 0);
+    return 0;
+}
+
+static int _ii_stub_index(lua_State* L) {
+    // args: (self, key)
+    // create and memoize a new stub table so chained lookups work:
+    // ii.jf.mode(1) -> ii.jf (table) -> .mode (table) -> (1) (no-op)
+    lua_newtable(L);
+    luaL_getmetatable(L, "ii_stub_mt");
+    lua_setmetatable(L, -2);
+
+    lua_pushvalue(L, 2);   // key
+    lua_pushvalue(L, -2);  // value (child stub)
+    lua_rawset(L, 1);
+    return 1;
+}
+
+static void _install_ii_stub(lua_State* L) {
+    if (luaL_newmetatable(L, "ii_stub_mt")) {
+        lua_pushcfunction(L, _ii_stub_index);
+        lua_setfield(L, -2, "__index");
+        lua_pushcfunction(L, _ii_stub_call);
+        lua_setfield(L, -2, "__call");
+    }
+    lua_pop(L, 1); // pop metatable
+
+    lua_newtable(L);
+    luaL_getmetatable(L, "ii_stub_mt");
+    lua_setmetatable(L, -2);
+    lua_setglobal(L, "ii");
+    lua_settop(L, 0);
 }
 
 static void _load_lib(lua_State* L, char* filename, char* luaname){
@@ -68,7 +108,21 @@ void l_crowlib_init(lua_State* L){
 
     // load C funcs into lua env first
     l_ii_mod_preload(L);
-	_load_lib(L, "ii", "ii");
+
+    // ii is optional in this firmware/emulator; don't let missing ii abort user init.
+    // Only load lua/ii.lua if the backing C hooks exist; otherwise install a no-op stub.
+    lua_getglobal(L, "c_ii_load");
+    bool have_ii_backend = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (have_ii_backend) {
+        _load_lib(L, "ii", "ii");
+    }
+    lua_getglobal(L, "ii");
+    bool have_ii_global = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (!have_ii_global) {
+        _install_ii_stub(L);
+    }
 
 	_load_lib(L, "calibrate", "cal");
 	_load_lib(L, "sequins", "sequins");
