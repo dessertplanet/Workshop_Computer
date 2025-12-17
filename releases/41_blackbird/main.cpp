@@ -300,6 +300,7 @@ static volatile uint32_t g_overrun_count = 0;
 static volatile uint32_t g_suppress_perf_warnings_until_us = 0;
 // Keep all LEDs lit for a while after operations that ask the user to reset.
 static volatile uint32_t g_force_all_leds_on_until_us = 0;
+static volatile bool g_force_all_leds_armed = false;
 static constexpr uint32_t kResetIndicatorHoldUs = 30000000u; // 30s
 static constexpr uint32_t kResetIndicatorBlinkHalfPeriodUs = 1000000u; // 1s on, 1s off => 0.5 Hz
 
@@ -2535,7 +2536,10 @@ public:
     void IndicatorLedOff(uint32_t index) { this->LedOff(index); }
     void UpdateOutputLeds() {
         uint32_t now_us = time_us_32();
-        if (u32_time_before(now_us, g_force_all_leds_on_until_us)) {
+        // Only blink all LEDs when explicitly armed (e.g. after flash operations).
+        // This avoids a confusing crash-like LED pattern if memory corruption ever
+        // clobbers the timestamp variable.
+        if (g_force_all_leds_armed && u32_time_before(now_us, g_force_all_leds_on_until_us)) {
             bool on = ((now_us / kResetIndicatorBlinkHalfPeriodUs) & 1u) == 0u;
             uint16_t level = on ? 4095 : 0;
             LedBrightness(0, level);
@@ -2545,6 +2549,11 @@ public:
             LedOn(4, on);
             LedOn(5, on);
             return;
+        }
+
+        // Auto-disarm once the hold period has elapsed.
+        if (g_force_all_leds_armed && !u32_time_before(now_us, g_force_all_leds_on_until_us)) {
+            g_force_all_leds_armed = false;
         }
 
         int32_t cv1_mv = g_output_state_mv[0];
@@ -3449,6 +3458,7 @@ public:
 
                         // Light up all LEDs (and keep them lit) to indicate upload complete
                         g_force_all_leds_on_until_us = time_us_32() + kResetIndicatorHoldUs;
+                        g_force_all_leds_armed = true;
                         UpdateOutputLeds();
                     } else {
                         tud_cdc_write_str("flash write failed\n\r");
@@ -3501,6 +3511,7 @@ public:
 
                     // Light up all LEDs (and keep them lit) to indicate operation complete
                     g_force_all_leds_on_until_us = time_us_32() + kResetIndicatorHoldUs;
+                    g_force_all_leds_armed = true;
                     UpdateOutputLeds();
 
                 } else {
