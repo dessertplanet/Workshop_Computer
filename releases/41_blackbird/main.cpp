@@ -3351,6 +3351,7 @@ public:
                 g_new_script_len = 0;
                 memset(g_new_script, 0, sizeof(g_new_script));
                 g_new_script_name[0] = '\0';  // Clear script name
+                lua_manager->evaluate_safe("crow.reset()"); // Reset crow state before upload
                 g_repl_mode = REPL_reception;
                 tud_cdc_write_str("script upload started\n\r");
                 
