@@ -1,9 +1,9 @@
-# bbbbowery
+# bbbowery
 [druid](https://github.com/monome/druid) script collection, specific to the "blackbird" variant of crow for use with the [MTM Workshop System Computer module](https://www.musicthing.co.uk/Computer_Program_Cards/).
 
 Info on blackbird and how to install can be found on the [MTM Github](https://github.com/TomWhitwell/Workshop_Computer/tree/main/releases/41_blackbird).  
 
-Blackbird has some limitations with relationship to crow (audio rate scripts will experience significant distortion, no ii support) but also has some advantages (additional inputs and ouputs, panel controls, LED feedback). Some of these scripts have been modified to take advantage of additional features. Those familiar with bowery might see some scripts missing - some have been removed due to the audio rate limitations of blackbird. Others will run slower than their crow counterparts.
+Blackbird has some limitations with relationship to crow (audio rate scripts may misbehave, no ii support) but also has some advantages (additional inputs and ouputs, panel controls, LED feedback). Some of these scripts have been modified to take advantage of additional features. Those familiar with bowery might see some scripts missing - some have been removed due to the audio rate limitations of blackbird. Others will run slower than their crow counterparts.
 
 - [alphabetsequencer_bb.lua](alphabetsequencer_bb.lua): sequence synth voices with sequins
 - [boids_bb.lua](boids_bb.lua): four simulated birds that fly around your input
