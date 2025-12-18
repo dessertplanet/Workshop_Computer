@@ -187,7 +187,7 @@ Special thanks to:
 - **Chris Johnson** for the ComputerCard framework
 - **Brian Crabtree** and **Trent Gill** (monome & Whimsical Raps) for the original crow and the open source crow firmware
 - **Zack Scholl** (infinitedigits) for encouragement and proving Lua can work on RP2040 with his midi-to-cv project
-- **Ben Regnier** (Q*Ben) for extensive testing and feedback without which this would not have been possible
+- **Ben Regnier** (Q*Ben) for extensive testing, feedback, and hard work on porting bowery scripts over to bbbowery
 
 ## License
 
