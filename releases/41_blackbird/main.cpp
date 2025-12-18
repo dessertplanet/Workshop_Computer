@@ -3006,7 +3006,9 @@ public:
                             lua_rawgeti(L, -1, i + 1);
                             if (lua_istable(L, -1)) {
                                 lua_getfield(L, -1, "change");
-                                if (lua_isfunction(L, -1)) {
+                                // Preserve historical semantics: skip only if nil/false.
+                                // If user sets a truthy non-function, allow Lua to raise an error.
+                                if (lua_toboolean(L, -1)) {
                                     lua_pushboolean(L, state);
                                     if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
                                         const char* err = lua_tostring(L, -1);
@@ -3017,7 +3019,7 @@ public:
                                         lua_pop(L, 1);
                                     }
                                 } else {
-                                    lua_pop(L, 1); // pop non-function
+                                    lua_pop(L, 1); // pop nil/false
                                 }
                             }
                             lua_pop(L, 1); // pop input[i]
@@ -3062,7 +3064,8 @@ public:
                     if (lua_manager && lua_manager->L) {
                         lua_State* L = lua_manager->L;
                         lua_getglobal(L, "_switch_change_callback");
-                        if (lua_isfunction(L, -1)) {
+                        // Preserve historical semantics: skip only if nil/false.
+                        if (lua_toboolean(L, -1)) {
                             lua_pushstring(L, pos_str);
                             if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
                                 const char* err = lua_tostring(L, -1);
@@ -3073,7 +3076,7 @@ public:
                                 lua_pop(L, 1);
                             }
                         } else {
-                            lua_pop(L, 1);
+                            lua_pop(L, 1); // pop nil/false
                         }
                     }
                 }
@@ -3142,7 +3145,8 @@ public:
                         char cb_name[32];
                         snprintf(cb_name, sizeof(cb_name), "_pulsein%d_change_callback", i + 1);
                         lua_getglobal(L, cb_name);
-                        if (lua_isfunction(L, -1)) {
+                        // Preserve historical semantics: skip only if nil/false.
+                        if (lua_toboolean(L, -1)) {
                             lua_pushboolean(L, edge_state);
                             if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
                                 const char* err = lua_tostring(L, -1);
@@ -3153,7 +3157,7 @@ public:
                                 lua_pop(L, 1);
                             }
                         } else {
-                            lua_pop(L, 1);
+                            lua_pop(L, 1); // pop nil/false
                         }
                     }
                     
@@ -4613,36 +4617,42 @@ extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
             if (detection_type == 1) {
                 method = "stream";
                 lua_getfield(L, -1, method);
-                pushed_method_value = true;
-                if (lua_isfunction(L, -1)) {
+                if (lua_toboolean(L, -1)) {
+                    pushed_method_value = true;
                     lua_pushnumber(L, value);
                     nargs = 1;
+                } else {
+                    lua_pop(L, 1);
                 }
             } else if (detection_type == 0) {
                 method = "change";
                 bool state = (value > 0.5f);
                 lua_getfield(L, -1, method);
-                pushed_method_value = true;
-                if (lua_isfunction(L, -1)) {
+                if (lua_toboolean(L, -1)) {
+                    pushed_method_value = true;
                     lua_pushboolean(L, state);
                     nargs = 1;
+                } else {
+                    lua_pop(L, 1);
                 }
             } else if (detection_type == 2) {
                 method = "window";
                 int win = (int)fabsf(value);
                 bool dir = (value > 0);
                 lua_getfield(L, -1, method);
-                pushed_method_value = true;
-                if (lua_isfunction(L, -1)) {
+                if (lua_toboolean(L, -1)) {
+                    pushed_method_value = true;
                     lua_pushinteger(L, win);
                     lua_pushboolean(L, dir);
                     nargs = 2;
+                } else {
+                    lua_pop(L, 1);
                 }
             } else if (detection_type == 3) {
                 method = "scale";
                 lua_getfield(L, -1, method);
-                pushed_method_value = true;
-                if (lua_isfunction(L, -1)) {
+                if (lua_toboolean(L, -1)) {
+                    pushed_method_value = true;
                     lua_createtable(L, 0, 4);
                     lua_pushinteger(L, event->extra.scale.index + 1); // Convert to 1-based
                     lua_setfield(L, -2, "index");
@@ -4653,44 +4663,48 @@ extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event) {
                     lua_pushnumber(L, event->extra.scale.volts);
                     lua_setfield(L, -2, "volts");
                     nargs = 1;
+                } else {
+                    lua_pop(L, 1);
                 }
             } else if (detection_type == 4) {
                 method = "volume";
                 lua_getfield(L, -1, method);
-                pushed_method_value = true;
-                if (lua_isfunction(L, -1)) {
+                if (lua_toboolean(L, -1)) {
+                    pushed_method_value = true;
                     lua_pushnumber(L, value);
                     nargs = 1;
+                } else {
+                    lua_pop(L, 1);
                 }
             } else if (detection_type == 5) {
                 method = "peak";
                 lua_getfield(L, -1, method);
-                pushed_method_value = true;
-                if (lua_isfunction(L, -1)) {
+                if (lua_toboolean(L, -1)) {
+                    pushed_method_value = true;
                     nargs = 0;
+                } else {
+                    lua_pop(L, 1);
                 }
             } else if (detection_type == 6) {
                 method = "freq";
                 lua_getfield(L, -1, method);
-                pushed_method_value = true;
-                if (lua_isfunction(L, -1)) {
+                if (lua_toboolean(L, -1)) {
+                    pushed_method_value = true;
                     lua_pushnumber(L, value);
                     nargs = 1;
+                } else {
+                    lua_pop(L, 1);
                 }
             }
 
             if (pushed_method_value) {
-                if (lua_isfunction(L, -1)) {
-                    if (lua_pcall(L, nargs, 0, 0) != LUA_OK) {
-                        const char* err = lua_tostring(L, -1);
-                        tud_cdc_write_str("lua runtime error: ");
-                        tud_cdc_write_str(err ? err : "unknown error");
-                        tud_cdc_write_str("\n\r");
-                        tud_cdc_write_flush();
-                        lua_pop(L, 1);
-                    }
-                } else {
-                    lua_pop(L, 1); // pop non-function (or missing method)
+                if (lua_pcall(L, nargs, 0, 0) != LUA_OK) {
+                    const char* err = lua_tostring(L, -1);
+                    tud_cdc_write_str("lua runtime error: ");
+                    tud_cdc_write_str(err ? err : "unknown error");
+                    tud_cdc_write_str("\n\r");
+                    tud_cdc_write_flush();
+                    lua_pop(L, 1);
                 }
             }
         }
