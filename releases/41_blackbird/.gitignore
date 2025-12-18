@@ -2,3 +2,4 @@ build/*
 .vscode/*
 TODO
 druid.log
+*.pptx

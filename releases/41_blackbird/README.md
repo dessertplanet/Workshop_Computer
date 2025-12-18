@@ -21,7 +21,10 @@ Tested with druid, norns, MAX/MSP, pyserial - works with **ANY** serial host tha
 
 ## Hardware Mapping
 
-Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as described below.
+Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as shown below. Details in the tables that follow.
+
+![Hardware Mapping Diagram](docs/HARDWARE_MAPPING.jpeg)
+
 
 ### Outputs
 
