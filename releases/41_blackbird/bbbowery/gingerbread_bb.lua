@@ -1,4 +1,4 @@
---- gingerbread man chaotic attractor
+--- gingerbread man chaotic attractor bb
 -- input1: clock
 -- main knob: offset (-5 to 5)
 -- input2: add to offset, attenuate with y

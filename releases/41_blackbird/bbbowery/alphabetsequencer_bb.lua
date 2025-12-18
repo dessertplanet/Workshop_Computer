@@ -1,4 +1,4 @@
--- alphabetsequencer_bb.lua
+--- alphabet sequencer bb
 --start playback for outputs 1-4 with start_playing() 
 --stop playback on outputs 1-4 with stop_playing() 
 --try updating the sequins!

@@ -1,4 +1,4 @@
---- boids_bb.lua
+--- boids bb
 -- t gill 190925
 -- inspired by http://www.vergenet.net/~conrad/boids/pseudocode.html
 -- When CVIns are patched then knobs become attenuators. TODO

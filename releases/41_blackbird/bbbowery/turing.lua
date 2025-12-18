@@ -1,4 +1,4 @@
--- turing.lua
+--- 5 step turing machine
 
 function init() 
     max = tonumber('11111', 2) -- maximum binary value is all 1's (matches bits table size)

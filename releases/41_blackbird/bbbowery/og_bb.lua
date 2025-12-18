@@ -1,5 +1,4 @@
--- og_bb.lua
--- simple 2 voice sequencer using sequins
+--- blackbird theme song
 -- plays the Blackbird theme song by Paul McCartney
 
 -- dummy init function

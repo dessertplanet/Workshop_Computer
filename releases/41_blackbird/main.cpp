@@ -2201,7 +2201,7 @@ typedef enum {
 static volatile repl_mode_t g_repl_mode = REPL_normal;
 static char g_new_script[16 * 1024];  // 16KB script buffer for uploads
 static volatile uint32_t g_new_script_len = 0;
-static char g_new_script_name[64] = "";  // Store script name from first comment line
+static char g_new_script_name[64] = "";  // Store script title/name extracted from first line
 
 // NOW define process_usb_byte (after the variables it needs)
 static void process_usb_byte(char c) {
@@ -2451,51 +2451,52 @@ static inline bool output_is_batching() {
     return g_output_batch.batch_mode_active;
 }
 
-// Try to extract script name from first comment line (e.g., "-- First.lua")
+// Try to extract a human-readable script title/name from the first line.
+// Format (matches monome/bowery style):
+//   --- My Script Title
+// Notes:
+// - Accepts either "--- Title" or "---Title" by stripping whitespace after "---".
 static void extract_script_name(const char* script, uint32_t length) {
     g_new_script_name[0] = '\0';
-    if (!script || length < 5) return;
-    
-    // Look for "-- filename.lua" pattern in first 200 chars
+    if (!script || length < 3) return;
+
+    // Consider only the first line and only the first 200 chars.
     const char* end = script + (length < 200 ? length : 200);
     const char* p = script;
-    
+
     // Skip whitespace at start
-    while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) p++;
-    
-    // Check if it starts with "--"
-    if (p + 2 < end && p[0] == '-' && p[1] == '-') {
-        p += 2;
-        // Skip spaces after "--"
-        while (p < end && (*p == ' ' || *p == '\t')) p++;
-        
-        // Look for .lua extension
-        const char* start = p;
-        const char* lua_ext = nullptr;
-        while (p < end && *p != '\r' && *p != '\n') {
-            if (p + 4 < end && strncmp(p, ".lua", 4) == 0) {
-                lua_ext = p + 4;
-                break;
-            }
-            p++;
+    while (p < end && (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')) {
+        p++;
+    }
+    if (p >= end) return;
+
+    const char* line_start = p;
+    const char* line_end = line_start;
+    while (line_end < end && *line_end != '\r' && *line_end != '\n') {
+        line_end++;
+    }
+
+    // "--- <title>" (allow either "--- " or "---<title>" for robustness)
+    if ((line_end - line_start) >= 3 && line_start[0] == '-' && line_start[1] == '-' && line_start[2] == '-') {
+        const char* title_start = line_start + 3;
+        // If there is whitespace after "---", skip it (supports the required "--- " format)
+        while (title_start < line_end && (*title_start == ' ' || *title_start == '\t')) {
+            title_start++;
         }
-        
-        // If we found .lua, extract the filename
-        if (lua_ext) {
-            // Back up to start of filename (look for last space before extension)
-            const char* name_start = start;
-            for (const char* s = start; s < lua_ext - 4; s++) {
-                if (*s == ' ' || *s == '\t' || *s == '/') {
-                    name_start = s + 1;
-                }
+
+        const char* title_end = line_end;
+        while (title_end > title_start && (title_end[-1] == ' ' || title_end[-1] == '\t')) {
+            title_end--;
+        }
+
+        size_t title_len = (size_t)(title_end - title_start);
+        if (title_len > 0) {
+            if (title_len > sizeof(g_new_script_name) - 1) {
+                title_len = sizeof(g_new_script_name) - 1;
             }
-            
-            // Copy filename
-            size_t name_len = lua_ext - name_start;
-            if (name_len > 0 && name_len < sizeof(g_new_script_name) - 1) {
-                memcpy(g_new_script_name, name_start, name_len);
-                g_new_script_name[name_len] = '\0';
-            }
+            memcpy(g_new_script_name, title_start, title_len);
+            g_new_script_name[title_len] = '\0';
+            return;
         }
     }
 }

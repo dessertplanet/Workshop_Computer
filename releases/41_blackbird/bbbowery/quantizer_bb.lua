@@ -1,4 +1,4 @@
---- quantizer_bb.lua
+--- quantizer bb
 -- sam wolk 2019.10.15
 -- updated by whimsicalraps 2021
 -- adapted by qben for bb 2025

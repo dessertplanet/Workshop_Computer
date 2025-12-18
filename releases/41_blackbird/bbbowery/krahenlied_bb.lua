@@ -1,4 +1,4 @@
----krahenlied_bb.lua
+---krahenlied bb
 --a poetry sequencer for crow
 --input 1: clock
 --outputs 1 & 3: v/8

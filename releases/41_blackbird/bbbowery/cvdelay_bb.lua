@@ -1,4 +1,4 @@
---- control voltage delay
+--- cv delay bb
 -- input1: CV to delay
 -- knob x: slew amount
 -- knob main: crossfade dry/wet (when input2 not patched)

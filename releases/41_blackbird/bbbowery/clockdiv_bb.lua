@@ -1,4 +1,4 @@
--- clockdiv_bb.lua
+--- clock divider bb
 -- in1: clock input
 -- main knob: division selector
 -- in2: division selector (see divs) when patched
