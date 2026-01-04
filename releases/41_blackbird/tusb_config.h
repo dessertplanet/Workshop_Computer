@@ -9,13 +9,23 @@ extern "C" {
 // COMMON CONFIGURATION
 //--------------------------------------------------------------------
 
-// RHPort number used for device
+// RHPort number used for dual-role operation
 #define BOARD_DEVICE_RHPORT_NUM     0
 
 // RHPort max operational speed
 #define BOARD_DEVICE_RHPORT_SPEED   OPT_MODE_FULL_SPEED
 
-#define CFG_TUSB_RHPORT0_MODE       (OPT_MODE_DEVICE | BOARD_DEVICE_RHPORT_SPEED)
+// Enable host stack optionally; dual-role is on by default for auto host/device selection.
+// Define ENABLE_USB_HOST=0 to force device-only if needed.
+#ifndef ENABLE_USB_HOST
+#define ENABLE_USB_HOST 1
+#endif
+
+#if ENABLE_USB_HOST
+#define CFG_TUSB_RHPORT0_MODE       (OPT_MODE_HOST | OPT_MODE_DEVICE)
+#else
+#define CFG_TUSB_RHPORT0_MODE       (OPT_MODE_DEVICE)
+#endif
 
 #ifndef CFG_TUSB_OS
 #define CFG_TUSB_OS                 OPT_OS_PICO
@@ -61,6 +71,29 @@ extern "C" {
 // MIDI FIFO sizes (small but enough for realtime note events)
 #define CFG_TUD_MIDI_RX_BUFSIZE     128
 #define CFG_TUD_MIDI_TX_BUFSIZE     128
+
+//--------------------------------------------------------------------
+// HOST CONFIGURATION
+//--------------------------------------------------------------------
+
+// Size of buffer to hold descriptors and other data used for enumeration
+#define CFG_TUH_ENUMERATION_BUFSIZE 256
+
+#define CFG_TUH_HUB                 1 // Enable USB hubs
+#define CFG_TUH_CDC                 0
+#define CFG_TUH_HID                 0
+#define CFG_TUH_MSC                 0
+#define CFG_TUH_VENDOR              0
+
+// max device support (excluding hub device)
+#define CFG_TUH_DEVICE_MAX          (CFG_TUH_HUB ? 4 : 1)
+
+// MIDI Host string support (optional, keep minimal)
+#define CFG_MIDI_HOST_DEVSTRINGS    0
+
+#define CFG_TUH_MIDI_RX_BUFSIZE     (TUD_OPT_HIGH_SPEED ? 512 : 64)
+#define CFG_TUH_MIDI_TX_BUFSIZE     (TUD_OPT_HIGH_SPEED ? 512 : 64)
+#define CFG_TUH_MIDI_EP_BUFSIZE     USBH_EPSIZE_BULK_MAX
 
 #ifdef __cplusplus
 }
