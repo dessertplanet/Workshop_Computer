@@ -34,6 +34,7 @@ License is GPLv3 or later- see LICENSE file for details.
 #include "lib/fastmath.h"
 #include "class/cdc/cdc_device.h"
 #include "class/midi/midi_device.h"
+#include "usb_midi_host.h"
 #include "lib/debug.h"
 #include "lib/usb_lockfree.h"
 #include <cstdio>
@@ -423,7 +424,25 @@ static inline bool check_for_backticks(const char* buffer, int pos) {
 
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
+enum UsbRole { USB_ROLE_DEVICE, USB_ROLE_HOST };
+static UsbRole g_usb_role = USB_ROLE_DEVICE;
+static ComputerCard::USBPowerState_t g_usb_power_state = ComputerCard::Unsupported;
+static uint8_t g_midi_host_addr = 0;
+static volatile uint8_t g_midi_host_connected = 0;
+static volatile uint8_t g_host_ready = 0;
 void core1_entry(); // defined after BlackbirdCrow - non-static so flash_storage can call it
+
+static inline bool usb_console_ready() {
+    return g_usb_role == USB_ROLE_DEVICE && tud_cdc_connected();
+}
+
+static inline void usb_console_write(const char* s) {
+    if (usb_console_ready()) tud_cdc_write_str(s);
+}
+
+static inline void usb_console_flush() {
+    if (usb_console_ready()) tud_cdc_write_flush();
+}
 
 
 // Forward declaration of C interface function (implemented after BlackbirdCrow class)
@@ -436,7 +455,8 @@ static bool is_pulse_input_connected(int pulse_idx);
 static void service_clock_from_core1(void);
 static void service_timer_from_core1(void);
 static void blackbird_core1_background_service(void);
-static void process_usb_midi_packets(void);
+static void process_usb_midi_packets_device(void);
+static void process_usb_midi_packets_host(void);
 static void handle_usb_midi_packet(const uint8_t packet[4]);
 static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel);
 static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel);
@@ -2520,10 +2540,12 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
                         lua_pushinteger(L, channel);
                         if (lua_pcall(L, 4, 0, 0) != LUA_OK) {
                             const char* err = lua_tostring(L, -1);
-                            tud_cdc_write_str("bb.midi.rx note handler error: ");
-                            tud_cdc_write_str(err ? err : "unknown error");
-                            tud_cdc_write_str("\n\r");
-                            tud_cdc_write_flush();
+                            if (usb_console_ready()) {
+                                tud_cdc_write_str("bb.midi.rx note handler error: ");
+                                tud_cdc_write_str(err ? err : "unknown error");
+                                tud_cdc_write_str("\n\r");
+                                tud_cdc_write_flush();
+                            }
                             lua_pop(L, 1);
                         } else {
                             handled = true;
@@ -2541,10 +2563,12 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
                             lua_pushinteger(L, channel);
                             if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
                                 const char* err = lua_tostring(L, -1);
-                                tud_cdc_write_str("bb.midi.rx note handler error: ");
-                                tud_cdc_write_str(err ? err : "unknown error");
-                                tud_cdc_write_str("\n\r");
-                                tud_cdc_write_flush();
+                                if (usb_console_ready()) {
+                                    tud_cdc_write_str("bb.midi.rx note handler error: ");
+                                    tud_cdc_write_str(err ? err : "unknown error");
+                                    tud_cdc_write_str("\n\r");
+                                    tud_cdc_write_flush();
+                                }
                                 lua_pop(L, 1);
                             } else {
                                 handled = true;
@@ -2591,10 +2615,12 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
                         lua_pushinteger(L, channel);
                         if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
                             const char* err = lua_tostring(L, -1);
-                            tud_cdc_write_str("bb.midi.rx bend handler error: ");
-                            tud_cdc_write_str(err ? err : "unknown error");
-                            tud_cdc_write_str("\n\r");
-                            tud_cdc_write_flush();
+                            if (usb_console_ready()) {
+                                tud_cdc_write_str("bb.midi.rx bend handler error: ");
+                                tud_cdc_write_str(err ? err : "unknown error");
+                                tud_cdc_write_str("\n\r");
+                                tud_cdc_write_flush();
+                            }
                             lua_pop(L, 1);
                         } else {
                             handled = true;
@@ -2716,15 +2742,25 @@ static void midi_clock_handle_tick(void) {
 }
 
 static inline void midi_send_note(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel) {
-#if CFG_TUD_MIDI
     if (channel < 1) channel = 1;
     if (channel > 16) channel = 16;
     uint8_t status = (uint8_t)((is_on ? 0x90 : 0x80) | ((channel - 1) & 0x0F));
     uint8_t msg[3] = {(uint8_t)status, (uint8_t)(note & 0x7F), (uint8_t)(velocity & 0x7F)};
-    tud_midi_stream_write(0, msg, sizeof(msg));
-#else
-    (void)is_on; (void)note; (void)velocity; (void)channel;
+
+    if (g_usb_role == USB_ROLE_DEVICE) {
+#if CFG_TUD_MIDI
+        tud_midi_stream_write(0, msg, sizeof(msg));
 #endif
+    } else {
+#if TUSB_OPT_HOST_ENABLED
+        if (g_midi_host_addr && tuh_midi_configured(g_midi_host_addr)) {
+            uint8_t cables = tuh_midih_get_num_tx_cables(g_midi_host_addr);
+            uint8_t cable = cables ? (uint8_t)(cables - 1) : 0;
+            tuh_midi_stream_write(g_midi_host_addr, cable, msg, sizeof(msg));
+            tuh_midi_stream_flush(g_midi_host_addr);
+        }
+#endif
+    }
 }
 
 static void schedule_midi_note_off(uint8_t note, uint8_t channel, uint64_t due_us) {
@@ -2755,7 +2791,7 @@ static void process_pending_midi_note_offs(void) {
 
 // Parse a single USB MIDI packet; surface Note On/Off and CC
 static void handle_usb_midi_packet(const uint8_t packet[4]) {
-#if CFG_TUD_MIDI
+#if CFG_TUD_MIDI || TUSB_OPT_HOST_ENABLED
     uint8_t status = packet[1];
     uint8_t data1 = packet[2];
     uint8_t data2 = packet[3];
@@ -2792,7 +2828,7 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
 }
 
 // Drain a few MIDI packets per loop to avoid starving other USB work.
-static void process_usb_midi_packets(void) {
+static void process_usb_midi_packets_device(void) {
 #if CFG_TUD_MIDI
     uint8_t packet[4];
     const int kMaxMidiPacketsPerLoop = 16;
@@ -2810,24 +2846,89 @@ static void process_usb_midi_packets(void) {
 #endif
 }
 
+// Drain host-side MIDI stream and surface events into Lua dispatch
+static void drain_host_midi_stream(uint8_t dev_addr) {
+#if TUSB_OPT_HOST_ENABLED
+    if (dev_addr == 0 || !tuh_midi_configured(dev_addr)) {
+        return;
+    }
+
+    uint8_t cable_num = 0;
+    uint8_t buffer[64];
+    while (1) {
+        int32_t count = tuh_midi_stream_read(dev_addr, &cable_num, buffer, sizeof(buffer));
+        if (count <= 0) {
+            break;
+        }
+        for (int32_t i = 0; i + 3 < count; i += 4) {
+            handle_usb_midi_packet(&buffer[i]);
+        }
+    }
+#else
+    (void)dev_addr;
+#endif
+}
+
+static void process_usb_midi_packets_host(void) {
+#if TUSB_OPT_HOST_ENABLED
+    drain_host_midi_stream(g_midi_host_addr);
+#endif
+}
+
+#if TUSB_OPT_HOST_ENABLED
+void tuh_midi_mount_cb(uint8_t dev_addr, uint8_t in_ep, uint8_t out_ep, uint8_t num_cables_rx, uint16_t num_cables_tx) {
+    (void)in_ep; (void)out_ep; (void)num_cables_rx; (void)num_cables_tx;
+    if (g_midi_host_addr == 0) {
+        g_midi_host_addr = dev_addr;
+        g_midi_host_connected = 1;
+        g_host_ready = 1;
+    }
+}
+
+void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance) {
+    (void)instance;
+    if (dev_addr == g_midi_host_addr) {
+        g_midi_host_addr = 0;
+        g_midi_host_connected = 0;
+        g_host_ready = 0;
+    }
+}
+
+void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets) {
+    (void)num_packets;
+    drain_host_midi_stream(dev_addr);
+}
+
+void tuh_midi_tx_cb(uint8_t dev_addr) {
+    (void)dev_addr;
+}
+#endif
+
 static inline void usb_service_poll_from_main(void) {
     // Coalesce ticks to bounded work per loop iteration
     if (g_usb_service_tick) {
         g_usb_service_tick = 0;
-        tud_task();
+        if (g_usb_role == USB_ROLE_DEVICE) {
+            tud_task();
 
-        // RX: Read available data and queue for main loop processing
-        while (tud_cdc_available()) {
-            uint8_t buf[64];
-            uint32_t count = tud_cdc_read(buf, sizeof(buf));
-            if (count == 0) break;
-            usb_rx_lockfree_post((char*)buf, count);
+            // RX: Read available data and queue for main loop processing
+            while (tud_cdc_available()) {
+                uint8_t buf[64];
+                uint32_t count = tud_cdc_read(buf, sizeof(buf));
+                if (count == 0) break;
+                usb_rx_lockfree_post((char*)buf, count);
+            }
+
+            process_usb_midi_packets_device();
+        } else {
+#if TUSB_OPT_HOST_ENABLED
+            tuh_task();
+            process_usb_midi_packets_host();
+#endif
         }
-
-        process_usb_midi_packets();
     }
 
-    if (g_usb_tx_tick) {
+    if (g_usb_tx_tick && g_usb_role == USB_ROLE_DEVICE) {
         g_usb_tx_tick = 0;
         usb_process_tx_bounded();
     }
@@ -3217,11 +3318,15 @@ public:
                 // Load First.lua from compiled bytecode
                 if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK 
                     || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
-                    tud_cdc_write_str(" Failed to load First.lua\n\r");
-                    tud_cdc_write_flush();
+                    if (usb_console_ready()) {
+                        tud_cdc_write_str(" Failed to load First.lua\n\r");
+                        tud_cdc_write_flush();
+                    }
                 } else {
-                    tud_cdc_write_str(" Loaded: First.lua (default)\n\r");
-                    tud_cdc_write_flush();
+                    if (usb_console_ready()) {
+                        tud_cdc_write_str(" Loaded: First.lua (default)\n\r");
+                        tud_cdc_write_flush();
+                    }
                     // Call init() like real crow does (no crow.reset() before init on startup)
                     lua_manager->evaluate_safe("if init then init() end");
                 }
@@ -3236,29 +3341,37 @@ public:
                     // Execute directly from flash (XIP)
                     if (script_addr && luaL_loadbuffer(lua_manager->L, script_addr, script_len, "=userscript") == LUA_OK
                         && lua_pcall(lua_manager->L, 0, 0, 0) == LUA_OK) {
-                        char msg[128];
-                        if (script_name && script_name[0]) {
-                            snprintf(msg, sizeof(msg), " Loaded: %s (%u bytes)\n\r", script_name, script_len);
-                        } else {
-                            snprintf(msg, sizeof(msg), " Loaded: Untitled User Script (%u bytes)\n\r", script_len);
+                        if (usb_console_ready()) {
+                            char msg[128];
+                            if (script_name && script_name[0]) {
+                                snprintf(msg, sizeof(msg), " Loaded: %s (%u bytes)\n\r", script_name, script_len);
+                            } else {
+                                snprintf(msg, sizeof(msg), " Loaded: Untitled User Script (%u bytes)\n\r", script_len);
+                            }
+                            tud_cdc_write_str(msg);
+                            tud_cdc_write_flush();
                         }
-                        tud_cdc_write_str(msg);
-                        tud_cdc_write_flush();
                         // Call init() like real crow does (no crow.reset() before init on startup)
                         lua_manager->evaluate_safe("if init then init() end");
                     } else {
-                        tud_cdc_write_str(" Failed to load user script from flash, loading First.lua\n\r");
-                        tud_cdc_write_flush();
+                        if (usb_console_ready()) {
+                            tud_cdc_write_str(" Failed to load user script from flash, loading First.lua\n\r");
+                            tud_cdc_write_flush();
+                        }
                         // Fallback to First.lua
                         if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") == LUA_OK 
                             && lua_pcall(lua_manager->L, 0, 0, 0) == LUA_OK) {
-                            tud_cdc_write_str(" Loaded First.lua fallback\n\r");
-                            tud_cdc_write_flush();
+                            if (usb_console_ready()) {
+                                tud_cdc_write_str(" Loaded First.lua fallback\n\r");
+                                tud_cdc_write_flush();
+                            }
                             // Call init() like real crow does (no crow.reset() before init on startup)
                             lua_manager->evaluate_safe("if init then init() end");
                         } else {
-                            tud_cdc_write_str(" Failed to load First.lua fallback\n\r");
-                            tud_cdc_write_flush();
+                            if (usb_console_ready()) {
+                                tud_cdc_write_str(" Failed to load First.lua fallback\n\r");
+                                tud_cdc_write_flush();
+                            }
                         }
                     }
                 }
@@ -3351,21 +3464,23 @@ public:
             
             // Send welcome message 1.5s after startup
             if (!welcome_sent && absolute_time_diff_us(get_absolute_time(), welcome_time) <= 0) {
-                char card_id_str[48];
-                
-                tud_cdc_write_str("\n\r");
-                tud_cdc_write_str(" Blackbird-v1.1\n\r");
-                tud_cdc_write_str(" Music Thing Modular Workshop Computer\n\r");
+                if (usb_console_ready()) {
+                    char card_id_str[48];
+                    
+                    tud_cdc_write_str("\n\r");
+                    tud_cdc_write_str(" Blackbird-v1.1\n\r");
+                    tud_cdc_write_str(" Music Thing Modular Workshop Computer\n\r");
 
-                tud_cdc_write_flush(); // flush manually due to long welcome string
-                
-                snprintf(card_id_str, sizeof(card_id_str), " Program Card ID: 0x%08X%08X\n\r", 
-                         (uint32_t)(cached_unique_id >> 32), (uint32_t)(cached_unique_id & 0xFFFFFFFF));
-                
-                tud_cdc_write_str(card_id_str);
-                
+                    tud_cdc_write_flush(); // flush manually due to long welcome string
+                    
+                    snprintf(card_id_str, sizeof(card_id_str), " Program Card ID: 0x%08X%08X\n\r", 
+                             (uint32_t)(cached_unique_id >> 32), (uint32_t)(cached_unique_id & 0xFFFFFFFF));
+                    
+                    tud_cdc_write_str(card_id_str);
+                }
+
                 welcome_sent = true;
-                
+
                 // NOW load the boot script - all hardware is initialized
                 load_boot_script();
             }
@@ -3378,11 +3493,13 @@ public:
                 g_performance_warning = false;  // Clear flag
                 uint32_t now_us = time_us_32();
                 if (!u32_time_before(now_us, g_suppress_perf_warnings_until_us)) {
-                    char perf_msg[256];
-                    snprintf(perf_msg, sizeof(perf_msg),
-                             "\n\r[PERF WARNING] ProcessSample exceeded budget: worst=%luus, overruns=%lu\n\r",
-                             (unsigned long)g_worst_case_us, (unsigned long)g_overrun_count);
-                    tud_cdc_write_str(perf_msg);
+                    if (usb_console_ready()) {
+                        char perf_msg[256];
+                        snprintf(perf_msg, sizeof(perf_msg),
+                                 "\n\r[PERF WARNING] ProcessSample exceeded budget: worst=%luus, overruns=%lu\n\r",
+                                 (unsigned long)g_worst_case_us, (unsigned long)g_overrun_count);
+                        tud_cdc_write_str(perf_msg);
+                    }
                 }
                 
                 // Note: Don't reset g_worst_case_us here - let user query via perf_stats()
@@ -6231,11 +6348,14 @@ extern "C" lua_State* get_lua_state(void) {
 BlackbirdCrow crow;
 
 // Simple MIDI-style LED animation while waiting for USB host connection
+// Device mode: around-the-world loop. Host mode: top-to-bottom sweep.
 static void usb_wait_led_step() {
-    static const uint8_t led_path[] = {0, 1, 3, 5, 4, 2};
+    static const uint8_t device_path[] = {0, 1, 3, 5, 4, 2};
+    static const uint8_t host_path[]   = {0, 2, 4, 1, 3, 5};
     static size_t path_index = 0;
     static int last_led = -1;
     static uint64_t last_step_us = 0;
+    static UsbRole last_role = USB_ROLE_DEVICE;
 
     uint64_t now = time_us_64();
     if (now - last_step_us < 50000) {
@@ -6243,15 +6363,30 @@ static void usb_wait_led_step() {
     }
     last_step_us = now;
 
+    // Reset animation when role changes
+    if (g_usb_role != last_role) {
+        path_index = 0;
+        if (last_led >= 0) {
+            crow.IndicatorLedOff(last_led);
+            last_led = -1;
+        }
+        last_role = g_usb_role;
+    }
+
+    const uint8_t* path = (g_usb_role == USB_ROLE_HOST) ? host_path : device_path;
+    size_t path_len = (g_usb_role == USB_ROLE_HOST)
+        ? (sizeof(host_path) / sizeof(host_path[0]))
+        : (sizeof(device_path) / sizeof(device_path[0]));
+
     if (last_led >= 0) {
         crow.IndicatorLedOff(last_led);
     }
 
-    int current_led = led_path[path_index];
+    int current_led = path[path_index];
     crow.IndicatorLedOn(current_led);
     last_led = current_led;
 
-    path_index = (path_index + 1) % (sizeof(led_path) / sizeof(led_path[0]));
+    path_index = (path_index + 1) % path_len;
 }
 
 static void usb_wait_led_clear() {
@@ -6360,20 +6495,65 @@ int main()
 {
     set_sys_clock_khz(200000, true);
 
-    // Initialize TinyUSB (replaces stdio_init_all)
-    tusb_init();
+    // Decide USB role based on power orientation with a short debounce
+    sleep_us(150000);
+#if TUSB_OPT_HOST_ENABLED
+    ComputerCard::USBPowerState_t ps1 = crow.GetUSBPowerState();
+    sleep_us(50000); // allow the hardware switch to settle
+    ComputerCard::USBPowerState_t ps2 = crow.GetUSBPowerState();
+    g_usb_power_state = ps2;
+    bool dfp_confident = (ps1 == ComputerCard::DFP) && (ps2 == ComputerCard::DFP);
+    g_usb_role = dfp_confident ? USB_ROLE_HOST : USB_ROLE_DEVICE;
+#else
+    g_usb_power_state = ComputerCard::Unsupported;
+    g_usb_role = USB_ROLE_DEVICE; // force device when host stack is disabled
+#endif
+
+    // Initialize TinyUSB stack according to role
+    if (g_usb_role == USB_ROLE_DEVICE) {
+        tud_init(BOARD_DEVICE_RHPORT_NUM);
+    } else {
+#if TUSB_OPT_HOST_ENABLED
+        tuh_init(BOARD_DEVICE_RHPORT_NUM);
+#endif
+    }
     
     // Disable stdio buffering for immediate console output
     setvbuf(stdout, NULL, _IONBF, 0);
     
-    // Wait briefly (up to 1500ms) for a USB serial host to connect so the boot banner is visible
-    {
+    // Wait briefly (up to 1500ms) for initial USB activity
+    if (g_usb_role == USB_ROLE_DEVICE) {
         absolute_time_t until = make_timeout_time_ms(1500);
         while (!tud_cdc_connected() && absolute_time_diff_us(get_absolute_time(), until) > 0) {
             tud_task();  // Must service TinyUSB while waiting
             usb_wait_led_step();
             tight_loop_contents();
         }
+    } else {
+#if TUSB_OPT_HOST_ENABLED
+        absolute_time_t until = make_timeout_time_ms(1500);
+        while (absolute_time_diff_us(get_absolute_time(), until) > 0) {
+            tuh_task();
+            usb_wait_led_step(); // host-specific animation path
+            tight_loop_contents();
+        }
+
+        // If no host MIDI device was seen during startup window, fall back to device mode.
+        if (!g_host_ready) {
+            // Host never mounted; fall back to device without explicit host stop (not provided in TinyUSB API)
+            sleep_ms(10);
+            g_usb_role = USB_ROLE_DEVICE;
+            g_usb_power_state = ComputerCard::Unsupported;
+            tud_init(BOARD_DEVICE_RHPORT_NUM);
+            // Run a short device wait so CDC/MIDI can enumerate cleanly
+            absolute_time_t dev_until = make_timeout_time_ms(1000);
+            while (!tud_cdc_connected() && absolute_time_diff_us(get_absolute_time(), dev_until) > 0) {
+                tud_task();
+                usb_wait_led_step();
+                tight_loop_contents();
+            }
+        }
+#endif
     }
 
     usb_wait_led_clear();

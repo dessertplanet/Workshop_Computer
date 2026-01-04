@@ -56,6 +56,9 @@ public:
 
 	ComputerCard();
 
+	// Public accessor for USB power role (DFP=host, UFP=device)
+	USBPowerState_t GetUSBPowerState() const { return USBPowerState(); }
+
 	/** \brief Start audio processing.
 
         The Run method starts audio processing, calling ProcessSample using an interrupt.
@@ -88,6 +91,16 @@ protected:
 
 	/// Read switch position
 	bool __not_in_flash_func(SwitchChanged)() {return switchVal != lastSwitchVal;}
+
+	/// Return power state of USB port (host vs device role)
+	USBPowerState_t __not_in_flash_func(USBPowerState)() const {
+		if (HardwareVersion() != Rev1_1)
+			return Unsupported;
+		else if (gpio_get(USB_HOST_STATUS))
+			return UFP;
+		else
+			return DFP;
+	}
 
 
 	/// Set Audio output (values -2048 to 2047)
