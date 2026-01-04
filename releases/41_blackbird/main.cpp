@@ -441,6 +441,10 @@ static void handle_usb_midi_packet(const uint8_t packet[4]);
 static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel);
 static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel);
 static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel);
+static void midi_clock_handle_tick(void);
+static void midi_clock_handle_start(void);
+static void midi_clock_handle_continue(void);
+static void midi_clock_handle_stop(void);
 
 // Chooses between internal and external clock based on clock-mode inputs and normalization probe connectivity.
 // Implemented later in the file (after the card helpers are available).
@@ -1442,6 +1446,7 @@ public:
     lua_register(L, "clock_schedule_beat", lua_clock_schedule_beat);
     lua_register(L, "clock_get_time_beats", lua_clock_get_time_beats);
     lua_register(L, "clock_get_tempo", lua_clock_get_tempo);
+    lua_register(L, "clock_get_source", lua_clock_get_source);
     lua_register(L, "clock_set_source", lua_clock_set_source);
     lua_register(L, "clock_internal_set_tempo", lua_clock_internal_set_tempo);
     lua_register(L, "clock_internal_start", lua_clock_internal_start);
@@ -2128,6 +2133,7 @@ public:
     static int lua_clock_schedule_beat(lua_State* L);
     static int lua_clock_get_time_beats(lua_State* L);
     static int lua_clock_get_tempo(lua_State* L);
+    static int lua_clock_get_source(lua_State* L);
     static int lua_clock_set_source(lua_State* L);
     static int lua_clock_internal_set_tempo(lua_State* L);
     static int lua_clock_internal_start(lua_State* L);
@@ -2383,6 +2389,35 @@ static bool __isr __time_critical_func(usb_tx_service_callback)(struct repeating
     return true;
 }
 
+// MIDI clock tracking (24 PPQN)
+static constexpr uint8_t kMidiClockPPQN = 24;
+static constexpr uint8_t kMidiClockWindow = 12;           // samples used for averaging
+static constexpr uint32_t kMidiClockTimeoutUs = 500000u;  // drop state after 0.5s gap
+
+static struct {
+    bool running;
+    uint32_t tick_count;
+    uint64_t last_tick_us;
+    uint32_t intervals_us[kMidiClockWindow];
+    uint8_t intervals_len;
+    uint8_t intervals_pos;
+    uint64_t interval_sum_us;
+} g_midi_clock = {false, 0, 0, {0}, 0, 0, 0};
+
+static inline bool midi_clock_is_active_source() {
+    return clock_get_source() == CLOCK_SOURCE_MIDI;
+}
+
+static void midi_clock_reset_state(void) {
+    g_midi_clock.running = false;
+    g_midi_clock.tick_count = 0;
+    g_midi_clock.last_tick_us = 0;
+    g_midi_clock.intervals_len = 0;
+    g_midi_clock.intervals_pos = 0;
+    g_midi_clock.interval_sum_us = 0;
+    for (int i = 0; i < kMidiClockWindow; i++) g_midi_clock.intervals_us[i] = 0;
+}
+
 // Dispatch Note On/Off into Lua (bb.midi.in.*) or fall back to ^^midi('noteon'|'noteoff',...)
 static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel) {
     const char* event_name = is_on ? "noteon" : "noteoff";
@@ -2521,6 +2556,61 @@ static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
     }
 }
 
+static void midi_clock_handle_start(void) {
+    if (!midi_clock_is_active_source()) return;
+    midi_clock_reset_state();
+    g_midi_clock.running = true;
+    clock_start_from(CLOCK_SOURCE_MIDI);
+}
+
+static void midi_clock_handle_continue(void) {
+    if (!midi_clock_is_active_source()) return;
+    // Keep current counters; just mark running again
+    g_midi_clock.running = true;
+    g_midi_clock.last_tick_us = 0; // re-sync on next tick
+    clock_start_from(CLOCK_SOURCE_MIDI);
+}
+
+static void midi_clock_handle_stop(void) {
+    if (!midi_clock_is_active_source()) return;
+    midi_clock_reset_state();
+    clock_stop_from(CLOCK_SOURCE_MIDI);
+}
+
+static void midi_clock_handle_tick(void) {
+    if (!midi_clock_is_active_source()) return;
+    uint64_t now_us = time_us_64();
+
+    // If we've been stopped or had a long gap, reset interval history
+    if (g_midi_clock.last_tick_us != 0) {
+        uint64_t interval = now_us - g_midi_clock.last_tick_us;
+        if (interval > kMidiClockTimeoutUs) {
+            midi_clock_reset_state();
+        } else {
+            // Ring buffer average
+            if (g_midi_clock.intervals_len < kMidiClockWindow) {
+                g_midi_clock.intervals_len++;
+            } else {
+                g_midi_clock.interval_sum_us -= g_midi_clock.intervals_us[g_midi_clock.intervals_pos];
+            }
+            g_midi_clock.intervals_us[g_midi_clock.intervals_pos] = (uint32_t)interval;
+            g_midi_clock.interval_sum_us += interval;
+            g_midi_clock.intervals_pos = (g_midi_clock.intervals_pos + 1) % kMidiClockWindow;
+        }
+    }
+
+    g_midi_clock.last_tick_us = now_us;
+    g_midi_clock.running = true;
+    g_midi_clock.tick_count++;
+
+    if (g_midi_clock.intervals_len > 0 && (g_midi_clock.tick_count % kMidiClockPPQN) == 0) {
+        float avg_interval_us = (float)g_midi_clock.interval_sum_us / (float)g_midi_clock.intervals_len;
+        float beat_duration_sec = (avg_interval_us * (float)kMidiClockPPQN) * 1e-6f;
+        float beat = (float)g_midi_clock.tick_count / (float)kMidiClockPPQN;
+        clock_update_reference_from(beat, beat_duration_sec, CLOCK_SOURCE_MIDI);
+    }
+}
+
 // Parse a single USB MIDI packet; surface Note On/Off and CC
 static void handle_usb_midi_packet(const uint8_t packet[4]) {
 #if CFG_TUD_MIDI
@@ -2543,6 +2633,14 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
     } else if (msg == 0xE0) {
         uint16_t bend14 = (uint16_t)(data1 | (data2 << 7));
         dispatch_midi_bend_event(bend14, channel);
+    } else if (status == 0xF8) {
+        midi_clock_handle_tick();
+    } else if (status == 0xFA) {
+        midi_clock_handle_start();
+    } else if (status == 0xFB) {
+        midi_clock_handle_continue();
+    } else if (status == 0xFC) {
+        midi_clock_handle_stop();
     } else {
         // Ignore other messages for now
     }
@@ -4024,6 +4122,11 @@ static bool is_pulse_input_connected(int pulse_idx) {
 // If any clock-mode input is enabled *and* the normalization probe reports it connected, use external (CROW) clock.
 // Otherwise, fall back to internal clock so clock.tempo / internal timing works again.
 static void auto_update_clock_source_from_connections(void) {
+    // Respect manual clock source selection (e.g., MIDI clock)
+    if (clock_is_source_manual()) {
+        return;
+    }
+
     static bool using_external = false;
 
     BlackbirdCrow* card = (BlackbirdCrow*)g_blackbird_instance;
@@ -5288,10 +5391,27 @@ int LuaManager::lua_clock_get_tempo(lua_State* L) {
     return 1;
 }
 
+// clock_get_source() - Get current clock source (1-based: 1=internal,2=MIDI,3=LINK,4=CROW)
+int LuaManager::lua_clock_get_source(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)(clock_get_source() + 1));
+    return 1;
+}
+
 // clock_set_source(source) - Set clock source (1-based in Lua)
 int LuaManager::lua_clock_set_source(lua_State* L) {
     int source = (int)luaL_checkinteger(L, 1);
-    clock_set_source((clock_source_t)(source - 1)); // Convert to 0-based
+    if (source <= 0) {
+        clock_set_source_auto_mode();
+        clock_set_source(CLOCK_SOURCE_INTERNAL);
+        midi_clock_reset_state();
+    } else {
+        clock_source_t src = (clock_source_t)(source - 1);
+        if (src < 0 || src >= CLOCK_SOURCE_LIST_LENGTH) {
+            return luaL_error(L, "clock source out of range");
+        }
+        clock_set_source_manual(src);
+        midi_clock_reset_state();
+    }
     lua_pop(L, 1);
     return 0;
 }
@@ -5307,7 +5427,7 @@ int LuaManager::lua_clock_internal_set_tempo(lua_State* L) {
 // clock_internal_start(new_beat) - Start internal clock at specified beat
 int LuaManager::lua_clock_internal_start(lua_State* L) {
     float new_beat = (float)luaL_checknumber(L, 1);
-    clock_set_source(CLOCK_SOURCE_INTERNAL);
+    clock_set_source_manual(CLOCK_SOURCE_INTERNAL);
     clock_internal_start(new_beat, true);
     lua_pop(L, 1);
     return 0;
@@ -5315,7 +5435,7 @@ int LuaManager::lua_clock_internal_start(lua_State* L) {
 
 // clock_internal_stop() - Stop internal clock
 int LuaManager::lua_clock_internal_stop(lua_State* L) {
-    clock_set_source(CLOCK_SOURCE_INTERNAL);
+    clock_set_source_manual(CLOCK_SOURCE_INTERNAL);
     clock_internal_stop();
     return 0;
 }

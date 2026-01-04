@@ -71,6 +71,7 @@ typedef struct{
 
 static clock_thread_HD_t internal; // for internal clocksource
 static clock_source_t clock_source = CLOCK_SOURCE_INTERNAL;
+static bool clock_source_manual = false;
 
 static clock_reference_t reference;
 
@@ -280,9 +281,35 @@ void clock_stop_from( clock_source_t source )
 
 void clock_set_source( clock_source_t source )
 {
+    if (clock_source_manual) {
+        return; // Respect manual lock
+    }
     if( source >= 0 && source < CLOCK_SOURCE_LIST_LENGTH ){
         clock_source = source;
     }
+}
+
+void clock_set_source_manual(clock_source_t source)
+{
+    if( source >= 0 && source < CLOCK_SOURCE_LIST_LENGTH ){
+        clock_source = source;
+        clock_source_manual = true;
+    }
+}
+
+void clock_set_source_auto_mode(void)
+{
+    clock_source_manual = false;
+}
+
+clock_source_t clock_get_source(void)
+{
+    return clock_source;
+}
+
+bool clock_is_source_manual(void)
+{
+    return clock_source_manual;
 }
 
 float clock_get_time_beats(void)
