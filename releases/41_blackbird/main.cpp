@@ -1957,23 +1957,41 @@ public:
         // Default MIDI callbacks: forward to host via ^^midi(...)
         const char* setup_midi_defaults = R"(
             bb.midi = bb.midi or {}
-            bb.midi.in = bb.midi.in or {}
 
-            bb.midi.in.noteon = function(note, vel, channel)
-                tell('midi', 'noteon', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+            -- Receive side (rx)
+            bb.midi.rx = bb.midi.rx or bb.midi.in or {}
+
+            bb.midi.rx.note = function(typ, note, vel, channel)
+                if typ == 'on' then
+                    tell('midi', 'noteon', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+                elseif typ == 'off' then
+                    tell('midi', 'noteoff', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+                end
             end
 
-            bb.midi.in.noteoff = function(note, vel, channel)
-                tell('midi', 'noteoff', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+            -- Legacy per-event handlers call through to note()
+            bb.midi.rx.noteon = function(note, vel, channel)
+                return bb.midi.rx.note('on', note, vel, channel)
             end
 
-            bb.midi.in.cc = function(num, val, channel)
+            bb.midi.rx.noteoff = function(note, vel, channel)
+                return bb.midi.rx.note('off', note, vel, channel)
+            end
+
+            bb.midi.rx.cc = function(num, val, channel)
                 tell('midi', 'cc', tostring(num or 0), tostring(val or 0), tostring(channel or 1))
             end
 
-            bb.midi.in.bend = function(val, channel)
+            bb.midi.rx.bend = function(val, channel)
                 tell('midi', 'bend', tostring(val or 0))
             end
+
+            -- Transmit side (tx) - functions added from C later
+            bb.midi.tx = bb.midi.tx or bb.midi.out or {}
+
+            -- Compatibility aliases
+            bb.midi.in = bb.midi.rx
+            bb.midi.out = bb.midi.tx
         )";
         if (luaL_dostring(L, setup_midi_defaults) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
@@ -1981,34 +1999,51 @@ public:
             lua_pop(L, 1);
         }
 
-        // Inject bb.midi.out.note binding
+        // Inject bb.midi.tx.note binding alongside midi.rx defaults (idempotent, preserves user tables)
         lua_getglobal(L, "bb");
-        if (lua_istable(L, -1)) {
-            // Ensure bb.midi exists
-            lua_getfield(L, -1, "midi");
-            if (!lua_istable(L, -1)) {
-                lua_pop(L, 1);
-                lua_newtable(L);
-            }
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+            lua_setglobal(L, "bb");
+            lua_getglobal(L, "bb");
+        }
 
-            // Ensure bb.midi.out exists
-            lua_getfield(L, -1, "out");
-            if (!lua_istable(L, -1)) {
-                lua_pop(L, 1);
-                lua_newtable(L);
-            }
+        // Ensure bb.midi exists
+        lua_getfield(L, -1, "midi");
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+        }
 
-            lua_pushcfunction(L, lua_bb_midi_out_note);
-            lua_setfield(L, -2, "note");
-
-            // Set bb.midi.out back
-            lua_setfield(L, -2, "out");
-
-            // Set bb.midi back
-            lua_setfield(L, -2, "midi");
+        // Ensure bb.midi.rx exists (defaults already loaded by Lua chunk above)
+        lua_getfield(L, -1, "rx");
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+            lua_setfield(L, -2, "rx");
         } else {
             lua_pop(L, 1);
         }
+
+        // Ensure bb.midi.tx exists and set note sender
+        lua_getfield(L, -1, "tx");
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+        }
+        lua_pushcfunction(L, lua_bb_midi_out_note);
+        lua_setfield(L, -2, "note");
+        lua_setfield(L, -2, "tx"); // set bb.midi.tx
+
+        // Compatibility aliases
+        lua_getfield(L, -1, "rx");
+        lua_setfield(L, -2, "in");
+        lua_getfield(L, -1, "tx");
+        lua_setfield(L, -2, "out");
+
+        // Write back bb.midi and pop bb
+        lua_setfield(L, -2, "midi");
+        lua_pop(L, 1);
         
         // Set up default pulse output actions
         const char* setup_pulseout_defaults = R"(
@@ -2462,9 +2497,10 @@ static void midi_clock_reset_state(void) {
     for (int i = 0; i < kMidiClockWindow; i++) g_midi_clock.intervals_us[i] = 0;
 }
 
-// Dispatch Note On/Off into Lua (bb.midi.in.*) or fall back to ^^midi('noteon'|'noteoff',...)
+// Dispatch Note On/Off into Lua (bb.midi.rx.note or legacy noteon/noteoff) or fall back to ^^midi('noteon'|'noteoff',...)
 static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel) {
     const char* event_name = is_on ? "noteon" : "noteoff";
+    const char* type_name = is_on ? "on" : "off";
     bool handled = false;
     LuaManager* lua_mgr = LuaManager::getInstance();
     if (lua_mgr && lua_mgr->L) {
@@ -2473,16 +2509,18 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
         if (lua_istable(L, -1)) {
             lua_getfield(L, -1, "midi");
             if (lua_istable(L, -1)) {
-                lua_getfield(L, -1, "in");
+                lua_getfield(L, -1, "rx");
                 if (lua_istable(L, -1)) {
-                    lua_getfield(L, -1, event_name);
+                    // Prefer unified note handler
+                    lua_getfield(L, -1, "note");
                     if (lua_isfunction(L, -1)) {
+                        lua_pushstring(L, type_name);
                         lua_pushinteger(L, note);
                         lua_pushinteger(L, velocity);
                         lua_pushinteger(L, channel);
-                        if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
+                        if (lua_pcall(L, 4, 0, 0) != LUA_OK) {
                             const char* err = lua_tostring(L, -1);
-                            tud_cdc_write_str("bb.midi.in note handler error: ");
+                            tud_cdc_write_str("bb.midi.rx note handler error: ");
                             tud_cdc_write_str(err ? err : "unknown error");
                             tud_cdc_write_str("\n\r");
                             tud_cdc_write_flush();
@@ -2491,10 +2529,32 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
                             handled = true;
                         }
                     } else {
-                        lua_pop(L, 1); // pop non-function
+                        lua_pop(L, 1); // pop non-function note
+                    }
+
+                    // Legacy handlers
+                    if (!handled) {
+                        lua_getfield(L, -1, event_name);
+                        if (lua_isfunction(L, -1)) {
+                            lua_pushinteger(L, note);
+                            lua_pushinteger(L, velocity);
+                            lua_pushinteger(L, channel);
+                            if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
+                                const char* err = lua_tostring(L, -1);
+                                tud_cdc_write_str("bb.midi.rx note handler error: ");
+                                tud_cdc_write_str(err ? err : "unknown error");
+                                tud_cdc_write_str("\n\r");
+                                tud_cdc_write_flush();
+                                lua_pop(L, 1);
+                            } else {
+                                handled = true;
+                            }
+                        } else {
+                            lua_pop(L, 1); // pop non-function
+                        }
                     }
                 }
-                lua_pop(L, 1); // pop midi.in
+                lua_pop(L, 1); // pop midi.rx
             }
             lua_pop(L, 1); // pop midi
         }
@@ -2507,7 +2567,7 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
     }
 }
 
-// Dispatch pitch bend (14-bit) into Lua (bb.midi.in.bend) or fall back to ^^midi('bend',val)
+// Dispatch pitch bend (14-bit) into Lua (bb.midi.rx.bend) or fall back to ^^midi('bend',val)
 static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
     // Convert 14-bit (0-16383) with center 8192 into -1.0..1.0
     int32_t centered = (int32_t)bend14 - 8192;
@@ -2523,7 +2583,7 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
         if (lua_istable(L, -1)) {
             lua_getfield(L, -1, "midi");
             if (lua_istable(L, -1)) {
-                lua_getfield(L, -1, "in");
+                lua_getfield(L, -1, "rx");
                 if (lua_istable(L, -1)) {
                     lua_getfield(L, -1, "bend");
                     if (lua_isfunction(L, -1)) {
@@ -2531,7 +2591,7 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
                         lua_pushinteger(L, channel);
                         if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
                             const char* err = lua_tostring(L, -1);
-                            tud_cdc_write_str("bb.midi.in bend handler error: ");
+                            tud_cdc_write_str("bb.midi.rx bend handler error: ");
                             tud_cdc_write_str(err ? err : "unknown error");
                             tud_cdc_write_str("\n\r");
                             tud_cdc_write_flush();
@@ -2543,7 +2603,7 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
                         lua_pop(L, 1); // pop non-function
                     }
                 }
-                lua_pop(L, 1); // pop midi.in
+                lua_pop(L, 1); // pop midi.rx
             }
             lua_pop(L, 1); // pop midi
         }
@@ -2556,7 +2616,7 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
     }
 }
 
-// Dispatch Control Change into Lua (bb.midi.in.cc) or fall back to ^^midicc
+// Dispatch Control Change into Lua (bb.midi.rx.cc) or fall back to ^^midicc
 static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
     bool handled = false;
     LuaManager* lua_mgr = LuaManager::getInstance();
@@ -2566,7 +2626,7 @@ static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
         if (lua_istable(L, -1)) {
             lua_getfield(L, -1, "midi");
             if (lua_istable(L, -1)) {
-                lua_getfield(L, -1, "in");
+                lua_getfield(L, -1, "rx");
                 if (lua_istable(L, -1)) {
                     lua_getfield(L, -1, "cc");
                     if (lua_isfunction(L, -1)) {
@@ -2575,7 +2635,7 @@ static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
                         lua_pushinteger(L, channel);
                         if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
                             const char* err = lua_tostring(L, -1);
-                            tud_cdc_write_str("bb.midi.in cc handler error: ");
+                            tud_cdc_write_str("bb.midi.rx cc handler error: ");
                             tud_cdc_write_str(err ? err : "unknown error");
                             tud_cdc_write_str("\n\r");
                             tud_cdc_write_flush();
@@ -2587,7 +2647,7 @@ static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
                         lua_pop(L, 1); // pop non-function
                     }
                 }
-                lua_pop(L, 1); // pop midi.in
+                lua_pop(L, 1); // pop midi.rx
             }
             lua_pop(L, 1); // pop midi
         }
@@ -5525,7 +5585,7 @@ int LuaManager::lua_clock_internal_stop(lua_State* L) {
     return 0;
 }
 
-// bb.midi.out.note(note, vel, duration, channel) - Send note on immediately and schedule note off
+// bb.midi.tx.note(note, vel, duration, channel) - Send note on immediately and schedule note off
 int LuaManager::lua_bb_midi_out_note(lua_State* L) {
     int note = (int)luaL_checkinteger(L, 1);
     int vel = luaL_optinteger(L, 2, 100);
