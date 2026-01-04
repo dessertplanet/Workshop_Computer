@@ -438,7 +438,9 @@ static void service_timer_from_core1(void);
 static void blackbird_core1_background_service(void);
 static void process_usb_midi_packets(void);
 static void handle_usb_midi_packet(const uint8_t packet[4]);
-static void dispatch_midi_note_event(const char* type, uint8_t note, uint8_t velocity, uint8_t channel);
+static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel);
+static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel);
+static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel);
 
 // Chooses between internal and external clock based on clock-mode inputs and normalization probe connectivity.
 // Implemented later in the file (after the card helpers are available).
@@ -1944,15 +1946,30 @@ public:
             lua_pop(L, 1);
         }
 
-        // Default MIDI callback simply echoes as ^^midinote(...) so hosts can react
+        // Default MIDI callbacks: forward to host via ^^midi(...)
         const char* setup_midi_defaults = R"(
-            bb.midinote = function(type, note, vel, channel)
-                tell('midinote', tostring(type or ''), tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+            bb.midi = bb.midi or {}
+            bb.midi.in = bb.midi.in or {}
+
+            bb.midi.in.noteon = function(note, vel, channel)
+                tell('midi', 'noteon', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+            end
+
+            bb.midi.in.noteoff = function(note, vel, channel)
+                tell('midi', 'noteoff', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+            end
+
+            bb.midi.in.cc = function(num, val, channel)
+                tell('midi', 'cc', tostring(num or 0), tostring(val or 0), tostring(channel or 1))
+            end
+
+            bb.midi.in.bend = function(val, channel)
+                tell('midi', 'bend', tostring(val or 0))
             end
         )";
         if (luaL_dostring(L, setup_midi_defaults) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
-            printf("Error adding bb.midinote: %s\n\r", error ? error : "unknown error");
+            printf("Error adding bb.midi defaults: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         }
         
@@ -2366,43 +2383,145 @@ static bool __isr __time_critical_func(usb_tx_service_callback)(struct repeating
     return true;
 }
 
-// Convert a MIDI note event into either a Lua callback or a ^^midinote echo.
-static void dispatch_midi_note_event(const char* type, uint8_t note, uint8_t velocity, uint8_t channel) {
+// Dispatch Note On/Off into Lua (bb.midi.in.*) or fall back to ^^midi('noteon'|'noteoff',...)
+static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel) {
+    const char* event_name = is_on ? "noteon" : "noteoff";
     bool handled = false;
     LuaManager* lua_mgr = LuaManager::getInstance();
     if (lua_mgr && lua_mgr->L) {
         lua_State* L = lua_mgr->L;
         lua_getglobal(L, "bb");
         if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "midinote");
-            if (lua_isfunction(L, -1)) {
-                lua_pushstring(L, type);
-                lua_pushinteger(L, note);
-                lua_pushinteger(L, velocity);
-                lua_pushinteger(L, channel);
-                if (lua_pcall(L, 4, 0, 0) != LUA_OK) {
-                    const char* err = lua_tostring(L, -1);
-                    tud_cdc_write_str("bb.midinote error: ");
-                    tud_cdc_write_str(err ? err : "unknown error");
-                    tud_cdc_write_str("\n\r");
-                    tud_cdc_write_flush();
-                    lua_pop(L, 1);
-                } else {
-                    handled = true;
+            lua_getfield(L, -1, "midi");
+            if (lua_istable(L, -1)) {
+                lua_getfield(L, -1, "in");
+                if (lua_istable(L, -1)) {
+                    lua_getfield(L, -1, event_name);
+                    if (lua_isfunction(L, -1)) {
+                        lua_pushinteger(L, note);
+                        lua_pushinteger(L, velocity);
+                        lua_pushinteger(L, channel);
+                        if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
+                            const char* err = lua_tostring(L, -1);
+                            tud_cdc_write_str("bb.midi.in note handler error: ");
+                            tud_cdc_write_str(err ? err : "unknown error");
+                            tud_cdc_write_str("\n\r");
+                            tud_cdc_write_flush();
+                            lua_pop(L, 1);
+                        } else {
+                            handled = true;
+                        }
+                    } else {
+                        lua_pop(L, 1); // pop non-function
+                    }
                 }
-            } else {
-                lua_pop(L, 1); // pop non-function
+                lua_pop(L, 1); // pop midi.in
             }
+            lua_pop(L, 1); // pop midi
         }
+        lua_pop(L, 1); // pop bb or nil
         lua_settop(L, 0);
     }
 
     if (!handled) {
-        Caw_printf("^^midinote('%s',%u,%u,%u)", type, note, velocity, channel);
+        Caw_printf("^^midi('%s',%u,%u,%u)", event_name, note, velocity, channel);
     }
 }
 
-// Parse a single USB MIDI packet; only Note On/Off are surfaced for now.
+// Dispatch pitch bend (14-bit) into Lua (bb.midi.in.bend) or fall back to ^^midi('bend',val)
+static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
+    // Convert 14-bit (0-16383) with center 8192 into -1.0..1.0
+    int32_t centered = (int32_t)bend14 - 8192;
+    float val = (float)centered / 8192.0f;
+    if (val > 1.0f) val = 1.0f;
+    if (val < -1.0f) val = -1.0f;
+
+    bool handled = false;
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (lua_mgr && lua_mgr->L) {
+        lua_State* L = lua_mgr->L;
+        lua_getglobal(L, "bb");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "midi");
+            if (lua_istable(L, -1)) {
+                lua_getfield(L, -1, "in");
+                if (lua_istable(L, -1)) {
+                    lua_getfield(L, -1, "bend");
+                    if (lua_isfunction(L, -1)) {
+                        lua_pushnumber(L, val);
+                        lua_pushinteger(L, channel);
+                        if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+                            const char* err = lua_tostring(L, -1);
+                            tud_cdc_write_str("bb.midi.in bend handler error: ");
+                            tud_cdc_write_str(err ? err : "unknown error");
+                            tud_cdc_write_str("\n\r");
+                            tud_cdc_write_flush();
+                            lua_pop(L, 1);
+                        } else {
+                            handled = true;
+                        }
+                    } else {
+                        lua_pop(L, 1); // pop non-function
+                    }
+                }
+                lua_pop(L, 1); // pop midi.in
+            }
+            lua_pop(L, 1); // pop midi
+        }
+        lua_pop(L, 1); // pop bb or nil
+        lua_settop(L, 0);
+    }
+
+    if (!handled) {
+        Caw_printf("^^midi('bend',%f)", val);
+    }
+}
+
+// Dispatch Control Change into Lua (bb.midi.in.cc) or fall back to ^^midicc
+static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
+    bool handled = false;
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (lua_mgr && lua_mgr->L) {
+        lua_State* L = lua_mgr->L;
+        lua_getglobal(L, "bb");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "midi");
+            if (lua_istable(L, -1)) {
+                lua_getfield(L, -1, "in");
+                if (lua_istable(L, -1)) {
+                    lua_getfield(L, -1, "cc");
+                    if (lua_isfunction(L, -1)) {
+                        lua_pushinteger(L, cc);
+                        lua_pushinteger(L, value);
+                        lua_pushinteger(L, channel);
+                        if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
+                            const char* err = lua_tostring(L, -1);
+                            tud_cdc_write_str("bb.midi.in cc handler error: ");
+                            tud_cdc_write_str(err ? err : "unknown error");
+                            tud_cdc_write_str("\n\r");
+                            tud_cdc_write_flush();
+                            lua_pop(L, 1);
+                        } else {
+                            handled = true;
+                        }
+                    } else {
+                        lua_pop(L, 1); // pop non-function
+                    }
+                }
+                lua_pop(L, 1); // pop midi.in
+            }
+            lua_pop(L, 1); // pop midi
+        }
+        lua_pop(L, 1); // pop bb or nil
+        lua_settop(L, 0);
+    }
+
+    if (!handled) {
+        Caw_printf("^^midi('cc',%u,%u,%u)", cc, value, channel);
+    }
+}
+
+// Parse a single USB MIDI packet; surface Note On/Off and CC
 static void handle_usb_midi_packet(const uint8_t packet[4]) {
 #if CFG_TUD_MIDI
     uint8_t status = packet[1];
@@ -2413,12 +2532,17 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
 
     if (msg == 0x90) {
         if (data2 == 0) {
-            dispatch_midi_note_event("off", data1, data2, channel);
+            dispatch_midi_note_event(false, data1, data2, channel);
         } else {
-            dispatch_midi_note_event("on", data1, data2, channel);
+            dispatch_midi_note_event(true, data1, data2, channel);
         }
     } else if (msg == 0x80) {
-        dispatch_midi_note_event("off", data1, data2, channel);
+        dispatch_midi_note_event(false, data1, data2, channel);
+    } else if (msg == 0xB0) {
+        dispatch_midi_cc_event(data1, data2, channel);
+    } else if (msg == 0xE0) {
+        uint16_t bend14 = (uint16_t)(data1 | (data2 << 7));
+        dispatch_midi_bend_event(bend14, channel);
     } else {
         // Ignore other messages for now
     }
