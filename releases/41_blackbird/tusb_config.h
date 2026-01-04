@@ -46,7 +46,7 @@ extern "C" {
 #define CFG_TUD_CDC                 1
 #define CFG_TUD_MSC                 0
 #define CFG_TUD_HID                 0
-#define CFG_TUD_MIDI                0
+#define CFG_TUD_MIDI                1
 #define CFG_TUD_VENDOR              0
 
 // CDC FIFO size of TX and RX
@@ -57,6 +57,10 @@ extern "C" {
 // - Reduced IRQ overhead from buffer management
 #define CFG_TUD_CDC_RX_BUFSIZE      2048
 #define CFG_TUD_CDC_TX_BUFSIZE      2048
+
+// MIDI FIFO sizes (small but enough for realtime note events)
+#define CFG_TUD_MIDI_RX_BUFSIZE     128
+#define CFG_TUD_MIDI_TX_BUFSIZE     128
 
 #ifdef __cplusplus
 }
