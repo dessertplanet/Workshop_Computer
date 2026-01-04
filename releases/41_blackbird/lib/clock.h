@@ -24,6 +24,10 @@ void clock_update_reference_from( float beats, float beat_duration, clock_source
 void clock_start_from( clock_source_t source );
 void clock_stop_from( clock_source_t source );
 void clock_set_source( clock_source_t source );
+void clock_set_source_manual(clock_source_t source);
+void clock_set_source_auto_mode(void);
+clock_source_t clock_get_source(void);
+bool clock_is_source_manual(void);
 
 float clock_get_time_beats(void);
 float clock_get_time_seconds(void);
