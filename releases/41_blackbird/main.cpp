@@ -445,6 +445,8 @@ static void midi_clock_handle_tick(void);
 static void midi_clock_handle_start(void);
 static void midi_clock_handle_continue(void);
 static void midi_clock_handle_stop(void);
+static void process_pending_midi_note_offs(void);
+static int lua_bb_midi_out_note(lua_State* L);
 
 // Chooses between internal and external clock based on clock-mode inputs and normalization probe connectivity.
 // Implemented later in the file (after the card helpers are available).
@@ -1451,6 +1453,7 @@ public:
     lua_register(L, "clock_internal_set_tempo", lua_clock_internal_set_tempo);
     lua_register(L, "clock_internal_start", lua_clock_internal_start);
     lua_register(L, "clock_internal_stop", lua_clock_internal_stop);
+    lua_register(L, "bb_midi_out_note", lua_bb_midi_out_note);
     
     // Create _c table with l_bootstrap_c_tell (handles both hardware and crow protocol)
     lua_newtable(L);
@@ -1977,6 +1980,35 @@ public:
             printf("Error adding bb.midi defaults: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         }
+
+        // Inject bb.midi.out.note binding
+        lua_getglobal(L, "bb");
+        if (lua_istable(L, -1)) {
+            // Ensure bb.midi exists
+            lua_getfield(L, -1, "midi");
+            if (!lua_istable(L, -1)) {
+                lua_pop(L, 1);
+                lua_newtable(L);
+            }
+
+            // Ensure bb.midi.out exists
+            lua_getfield(L, -1, "out");
+            if (!lua_istable(L, -1)) {
+                lua_pop(L, 1);
+                lua_newtable(L);
+            }
+
+            lua_pushcfunction(L, lua_bb_midi_out_note);
+            lua_setfield(L, -2, "note");
+
+            // Set bb.midi.out back
+            lua_setfield(L, -2, "out");
+
+            // Set bb.midi back
+            lua_setfield(L, -2, "midi");
+        } else {
+            lua_pop(L, 1);
+        }
         
         // Set up default pulse output actions
         const char* setup_pulseout_defaults = R"(
@@ -2138,6 +2170,7 @@ public:
     static int lua_clock_internal_set_tempo(lua_State* L);
     static int lua_clock_internal_start(lua_State* L);
     static int lua_clock_internal_stop(lua_State* L);
+    static int lua_bb_midi_out_note(lua_State* L);
     
     // Hardware knob and switch access
     static int lua_get_knob_main(lua_State* L);
@@ -2394,6 +2427,15 @@ static constexpr uint8_t kMidiClockPPQN = 24;
 static constexpr uint8_t kMidiClockWindow = 12;           // samples used for averaging
 static constexpr uint32_t kMidiClockTimeoutUs = 500000u;  // drop state after 0.5s gap
 
+static constexpr int kMidiNoteOffQueueSize = 16;
+
+typedef struct {
+    bool active;
+    uint8_t note;
+    uint8_t channel;
+    uint64_t due_us;
+} midi_note_off_t;
+
 static struct {
     bool running;
     uint32_t tick_count;
@@ -2403,6 +2445,8 @@ static struct {
     uint8_t intervals_pos;
     uint64_t interval_sum_us;
 } g_midi_clock = {false, 0, 0, {0}, 0, 0, 0};
+
+static midi_note_off_t g_midi_note_off_queue[kMidiNoteOffQueueSize] = {};
 
 static inline bool midi_clock_is_active_source() {
     return clock_get_source() == CLOCK_SOURCE_MIDI;
@@ -2608,6 +2652,44 @@ static void midi_clock_handle_tick(void) {
         float beat_duration_sec = (avg_interval_us * (float)kMidiClockPPQN) * 1e-6f;
         float beat = (float)g_midi_clock.tick_count / (float)kMidiClockPPQN;
         clock_update_reference_from(beat, beat_duration_sec, CLOCK_SOURCE_MIDI);
+    }
+}
+
+static inline void midi_send_note(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel) {
+#if CFG_TUD_MIDI
+    if (channel < 1) channel = 1;
+    if (channel > 16) channel = 16;
+    uint8_t status = (uint8_t)((is_on ? 0x90 : 0x80) | ((channel - 1) & 0x0F));
+    uint8_t msg[3] = {(uint8_t)status, (uint8_t)(note & 0x7F), (uint8_t)(velocity & 0x7F)};
+    tud_midi_stream_write(0, msg, sizeof(msg));
+#else
+    (void)is_on; (void)note; (void)velocity; (void)channel;
+#endif
+}
+
+static void schedule_midi_note_off(uint8_t note, uint8_t channel, uint64_t due_us) {
+    // Find a free slot
+    for (int i = 0; i < kMidiNoteOffQueueSize; i++) {
+        if (!g_midi_note_off_queue[i].active) {
+            g_midi_note_off_queue[i].active = true;
+            g_midi_note_off_queue[i].note = note;
+            g_midi_note_off_queue[i].channel = channel;
+            g_midi_note_off_queue[i].due_us = due_us;
+            return;
+        }
+    }
+
+    // Queue full: send the note off immediately to avoid hanging notes
+    midi_send_note(false, note, 0, channel);
+}
+
+static void process_pending_midi_note_offs(void) {
+    uint64_t now = time_us_64();
+    for (int i = 0; i < kMidiNoteOffQueueSize; i++) {
+        if (g_midi_note_off_queue[i].active && (now >= g_midi_note_off_queue[i].due_us)) {
+            midi_send_note(false, g_midi_note_off_queue[i].note, 0, g_midi_note_off_queue[i].channel);
+            g_midi_note_off_queue[i].active = false;
+        }
     }
 }
 
@@ -3175,6 +3257,9 @@ public:
 
             // Service USB from main loop (timer IRQs only set tick flags)
             usb_service_poll_from_main();
+
+            // Send any scheduled MIDI note-off events
+            process_pending_midi_note_offs();
             
             // Process USB RX messages from lock-free queue
             usb_rx_message_t rx_msg;
@@ -5437,6 +5522,30 @@ int LuaManager::lua_clock_internal_start(lua_State* L) {
 int LuaManager::lua_clock_internal_stop(lua_State* L) {
     clock_set_source_manual(CLOCK_SOURCE_INTERNAL);
     clock_internal_stop();
+    return 0;
+}
+
+// bb.midi.out.note(note, vel, duration, channel) - Send note on immediately and schedule note off
+int LuaManager::lua_bb_midi_out_note(lua_State* L) {
+    int note = (int)luaL_checkinteger(L, 1);
+    int vel = luaL_optinteger(L, 2, 100);
+    float duration = (float)luaL_optnumber(L, 3, 0.0);
+    int channel = luaL_optinteger(L, 4, 1);
+
+    if (note < 0) note = 0;
+    if (note > 127) note = 127;
+    if (vel < 0) vel = 0;
+    if (vel > 127) vel = 127;
+    if (channel < 1) channel = 1;
+    if (channel > 16) channel = 16;
+
+    midi_send_note(true, (uint8_t)note, (uint8_t)vel, (uint8_t)channel);
+
+    if (duration > 0.0f) {
+        uint64_t due = time_us_64() + (uint64_t)(duration * 1000000.0f);
+        schedule_midi_note_off((uint8_t)note, (uint8_t)channel, due);
+    }
+
     return 0;
 }
 
