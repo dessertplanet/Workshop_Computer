@@ -2690,6 +2690,12 @@ static void midi_clock_handle_start(void) {
     if (!midi_clock_is_active_source()) return;
     midi_clock_reset_state();
     g_midi_clock.running = true;
+    // MIDI Start implies transport reset to beat 0.
+    // We may not have enough clock ticks yet to estimate tempo, so preserve the current reference tempo
+    // (or fall back to 120 BPM) and reset position immediately.
+    float bpm = clock_get_tempo();
+    if (!(bpm > 0.0f)) bpm = 120.0f;
+    clock_update_reference_from(0.0f, 60.0f / bpm, CLOCK_SOURCE_MIDI);
     clock_start_from(CLOCK_SOURCE_MIDI);
 }
 
