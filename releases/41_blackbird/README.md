@@ -69,6 +69,7 @@ Blackbird maps the Workshop Computer's hardware to crow's inputs and outputs as 
 - **Blackbird-Specific Features: supplementary docs**:
   - [Knob & Switch API](docs/KNOB_SWITCH_API.md)
   - [Using Knobs with ASL Dynamics](docs/KNOBS_WITH_ASL.md)
+  - [MIDI API (`bb.midi`)](docs/MIDI_API.md)
   - [Pulse Input Detection](docs/PULSEIN_DETECTION.md)
   - [Pulse Output Actions](docs/PULSEOUT_ACTIONS.md)
 
