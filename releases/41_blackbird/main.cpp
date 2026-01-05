@@ -466,6 +466,7 @@ static void midi_clock_handle_start(void);
 static void midi_clock_handle_continue(void);
 static void midi_clock_handle_stop(void);
 static void process_pending_midi_note_offs(void);
+static void process_pending_midi_cc_events(void);
 static int lua_bb_midi_out_note(lua_State* L);
 
 // Chooses between internal and external clock based on clock-mode inputs and normalization probe connectivity.
@@ -1979,7 +1980,7 @@ public:
             bb.midi = bb.midi or {}
 
             -- Receive side (rx)
-            bb.midi.rx = bb.midi.rx or bb.midi.in or {}
+            bb.midi.rx = bb.midi.rx or {}
 
             bb.midi.rx.note = function(typ, note, vel, channel)
                 if typ == 'on' then
@@ -1987,15 +1988,6 @@ public:
                 elseif typ == 'off' then
                     tell('midi', 'noteoff', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
                 end
-            end
-
-            -- Legacy per-event handlers call through to note()
-            bb.midi.rx.noteon = function(note, vel, channel)
-                return bb.midi.rx.note('on', note, vel, channel)
-            end
-
-            bb.midi.rx.noteoff = function(note, vel, channel)
-                return bb.midi.rx.note('off', note, vel, channel)
             end
 
             bb.midi.rx.cc = function(num, val, channel)
@@ -2007,11 +1999,7 @@ public:
             end
 
             -- Transmit side (tx) - functions added from C later
-            bb.midi.tx = bb.midi.tx or bb.midi.out or {}
-
-            -- Compatibility aliases
-            bb.midi.in = bb.midi.rx
-            bb.midi.out = bb.midi.tx
+            bb.midi.tx = bb.midi.tx or {}
         )";
         if (luaL_dostring(L, setup_midi_defaults) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
@@ -2054,12 +2042,6 @@ public:
         lua_pushcfunction(L, lua_bb_midi_out_note);
         lua_setfield(L, -2, "note");
         lua_setfield(L, -2, "tx"); // set bb.midi.tx
-
-        // Compatibility aliases
-        lua_getfield(L, -1, "rx");
-        lua_setfield(L, -2, "in");
-        lua_getfield(L, -1, "tx");
-        lua_setfield(L, -2, "out");
 
         // Write back bb.midi and pop bb
         lua_setfield(L, -2, "midi");
@@ -2503,6 +2485,51 @@ static struct {
 
 static midi_note_off_t g_midi_note_off_queue[kMidiNoteOffQueueSize] = {};
 
+// MIDI CC flood handling:
+// Coalesce CC updates per (channel, cc) to the latest value, then dispatch with a
+// token-bucket rate limit so CC floods can't starve USB/Lua or overwhelm hosts.
+static constexpr uint32_t kMidiCcMaxDispatchPerSecond = 250;
+static constexpr uint32_t kMidiCcDispatchBurst = 64;
+static constexpr int kMidiCcMaxDispatchPerLoop = 8;
+
+static uint8_t g_midi_cc_pending_values[16][128] = {};
+static uint64_t g_midi_cc_pending_mask[16][2] = {}; // 2 * 64 bits = 128 CCs
+static uint8_t g_midi_cc_scan_ch = 0;
+static uint8_t g_midi_cc_scan_word = 0;
+static uint8_t g_midi_cc_scan_bit = 0;
+static uint32_t g_midi_cc_tokens = kMidiCcDispatchBurst;
+static uint64_t g_midi_cc_last_refill_us = 0;
+
+static inline void midi_cc_queue_update(uint8_t cc, uint8_t value, uint8_t channel) {
+    if (channel < 1 || channel > 16) return;
+    cc &= 0x7F;
+    value &= 0x7F;
+    uint8_t ch = (uint8_t)(channel - 1);
+
+    g_midi_cc_pending_values[ch][cc] = value;
+    uint8_t word = (uint8_t)(cc >> 6); // 0..1
+    uint8_t bit = (uint8_t)(cc & 63);
+    g_midi_cc_pending_mask[ch][word] |= (1ull << bit);
+}
+
+static inline void midi_cc_refill_tokens(uint64_t now_us) {
+    if (kMidiCcMaxDispatchPerSecond == 0) return;
+    if (g_midi_cc_last_refill_us == 0) {
+        g_midi_cc_last_refill_us = now_us;
+        return;
+    }
+
+    uint64_t elapsed_us = now_us - g_midi_cc_last_refill_us;
+    if (elapsed_us < 1000) return;
+
+    uint64_t add = (elapsed_us * (uint64_t)kMidiCcMaxDispatchPerSecond) / 1000000ull;
+    if (add == 0) return;
+
+    uint32_t new_tokens = g_midi_cc_tokens + (uint32_t)add;
+    g_midi_cc_tokens = (new_tokens > kMidiCcDispatchBurst) ? kMidiCcDispatchBurst : new_tokens;
+    g_midi_cc_last_refill_us += (add * 1000000ull) / (uint64_t)kMidiCcMaxDispatchPerSecond;
+}
+
 static inline bool midi_clock_is_active_source() {
     return clock_get_source() == CLOCK_SOURCE_MIDI;
 }
@@ -2552,30 +2579,6 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
                         }
                     } else {
                         lua_pop(L, 1); // pop non-function note
-                    }
-
-                    // Legacy handlers
-                    if (!handled) {
-                        lua_getfield(L, -1, event_name);
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushinteger(L, note);
-                            lua_pushinteger(L, velocity);
-                            lua_pushinteger(L, channel);
-                            if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
-                                const char* err = lua_tostring(L, -1);
-                                if (usb_console_ready()) {
-                                    tud_cdc_write_str("bb.midi.rx note handler error: ");
-                                    tud_cdc_write_str(err ? err : "unknown error");
-                                    tud_cdc_write_str("\n\r");
-                                    tud_cdc_write_flush();
-                                }
-                                lua_pop(L, 1);
-                            } else {
-                                handled = true;
-                            }
-                        } else {
-                            lua_pop(L, 1); // pop non-function
-                        }
                     }
                 }
                 lua_pop(L, 1); // pop midi.rx
@@ -2683,6 +2686,57 @@ static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
 
     if (!handled) {
         Caw_printf("^^midi('cc',%u,%u,%u)", cc, value, channel);
+    }
+}
+
+static void process_pending_midi_cc_events(void) {
+    // Fast-path: nothing pending.
+    bool any_pending = false;
+    for (int ch = 0; ch < 16; ch++) {
+        if (g_midi_cc_pending_mask[ch][0] || g_midi_cc_pending_mask[ch][1]) {
+            any_pending = true;
+            break;
+        }
+    }
+    if (!any_pending) return;
+
+    uint64_t now_us = time_us_64();
+    midi_cc_refill_tokens(now_us);
+
+    int dispatched = 0;
+    while (dispatched < kMidiCcMaxDispatchPerLoop && g_midi_cc_tokens > 0) {
+        bool found = false;
+
+        for (int scan = 0; scan < (16 * 2 * 64); scan++) {
+            uint8_t ch = g_midi_cc_scan_ch;
+            uint8_t word = g_midi_cc_scan_word;
+            uint8_t bit = g_midi_cc_scan_bit;
+
+            // Advance scan position for next time (round-robin fairness).
+            g_midi_cc_scan_bit++;
+            if (g_midi_cc_scan_bit >= 64) {
+                g_midi_cc_scan_bit = 0;
+                g_midi_cc_scan_word ^= 1;
+                if (g_midi_cc_scan_word == 0) {
+                    g_midi_cc_scan_ch = (uint8_t)((g_midi_cc_scan_ch + 1) & 0x0F);
+                }
+            }
+
+            uint64_t mask = g_midi_cc_pending_mask[ch][word];
+            uint64_t bitmask = (1ull << bit);
+            if ((mask & bitmask) == 0) continue;
+
+            g_midi_cc_pending_mask[ch][word] = (uint64_t)(mask & ~bitmask);
+            uint8_t cc = (uint8_t)((word << 6) | bit);
+            uint8_t value = g_midi_cc_pending_values[ch][cc];
+            dispatch_midi_cc_event(cc, value, (uint8_t)(ch + 1));
+            g_midi_cc_tokens--;
+            dispatched++;
+            found = true;
+            break;
+        }
+
+        if (!found) break;
     }
 }
 
@@ -2813,7 +2867,8 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
     } else if (msg == 0x80) {
         dispatch_midi_note_event(false, data1, data2, channel);
     } else if (msg == 0xB0) {
-        dispatch_midi_cc_event(data1, data2, channel);
+        // CC can arrive at very high rates (faders/encoders). Coalesce + rate-limit dispatch.
+        midi_cc_queue_update(data1, data2, channel);
     } else if (msg == 0xE0) {
         uint16_t bend14 = (uint16_t)(data1 | (data2 << 7));
         dispatch_midi_bend_event(bend14, channel);
@@ -3437,6 +3492,9 @@ public:
 
             // Send any scheduled MIDI note-off events
             process_pending_midi_note_offs();
+
+            // Drain pending/coalesced MIDI CC events (bounded + rate-limited)
+            process_pending_midi_cc_events();
             
             // Process USB RX messages from lock-free queue
             usb_rx_message_t rx_msg;
