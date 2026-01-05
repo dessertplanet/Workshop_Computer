@@ -1983,19 +1983,10 @@ public:
 
             bb.midi.rx.note = function(typ, note, vel, channel)
                 if typ == 'on' then
-                    tell('midi', 'noteon', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+                    tell('midi', 'on', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
                 elseif typ == 'off' then
-                    tell('midi', 'noteoff', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+                    tell('midi', 'off', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
                 end
-            end
-
-            -- Legacy per-event handlers call through to note()
-            bb.midi.rx.noteon = function(note, vel, channel)
-                return bb.midi.rx.note('on', note, vel, channel)
-            end
-
-            bb.midi.rx.noteoff = function(note, vel, channel)
-                return bb.midi.rx.note('off', note, vel, channel)
             end
 
             bb.midi.rx.cc = function(num, val, channel)
@@ -2519,7 +2510,6 @@ static void midi_clock_reset_state(void) {
 
 // Dispatch Note On/Off into Lua (bb.midi.rx.note or legacy noteon/noteoff) or fall back to ^^midi('noteon'|'noteoff',...)
 static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel) {
-    const char* event_name = is_on ? "noteon" : "noteoff";
     const char* type_name = is_on ? "on" : "off";
     bool handled = false;
     LuaManager* lua_mgr = LuaManager::getInstance();
@@ -2553,30 +2543,6 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
                     } else {
                         lua_pop(L, 1); // pop non-function note
                     }
-
-                    // Legacy handlers
-                    if (!handled) {
-                        lua_getfield(L, -1, event_name);
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushinteger(L, note);
-                            lua_pushinteger(L, velocity);
-                            lua_pushinteger(L, channel);
-                            if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
-                                const char* err = lua_tostring(L, -1);
-                                if (usb_console_ready()) {
-                                    tud_cdc_write_str("bb.midi.rx note handler error: ");
-                                    tud_cdc_write_str(err ? err : "unknown error");
-                                    tud_cdc_write_str("\n\r");
-                                    tud_cdc_write_flush();
-                                }
-                                lua_pop(L, 1);
-                            } else {
-                                handled = true;
-                            }
-                        } else {
-                            lua_pop(L, 1); // pop non-function
-                        }
-                    }
                 }
                 lua_pop(L, 1); // pop midi.rx
             }
@@ -2587,7 +2553,7 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
     }
 
     if (!handled) {
-        Caw_printf("^^midi('%s',%u,%u,%u)", event_name, note, velocity, channel);
+        Caw_printf("^^midi('%s',%u,%u,%u)", type_name, note, velocity, channel);
     }
 }
 
