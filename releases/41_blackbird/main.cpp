@@ -2846,23 +2846,21 @@ static void process_usb_midi_packets_device(void) {
 #endif
 }
 
-// Drain host-side MIDI stream and surface events into Lua dispatch
-static void drain_host_midi_stream(uint8_t dev_addr) {
+// Drain host-side USB-MIDI event packets and surface events into Lua dispatch.
+// NOTE: `tuh_midi_stream_read()` returns raw MIDI bytes, not 4-byte USB-MIDI event packets.
+// We must use `tuh_midi_packet_read()` here since `handle_usb_midi_packet()` expects a 4-byte event packet.
+static void drain_host_midi_packets(uint8_t dev_addr) {
 #if TUSB_OPT_HOST_ENABLED
     if (dev_addr == 0 || !tuh_midi_configured(dev_addr)) {
         return;
     }
 
-    uint8_t cable_num = 0;
-    uint8_t buffer[64];
-    while (1) {
-        int32_t count = tuh_midi_stream_read(dev_addr, &cable_num, buffer, sizeof(buffer));
-        if (count <= 0) {
-            break;
-        }
-        for (int32_t i = 0; i + 3 < count; i += 4) {
-            handle_usb_midi_packet(&buffer[i]);
-        }
+    uint8_t packet[4];
+    const int kMaxMidiPacketsPerLoop = 32;
+    int processed = 0;
+    while (processed < kMaxMidiPacketsPerLoop && tuh_midi_packet_read(dev_addr, packet)) {
+        handle_usb_midi_packet(packet);
+        processed++;
     }
 #else
     (void)dev_addr;
@@ -2871,7 +2869,7 @@ static void drain_host_midi_stream(uint8_t dev_addr) {
 
 static void process_usb_midi_packets_host(void) {
 #if TUSB_OPT_HOST_ENABLED
-    drain_host_midi_stream(g_midi_host_addr);
+    drain_host_midi_packets(g_midi_host_addr);
 #endif
 }
 
@@ -2896,7 +2894,7 @@ void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance) {
 
 void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets) {
     (void)num_packets;
-    drain_host_midi_stream(dev_addr);
+    drain_host_midi_packets(dev_addr);
 }
 
 void tuh_midi_tx_cb(uint8_t dev_addr) {
