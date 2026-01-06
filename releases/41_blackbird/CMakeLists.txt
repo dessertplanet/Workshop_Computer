@@ -192,6 +192,12 @@ add_custom_command(
     TARGET ${CARD_NAME}
     POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_SOURCE_DIR}/UF2
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_SOURCE_DIR}/UF2/platform
+    # Also copy the raw UF2 (no user-script erase blocks). Useful as a base for tools (e.g. Web-Druid)
+    # that want to inject a startup script into the reserved user-script flash region.
+    COMMAND ${CMAKE_COMMAND} -E copy
+            ${CMAKE_CURRENT_BINARY_DIR}/${CARD_NAME}.uf2
+        ${CMAKE_CURRENT_SOURCE_DIR}/UF2/platform/${CARD_NAME}_platform.uf2
     # First create a temp UF2 with erase blocks
     COMMAND ${CMAKE_COMMAND} -E env python3 
             ${CMAKE_CURRENT_SOURCE_DIR}/util/add_uf2_erase_block.py
