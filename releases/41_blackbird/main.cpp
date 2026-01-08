@@ -6491,9 +6491,9 @@ int main()
     // Disable stdio buffering for immediate console output
     setvbuf(stdout, NULL, _IONBF, 0);
     
-    // Wait briefly (up to 1500ms) for initial USB activity
+    // Wait for initial USB activity; some hosts (e.g., larger audio/MIDI devices) can take a few seconds
     if (g_usb_role == USB_ROLE_DEVICE) {
-        absolute_time_t until = make_timeout_time_ms(1500);
+        absolute_time_t until = make_timeout_time_ms(4000);
         while (!tud_cdc_connected() && absolute_time_diff_us(get_absolute_time(), until) > 0) {
             tud_task();  // Must service TinyUSB while waiting
             usb_wait_led_step();
@@ -6501,7 +6501,7 @@ int main()
         }
     } else {
 #if TUSB_OPT_HOST_ENABLED
-        absolute_time_t until = make_timeout_time_ms(1500);
+        absolute_time_t until = make_timeout_time_ms(4000);
         while (absolute_time_diff_us(get_absolute_time(), until) > 0) {
             tuh_task();
             usb_wait_led_step(); // host-specific animation path
