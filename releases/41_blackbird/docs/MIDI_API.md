@@ -14,7 +14,7 @@ Blackbird supports USB-MIDI in both directions, depending on the USB role it boo
 - **Device mode**: Blackbird enumerates as a USB device (CDC serial + USB-MIDI). This is the mode you use with a computer + web-druid/druid for live coding and seeing `print()` output.
 - **Host mode**: Blackbird acts as a USB host and reads MIDI from a class-compliant USB-MIDI device plugged into it (controller, keyboard, etc.).
 
-Role selection is automatic at boot, based on the Workshop Computer’s USB power orientation (whether it believes it is downstream-facing power / DFP). In host mode, Blackbird waits briefly at startup for a USB-MIDI device to mount; if none appears, it falls back to device mode. Note you always need to power the Workshop System completely off and back on to switch between device and host mode- resetting computer alone is not enough.
+Role selection is automatic at boot, based on the Workshop Computer’s USB power orientation (whether it believes it is downstream-facing power / DFP). In host mode, Blackbird waits briefly at startup for a USB-MIDI device to mount. Note you always need to power the Workshop System completely off and back on to switch between device and host mode- resetting computer alone is not enough.
 
 Tip: during the startup “waiting” period, the LEDs animate differently:
 
