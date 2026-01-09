@@ -3269,10 +3269,10 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
             bool has_fine7 = pop_fine_velocity7(channel, &fine7);
             float vel = (float)data2;
             if (has_fine7) vel += ((float)fine7 / 128.0f);
-            if (g_midi_lua_dispatch_budget > 0) {
-                g_midi_lua_dispatch_budget--;
-                dispatch_midi_note_event(true, data1, vel, channel);
-            }
+            // Note-on always passes. Throttling is applied to high-rate controllers (CC/bend/etc)
+            // but dropping note-ons breaks musical correctness (and in MPE, other messages can
+            // easily consume the entire per-tick budget before the note-on arrives).
+            dispatch_midi_note_event(true, data1, vel, channel);
         }
     } else if (msg == 0x80) {
         // Note-off always passes to avoid stuck notes.
