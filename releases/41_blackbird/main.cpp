@@ -475,6 +475,11 @@ static int lua_bb_mpe_note_default(lua_State* L);
 static int lua_bb_mpe_bend_default(lua_State* L);
 static int lua_bb_mpe_slide_default(lua_State* L);
 static int lua_bb_mpe_pressure_default(lua_State* L);
+static int bb_mpe_index(lua_State* L);
+static int bb_mpe_newindex(lua_State* L);
+
+// MPE routing: when enabled, route incoming MIDI to bb.mpe.* instead of bb.midi.rx.*
+static volatile bool g_mpe_mode_enabled = false;
 
 // Chooses between internal and external clock based on clock-mode inputs and normalization probe connectivity.
 // Implemented later in the file (after the card helpers are available).
@@ -1985,7 +1990,7 @@ public:
 
         // MIDI table setup (minimal, low-allocation). Host-forwarding defaults are implemented in C
         // (see dispatch_* fallbacks) to avoid Lua heap spikes during startup.
-        const char* setup_midi_defaults = R"(
+                const char* setup_midi_defaults = R"(
             bb.midi = bb.midi or {}
             bb.midi.rx = bb.midi.rx or bb.midi.in or {}
             bb.midi.tx = bb.midi.tx or bb.midi.out or {}
@@ -1993,22 +1998,10 @@ public:
             bb.midi.out = bb.midi.tx
 
             bb.mpe = bb.mpe or {}
-            bb.mpe.mode = bb.mpe.mode or 'off'
 
-            do
-              local mt = getmetatable(bb.mpe) or {}
-              if mt.__newindex == nil then
-                mt.__newindex = function(t, k, v)
-                  rawset(t, k, v)
-                  if k == 'mode' then
-                    bb_mpe_set_mode(v)
-                  end
-                end
-                setmetatable(bb.mpe, mt)
-              end
-            end
-
-            bb_mpe_set_mode(bb.mpe.mode)
+                        -- Keep a backing field; C installs a metatable so bb.mpe.mode reads/writes always work.
+                        bb.mpe._mode = bb.mpe._mode or bb.mpe.mode or 'off'
+                        bb.mpe.mode = nil
         )";
         if (luaL_dostring(L, setup_midi_defaults) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
@@ -2047,21 +2040,40 @@ public:
         if (!lua_istable(L, -1)) {
             lua_pop(L, 1);
             lua_newtable(L);
-            lua_pushliteral(L, "off");
-            lua_setfield(L, -2, "mode");
             lua_setfield(L, -3, "mpe");
-        } else {
-            // Ensure bb.mpe.mode exists
-            lua_getfield(L, -1, "mode");
-            if (!lua_isstring(L, -1)) {
-                lua_pop(L, 1);
-                lua_pushliteral(L, "off");
-                lua_setfield(L, -2, "mode");
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // pop bb.mpe
+            lua_getfield(L, -2, "mpe");
         }
+
+        // Ensure backing field bb.mpe._mode exists; avoid creating a real `mode` key.
+        lua_getfield(L, -1, "_mode");
+        if (!lua_isstring(L, -1)) {
+            lua_pop(L, 1);
+            lua_pushliteral(L, "off");
+            lua_setfield(L, -2, "_mode");
+        } else {
+            lua_pop(L, 1);
+        }
+
+        // Remove real `mode` key if present so assignments can be intercepted.
+        lua_pushnil(L);
+        lua_setfield(L, -2, "mode");
+
+        // Install a C metatable so bb.mpe.mode reads/writes always work.
+        lua_newtable(L);
+        lua_pushcfunction(L, bb_mpe_index);
+        lua_setfield(L, -2, "__index");
+        lua_pushcfunction(L, bb_mpe_newindex);
+        lua_setfield(L, -2, "__newindex");
+        lua_setmetatable(L, -2);
+
+        // Sync initial mode into C flag.
+        lua_getfield(L, -1, "_mode");
+        const char* mode = lua_tostring(L, -1);
+        bool enable = (mode && (strcmp(mode, "on") == 0));
+        g_mpe_mode_enabled = enable;
+        lua_pop(L, 1);
+
+        lua_pop(L, 1); // pop bb.mpe
 
         // Note: we intentionally do not install Lua-side default MPE forwarding callbacks here.
         // If no handler is installed, dispatch_* will forward to host via Caw_printf without
@@ -2556,9 +2568,6 @@ static constexpr uint32_t kMidiHiResVelocityTimeoutUs = 50000u; // 50ms: tolerat
 static volatile uint8_t g_midi_vel_fine7[16] = {0};
 static volatile uint32_t g_midi_vel_fine_time_us[16] = {0};
 static volatile bool g_midi_vel_fine_valid[16] = {false};
-
-// MPE routing: when enabled, route incoming MIDI to bb.mpe.* instead of bb.midi.rx.*
-static volatile bool g_mpe_mode_enabled = false;
 
 // MIDI->Lua throttling
 // Limit the number of Lua calls we do per USB service tick (1kHz) so arpeggiators
@@ -4968,6 +4977,52 @@ static int bb_connected_index(lua_State* L) {
     
     lua_pushboolean(L, card->IsInputConnected(input));
     return 1;
+}
+
+// bb.mpe metatable helpers: virtual `mode` property backed by `_mode`.
+static int bb_mpe_index(lua_State* L) {
+    // stack: 1=table, 2=key
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        const char* key = lua_tostring(L, 2);
+        if (key && strcmp(key, "mode") == 0) {
+            lua_getfield(L, 1, "_mode");
+            if (!lua_isstring(L, -1)) {
+                lua_pop(L, 1);
+                lua_pushliteral(L, "off");
+            }
+            return 1;
+        }
+    }
+    lua_pushvalue(L, 2);
+    lua_rawget(L, 1);
+    return 1;
+}
+
+static int bb_mpe_newindex(lua_State* L) {
+    // stack: 1=table, 2=key, 3=value
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        const char* key = lua_tostring(L, 2);
+        if (key && strcmp(key, "mode") == 0) {
+            // Store in backing field using raw set (avoid __newindex recursion)
+            lua_pushliteral(L, "_mode");
+            lua_pushvalue(L, 3);
+            lua_rawset(L, 1);
+
+            // Intentionally do NOT create a real `mode` key. Leaving it absent ensures
+            // subsequent bb.mpe.mode assignments continue to route through __newindex.
+
+            const char* mode = lua_tostring(L, 3);
+            bool enable = (mode && (strcmp(mode, "on") == 0));
+            g_mpe_mode_enabled = enable;
+            lua_settop(L, 0);
+            return 0;
+        }
+    }
+    lua_pushvalue(L, 2);
+    lua_pushvalue(L, 3);
+    lua_rawset(L, 1);
+    lua_settop(L, 0);
+    return 0;
 }
 
 // CASL bridge functions
