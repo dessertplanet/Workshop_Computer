@@ -459,7 +459,7 @@ static void blackbird_core1_background_service(void);
 static void process_usb_midi_packets_device(void);
 static void process_usb_midi_packets_host(void);
 static void handle_usb_midi_packet(const uint8_t packet[4]);
-static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel);
+static void dispatch_midi_note_event(bool is_on, uint8_t note, float velocity, uint8_t channel);
 static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel);
 static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel);
 static void midi_clock_handle_tick(void);
@@ -2476,6 +2476,15 @@ static constexpr uint32_t kMidiClockTimeoutUs = 500000u;  // drop state after 0.
 
 static constexpr int kMidiNoteOffQueueSize = 16;
 
+// High-resolution velocity (MIDI 1.0 convention): CC88 acts as a velocity prefix
+// for the next Note On on the same channel, providing extra 7 fine bits.
+// We expose this to Lua by passing velocity as a float: vel = vel7 + (fine7 / 128).
+static constexpr uint8_t kMidiHiResVelocityCC = 88;
+static constexpr uint32_t kMidiHiResVelocityTimeoutUs = 50000u; // 50ms: tolerate small scheduling jitter
+static volatile uint8_t g_midi_vel_fine7[16] = {0};
+static volatile uint32_t g_midi_vel_fine_time_us[16] = {0};
+static volatile bool g_midi_vel_fine_valid[16] = {false};
+
 // MIDI->Lua throttling
 // Limit the number of Lua calls we do per USB service tick (1kHz) so arpeggiators
 // and fast playing can't outpace Lua GC. Note-offs always pass to avoid stuck notes.
@@ -2557,9 +2566,17 @@ static void midi_clock_reset_state(void) {
 }
 
 // Dispatch Note On/Off into Lua (bb.midi.rx.note or legacy noteon/noteoff) or fall back to ^^midi('noteon'|'noteoff',...)
-static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel) {
+static void dispatch_midi_note_event(bool is_on, uint8_t note, float velocity, uint8_t channel) {
     const char* type_name = is_on ? "on" : "off";
     bool handled = false;
+    // Preserve a 7-bit velocity for legacy / host-forward paths.
+    uint8_t velocity7 = 0;
+    if (velocity > 0.0f) {
+        float clamped = velocity;
+        if (clamped < 0.0f) clamped = 0.0f;
+        if (clamped > 127.999f) clamped = 127.999f;
+        velocity7 = (uint8_t)clamped;
+    }
     LuaManager* lua_mgr = LuaManager::getInstance();
     if (lua_mgr && lua_mgr->L) {
         lua_State* L = lua_mgr->L;
@@ -2574,7 +2591,7 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
                     if (lua_isfunction(L, -1)) {
                         lua_pushstring(L, type_name);
                         lua_pushinteger(L, note);
-                        lua_pushinteger(L, velocity);
+                        lua_pushnumber(L, (lua_Number)velocity);
                         lua_pushinteger(L, channel);
                         int rc = lua_pcall(L, 4, 0, 0);
                         if (rc != LUA_OK) {
@@ -2610,7 +2627,7 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
     }
 
     if (!handled) {
-        Caw_printf("^^midi('%s',%u,%u,%u)", type_name, note, velocity, channel);
+        Caw_printf("^^midi('%s',%u,%u,%u)", type_name, note, velocity7, channel);
     }
 }
 
@@ -2845,20 +2862,54 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
     uint8_t msg = status & 0xF0;
     uint8_t channel = (status & 0x0F) + 1; // MIDI channels are 1-16 for users
 
+    // Helper: consume CC88 fine velocity for this channel, if still fresh.
+    auto pop_fine_velocity7 = [&](uint8_t ch, uint8_t* fine_out) -> bool {
+        if (ch < 1 || ch > 16) return false;
+        uint8_t idx = (uint8_t)(ch - 1);
+        if (!g_midi_vel_fine_valid[idx]) return false;
+        uint32_t now_us = time_us_32();
+        uint32_t age_us = (uint32_t)(now_us - g_midi_vel_fine_time_us[idx]);
+        // Always consume when we check, to preserve the "applies to next note" behavior.
+        uint8_t fine = g_midi_vel_fine7[idx];
+        g_midi_vel_fine_valid[idx] = false;
+        if (age_us > kMidiHiResVelocityTimeoutUs) return false;
+        *fine_out = (uint8_t)(fine & 0x7F);
+        return true;
+    };
+
+    // Helper: clear any pending fine velocity on this channel.
+    auto clear_fine_velocity = [&](uint8_t ch) {
+        if (ch < 1 || ch > 16) return;
+        g_midi_vel_fine_valid[ch - 1] = false;
+    };
+
     if (msg == 0x90) {
         if (data2 == 0) {
             // Note-off always passes to avoid stuck notes.
-            dispatch_midi_note_event(false, data1, data2, channel);
+            clear_fine_velocity(channel);
+            dispatch_midi_note_event(false, data1, (float)data2, channel);
         } else {
+            // Consume CC88 fine velocity even if we're dropping this Note On due to throttling.
+            uint8_t fine7 = 0;
+            bool has_fine7 = pop_fine_velocity7(channel, &fine7);
+            float vel = (float)data2;
+            if (has_fine7) vel += ((float)fine7 / 128.0f);
             if (g_midi_lua_dispatch_budget > 0) {
                 g_midi_lua_dispatch_budget--;
-                dispatch_midi_note_event(true, data1, data2, channel);
+                dispatch_midi_note_event(true, data1, vel, channel);
             }
         }
     } else if (msg == 0x80) {
         // Note-off always passes to avoid stuck notes.
-        dispatch_midi_note_event(false, data1, data2, channel);
+        clear_fine_velocity(channel);
+        dispatch_midi_note_event(false, data1, (float)data2, channel);
     } else if (msg == 0xB0) {
+        if (data1 == kMidiHiResVelocityCC && channel >= 1 && channel <= 16) {
+            uint8_t idx = (uint8_t)(channel - 1);
+            g_midi_vel_fine7[idx] = (uint8_t)(data2 & 0x7F);
+            g_midi_vel_fine_time_us[idx] = time_us_32();
+            g_midi_vel_fine_valid[idx] = true;
+        }
         if (g_midi_lua_dispatch_budget > 0) {
             g_midi_lua_dispatch_budget--;
             dispatch_midi_cc_event(data1, data2, channel);

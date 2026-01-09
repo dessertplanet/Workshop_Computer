@@ -50,12 +50,34 @@ Unified note handler.
 
 - `type`: string, `'on'` or `'off'`
 - `note`: integer 0–127
-- `vel`: integer 0–127
+- `vel`: number 0–127 (see “High-resolution velocity (CC88)” below)
 - `channel`: integer 1–16
 
 Notes:
 
 - A MIDI **Note On** with velocity `0` is treated as a **Note Off** (this is common MIDI practice).
+
+#### High-resolution velocity (CC88)
+
+Blackbird supports the MIDI 1.0 convention **CC88 = High Resolution Velocity Prefix**.
+
+If a controller sends **CC88** immediately before a **Note On** on the same channel, Blackbird will pass `vel` as a **fractional number** to preserve extra resolution:
+
+- Coarse velocity is the Note On velocity byte (0–127)
+- Fine velocity is the CC88 value (0–127)
+
+Encoding used by Blackbird:
+
+`vel = vel7 + (fine7 / 128)`
+
+This keeps the Lua API the same (`bb.midi.rx.note(type, note, vel, channel)`), while allowing scripts to recover 14-bit velocity when available:
+
+- `vel14 = math.floor(vel * 128 + 0.5)`  -- 0..16383
+
+Notes:
+
+- CC88 is treated as applying to the **next Note On** on that channel.
+- If CC88 arrives but no Note On follows soon, it expires (to avoid “stale” fine velocity being applied later).
 
 Example: MIDI note → 1V/oct pitch on `output[1]` (middle C = 60 → 0V)
 
