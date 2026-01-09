@@ -6512,22 +6512,6 @@ int main()
             usb_wait_led_step(); // host-specific animation path
             tight_loop_contents();
         }
-
-        // If no host MIDI device was seen during startup window, fall back to device mode.
-        if (!g_host_ready) {
-            // Host never mounted; fall back to device without explicit host stop (not provided in TinyUSB API)
-            sleep_ms(10);
-            g_usb_role = USB_ROLE_DEVICE;
-            g_usb_power_state = ComputerCard::Unsupported;
-            tud_init(BOARD_DEVICE_RHPORT_NUM);
-            // Run a short device wait so CDC/MIDI can enumerate cleanly
-            absolute_time_t dev_until = make_timeout_time_ms(1000);
-            while (!tud_cdc_connected() && absolute_time_diff_us(get_absolute_time(), dev_until) > 0) {
-                tud_task();
-                usb_wait_led_step();
-                tight_loop_contents();
-            }
-        }
 #endif
     }
 
