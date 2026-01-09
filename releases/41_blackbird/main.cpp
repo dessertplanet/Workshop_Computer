@@ -291,6 +291,7 @@ static constexpr uint32_t kProcessSampleOverrunThresholdUs =
 static constexpr uint32_t kClockServiceRateHz = 1000;      // crow-compatible cadence
 static constexpr uint32_t kTimerServiceRateHz = 1500;      // ~1.5kHz target (crow-compatible cadence)
 static constexpr int kLuaGcStepSize = 2; // small incremental GC step per main loop
+static constexpr int kLuaMidiGcStepSize = 25; // extra GC work per MIDI event burst (prevents Lua OOM)
 static constexpr uint32_t kMainLoopSoftBudgetUs = 8000; // soft budget per loop to reduce stalls
 static constexpr int kMaxLogMessagesPerLoop = 4; // cap logs per loop to avoid large spikes
 // ProcessSample (Core 1 audio thread) performance
@@ -1983,18 +1984,18 @@ public:
 
             bb.midi.rx.note = function(typ, note, vel, channel)
                 if typ == 'on' then
-                    tell('midi', 'on', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+                    tell('midi', "'on'", note or 0, vel or 0, channel or 1)
                 elseif typ == 'off' then
-                    tell('midi', 'off', tostring(note or 0), tostring(vel or 0), tostring(channel or 1))
+                    tell('midi', "'off'", note or 0, vel or 0, channel or 1)
                 end
             end
 
             bb.midi.rx.cc = function(num, val, channel)
-                tell('midi', 'cc', tostring(num or 0), tostring(val or 0), tostring(channel or 1))
+                tell('midi', "'cc'", num or 0, val or 0, channel or 1)
             end
 
             bb.midi.rx.bend = function(val, channel)
-                tell('midi', 'bend', tostring(val or 0))
+                tell('midi', "'bend'", val or 0)
             end
 
             -- Transmit side (tx) - functions added from C later
@@ -2475,6 +2476,12 @@ static constexpr uint32_t kMidiClockTimeoutUs = 500000u;  // drop state after 0.
 
 static constexpr int kMidiNoteOffQueueSize = 16;
 
+// MIDI->Lua throttling
+// Limit the number of Lua calls we do per USB service tick (1kHz) so arpeggiators
+// and fast playing can't outpace Lua GC. Note-offs always pass to avoid stuck notes.
+static constexpr int kMaxMidiLuaDispatchPerUsbTick = 1;
+static int g_midi_lua_dispatch_budget = 0;
+
 typedef struct {
     bool active;
     uint8_t note;
@@ -2493,6 +2500,47 @@ static struct {
 } g_midi_clock = {false, 0, 0, {0}, 0, 0, 0};
 
 static midi_note_off_t g_midi_note_off_queue[kMidiNoteOffQueueSize] = {};
+
+static inline void lua_mem_snapshot_if_console(lua_State* L, const char* tag) {
+    if (!L || !usb_console_ready()) return;
+    int kb_used = lua_gc(L, LUA_GCCOUNT, 0);
+    int bytes = lua_gc(L, LUA_GCCOUNTB, 0);
+    char buf[128];
+    snprintf(buf, sizeof(buf), "[lua-mem] %s: %d KB + %d B\n\r", tag ? tag : "(null)", kb_used, bytes);
+    tud_cdc_write_str(buf);
+}
+
+static inline void lua_call_init_if_present(lua_State* L, const char* tag) {
+    if (!L) return;
+
+    lua_getglobal(L, "init");
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+
+    lua_mem_snapshot_if_console(L, tag);
+    int rc = lua_pcall(L, 0, 0, 0);
+    if (rc != LUA_OK) {
+        if (usb_console_ready()) {
+            if (rc == LUA_ERRMEM) {
+                tud_cdc_write_str("init() OOM (LUA_ERRMEM)\n\r");
+                lua_mem_snapshot_if_console(L, "init-oom");
+            } else {
+                const char* err = lua_tostring(L, -1);
+                tud_cdc_write_str("init() error: ");
+                tud_cdc_write_str(err ? err : "unknown error");
+                tud_cdc_write_str("\n\r");
+            }
+            tud_cdc_write_flush();
+        }
+        lua_pop(L, 1);
+    } else {
+        lua_mem_snapshot_if_console(L, tag);
+    }
+
+    lua_settop(L, 0);
+}
 
 static inline bool midi_clock_is_active_source() {
     return clock_get_source() == CLOCK_SOURCE_MIDI;
@@ -2528,12 +2576,17 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
                         lua_pushinteger(L, note);
                         lua_pushinteger(L, velocity);
                         lua_pushinteger(L, channel);
-                        if (lua_pcall(L, 4, 0, 0) != LUA_OK) {
-                            const char* err = lua_tostring(L, -1);
+                        int rc = lua_pcall(L, 4, 0, 0);
+                        if (rc != LUA_OK) {
                             if (usb_console_ready()) {
-                                tud_cdc_write_str("bb.midi.rx note handler error: ");
-                                tud_cdc_write_str(err ? err : "unknown error");
-                                tud_cdc_write_str("\n\r");
+                                if (rc == LUA_ERRMEM) {
+                                    tud_cdc_write_str("bb.midi.rx note handler OOM (LUA_ERRMEM)\n\r");
+                                } else {
+                                    const char* err = lua_tostring(L, -1);
+                                    tud_cdc_write_str("bb.midi.rx note handler error: ");
+                                    tud_cdc_write_str(err ? err : "unknown error");
+                                    tud_cdc_write_str("\n\r");
+                                }
                                 tud_cdc_write_flush();
                             }
                             lua_pop(L, 1);
@@ -2550,6 +2603,10 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, uint8_t velocity,
         }
         lua_pop(L, 1); // pop bb or nil
         lua_settop(L, 0);
+
+        // MIDI can arrive in short bursts; do a small incremental GC step
+        // here so allocations inside user handlers can't outpace the main-loop GC.
+        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
 
     if (!handled) {
@@ -2579,12 +2636,17 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
                     if (lua_isfunction(L, -1)) {
                         lua_pushnumber(L, val);
                         lua_pushinteger(L, channel);
-                        if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
-                            const char* err = lua_tostring(L, -1);
+                        int rc = lua_pcall(L, 2, 0, 0);
+                        if (rc != LUA_OK) {
                             if (usb_console_ready()) {
-                                tud_cdc_write_str("bb.midi.rx bend handler error: ");
-                                tud_cdc_write_str(err ? err : "unknown error");
-                                tud_cdc_write_str("\n\r");
+                                if (rc == LUA_ERRMEM) {
+                                    tud_cdc_write_str("bb.midi.rx bend handler OOM (LUA_ERRMEM)\n\r");
+                                } else {
+                                    const char* err = lua_tostring(L, -1);
+                                    tud_cdc_write_str("bb.midi.rx bend handler error: ");
+                                    tud_cdc_write_str(err ? err : "unknown error");
+                                    tud_cdc_write_str("\n\r");
+                                }
                                 tud_cdc_write_flush();
                             }
                             lua_pop(L, 1);
@@ -2601,6 +2663,9 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
         }
         lua_pop(L, 1); // pop bb or nil
         lua_settop(L, 0);
+
+        // Keep Lua GC responsive under high-rate controllers.
+        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
 
     if (!handled) {
@@ -2625,12 +2690,19 @@ static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
                         lua_pushinteger(L, cc);
                         lua_pushinteger(L, value);
                         lua_pushinteger(L, channel);
-                        if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
-                            const char* err = lua_tostring(L, -1);
-                            tud_cdc_write_str("bb.midi.rx cc handler error: ");
-                            tud_cdc_write_str(err ? err : "unknown error");
-                            tud_cdc_write_str("\n\r");
-                            tud_cdc_write_flush();
+                        int rc = lua_pcall(L, 3, 0, 0);
+                        if (rc != LUA_OK) {
+                            if (usb_console_ready()) {
+                                if (rc == LUA_ERRMEM) {
+                                    tud_cdc_write_str("bb.midi.rx cc handler OOM (LUA_ERRMEM)\n\r");
+                                } else {
+                                    const char* err = lua_tostring(L, -1);
+                                    tud_cdc_write_str("bb.midi.rx cc handler error: ");
+                                    tud_cdc_write_str(err ? err : "unknown error");
+                                    tud_cdc_write_str("\n\r");
+                                }
+                                tud_cdc_write_flush();
+                            }
                             lua_pop(L, 1);
                         } else {
                             handled = true;
@@ -2645,6 +2717,9 @@ static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
         }
         lua_pop(L, 1); // pop bb or nil
         lua_settop(L, 0);
+
+        // Keep Lua GC responsive under high-rate controllers.
+        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
 
     if (!handled) {
@@ -2772,17 +2847,28 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
 
     if (msg == 0x90) {
         if (data2 == 0) {
+            // Note-off always passes to avoid stuck notes.
             dispatch_midi_note_event(false, data1, data2, channel);
         } else {
-            dispatch_midi_note_event(true, data1, data2, channel);
+            if (g_midi_lua_dispatch_budget > 0) {
+                g_midi_lua_dispatch_budget--;
+                dispatch_midi_note_event(true, data1, data2, channel);
+            }
         }
     } else if (msg == 0x80) {
+        // Note-off always passes to avoid stuck notes.
         dispatch_midi_note_event(false, data1, data2, channel);
     } else if (msg == 0xB0) {
-        dispatch_midi_cc_event(data1, data2, channel);
+        if (g_midi_lua_dispatch_budget > 0) {
+            g_midi_lua_dispatch_budget--;
+            dispatch_midi_cc_event(data1, data2, channel);
+        }
     } else if (msg == 0xE0) {
         uint16_t bend14 = (uint16_t)(data1 | (data2 << 7));
-        dispatch_midi_bend_event(bend14, channel);
+        if (g_midi_lua_dispatch_budget > 0) {
+            g_midi_lua_dispatch_budget--;
+            dispatch_midi_bend_event(bend14, channel);
+        }
     } else if (status == 0xF8) {
         midi_clock_handle_tick();
     } else if (status == 0xFA) {
@@ -2883,6 +2969,10 @@ static inline void usb_service_poll_from_main(void) {
     // Coalesce ticks to bounded work per loop iteration
     if (g_usb_service_tick) {
         g_usb_service_tick = 0;
+
+        // Reset MIDI->Lua dispatch budget once per USB service tick (1kHz).
+        g_midi_lua_dispatch_budget = kMaxMidiLuaDispatchPerUsbTick;
+
         if (g_usb_role == USB_ROLE_DEVICE) {
             tud_task();
 
@@ -3303,7 +3393,7 @@ public:
                         tud_cdc_write_flush();
                     }
                     // Call init() like real crow does (no crow.reset() before init on startup)
-                    lua_manager->evaluate_safe("if init then init() end");
+                    lua_call_init_if_present(lua_manager->L, "boot:init");
                 }
                 break;
                 
@@ -3327,7 +3417,7 @@ public:
                             tud_cdc_write_flush();
                         }
                         // Call init() like real crow does (no crow.reset() before init on startup)
-                        lua_manager->evaluate_safe("if init then init() end");
+                        lua_call_init_if_present(lua_manager->L, "boot:init");
                     } else {
                         if (usb_console_ready()) {
                             tud_cdc_write_str(" Failed to load user script from flash, loading First.lua\n\r");
@@ -3341,7 +3431,7 @@ public:
                                 tud_cdc_write_flush();
                             }
                             // Call init() like real crow does (no crow.reset() before init on startup)
-                            lua_manager->evaluate_safe("if init then init() end");
+                            lua_call_init_if_present(lua_manager->L, "boot:init");
                         } else {
                             if (usb_console_ready()) {
                                 tud_cdc_write_str(" Failed to load First.lua fallback\n\r");
@@ -5844,41 +5934,95 @@ int LuaManager::lua_tell(lua_State* L) {
     int nargs = lua_gettop(L);
     
     // Need at least the event name
-    if (nargs == 0) {
-        return luaL_error(L, "tell: no event name provided");
+    if (nargs < 1) {
+        lua_settop(L, 0);
+        return 0;
     }
-    
-    switch(nargs) {
-        case 1:
-            Caw_printf("^^%s()", luaL_checkstring(L, 1));
-            break;
-        case 2:
-            Caw_printf("^^%s(%s)", luaL_checkstring(L, 1),
-                                   luaL_checkstring(L, 2));
-            break;
-        case 3:
-            Caw_printf("^^%s(%s,%s)", luaL_checkstring(L, 1),
-                                      luaL_checkstring(L, 2),
-                                      luaL_checkstring(L, 3));
-            break;
-        case 4:
-            Caw_printf("^^%s(%s,%s,%s)", luaL_checkstring(L, 1),
-                                         luaL_checkstring(L, 2),
-                                         luaL_checkstring(L, 3),
-                                         luaL_checkstring(L, 4));
-            break;
-        case 5:
-            Caw_printf("^^%s(%s,%s,%s,%s)", luaL_checkstring(L, 1),
-                                            luaL_checkstring(L, 2),
-                                            luaL_checkstring(L, 3),
-                                            luaL_checkstring(L, 4),
-                                            luaL_checkstring(L, 5));
-            break;
-        default:
-            return luaL_error(L, "tell: too many arguments (max 5)");
+
+    const char* event_type = luaL_checkstring(L, 1);
+
+    // Preserve existing arity cap; avoid allocating an error string in low-memory conditions.
+    if (nargs > 5) {
+        nargs = 5;
     }
-    
-    lua_pop(L, nargs);
+
+    if (!tud_cdc_connected()) {
+        lua_settop(L, 0);
+        return 0;
+    }
+
+    // Format: ^^event_type(arg1,arg2,...)
+    // Accept numbers/booleans directly to avoid per-call tostring() allocations in Lua.
+    char msg[240];
+    int pos = snprintf(msg, sizeof(msg), "^^%s(", event_type);
+    if (pos < 0) {
+        lua_settop(L, 0);
+        return 0;
+    }
+
+    for (int i = 2; i <= nargs; i++) {
+        if (i > 2) {
+            if (pos < (int)sizeof(msg) - 1) msg[pos++] = ',';
+        }
+
+        char numbuf[32];
+        const char* arg = NULL;
+        int t = lua_type(L, i);
+        switch (t) {
+            case LUA_TSTRING:
+                arg = lua_tostring(L, i);
+                break;
+            case LUA_TNUMBER:
+                if (lua_isinteger(L, i)) {
+                    snprintf(numbuf, sizeof(numbuf), "%lld", (long long)lua_tointeger(L, i));
+                } else {
+                    snprintf(numbuf, sizeof(numbuf), "%g", (double)lua_tonumber(L, i));
+                }
+                arg = numbuf;
+                break;
+            case LUA_TBOOLEAN:
+                arg = lua_toboolean(L, i) ? "1" : "0";
+                break;
+            case LUA_TNIL:
+                arg = "nil";
+                break;
+            case LUA_TTABLE:
+                arg = "[table]";
+                break;
+            default:
+                arg = luaL_typename(L, i);
+                break;
+        }
+
+        if (!arg) arg = "";
+        int remaining = (int)sizeof(msg) - pos;
+        if (remaining <= 1) {
+            break;
+        }
+        int w = snprintf(msg + pos, (size_t)remaining, "%s", arg);
+        if (w < 0) {
+            break;
+        }
+        if (w >= remaining) {
+            pos = (int)sizeof(msg) - 1;
+            break;
+        }
+        pos += w;
+    }
+
+    if (pos < (int)sizeof(msg) - 3) {
+        msg[pos++] = ')';
+        msg[pos++] = '\n';
+        msg[pos++] = '\r';
+        msg[pos] = '\0';
+    } else {
+        msg[sizeof(msg) - 3] = '\n';
+        msg[sizeof(msg) - 2] = '\r';
+        msg[sizeof(msg) - 1] = '\0';
+        pos = (int)sizeof(msg) - 1;
+    }
+
+    tud_cdc_write(msg, (uint32_t)(pos - 1));
     lua_settop(L, 0);
     return 0;
 }
