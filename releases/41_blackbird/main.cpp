@@ -2828,7 +2828,9 @@ static void drain_host_midi_packets(uint8_t dev_addr) {
     }
 
     uint8_t packet[4];
-    const int kMaxMidiPacketsPerLoop = 32;
+    // Keep host-mode bounded similarly to device-mode to avoid starving the
+    // main loop and overwhelming Lua/GC under high-rate arpeggiators.
+    const int kMaxMidiPacketsPerLoop = 16;
     int processed = 0;
     while (processed < kMaxMidiPacketsPerLoop && tuh_midi_packet_read(dev_addr, packet)) {
         handle_usb_midi_packet(packet);
@@ -2865,8 +2867,11 @@ void tuh_midi_umount_cb(uint8_t dev_addr, uint8_t instance) {
 }
 
 void tuh_midi_rx_cb(uint8_t dev_addr, uint32_t num_packets) {
+    // IMPORTANT: Do not call into Lua (or do heavy work) from TinyUSB host
+    // callbacks. `drain_host_midi_packets()` dispatches into Lua, so we only
+    // drain from the main loop (see `usb_service_poll_from_main`).
+    (void)dev_addr;
     (void)num_packets;
-    drain_host_midi_packets(dev_addr);
 }
 
 void tuh_midi_tx_cb(uint8_t dev_addr) {
