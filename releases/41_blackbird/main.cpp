@@ -462,7 +462,7 @@ static void handle_usb_midi_packet(const uint8_t packet[4]);
 static void dispatch_midi_note_event(bool is_on, uint8_t note, float velocity, uint8_t channel);
 static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel);
 static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel);
-static void dispatch_mpe_aftertouch_event(int note_or_neg1, uint8_t pressure, uint8_t channel);
+static void dispatch_mpe_aftertouch_event(uint8_t pressure, uint8_t channel);
 static void dispatch_midi_aftertouch_event(uint8_t pressure, uint8_t channel);
 static void midi_clock_handle_tick(void);
 static void midi_clock_handle_start(void);
@@ -2945,9 +2945,8 @@ static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
 }
 
 // Dispatch pressure into Lua (bb.mpe.pressure) in MPE mode.
-// - Channel pressure: note=nil
-// - Poly pressure: note=0..127
-static void dispatch_mpe_aftertouch_event(int note_or_neg1, uint8_t pressure, uint8_t channel) {
+// We do not include note; per-note identification is available via MPE channel assignment.
+static void dispatch_mpe_aftertouch_event(uint8_t pressure, uint8_t channel) {
     bool handled = false;
     LuaManager* lua_mgr = LuaManager::getInstance();
     if (lua_mgr && lua_mgr->L) {
@@ -2958,14 +2957,9 @@ static void dispatch_mpe_aftertouch_event(int note_or_neg1, uint8_t pressure, ui
             if (lua_istable(L, -1)) {
                 lua_getfield(L, -1, "pressure");
                 if (lua_isfunction(L, -1)) {
-                    if (note_or_neg1 >= 0) {
-                        lua_pushinteger(L, note_or_neg1);
-                    } else {
-                        lua_pushnil(L);
-                    }
                     lua_pushinteger(L, pressure);
                     lua_pushinteger(L, channel);
-                    int rc = lua_pcall(L, 3, 0, 0);
+                    int rc = lua_pcall(L, 2, 0, 0);
                     if (rc != LUA_OK) {
                         if (usb_console_ready()) {
                             if (rc == LUA_ERRMEM) {
@@ -2993,12 +2987,7 @@ static void dispatch_mpe_aftertouch_event(int note_or_neg1, uint8_t pressure, ui
         lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
     if (!handled) {
-        if (note_or_neg1 >= 0) {
-            Caw_printf("^^mpe('pressure',%d,%u,%u)", note_or_neg1, pressure, channel);
-        } else {
-            // Channel pressure: encode nil note position.
-            Caw_printf("^^mpe('pressure',nil,%u,%u)", pressure, channel);
-        }
+        Caw_printf("^^mpe('pressure',%u,%u)", pressure, channel);
     }
 }
 
@@ -3098,23 +3087,21 @@ static int lua_bb_mpe_slide_default(lua_State* L) {
 }
 
 static int lua_bb_mpe_pressure_default(lua_State* L) {
-    int arg_note_is_nil = lua_isnil(L, 1);
-    int note = 0;
-    if (!arg_note_is_nil) {
-        note = (int)luaL_checkinteger(L, 1);
-        if (note < 0) note = 0;
-        if (note > 127) note = 127;
+    // Accept either bb.mpe.pressure(val, chan) or legacy bb.mpe.pressure(note, val, chan).
+    int nargs = lua_gettop(L);
+    int val = 0;
+    int chan = 1;
+    if (nargs >= 3) {
+        val = (int)luaL_checkinteger(L, 2);
+        chan = (int)luaL_optinteger(L, 3, 1);
+    } else {
+        val = (int)luaL_checkinteger(L, 1);
+        chan = (int)luaL_optinteger(L, 2, 1);
     }
-    int val = (int)luaL_checkinteger(L, 2);
-    int chan = (int)luaL_optinteger(L, 3, 1);
     if (val < 0) val = 0;
     if (val > 127) val = 127;
 
-    if (arg_note_is_nil) {
-        Caw_printf("^^mpe('pressure',nil,%d,%d)", val, chan);
-    } else {
-        Caw_printf("^^mpe('pressure',%d,%d,%d)", note, val, chan);
-    }
+    Caw_printf("^^mpe('pressure',%d,%d)", val, chan);
     lua_settop(L, 0);
     return 0;
 }
@@ -3294,7 +3281,7 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
         if (g_midi_lua_dispatch_budget > 0) {
             g_midi_lua_dispatch_budget--;
             if (g_mpe_mode_enabled) {
-                dispatch_mpe_aftertouch_event(-1, data1 & 0x7F, channel);
+                dispatch_mpe_aftertouch_event(data1 & 0x7F, channel);
             } else {
                 dispatch_midi_aftertouch_event(data1 & 0x7F, channel);
             }
@@ -3304,7 +3291,7 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
         if (g_midi_lua_dispatch_budget > 0) {
             g_midi_lua_dispatch_budget--;
             if (g_mpe_mode_enabled) {
-                dispatch_mpe_aftertouch_event((int)(data1 & 0x7F), data2 & 0x7F, channel);
+                dispatch_mpe_aftertouch_event(data2 & 0x7F, channel);
             } else {
                 dispatch_midi_aftertouch_event(data2 & 0x7F, channel);
             }

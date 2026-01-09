@@ -55,7 +55,7 @@ When `bb.mpe.mode == 'on'`, Blackbird routes a subset of messages:
 
 - Note On/Off → `bb.mpe.note(type, num, vel, chan)`
 - Pitch bend → `bb.mpe.bend(val, chan)` (same normalized range as `bb.midi.rx.bend`: **-1.0 .. 1.0**, derived from 14-bit bend)
-- Aftertouch (channel pressure; poly pressure is also mapped) → `bb.mpe.pressure(note, val, chan)` (for channel pressure, `note` is `nil`)
+- Aftertouch (channel pressure; poly pressure is also mapped) → `bb.mpe.pressure(val, chan)`
 - CC74 → `bb.mpe.slide(val, chan)`
 
 Note: In MPE mode, Blackbird does not call `bb.midi.rx.*` for incoming messages. Blackbird can only receive MPE data.
