@@ -3966,7 +3966,7 @@ public:
                     char card_id_str[48];
                     
                     tud_cdc_write_str("\n\r");
-                    tud_cdc_write_str(" Blackbird-v1.1\n\r");
+                    tud_cdc_write_str(" Blackbird-v1.1M\n\r");
                     tud_cdc_write_str(" Music Thing Modular Workshop Computer\n\r");
 
                     tud_cdc_write_flush(); // flush manually due to long welcome string
@@ -4327,7 +4327,7 @@ public:
         switch (cmd) {
             case C_version: {
                 // Embed build date/time and debug format so a late serial connection can verify firmware
-                tud_cdc_write_str("^^version('blackbird-1.1')\n\r");
+                tud_cdc_write_str("^^version('blackbird-1.1M')\n\r");
                 
                 break; }
                 
