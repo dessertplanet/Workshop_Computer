@@ -462,12 +462,19 @@ static void handle_usb_midi_packet(const uint8_t packet[4]);
 static void dispatch_midi_note_event(bool is_on, uint8_t note, float velocity, uint8_t channel);
 static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel);
 static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel);
+static void dispatch_mpe_aftertouch_event(int note_or_neg1, uint8_t pressure, uint8_t channel);
+static void dispatch_midi_aftertouch_event(uint8_t pressure, uint8_t channel);
 static void midi_clock_handle_tick(void);
 static void midi_clock_handle_start(void);
 static void midi_clock_handle_continue(void);
 static void midi_clock_handle_stop(void);
 static void process_pending_midi_note_offs(void);
 static int lua_bb_midi_out_note(lua_State* L);
+static int lua_bb_mpe_set_mode(lua_State* L);
+static int lua_bb_mpe_note_default(lua_State* L);
+static int lua_bb_mpe_bend_default(lua_State* L);
+static int lua_bb_mpe_slide_default(lua_State* L);
+static int lua_bb_mpe_pressure_default(lua_State* L);
 
 // Chooses between internal and external clock based on clock-mode inputs and normalization probe connectivity.
 // Implemented later in the file (after the card helpers are available).
@@ -1475,6 +1482,7 @@ public:
     lua_register(L, "clock_internal_start", lua_clock_internal_start);
     lua_register(L, "clock_internal_stop", lua_clock_internal_stop);
     lua_register(L, "bb_midi_out_note", lua_bb_midi_out_note);
+    lua_register(L, "bb_mpe_set_mode", lua_bb_mpe_set_mode);
     
     // Create _c table with l_bootstrap_c_tell (handles both hardware and crow protocol)
     lua_newtable(L);
@@ -1975,35 +1983,32 @@ public:
             lua_pop(L, 1);
         }
 
-        // Default MIDI callbacks: forward to host via ^^midi(...)
+        // MIDI table setup (minimal, low-allocation). Host-forwarding defaults are implemented in C
+        // (see dispatch_* fallbacks) to avoid Lua heap spikes during startup.
         const char* setup_midi_defaults = R"(
             bb.midi = bb.midi or {}
-
-            -- Receive side (rx)
             bb.midi.rx = bb.midi.rx or bb.midi.in or {}
-
-            bb.midi.rx.note = function(typ, note, vel, channel)
-                if typ == 'on' then
-                    tell('midi', "'on'", note or 0, vel or 0, channel or 1)
-                elseif typ == 'off' then
-                    tell('midi', "'off'", note or 0, vel or 0, channel or 1)
-                end
-            end
-
-            bb.midi.rx.cc = function(num, val, channel)
-                tell('midi', "'cc'", num or 0, val or 0, channel or 1)
-            end
-
-            bb.midi.rx.bend = function(val, channel)
-                tell('midi', "'bend'", val or 0)
-            end
-
-            -- Transmit side (tx) - functions added from C later
             bb.midi.tx = bb.midi.tx or bb.midi.out or {}
-
-            -- Compatibility aliases
             bb.midi.in = bb.midi.rx
             bb.midi.out = bb.midi.tx
+
+            bb.mpe = bb.mpe or {}
+            bb.mpe.mode = bb.mpe.mode or 'off'
+
+            do
+              local mt = getmetatable(bb.mpe) or {}
+              if mt.__newindex == nil then
+                mt.__newindex = function(t, k, v)
+                  rawset(t, k, v)
+                  if k == 'mode' then
+                    bb_mpe_set_mode(v)
+                  end
+                end
+                setmetatable(bb.mpe, mt)
+              end
+            end
+
+            bb_mpe_set_mode(bb.mpe.mode)
         )";
         if (luaL_dostring(L, setup_midi_defaults) != LUA_OK) {
             const char* error = lua_tostring(L, -1);
@@ -2036,6 +2041,73 @@ public:
         } else {
             lua_pop(L, 1);
         }
+
+        // Ensure bb.mpe exists (some hosts may run Lua snippets before the defaults chunk succeeds)
+        lua_getfield(L, -2, "mpe"); // bb.mpe
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+            lua_pushliteral(L, "off");
+            lua_setfield(L, -2, "mode");
+            lua_setfield(L, -3, "mpe");
+        } else {
+            // Ensure bb.mpe.mode exists
+            lua_getfield(L, -1, "mode");
+            if (!lua_isstring(L, -1)) {
+                lua_pop(L, 1);
+                lua_pushliteral(L, "off");
+                lua_setfield(L, -2, "mode");
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // pop bb.mpe
+        }
+
+        // Note: we intentionally do not install Lua-side default MPE forwarding callbacks here.
+        // If no handler is installed, dispatch_* will forward to host via Caw_printf without
+        // allocating Lua strings.
+
+        // Install low-allocation default MPE callbacks as C functions (idempotent).
+        // These forward to host via ^^mpe(...) without using tell()/tostring().
+        lua_getfield(L, -2, "mpe"); // bb.mpe
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "note");
+            if (!lua_isfunction(L, -1)) {
+                lua_pop(L, 1);
+                lua_pushcfunction(L, lua_bb_mpe_note_default);
+                lua_setfield(L, -2, "note");
+            } else {
+                lua_pop(L, 1);
+            }
+
+            lua_getfield(L, -1, "bend");
+            if (!lua_isfunction(L, -1)) {
+                lua_pop(L, 1);
+                lua_pushcfunction(L, lua_bb_mpe_bend_default);
+                lua_setfield(L, -2, "bend");
+            } else {
+                lua_pop(L, 1);
+            }
+
+            lua_getfield(L, -1, "slide");
+            if (!lua_isfunction(L, -1)) {
+                lua_pop(L, 1);
+                lua_pushcfunction(L, lua_bb_mpe_slide_default);
+                lua_setfield(L, -2, "slide");
+            } else {
+                lua_pop(L, 1);
+            }
+
+            lua_getfield(L, -1, "pressure");
+            if (!lua_isfunction(L, -1)) {
+                lua_pop(L, 1);
+                lua_pushcfunction(L, lua_bb_mpe_pressure_default);
+                lua_setfield(L, -2, "pressure");
+            } else {
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1); // pop bb.mpe
 
         // Ensure bb.midi.tx exists and set note sender
         lua_getfield(L, -1, "tx");
@@ -2485,6 +2557,9 @@ static volatile uint8_t g_midi_vel_fine7[16] = {0};
 static volatile uint32_t g_midi_vel_fine_time_us[16] = {0};
 static volatile bool g_midi_vel_fine_valid[16] = {false};
 
+// MPE routing: when enabled, route incoming MIDI to bb.mpe.* instead of bb.midi.rx.*
+static volatile bool g_mpe_mode_enabled = false;
+
 // MIDI->Lua throttling
 // Limit the number of Lua calls we do per USB service tick (1kHz) so arpeggiators
 // and fast playing can't outpace Lua GC. Note-offs always pass to avoid stuck notes.
@@ -2582,11 +2657,9 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, float velocity, u
         lua_State* L = lua_mgr->L;
         lua_getglobal(L, "bb");
         if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "midi");
-            if (lua_istable(L, -1)) {
-                lua_getfield(L, -1, "rx");
+            if (g_mpe_mode_enabled) {
+                lua_getfield(L, -1, "mpe");
                 if (lua_istable(L, -1)) {
-                    // Prefer unified note handler
                     lua_getfield(L, -1, "note");
                     if (lua_isfunction(L, -1)) {
                         lua_pushstring(L, type_name);
@@ -2597,10 +2670,10 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, float velocity, u
                         if (rc != LUA_OK) {
                             if (usb_console_ready()) {
                                 if (rc == LUA_ERRMEM) {
-                                    tud_cdc_write_str("bb.midi.rx note handler OOM (LUA_ERRMEM)\n\r");
+                                    tud_cdc_write_str("bb.mpe.note handler OOM (LUA_ERRMEM)\n\r");
                                 } else {
                                     const char* err = lua_tostring(L, -1);
-                                    tud_cdc_write_str("bb.midi.rx note handler error: ");
+                                    tud_cdc_write_str("bb.mpe.note handler error: ");
                                     tud_cdc_write_str(err ? err : "unknown error");
                                     tud_cdc_write_str("\n\r");
                                 }
@@ -2611,12 +2684,47 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, float velocity, u
                             handled = true;
                         }
                     } else {
-                        lua_pop(L, 1); // pop non-function note
+                        lua_pop(L, 1);
                     }
                 }
-                lua_pop(L, 1); // pop midi.rx
+                lua_pop(L, 1); // pop bb.mpe
+            } else {
+                lua_getfield(L, -1, "midi");
+                if (lua_istable(L, -1)) {
+                    lua_getfield(L, -1, "rx");
+                    if (lua_istable(L, -1)) {
+                        // Prefer unified note handler
+                        lua_getfield(L, -1, "note");
+                        if (lua_isfunction(L, -1)) {
+                            lua_pushstring(L, type_name);
+                            lua_pushinteger(L, note);
+                            lua_pushnumber(L, (lua_Number)velocity);
+                            lua_pushinteger(L, channel);
+                            int rc = lua_pcall(L, 4, 0, 0);
+                            if (rc != LUA_OK) {
+                                if (usb_console_ready()) {
+                                    if (rc == LUA_ERRMEM) {
+                                        tud_cdc_write_str("bb.midi.rx note handler OOM (LUA_ERRMEM)\n\r");
+                                    } else {
+                                        const char* err = lua_tostring(L, -1);
+                                        tud_cdc_write_str("bb.midi.rx note handler error: ");
+                                        tud_cdc_write_str(err ? err : "unknown error");
+                                        tud_cdc_write_str("\n\r");
+                                    }
+                                    tud_cdc_write_flush();
+                                }
+                                lua_pop(L, 1);
+                            } else {
+                                handled = true;
+                            }
+                        } else {
+                            lua_pop(L, 1); // pop non-function note
+                        }
+                    }
+                    lua_pop(L, 1); // pop midi.rx
+                }
+                lua_pop(L, 1); // pop midi
             }
-            lua_pop(L, 1); // pop midi
         }
         lua_pop(L, 1); // pop bb or nil
         lua_settop(L, 0);
@@ -2627,7 +2735,13 @@ static void dispatch_midi_note_event(bool is_on, uint8_t note, float velocity, u
     }
 
     if (!handled) {
-        Caw_printf("^^midi('%s',%u,%u,%u)", type_name, note, velocity7, channel);
+        if (g_mpe_mode_enabled) {
+            // Match the host-forward API format: ^^mpe('on'|'off',note,vel,chan)
+            // Use a compact float formatting for velocity (may include fractional CC88 data).
+            Caw_printf("^^mpe('%s',%u,%.9g,%u)", type_name, note, (double)velocity, channel);
+        } else {
+            Caw_printf("^^midi('%s',%u,%u,%u)", type_name, note, velocity7, channel);
+        }
     }
 }
 
@@ -2645,9 +2759,8 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
         lua_State* L = lua_mgr->L;
         lua_getglobal(L, "bb");
         if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "midi");
-            if (lua_istable(L, -1)) {
-                lua_getfield(L, -1, "rx");
+            if (g_mpe_mode_enabled) {
+                lua_getfield(L, -1, "mpe");
                 if (lua_istable(L, -1)) {
                     lua_getfield(L, -1, "bend");
                     if (lua_isfunction(L, -1)) {
@@ -2657,10 +2770,10 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
                         if (rc != LUA_OK) {
                             if (usb_console_ready()) {
                                 if (rc == LUA_ERRMEM) {
-                                    tud_cdc_write_str("bb.midi.rx bend handler OOM (LUA_ERRMEM)\n\r");
+                                    tud_cdc_write_str("bb.mpe.bend handler OOM (LUA_ERRMEM)\n\r");
                                 } else {
                                     const char* err = lua_tostring(L, -1);
-                                    tud_cdc_write_str("bb.midi.rx bend handler error: ");
+                                    tud_cdc_write_str("bb.mpe.bend handler error: ");
                                     tud_cdc_write_str(err ? err : "unknown error");
                                     tud_cdc_write_str("\n\r");
                                 }
@@ -2671,12 +2784,44 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
                             handled = true;
                         }
                     } else {
-                        lua_pop(L, 1); // pop non-function
+                        lua_pop(L, 1);
                     }
                 }
-                lua_pop(L, 1); // pop midi.rx
+                lua_pop(L, 1); // pop bb.mpe
+            } else {
+                lua_getfield(L, -1, "midi");
+                if (lua_istable(L, -1)) {
+                    lua_getfield(L, -1, "rx");
+                    if (lua_istable(L, -1)) {
+                        lua_getfield(L, -1, "bend");
+                        if (lua_isfunction(L, -1)) {
+                            lua_pushnumber(L, val);
+                            lua_pushinteger(L, channel);
+                            int rc = lua_pcall(L, 2, 0, 0);
+                            if (rc != LUA_OK) {
+                                if (usb_console_ready()) {
+                                    if (rc == LUA_ERRMEM) {
+                                        tud_cdc_write_str("bb.midi.rx bend handler OOM (LUA_ERRMEM)\n\r");
+                                    } else {
+                                        const char* err = lua_tostring(L, -1);
+                                        tud_cdc_write_str("bb.midi.rx bend handler error: ");
+                                        tud_cdc_write_str(err ? err : "unknown error");
+                                        tud_cdc_write_str("\n\r");
+                                    }
+                                    tud_cdc_write_flush();
+                                }
+                                lua_pop(L, 1);
+                            } else {
+                                handled = true;
+                            }
+                        } else {
+                            lua_pop(L, 1); // pop non-function
+                        }
+                    }
+                    lua_pop(L, 1); // pop midi.rx
+                }
+                lua_pop(L, 1); // pop midi
             }
-            lua_pop(L, 1); // pop midi
         }
         lua_pop(L, 1); // pop bb or nil
         lua_settop(L, 0);
@@ -2686,7 +2831,12 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
     }
 
     if (!handled) {
-        Caw_printf("^^midi('bend',%f)", val);
+        if (g_mpe_mode_enabled) {
+            Caw_printf("^^mpe('bend',%.9g,%u)", (double)val, channel);
+        } else {
+            // Include channel to match Lua API signature bb.midi.rx.bend(val, channel)
+            Caw_printf("^^midi('bend',%.9g,%u)", (double)val, channel);
+        }
     }
 }
 
@@ -2698,23 +2848,176 @@ static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
         lua_State* L = lua_mgr->L;
         lua_getglobal(L, "bb");
         if (lua_istable(L, -1)) {
+            if (g_mpe_mode_enabled) {
+                // In MPE mode, only surface CC74 as slide.
+                if (cc == 74) {
+                    lua_getfield(L, -1, "mpe");
+                    if (lua_istable(L, -1)) {
+                        lua_getfield(L, -1, "slide");
+                        if (lua_isfunction(L, -1)) {
+                            lua_pushinteger(L, value);
+                            lua_pushinteger(L, channel);
+                            int rc = lua_pcall(L, 2, 0, 0);
+                            if (rc != LUA_OK) {
+                                if (usb_console_ready()) {
+                                    if (rc == LUA_ERRMEM) {
+                                        tud_cdc_write_str("bb.mpe.slide handler OOM (LUA_ERRMEM)\n\r");
+                                    } else {
+                                        const char* err = lua_tostring(L, -1);
+                                        tud_cdc_write_str("bb.mpe.slide handler error: ");
+                                        tud_cdc_write_str(err ? err : "unknown error");
+                                        tud_cdc_write_str("\n\r");
+                                    }
+                                    tud_cdc_write_flush();
+                                }
+                                lua_pop(L, 1);
+                            } else {
+                                handled = true;
+                            }
+                        } else {
+                            lua_pop(L, 1);
+                        }
+                    }
+                    lua_pop(L, 1); // pop bb.mpe
+                }
+            } else {
+                lua_getfield(L, -1, "midi");
+                if (lua_istable(L, -1)) {
+                    lua_getfield(L, -1, "rx");
+                    if (lua_istable(L, -1)) {
+                        lua_getfield(L, -1, "cc");
+                        if (lua_isfunction(L, -1)) {
+                            lua_pushinteger(L, cc);
+                            lua_pushinteger(L, value);
+                            lua_pushinteger(L, channel);
+                            int rc = lua_pcall(L, 3, 0, 0);
+                            if (rc != LUA_OK) {
+                                if (usb_console_ready()) {
+                                    if (rc == LUA_ERRMEM) {
+                                        tud_cdc_write_str("bb.midi.rx cc handler OOM (LUA_ERRMEM)\n\r");
+                                    } else {
+                                        const char* err = lua_tostring(L, -1);
+                                        tud_cdc_write_str("bb.midi.rx cc handler error: ");
+                                        tud_cdc_write_str(err ? err : "unknown error");
+                                        tud_cdc_write_str("\n\r");
+                                    }
+                                    tud_cdc_write_flush();
+                                }
+                                lua_pop(L, 1);
+                            } else {
+                                handled = true;
+                            }
+                        } else {
+                            lua_pop(L, 1); // pop non-function
+                        }
+                    }
+                    lua_pop(L, 1); // pop midi.rx
+                }
+                lua_pop(L, 1); // pop midi
+            }
+        }
+        lua_pop(L, 1); // pop bb or nil
+        lua_settop(L, 0);
+
+        // Keep Lua GC responsive under high-rate controllers.
+        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
+    }
+
+    if (!handled) {
+        if (g_mpe_mode_enabled) {
+            // Only CC74 is routed as slide in MPE mode.
+            if (cc == 74) {
+                Caw_printf("^^mpe('slide',%u,%u)", value, channel);
+            }
+        } else {
+            Caw_printf("^^midi('cc',%u,%u,%u)", cc, value, channel);
+        }
+    }
+}
+
+// Dispatch pressure into Lua (bb.mpe.pressure) in MPE mode.
+// - Channel pressure: note=nil
+// - Poly pressure: note=0..127
+static void dispatch_mpe_aftertouch_event(int note_or_neg1, uint8_t pressure, uint8_t channel) {
+    bool handled = false;
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (lua_mgr && lua_mgr->L) {
+        lua_State* L = lua_mgr->L;
+        lua_getglobal(L, "bb");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "mpe");
+            if (lua_istable(L, -1)) {
+                lua_getfield(L, -1, "pressure");
+                if (lua_isfunction(L, -1)) {
+                    if (note_or_neg1 >= 0) {
+                        lua_pushinteger(L, note_or_neg1);
+                    } else {
+                        lua_pushnil(L);
+                    }
+                    lua_pushinteger(L, pressure);
+                    lua_pushinteger(L, channel);
+                    int rc = lua_pcall(L, 3, 0, 0);
+                    if (rc != LUA_OK) {
+                        if (usb_console_ready()) {
+                            if (rc == LUA_ERRMEM) {
+                                tud_cdc_write_str("bb.mpe.pressure handler OOM (LUA_ERRMEM)\n\r");
+                            } else {
+                                const char* err = lua_tostring(L, -1);
+                                tud_cdc_write_str("bb.mpe.pressure handler error: ");
+                                tud_cdc_write_str(err ? err : "unknown error");
+                                tud_cdc_write_str("\n\r");
+                            }
+                            tud_cdc_write_flush();
+                        }
+                        lua_pop(L, 1);
+                    } else {
+                        handled = true;
+                    }
+                } else {
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1); // pop bb.mpe
+        }
+        lua_pop(L, 1); // pop bb
+        lua_settop(L, 0);
+        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
+    }
+    if (!handled) {
+        if (note_or_neg1 >= 0) {
+            Caw_printf("^^mpe('pressure',%d,%u,%u)", note_or_neg1, pressure, channel);
+        } else {
+            // Channel pressure: encode nil note position.
+            Caw_printf("^^mpe('pressure',nil,%u,%u)", pressure, channel);
+        }
+    }
+}
+
+// Dispatch aftertouch into Lua (bb.midi.rx.aftertouch) when NOT in MPE mode.
+// We surface channel pressure and poly pressure as a single stream of values.
+static void dispatch_midi_aftertouch_event(uint8_t pressure, uint8_t channel) {
+    bool handled = false;
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (lua_mgr && lua_mgr->L) {
+        lua_State* L = lua_mgr->L;
+        lua_getglobal(L, "bb");
+        if (lua_istable(L, -1)) {
             lua_getfield(L, -1, "midi");
             if (lua_istable(L, -1)) {
                 lua_getfield(L, -1, "rx");
                 if (lua_istable(L, -1)) {
-                    lua_getfield(L, -1, "cc");
+                    lua_getfield(L, -1, "aftertouch");
                     if (lua_isfunction(L, -1)) {
-                        lua_pushinteger(L, cc);
-                        lua_pushinteger(L, value);
+                        lua_pushinteger(L, pressure);
                         lua_pushinteger(L, channel);
-                        int rc = lua_pcall(L, 3, 0, 0);
+                        int rc = lua_pcall(L, 2, 0, 0);
                         if (rc != LUA_OK) {
                             if (usb_console_ready()) {
                                 if (rc == LUA_ERRMEM) {
-                                    tud_cdc_write_str("bb.midi.rx cc handler OOM (LUA_ERRMEM)\n\r");
+                                    tud_cdc_write_str("bb.midi.rx aftertouch handler OOM (LUA_ERRMEM)\n\r");
                                 } else {
                                     const char* err = lua_tostring(L, -1);
-                                    tud_cdc_write_str("bb.midi.rx cc handler error: ");
+                                    tud_cdc_write_str("bb.midi.rx aftertouch handler error: ");
                                     tud_cdc_write_str(err ? err : "unknown error");
                                     tud_cdc_write_str("\n\r");
                                 }
@@ -2725,23 +3028,86 @@ static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
                             handled = true;
                         }
                     } else {
-                        lua_pop(L, 1); // pop non-function
+                        lua_pop(L, 1);
                     }
                 }
                 lua_pop(L, 1); // pop midi.rx
             }
             lua_pop(L, 1); // pop midi
         }
-        lua_pop(L, 1); // pop bb or nil
+        lua_pop(L, 1); // pop bb
         lua_settop(L, 0);
-
-        // Keep Lua GC responsive under high-rate controllers.
         lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
 
     if (!handled) {
-        Caw_printf("^^midi('cc',%u,%u,%u)", cc, value, channel);
+        Caw_printf("^^midi('aftertouch',%u,%u)", pressure, channel);
     }
+}
+
+static int lua_bb_mpe_set_mode(lua_State* L) {
+    const char* mode = luaL_optstring(L, 1, "off");
+    bool enable = false;
+    if (mode) {
+        enable = (strcmp(mode, "on") == 0);
+    }
+    g_mpe_mode_enabled = enable;
+    return 0;
+}
+
+// Default MPE callbacks (low-allocation): forward directly to host via ^^mpe(...)
+static int lua_bb_mpe_note_default(lua_State* L) {
+    const char* type = luaL_checkstring(L, 1);
+    int note = (int)luaL_checkinteger(L, 2);
+    lua_Number vel = luaL_optnumber(L, 3, 0.0);
+    int chan = (int)luaL_optinteger(L, 4, 1);
+    if (strcmp(type, "on") == 0) {
+        Caw_printf("^^mpe('on',%d,%.9g,%d)", note, (double)vel, chan);
+    } else if (strcmp(type, "off") == 0) {
+        Caw_printf("^^mpe('off',%d,%.9g,%d)", note, (double)vel, chan);
+    }
+    lua_settop(L, 0);
+    return 0;
+}
+
+static int lua_bb_mpe_bend_default(lua_State* L) {
+    lua_Number val = luaL_checknumber(L, 1);
+    int chan = (int)luaL_optinteger(L, 2, 1);
+    Caw_printf("^^mpe('bend',%.9g,%d)", (double)val, chan);
+    lua_settop(L, 0);
+    return 0;
+}
+
+static int lua_bb_mpe_slide_default(lua_State* L) {
+    int val = (int)luaL_checkinteger(L, 1);
+    int chan = (int)luaL_optinteger(L, 2, 1);
+    if (val < 0) val = 0;
+    if (val > 127) val = 127;
+    Caw_printf("^^mpe('slide',%d,%d)", val, chan);
+    lua_settop(L, 0);
+    return 0;
+}
+
+static int lua_bb_mpe_pressure_default(lua_State* L) {
+    int arg_note_is_nil = lua_isnil(L, 1);
+    int note = 0;
+    if (!arg_note_is_nil) {
+        note = (int)luaL_checkinteger(L, 1);
+        if (note < 0) note = 0;
+        if (note > 127) note = 127;
+    }
+    int val = (int)luaL_checkinteger(L, 2);
+    int chan = (int)luaL_optinteger(L, 3, 1);
+    if (val < 0) val = 0;
+    if (val > 127) val = 127;
+
+    if (arg_note_is_nil) {
+        Caw_printf("^^mpe('pressure',nil,%d,%d)", val, chan);
+    } else {
+        Caw_printf("^^mpe('pressure',%d,%d,%d)", note, val, chan);
+    }
+    lua_settop(L, 0);
+    return 0;
 }
 
 static void midi_clock_handle_start(void) {
@@ -2913,6 +3279,26 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
         if (g_midi_lua_dispatch_budget > 0) {
             g_midi_lua_dispatch_budget--;
             dispatch_midi_cc_event(data1, data2, channel);
+        }
+    } else if (msg == 0xD0) {
+        // Channel pressure (aftertouch)
+        if (g_midi_lua_dispatch_budget > 0) {
+            g_midi_lua_dispatch_budget--;
+            if (g_mpe_mode_enabled) {
+                dispatch_mpe_aftertouch_event(-1, data1 & 0x7F, channel);
+            } else {
+                dispatch_midi_aftertouch_event(data1 & 0x7F, channel);
+            }
+        }
+    } else if (msg == 0xA0) {
+        // Polyphonic key pressure (note aftertouch) includes a note number (data1).
+        if (g_midi_lua_dispatch_budget > 0) {
+            g_midi_lua_dispatch_budget--;
+            if (g_mpe_mode_enabled) {
+                dispatch_mpe_aftertouch_event((int)(data1 & 0x7F), data2 & 0x7F, channel);
+            } else {
+                dispatch_midi_aftertouch_event(data2 & 0x7F, channel);
+            }
         }
     } else if (msg == 0xE0) {
         uint16_t bend14 = (uint16_t)(data1 | (data2 << 7));

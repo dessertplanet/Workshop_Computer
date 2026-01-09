@@ -44,6 +44,24 @@ Incoming MIDI is decoded and dispatched into Lua. MIDI channels are presented as
 
 If you do nothing, Blackbird installs default callbacks that forward events to the host as crow-style MIDI messages (via `tell('midi', ...)`). When you override the callbacks below, you take control of what happens.
 
+## Optional: MPE routing (`bb.mpe`)
+
+Blackbird can optionally route incoming MIDI into an MPE-oriented API.
+
+- Default: `bb.mpe.mode = 'off'` (normal behavior: events go to `bb.midi.rx.*`)
+- Enable: `bb.mpe.mode = 'on'` (events go to `bb.mpe.*` instead)
+
+When `bb.mpe.mode == 'on'`, Blackbird routes a subset of messages:
+
+- Note On/Off → `bb.mpe.note(type, num, vel, chan)`
+- Pitch bend → `bb.mpe.bend(val, chan)` (same normalized range as `bb.midi.rx.bend`: **-1.0 .. 1.0**, derived from 14-bit bend)
+- Aftertouch (channel pressure; poly pressure is also mapped) → `bb.mpe.pressure(note, val, chan)` (for channel pressure, `note` is `nil`)
+- CC74 → `bb.mpe.slide(val, chan)`
+
+Note: In MPE mode, Blackbird does not call `bb.midi.rx.*` for incoming messages. Blackbird can only receive MPE data.
+
+If you do nothing, Blackbird installs default `bb.mpe.*` callbacks that forward events to the host as crow-style messages via `tell('mpe', ...)` (e.g. `^^mpe('on',note,vel,chan)`).
+
 ### `bb.midi.rx.note(type, note, vel, channel)`
 
 Unified note handler.
@@ -130,6 +148,15 @@ end
 bb.midi.rx.bend = function(v, ch)
   output[1].volts = base + (v * (2/12)) -- +/- 2 semitones
 end
+
+### `bb.midi.rx.aftertouch(val, channel)`
+
+Aftertouch / pressure.
+
+- `val`: integer 0–127
+- `channel`: integer 1–16
+
+Blackbird surfaces both **channel pressure** and **polyphonic key pressure** as this callback.
 ```
 
 ## Transmit: `bb.midi.tx`
