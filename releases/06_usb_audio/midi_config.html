@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workshop System USB Bridge Config</title>
+    <style>
+        :root {
+            --bg-page: #18181b;
+            --bg-panel: #1e1e1e;
+            --bg-element: #27272a;
+            --border: #3f3f46;
+            --text-main: #e4e4e7;
+            --text-muted: #a1a1aa;
+            --accent: #fbbf24;
+            --accent-hover: #f59e0b;
+            --danger: #ef4444;
+            --success: #22c55e;
+            --input-bg: #27272a;
+        }
+
+        body {
+            background-color: var(--bg-page);
+            color: var(--text-main);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        h1,
+        h2,
+        h3 {
+            color: var(--accent);
+            margin: 0 0 10px 0;
+            font-weight: 600;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            text-align: center;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            text-align: center;
+            margin: 0 auto 25px auto;
+            font-size: 0.9rem;
+            max-width: 600px;
+            line-height: 1.4;
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+            white-space: nowrap;
+        }
+
+        h2 {
+            font-size: 1.1rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 8px;
+            margin-bottom: 15px;
+        }
+
+        h3 {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1100px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Status Bar */
+        .status-bar {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            padding: 15px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            padding: 2px 5px;
+            font-size: 0.8rem;
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--border);
+        }
+
+        .dot.connected {
+            background-color: var(--success);
+            box-shadow: 0 0 8px var(--success);
+        }
+
+        .dot.error {
+            background-color: var(--danger);
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            background: var(--bg-element);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        button:active {
+            background: var(--accent);
+            color: #000;
+        }
+
+        button.primary {
+            background: var(--accent);
+            color: #000;
+            border-color: var(--accent);
+        }
+
+        button.primary:hover {
+            background: var(--accent-hover);
+        }
+
+        /* Panels */
+        .panel {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        /* Grid Layouts */
+        .global-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 15px;
+        }
+
+        /* Row Layout for CV/Pulse Groups */
+        .section-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        /* Responsive Matrix Layout */
+        .matrix-row {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            /* Allows wrapping on smaller screens */
+        }
+
+        .matrix-row .panel {
+            flex: 1;
+            min-width: 380px;
+            /* Ensure 2 columns fit, but wrap if too narrow */
+        }
+
+        /* Form Elements */
+        .port-config {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: var(--bg-element);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+
+        .port-label {
+            font-weight: bold;
+            width: 80px;
+            color: var(--text-main);
+            font-size: 0.95rem;
+        }
+
+        label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-right: 5px;
+        }
+
+        select,
+        input {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 6px;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+
+        select:focus,
+        input:focus {
+            outline: 1px solid var(--accent);
+        }
+
+        .channel-select {
+            width: 70px;
+        }
+
+        .cc-input {
+            width: 60px;
+        }
+
+        .mode-select {
+            flex-grow: 1;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        #toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--accent);
+            color: #000;
+            padding: 10px 20px;
+            border-radius: 20px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            font-weight: bold;
+        }
+
+        .config-item {
+            display: inline-flex;
+            align-items: center;
+            margin-right: 12px;
+        }
+
+        .config-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-right: 6px;
+        }
+
+        .allow-wrap,
+        .config-wrap {
+            white-space: normal;
+        }
+
+        .mini-config {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <h1>Workshop System USB Bridge Config</h1>
+        <div class="subtitle">
+            Configure the behavior of the CV/Pulse ports when the module switch is in the <strong>UP</strong>
+            position.<br>
+            In the <strong>MIDDLE</strong> position, the selected channels act as standard USB Audio inputs/outputs.<br>
+            In the <strong>DOWN</strong> position, MIDI is completely disabled.<br>
+            <span style="color: var(--accent);">Warning: Not all sample rate and channel count combinations may work on
+                your device.</span>
+        </div>
+
+        <div class="status-bar">
+            <div class="status-indicator">
+                <div id="statusDot" class="dot"></div>
+                <span id="statusText">Searching for Device...</span>
+            </div>
+            <div class="btn-group">
+                <button onclick="readConfig()">Read</button>
+                <button onclick="sendConfig()">Apply</button>
+                <button class="primary" onclick="saveToFlash()">Save</button>
+                <div style="width: 10px;"></div> <!-- Spacer -->
+                <button onclick="rebootDevice()" style="background: #eab308; color: black;">Reboot</button>
+                <button onclick="enterBootloader()" style="background: #ef4444; color: white;">Bootloader</button>
+            </div>
+        </div>
+
+        <!-- 1. Global Settings -->
+        <div class="panel">
+            <h2>Global Settings</h2>
+            <div class="section-row">
+                <div><label>Sample Rate</label><br>
+                    <select id="sampleRate">
+                        <option value="0">48 kHz</option>
+                        <option value="1" selected>44.1 kHz</option>
+                        <option value="2">24 kHz</option>
+                    </select>
+                </div>
+                <div><label>Active Channels</label><br>
+                    <div id="channelInfo" style="padding: 6px; font-weight: bold; color: var(--accent);">Waiting...
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top: 10px; font-size: 0.8rem; color: var(--text-muted);">
+                * Changes to Sample Rate or Channel Configuration require a reboot.
+            </div>
+        </div>
+
+        <!-- 2. Knob Configuration -->
+        <div class="panel">
+            <h2>Knob Configuration</h2>
+            <div class="section-row">
+                <div class="config-item"><span class="config-label">Main Knob CC</span><input type="number"
+                        id="knobMainCC" class="cc-input" placeholder="CC" value="1"></div>
+                <div class="config-item"><span class="config-label">X Knob CC</span><input type="number" id="knobXCC"
+                        class="cc-input" placeholder="CC" value="2"></div>
+                <div class="config-item"><span class="config-label">Y Knob CC</span><input type="number" id="knobYCC"
+                        class="cc-input" placeholder="CC" value="3"></div>
+            </div>
+        </div>
+
+        <!-- Matrix Container -->
+        <div class="matrix-row">
+
+            <!-- 3. Input Configuration -->
+            <div class="panel">
+                <h2>Input Channels</h2>
+                <table class="matrix-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 15%;">Port</th>
+                            <th style="width: 20%;">USB-Audio</th>
+                            <th style="width: 35%;">Midi Mode</th>
+                            <th style="width: 45%;">Config</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Audio 1 -->
+                        <tr>
+                            <td class="port-label">Audio 1</td>
+                            <td><input type="checkbox" id="inEn0" onchange="syncPairs('in', 0)" checked> <label
+                                    for="inEn0">Enable</label></td>
+                            <td><select id="inMode0" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                </select></td>
+                            <td class="config-wrap">
+                                <div class="mini-config" id="cfgIn0"></div>
+                            </td>
+                        </tr>
+                        <!-- Audio 2 -->
+                        <tr>
+                            <td class="port-label">Audio 2</td>
+                            <td><input type="checkbox" id="inEn1" onchange="syncPairs('in', 1)" checked> <label
+                                    for="inEn1">Enable</label></td>
+                            <td><select id="inMode1" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                </select></td>
+                            <td>
+                                <div class="mini-config" id="cfgIn1"></div>
+                            </td>
+                        </tr>
+                        <!-- CV 1 -->
+                        <tr>
+                            <td class="port-label">CV 1</td>
+                            <td><input type="checkbox" id="inEn2" onchange="syncPairs('in', 2)" checked> <label
+                                    for="inEn2">Enable</label></td>
+                            <td><select id="inMode2" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                    <option value="1" selected>Pitch</option>
+                                    <option value="2">CC</option>
+                                </select></td>
+                            <td>
+                                <div class="mini-config" id="cfgIn2"></div>
+                            </td>
+                        </tr>
+                        <!-- CV 2 -->
+                        <tr>
+                            <td class="port-label">CV 2</td>
+                            <td><input type="checkbox" id="inEn3" onchange="syncPairs('in', 3)" checked> <label
+                                    for="inEn3">Enable</label></td>
+                            <td><select id="inMode3" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                    <option value="1">Pitch</option>
+                                    <option value="2" selected>CC</option>
+                                </select></td>
+                            <td>
+                                <div class="mini-config" id="cfgIn3"></div>
+                            </td>
+                        </tr>
+                        <!-- Pulse 1 -->
+                        <tr>
+                            <td class="port-label">Pulse 1</td>
+                            <td><input type="checkbox" id="inEn4" onchange="syncPairs('in', 4)"> <label
+                                    for="inEn4">Enable</label></td>
+                            <td><select id="inMode4" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                    <option value="1">Gate</option>
+                                </select></td>
+                            <td>
+                                <div class="mini-config" id="cfgIn4"></div>
+                            </td>
+                        </tr>
+                        <!-- Pulse 2 -->
+                        <tr>
+                            <td class="port-label">Pulse 2</td>
+                            <td><input type="checkbox" id="inEn5" onchange="syncPairs('in', 5)"> <label
+                                    for="inEn5">Enable</label></td>
+                            <td><select id="inMode5" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                    <option value="1">Gate</option>
+                                </select></td>
+                            <td>
+                                <div class="mini-config" id="cfgIn5"></div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 4. Output Configuration -->
+            <div class="panel">
+                <h2>Output Channels</h2>
+                <table class="matrix-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 15%;">Port</th>
+                            <th style="width: 20%;">USB-Audio</th>
+                            <th style="width: 35%;">Midi Mode</th>
+                            <th style="width: 45%;">Config</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <!-- Audio 1 -->
+                        <tr>
+                            <td class="port-label">Audio 1</td>
+                            <td><input type="checkbox" id="outEn0" onchange="syncPairs('out', 0)" checked> <label
+                                    for="outEn0">Enable</label></td>
+                            <td><select id="outMode0" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                </select></td>
+                            <td class="config-wrap">
+                                <div class="mini-config" id="cfgOut0"></div>
+                            </td>
+                        </tr>
+                        <!-- Audio 2 -->
+                        <tr>
+                            <td class="port-label">Audio 2</td>
+                            <td><input type="checkbox" id="outEn1" onchange="syncPairs('out', 1)" checked> <label
+                                    for="outEn1">Enable</label></td>
+                            <td><select id="outMode1" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                </select></td>
+                            <td>
+                                <div class="mini-config" id="cfgOut1"></div>
+                            </td>
+                        </tr>
+                        <!-- CV 1 -->
+                        <tr>
+                            <td class="port-label">CV 1</td>
+                            <td><input type="checkbox" id="outEn2" onchange="syncPairs('out', 2)" checked> <label
+                                    for="outEn2">Enable</label></td>
+                            <td><select id="outMode2" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                    <option value="1" selected>Pitch</option>
+                                    <option value="2">CC</option>
+                                </select></td>
+                            <td>
+                                <div class="mini-config" id="cfgOut2"></div>
+                            </td>
+                        </tr>
+                        <!-- CV 2 -->
+                        <tr>
+                            <td class="port-label">CV 2</td>
+                            <td><input type="checkbox" id="outEn3" onchange="syncPairs('out', 3)" checked> <label
+                                    for="outEn3">Enable</label></td>
+                            <td><select id="outMode3" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                    <option value="1">Pitch</option>
+                                    <option value="2" selected>CC</option>
+                                </select></td>
+                            <td>
+                                <div class="mini-config" id="cfgOut3"></div>
+                            </td>
+                        </tr>
+                        <!-- Pulse 1 -->
+                        <tr>
+                            <td class="port-label">Pulse 1</td>
+                            <td class="allow-wrap">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <div><input type="checkbox" id="outEn4" onchange="syncPairs('out', 4)"> <label
+                                            for="outEn4">Enable</label></div>
+                                    <div><input type="checkbox" id="pulsePWM4"> <label for="pulsePWM4"
+                                            style="font-size:0.75rem;">PWM</label></div>
+                                </div>
+                            </td>
+                            <td><select id="outMode4" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                    <option value="3" selected>Gate</option>
+                                    <option value="4">Trigger</option>
+                                    <option value="5">Clock</option>
+                                </select></td>
+                            <td>
+                                <div class="mini-config" id="cfgOut4"></div>
+                            </td>
+                        </tr>
+                        <!-- Pulse 2 -->
+                        <tr>
+                            <td class="port-label">Pulse 2</td>
+                            <td class="allow-wrap">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <div><input type="checkbox" id="outEn5" onchange="syncPairs('out', 5)"> <label
+                                            for="outEn5">Enable</label></div>
+                                    <div><input type="checkbox" id="pulsePWM5"> <label for="pulsePWM5"
+                                            style="font-size:0.75rem;">PWM</label></div>
+                                </div>
+                            </td>
+                            <td><select id="outMode5" class="mini-select" onchange="updateUI()">
+                                    <option value="0">Audio</option>
+                                    <option value="3">Gate</option>
+                                    <option value="4">Trigger</option>
+                                    <option value="5" selected>Clock</option>
+                                </select></td>
+                            <td>
+                                <div class="mini-config" id="cfgOut5"></div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    </div>
+    </div>
+    </div>
+
+    <div id="toast">Config Saved</div>
+
+    <script>
+        let midiAccess = null;
+        let outputPort = null;
+        let inputPort = null;
+
+        // Populate Channel Dropdowns (1-16)
+        const channelSelects = document.querySelectorAll('.channel-select');
+        channelSelects.forEach(sel => {
+            if (sel.options.length === 0) {
+                let def = document.createElement('option');
+                def.value = 0; def.text = sel.id.includes('In') ? "Ch 1" : "Omni";
+                sel.appendChild(def);
+            }
+            for (let i = 1; i <= 16; i++) {
+                let opt = document.createElement('option');
+                opt.value = i;
+                opt.text = "Ch " + i;
+                sel.appendChild(opt);
+            }
+        });
+
+        async function initMIDI() {
+            try {
+                midiAccess = await navigator.requestMIDIAccess({ sysex: true });
+                midiAccess.onstatechange = onStateChange;
+                scanPorts();
+            } catch (err) {
+                document.getElementById('statusText').innerText = "MIDI Access Failed";
+                document.getElementById('statusDot').className = "dot error";
+            }
+        }
+
+        function scanPorts() {
+            let found = false;
+            for (let output of midiAccess.outputs.values()) {
+                if (output.name.includes("Workshop") || output.name.includes("TinyUSB") || output.name.includes("Pico") || output.name.includes("Generic")) {
+                    outputPort = output;
+                    found = true;
+                    break;
+                }
+            }
+            for (let input of midiAccess.inputs.values()) {
+                if (input.name.includes("Workshop") || input.name.includes("TinyUSB") || input.name.includes("Pico") || input.name.includes("Generic")) {
+                    inputPort = input;
+                    inputPort.onmidimessage = onMIDIMessage;
+                    break;
+                }
+            }
+
+            if (found) {
+                document.getElementById('statusText').innerText = "Connected: " + outputPort.name;
+                document.getElementById('statusDot').className = "dot connected";
+            } else {
+                document.getElementById('statusText').innerText = "Device Not Found";
+                document.getElementById('statusDot').className = "dot";
+            }
+        }
+
+        function onStateChange(e) { scanPorts(); }
+
+        function onMIDIMessage(e) {
+            console.log("RX MIDI:", Array.from(e.data).map(b => b.toString(16)));
+            // V18/V17 Response (CMD 3)
+            if (e.data[0] === 0xF0 && e.data[1] === 0x7D && e.data[2] === 0x03) {
+                parseConfig(e.data);
+            }
+        }
+
+        function showToast(msg) {
+            let t = document.getElementById('toast');
+            t.innerText = msg;
+            t.style.opacity = 1;
+            setTimeout(() => t.style.opacity = 0, 2000);
+        }
+
+        // Helper to generate a Channel Select dropdown
+        function makeChannelSelect(id, value, isInput) {
+            let html = `<select id="${id}" class="channel-select" style="width:70px;">`;
+            if (!isInput) html += `<option value="0">Omni</option>`;
+            else html += `<option value="0">Ch 1</option>`; // Input default
+            for (let i = 1; i <= 16; i++) {
+                let sel = (i == value) ? "selected" : "";
+                html += `<option value="${i}" ${sel}>Ch ${i}</option>`;
+            }
+            html += `</select>`;
+            return html;
+        }
+
+        // Helper to generate a CC Input
+        function makeCCInput(id, value) {
+            return `<input type="number" id="${id}" class="cc-input" style="width:50px;" value="${value}" placeholder="CC">`;
+        }
+
+        // Helper to generate PPQN Input
+        function makePPQNInput(id, value) {
+            return `<input type="number" id="${id}" class="cc-input" style="width:50px;" value="${value}" min="1" max="96" title="PPQN">`;
+        }
+
+        // --- PAIR SYNC LOGIC ---
+        function syncPairs(type, clickedIdx) {
+            let partnerIdx = (clickedIdx % 2 === 0) ? clickedIdx + 1 : clickedIdx - 1;
+            let clickedEl = document.getElementById(`${type}En${clickedIdx}`);
+            let partnerEl = document.getElementById(`${type}En${partnerIdx}`);
+
+            if (clickedEl && partnerEl) {
+                partnerEl.checked = clickedEl.checked;
+            }
+            updateUI();
+        }
+
+        function updateUI() {
+            let inCount = 0;
+            let outCount = 0;
+
+            for (let i = 0; i < 6; i++) {
+                // Count Enabled Channels
+                let inEnabled = document.getElementById(`inEn${i}`) && document.getElementById(`inEn${i}`).checked;
+                let outEnabled = document.getElementById(`outEn${i}`) && document.getElementById(`outEn${i}`).checked;
+
+                if (inEnabled) inCount++;
+                if (outEnabled) outCount++;
+
+                // Disabled 'Audio' options if USB Audio disabled
+                let inModeSel = document.getElementById(`inMode${i}`);
+                if (inModeSel) {
+                    for (let op of inModeSel.options) {
+                        if (op.value == "0") {
+                            op.disabled = !inEnabled;
+                            if (op.disabled && inModeSel.value == "0") inModeSel.value = "1"; // Default to next if audio disabled? No, leave as is but grayed.
+                            // Actually user wants "gray out", so disabling is correct. 
+                            // If currently selected, browser handles it (shows current value).
+                            // If we force change it might be annoying.
+                        }
+                    }
+                }
+
+                let outModeSel = document.getElementById(`outMode${i}`);
+                if (outModeSel) {
+                    for (let op of outModeSel.options) {
+                        if (op.value == "0") {
+                            op.disabled = !outEnabled;
+                        }
+                    }
+                }
+
+                // --- OUTPUT CONFIG ---
+                let divOut = document.getElementById(`cfgOut${i}`);
+                if (divOut) {
+                    let outMode = parseInt(document.getElementById(`outMode${i}`).value);
+                    let savedOutCh = document.getElementById(`outCh${i}`) ? document.getElementById(`outCh${i}`).value : 0;
+                    let savedOutCC = document.getElementById(`outCC${i}`) ? document.getElementById(`outCC${i}`).value : 0;
+                    let savedPPQN = document.getElementById(`ppqn${i}`) ? document.getElementById(`ppqn${i}`).value : 24;
+
+                    let htmlOut = "";
+                    if (outMode != 0) { // If Not Audio
+                        // Channel
+                        htmlOut += `<div class="config-item"><span class="config-label">Midi Ch</span>${makeChannelSelect(`outCh${i}`, savedOutCh, false)}</div>`;
+
+                        // CC
+                        if (outMode == 2) {
+                            htmlOut += `<div class="config-item"><span class="config-label">CC No</span>${makeCCInput(`outCC${i}`, savedOutCC)}</div>`;
+                        }
+
+                        // Clock PPQN
+                        if (outMode == 5) { // Clock
+                            htmlOut += `<div class="config-item"><span class="config-label">PPQN</span>${makePPQNInput(`ppqn${i}`, savedPPQN)}</div>`;
+                        }
+                    }
+                    divOut.innerHTML = htmlOut;
+                }
+
+                // --- INPUT CONFIG ---
+                let divIn = document.getElementById(`cfgIn${i}`);
+                if (divIn) {
+                    let inMode = parseInt(document.getElementById(`inMode${i}`).value);
+                    let savedInCh = document.getElementById(`inCh${i}`) ? document.getElementById(`inCh${i}`).value : 0;
+                    let savedInCC = document.getElementById(`inCC${i}`) ? document.getElementById(`inCC${i}`).value : 0;
+
+                    let htmlIn = "";
+                    if (inMode != 0) { // If Not Audio
+                        htmlIn += `<div class="config-item"><span class="config-label">Midi Ch</span>${makeChannelSelect(`inCh${i}`, savedInCh, true)}</div>`;
+
+                        if (inMode == 2) {
+                            htmlIn += `<div class="config-item"><span class="config-label">CC No</span>${makeCCInput(`inCC${i}`, savedInCC)}</div>`;
+                        }
+                    }
+                    divIn.innerHTML = htmlIn;
+                }
+            }
+
+            // Update Global Info
+            let infoDiv = document.getElementById('channelInfo');
+            if (infoDiv) {
+                // Calculate USB Channels (Padded to even if needed, though firmware handles it)
+                // Actually user just wants to know "How many".
+                // Logic: 0, 2, 4, 6.
+                let usbIn = inCount > 4 ? 6 : (inCount > 2 ? 4 : (inCount > 0 ? 2 : 0));
+                let usbOut = outCount > 4 ? 6 : (outCount > 2 ? 4 : (outCount > 0 ? 2 : 0));
+
+                infoDiv.innerText = `${inCount} In / ${outCount} Out (USB: ${usbIn}x${usbOut})`;
+            }
+        }
+
+        function sendConfig(silent = false) {
+            if (!outputPort) {
+                if (!silent) showToast("No Output Port");
+                return;
+            }
+
+            try {
+                let data = [0xF0, 0x7D, 0x01]; // Header + CMD 1 (Preview)
+
+                // 1. Masks
+                let usbOutMask = 0;
+                let usbInMask = 0;
+                for (let i = 0; i < 6; i++) {
+                    if (document.getElementById(`outEn${i}`).checked) usbOutMask |= (1 << i);
+                    if (document.getElementById(`inEn${i}`).checked) usbInMask |= (1 << i);
+                }
+                data.push(usbOutMask);
+                data.push(usbInMask);
+
+                // 2. Out Modes
+                for (let i = 0; i < 6; i++) data.push(parseInt(document.getElementById(`outMode${i}`).value) || 0);
+
+                // 3. Out Channels
+                for (let i = 0; i < 6; i++) {
+                    let el = document.getElementById(`outCh${i}`);
+                    data.push(el ? (parseInt(el.value) || 0) : 0);
+                }
+
+                // 4. Out CCs
+                for (let i = 0; i < 6; i++) {
+                    let el = document.getElementById(`outCC${i}`);
+                    data.push(el ? (parseInt(el.value) || 0) : 0);
+                }
+
+                // 5. In Modes
+                for (let i = 0; i < 6; i++) data.push(parseInt(document.getElementById(`inMode${i}`).value) || 0);
+
+                // 6. In Channels
+                for (let i = 0; i < 6; i++) {
+                    let el = document.getElementById(`inCh${i}`);
+                    data.push(el ? (parseInt(el.value) || 0) : 0);
+                }
+
+                // 7. In CCs
+                for (let i = 0; i < 6; i++) {
+                    let el = document.getElementById(`inCC${i}`);
+                    data.push(el ? (parseInt(el.value) || 0) : 0);
+                }
+
+                // 8. Globals
+                data.push(parseInt(document.getElementById('knobMainCC').value) || 0);
+                data.push(parseInt(document.getElementById('knobXCC').value) || 0);
+                data.push(parseInt(document.getElementById('knobYCC').value) || 0);
+                data.push(parseInt(document.getElementById('sampleRate').value) || 0);
+
+                // 9. PPQN
+                let p1 = document.getElementById(`ppqn4`);
+                let p2 = document.getElementById(`ppqn5`);
+                data.push(p1 ? (parseInt(p1.value) || 24) : 24);
+                data.push(p2 ? (parseInt(p2.value) || 24) : 24);
+
+                // 10. Pulse PWM
+                let pwm4 = document.getElementById('pulsePWM4');
+                data.push((pwm4 && pwm4.checked) ? 0 : 1);
+
+                let pwm5 = document.getElementById('pulsePWM5');
+                data.push((pwm5 && pwm5.checked) ? 0 : 1);
+
+                data.push(0xF7);
+
+                // Debug Log
+                console.log("Sending Config:", data.map(b => b.toString(16)));
+
+                outputPort.send(data);
+                if (!silent) showToast("Config Applied");
+            } catch (err) {
+                console.error("Send Config Failed:", err);
+                if (!silent) alert("Failed to send config: " + err);
+            }
+        }
+
+        function parseConfig(data) {
+            console.log("Config Packet Length:", data.length);
+
+            if (data.length < 48) {
+                showToast("Old Firmware Detected. Please Update!");
+                return;
+            }
+
+            // V18 (50 bytes) or V17 (48 bytes)
+            showToast("Config Read (V" + (data.length >= 50 ? "18" : "17") + ")");
+
+            let outMask = data[3];
+            let inMask = data[4];
+
+            for (let i = 0; i < 6; i++) {
+                document.getElementById(`outEn${i}`).checked = (outMask & (1 << i));
+                document.getElementById(`inEn${i}`).checked = (inMask & (1 << i));
+                document.getElementById(`outMode${i}`).value = data[5 + i];
+                document.getElementById(`inMode${i}`).value = data[23 + i];
+            }
+
+            // Render Dynamic Inputs
+            updateUI();
+
+            // Populate Dynamic Inputs
+            for (let i = 0; i < 6; i++) {
+                let outCh = document.getElementById(`outCh${i}`);
+                if (outCh) outCh.value = data[11 + i];
+
+                let outCC = document.getElementById(`outCC${i}`);
+                if (outCC) outCC.value = data[17 + i];
+
+                let inCh = document.getElementById(`inCh${i}`);
+                if (inCh) inCh.value = data[29 + i];
+
+                let inCC = document.getElementById(`inCC${i}`);
+                if (inCC) inCC.value = data[35 + i];
+            }
+
+            // Globals
+            document.getElementById('knobMainCC').value = data[41];
+            document.getElementById('knobXCC').value = data[42];
+            document.getElementById('knobYCC').value = data[43];
+            document.getElementById('sampleRate').value = data[44];
+
+            // PPQN
+            let p1 = document.getElementById(`ppqn4`);
+            if (p1) p1.value = data[45];
+            let p2 = document.getElementById(`ppqn5`);
+            if (p2) p2.value = data[46];
+
+            // Pulse Audio Mode (Binary)
+            // Check length for backward compatibility? V18 is 50 bytes.
+            if (data.length >= 50) {
+                let pwm4 = document.getElementById('pulsePWM4');
+                if (pwm4) pwm4.checked = (data[47] == 0); // 0=PWM (Checked)
+
+                let pwm5 = document.getElementById('pulsePWM5');
+                if (pwm5) pwm5.checked = (data[48] == 0); // 0=PWM (Checked)
+            }
+        }
+
+        function saveToFlash() {
+            if (!outputPort) return;
+            sendConfig(true);
+            setTimeout(() => {
+                outputPort.send([0xF0, 0x7D, 0x02, 0xF7]);
+                showToast("Saved to Flash");
+            }, 50);
+        }
+
+        function readConfig() {
+            if (!outputPort) return;
+            console.log("Sending Read Request (CMD 3)");
+            outputPort.send([0xF0, 0x7D, 0x03, 0xF7]);
+        }
+
+        function rebootDevice() {
+            if (!outputPort) return;
+            if (confirm("Reboot Device?")) {
+                outputPort.send([0xF0, 0x7D, 0x04, 0xF7]);
+            }
+        }
+
+        function enterBootloader() {
+            if (!outputPort) return;
+            if (confirm("Enter Bootloader?")) {
+                outputPort.send([0xF0, 0x7D, 0x05, 0xF7]);
+            }
+        }
+
+        window.addEventListener('load', initMIDI);
+    </script>
+
+</body>
+
+</html>

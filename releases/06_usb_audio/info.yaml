@@ -1,6 +1,6 @@
-Description: USB audio output
-Name: USB Audio
-Language: C (RPi Pico SDK)
-Creator: Chris Johnson
-Version: 0.1
-Status: Proof of concept
+Description: 6-Channel USB Audio & MIDI firmware with CV/Gate support
+Name: USB Audio & MIDI
+Language: C++ (RPi Pico SDK)
+Creator: Workshop System
+Version: 1.0
+Status: Release
