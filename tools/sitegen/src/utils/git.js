@@ -29,3 +29,14 @@ export function detectRefFromGit() {
   } catch (e) { debugLog('detectRefFromGit branch failed:', e?.message || e); }
   return null;
 }
+
+export function getLastCommitDate(relPath) {
+  try {
+    // Returns ISO 8601 date (e.g. 2023-01-01T12:00:00+00:00) of last change to path
+    const date = execSync(`git log -1 --format=%cI -- "${relPath}"`, { cwd: ROOT, encoding: 'utf8' }).trim();
+    return date;
+  } catch (e) {
+    debugLog(`getLastCommitDate failed for ${relPath}:`, e?.message || e);
+    return null;
+  }
+}

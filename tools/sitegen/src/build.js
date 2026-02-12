@@ -66,9 +66,11 @@ function releaseCard(rel) {
   const statusClass = mapStatusToClass(statusRaw);
     const metaItems = renderMetaList({ creator, version, language, statusRaw, statusClass });
 	const latestUf2 = rel.latestUf2;
-	const editorLink = (info.editor != '');
-	const editor = info.editor;
-  return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}">
+  const editorLink = (info.editor != '');
+  const editor = info.editor;
+  const date = info.date || '';
+  const searchText = normalizeSpaces(`${display.title} ${desc}`).toLowerCase();
+  return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}" data-date="${escapeAttr(date)}" data-search="${escapeAttr(searchText)}">
 <div class="card-head">
     <h3 class="card-title">${display.title}</h3>
     ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
@@ -215,6 +217,12 @@ async function build() {
 </article>
 <div class="filter-bar card" aria-label="Filter programs">
   <div class="card-body">
+    <div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+      <div class="search-wrapper">
+        <input type="text" id="filter-search" placeholder="Search programs..." class="search-input" aria-label="Search programs">
+        <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
+      </div>
+    </div>
     <div class="filter-row">
       <div class="filter-group">
         <label for="filter-type">Release type</label>
@@ -227,6 +235,14 @@ async function build() {
       <div class="filter-group">
         <label for="filter-language">Language</label>
         <select id="filter-language">${languageOptions}</select>
+      </div>
+    </div>
+    <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);" class="filter-row">
+      <div class="filter-group">
+        <label for="sort-latest" style="display:flex;align-items:center;cursor:pointer">
+          Sort by Latest Update
+          <input type="checkbox" id="sort-latest" style="margin-left:8px;transform:scale(1.2)">
+        </label>
       </div>
     </div>
   </div>

@@ -66,6 +66,10 @@ add_example(passthrough)
 
 add_example(sample_and_hold)
 
+add_example(web_interface)
+target_link_libraries(web_interface pico_multicore tinyusb_device tinyusb_board )
+target_sources(web_interface PUBLIC ${CMAKE_CURRENT_LIST_DIR}/examples/web_interface/usb_descriptors.c)
+
 add_example(sample_upload)
 
 add_example(second_core)

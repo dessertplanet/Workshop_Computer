@@ -22,6 +22,10 @@
 
    Only the sending of MIDI messages is demonstrated here. 
    The midi_device and midi_host examples demonstrate receiving MIDI messages.
+
+   This approach does not cope with long messages (e.g. SysEx), or, potentially, with
+   very high message rates when tud_midi_stream_write doesn't write (all) bytes.
+   See web_interface demo for a way of resolving this.
  */
 
 class MIDIDeviceHost : public ComputerCard

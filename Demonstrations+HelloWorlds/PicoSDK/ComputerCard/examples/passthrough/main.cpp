@@ -11,12 +11,15 @@ public:
 	virtual void ProcessSample()
 	{
 		// Transfer audio/CV/Pulse inputs directly to outputs
+
+		// Audio and CV out/in have range -2048 to +2047, for -6V to +6V.
 		AudioOut1(AudioIn1());
 		AudioOut2(AudioIn2());
 
 		CVOut1(CVIn1());
 		CVOut2(CVIn2());
 
+		// Pulse out/in are bool values
 		PulseOut1(PulseIn1());
 		PulseOut2(PulseIn2());
 
@@ -28,7 +31,7 @@ public:
 		LedOn(0, s == Switch::Up);
 
 		// Set LED 1, 3, 5 brightness to knob values
-		// (respectively, top rihgt, middle right and bottom right)
+		// (respectively, top right, middle right and bottom right)
 		LedBrightness(1, KnobVal(Knob::Main));
 		LedBrightness(3, KnobVal(Knob::X));
 		LedBrightness(5, KnobVal(Knob::Y));

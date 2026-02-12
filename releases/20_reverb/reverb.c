@@ -74,6 +74,7 @@ volatile uint32_t pf1 = 0, pf2 = 0, pfflag = 0;
 #define MIDI_NOTE_ON 0x90
 #define MIDI_NOTE_OFF 0x80
 #define MIDI_CC 0xB0
+#define MIDI_PITCHBEND 0xE0
 
 #define OPT_PITCH OPT_PITCH_OF_MIDI_NOTE
 
@@ -127,6 +128,8 @@ volatile uint8_t midiDeviceConnected=0;
 int32_t midiDeviceOutputCable=0;
 uint8_t midiDeviceAddress=0;
 
+int32_t midiPitchbend = 0;
+int32_t midiNotenum = 0;
 
 uint8_t dmaPhase = 0;
 
@@ -859,16 +862,16 @@ void handle_midi_message(uint8_t *packet)
 			tm_step();
 
 		// Pitch CV
-		uint16_t noteNum = packet[1];
+		midiNotenum = packet[1];
 		if (noteOn)
 		{
 			if (config[SEN_CV_OUT_1] == OPT_PITCH && midi_channel(packet, SEN_CV_OUT_1 + 1))
 			{
-				CVOut1(midiToDac(noteNum, 0) >> 8);
+				CVOut1(midiToDac8((midiNotenum<<8)+(midiPitchbend>>4), 0) >> 8);
 			}
 			if (config[SEN_CV_OUT_2] == OPT_PITCH && midi_channel(packet, SEN_CV_OUT_2 + 1))
 			{
-				CVOut2(midiToDac(noteNum, 1) >> 8);
+				CVOut2(midiToDac8((midiNotenum<<8)+(midiPitchbend>>4), 1) >> 8);
 			}
 		}
 	}
@@ -877,6 +880,18 @@ void handle_midi_message(uint8_t *packet)
 		uint8_t ccVal = packet[2];
 		if (config[SEN_CV_OUT_1] == OPT_MIDI_CC && midi_cc(packet, SEN_CV_OUT_1 + 1)) CVOut1(1024 - ccVal * 8);
 		if (config[SEN_CV_OUT_2] == OPT_MIDI_CC && midi_cc(packet, SEN_CV_OUT_2 + 1)) CVOut2(1024 - ccVal * 8);
+	}
+	else if (messageType == MIDI_PITCHBEND)
+	{
+		midiPitchbend =  packet[1] + (packet[2]<<7) - 8192;
+		if (config[SEN_CV_OUT_1] == OPT_PITCH && midi_channel(packet, SEN_CV_OUT_1 + 1))
+		{		
+			CVOut1(midiToDac8((midiNotenum<<8)+(midiPitchbend>>4), 0) >> 8);
+		}
+		if (config[SEN_CV_OUT_2] == OPT_PITCH && midi_channel(packet, SEN_CV_OUT_2 + 1))
+		{
+			CVOut2(midiToDac8((midiNotenum<<8)+(midiPitchbend>>4), 1) >> 8);
+		}
 	}
 }
 

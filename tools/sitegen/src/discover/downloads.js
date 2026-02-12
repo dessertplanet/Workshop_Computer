@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { fsAsync as fs, encodePathSegments } from '../utils/fs.js';
+import { fsAsync as fs } from '../utils/fs.js';
 
 export async function discoverDownloads(absReleaseDir, repoRelBase, makeRawUrl) {
   const downloads = [];
@@ -18,8 +18,7 @@ export async function discoverDownloads(absReleaseDir, repoRelBase, makeRawUrl) 
         try {
           mtime = (await fs.stat(fullPath)).mtimeMs;
         } catch {}
-        const encoded = encodePathSegments(relFromRepoRoot);
-        const url = makeRawUrl(encoded);
+        const url = makeRawUrl(relFromRepoRoot);
         const item = { name: ent.name, rel: relFromRepoRoot, url, mtime };
         downloads.push(item);
         if (/\.uf2$/i.test(ent.name)) {

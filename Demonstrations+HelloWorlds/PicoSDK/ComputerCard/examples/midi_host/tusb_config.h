@@ -76,7 +76,8 @@
 //--------------------------------------------------------------------
 
 // Size of buffer to hold descriptors and other data used for enumeration
-#define CFG_TUH_ENUMERATION_BUFSIZE 256
+// Enlarged from default 256 to cope with long descriptors from some devices
+#define CFG_TUH_ENUMERATION_BUFSIZE 1024
 
 #define CFG_TUH_HUB                 1 // Enable USB hubs
 #define CFG_TUH_CDC                 0

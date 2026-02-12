@@ -5,6 +5,7 @@ import { fsAsync as fs, fileExists } from '../utils/fs.js';
 import { slugify, parseDisplayFromFolder, formatDisplayTitle } from '../utils/strings.js';
 import { discoverDocs } from './docs.js';
 import { discoverDownloads } from './downloads.js';
+import { getLastCommitDate } from '../utils/git.js';
 
 export function normalizeInfo(raw, fallbackTitle) {
   const out = {};
@@ -18,6 +19,7 @@ export function normalizeInfo(raw, fallbackTitle) {
     version: out.version || '',
     status: out.status || '',
     editor: out.editor || '',
+    date: out.date || out.releasedate || '',
   };
 }
 
@@ -34,6 +36,19 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     catch { info = normalizeInfo({}, folderName); }
   } else {
     info = normalizeInfo({}, folderName);
+  }
+
+  // Fallback date from git if not specified in YAML
+  if (!info.date) {
+    const relPath = path.join('releases', folderName);
+    const gitDate = getLastCommitDate(relPath);
+    if (gitDate) {
+      // Keep ISO string or take YYYY-MM-DD. ISO string sorts better if we want time too, 
+      // but UI logic just compares strings. Let's keep full ISO for better precision
+      // or just YYYY-MM-DD if preferred. The user asked for "date".
+      // Let's use YYYY-MM-DD for consistency with manual entry usually.
+      info.date = gitDate.split('T')[0];
+    }
   }
 
   // Helper: rewrite relative links in README HTML to raw GitHub URLs

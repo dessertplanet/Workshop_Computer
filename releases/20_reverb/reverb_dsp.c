@@ -102,7 +102,7 @@ int32_t __not_in_flash_func(buffer_read)(buffer *db, uint16_t tapId, uint16_t t)
 	return db->buffer[(t + db->readOffset[tapId]) & db->mask];
 }
 
-
+typedef int32_t multiplier_type;
 
 // Allpass filter 
 int32_t __not_in_flash_func(allpass_process)(buffer *db, uint16_t t, int32_t gain, int32_t in)
@@ -113,11 +113,11 @@ int32_t __not_in_flash_func(allpass_process)(buffer *db, uint16_t t, int32_t gai
 	gain >>= 4;
 
 	int32_t delayed = buffer_read(db, TAP_MAIN, t);
-	in += ((delayed * -gain) >> 12);
+	in += ((delayed * -gain + 2048) >> 12);
 	// in = clamp(in, -16383, 16383);
 
 	buffer_write(db, t, in);
-	return delayed + ((in * gain) >> 12);
+	return delayed + ((in * gain + 2048) >> 12);
 }
 
 
@@ -131,14 +131,14 @@ where f_s is the sample rate
 */
 int32_t __not_in_flash_func(lowpass_process)(int32_t *out, int32_t b, int32_t in)
 {
-	*out += (((in - *out) * b) >> 16);
+	*out += (((in - *out) * b + 32768) >> 16);
 	return *out;
 }
 
 // Highpass, as above 
 int32_t __not_in_flash_func(highpass_process)(int32_t *out, int32_t b, int32_t in)
 {
-	*out += (((in - *out) * b) >> 16);
+	*out += (((in - *out) * b + 32768) >> 16);
 	return in - *out;
 }
 
@@ -357,16 +357,18 @@ void __not_in_flash_func(reverb_process)(reverb *v, int32_t in)
 	// This almost certainly doesn't eliminate wrapping entirely, but helps avoid it
 	for (int i = 0; i < 2; i++)
 	{
-		// ~23Hz input HPF, to cancel any input DC offset
-		if (i == 0)
-			x1 = highpass_process(&v->acCouplingHPF, 200, x);
-		else
-			x1 = x;
 
 		// Add cross feedback
-		x1 = x1 + ((buffer_read(&v->postDampingDelay[1 - i], TAP_MAIN, v->t) * v->decayAmount) >> 16);
+		x1 = x + ((buffer_read(&v->postDampingDelay[1 - i], TAP_MAIN, v->t) * v->decayAmount) >> 16);
 		x1 = clamp(x1, -16383, 16383);
 
+		// 11 Hz DC-blocking HPF once within figure-of-eight
+		if (i == 0)
+		{
+			x1 = highpass_process(&v->acCouplingHPF, 100, x1);
+			x1 = clamp(x1, -16383, 16383);
+		}
+		
 		// Process single half of the tank
 		x1 = allpass_process(&v->decayDiffusion1[i], v->t, -v->decayDiffusion1Amount, x1);
 		//		x1 = clamp(x1, -16383, 16383);

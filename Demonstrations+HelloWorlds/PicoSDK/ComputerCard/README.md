@@ -73,6 +73,7 @@ For beginners just starting with ComputerCard, the first example to look at is `
 - `sine_wave_lookup` — 440Hz sine wave generator, demonstrating scanning and linear interpolation of a lookup table using integer arithmetic 
 - `usb_detect` — Displays on the LEDs whether the USB port on the MTM Computer is acting as a 'downstream facing port' (MTM Computer is USB Host), or 'upstream facing port' (MTM Computer is USB device). Requires Computer 1.1.0 Hardware. 
 - `usb_serial` — Outputs debugging information from a ComputerCard through the USB serial connection
+- `web_interface` — Demonstrates bidirectional SysEx communication with an HTML web interface
 
 ### Notes
 - Make sure execution of `ComputerCard::ProcessSample` always runs quickly enough that it has returned before the next execution begins (1/48kHz = ~20μs). (See the [guidance below](#programming) on achieving this)
@@ -159,6 +160,8 @@ Early versions do not include a version number in the source code, but can be id
 | 0.2.5   | 2025/03/02 | b76132bc5126e2cb2ee14617f72b7f64 |
 | 0.2.6   | 2025/07/31 | Version number in ComputerCard.h |
 | 0.2.7   | 2025/08/03 |                                  |
+| 0.2.8   | 2026/02/09 |                                  |
+
 #### 0.1.4
 Transfer of code to public Workshop_Computer repository.
 
@@ -208,6 +211,9 @@ Lots of fixes found during Utility Pair development:
 - Added `CVOutsCalibrated` function to detect if CV outputs have been calibrated
 - New `calibrated_cv_out` example
 
+#### 0.2.8
+- Bug fix in calibration routine, where up to v0.2.7 `CVOutMillivolts` and `CVOutMIDINote` outputted constant voltages if the EEPROM did not contain calibration data
+- This also fixes an issue where ComputerCard did not run on Computer development boards without an EEPROM.
 
 # [Reference](#reference)
 

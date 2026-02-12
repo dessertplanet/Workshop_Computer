@@ -24,18 +24,10 @@ Installation
 
 See dist/ for pre-compiled .uf2 images.
 
-Building
---------
+Source
+------
 
-You should be able to build this with both Arduino IDE and CMake.
-
-mdkir build
-cd build
-cmake ..
-make
-
-See dist/ for pre-compiled .uf2 images.
-
+https://github.com/olt/slowmod
 
 Thanks
 ------

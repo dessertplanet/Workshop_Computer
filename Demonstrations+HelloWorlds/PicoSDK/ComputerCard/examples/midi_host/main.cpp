@@ -67,6 +67,7 @@ public:
 	
 	// Code for second RP2040 core, blocking
 	// Handles MIDI in/out messages
+	// Untested on long SysEx messages
 	void USBCore()
 	{
 		// Initialise TinyUSB

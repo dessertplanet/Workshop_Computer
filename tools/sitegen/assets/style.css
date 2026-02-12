@@ -111,8 +111,17 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.
 /* =====================================================================
   Filters (index page)
   ===================================================================== */
+.search-wrapper{position:relative;width:100%}
+.search-input{width:100%;padding:8px 36px 8px 8px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--text);margin-top:0;appearance:none}
+.theme-dark .search-input{background:var(--dark-bg);color:var(--toggle-thumb)}
+.theme-light .search-input{background:var(--light-bg);color:var(--light-text)}
+.search-input::placeholder{color:var(--muted)}
+.search-input:focus{outline:2px solid var(--accent);border-color:transparent}
+.search-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;width:24px;height:24px;border-radius:50%;display:none;align-items:center;justify-content:center;padding:0}
+.search-clear:hover{background:rgba(128,128,128,0.2);color:var(--text)}
+
 .filter-bar label{font-weight:600;color:var(--muted)}
-.filter-row{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;align-items:end}
+.filter-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;align-items:end}
 .filter-group{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center}
 .filter-group label{white-space:nowrap}
 .filter-bar select{appearance:none;background:transparent;border:1px solid var(--border);color:var(--text);padding:8px;border-radius:8px;width:100%}
