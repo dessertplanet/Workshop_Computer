@@ -1,0 +1,5 @@
+Description: Chord Organ - 16 chords, 8 voices, 1V/oct root. Replicates Music Thing Chord-Organ.
+Language: Pico SDK (C++), ComputerCard
+Creator: Workshop System
+Version: 0.1
+Status: Working

@@ -1,3 +1,12 @@
+# v1.1.1
+
+2026-02-18
+
+Bugfixes:
+
+* Fix crash when resetting chord progression through long hold of Z switch
+* Reduce output level of tuning mode to match normal mode
+
 # v1.1
 
 2026-02-04
