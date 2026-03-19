@@ -193,10 +193,11 @@ pico_add_extra_outputs(name)
 
 ### Programming guidance
 
-1. **`int32_t` for everything.** `float` is software-emulated. Multiply + `>>` instead of division. `sinf()` not `sin()`, `float` not `double`. `-Wdouble-promotion` catches accidental doubles.
-2. **Multicore — remember the second core is available.** The RP2040 has two cores; use them. USB/MIDI *must* be on a separate core. Beyond that, the second core is well-suited to **control-rate logic** (LFO computation, parameter smoothing, UI/LED updates, sequencer state) while core 0 handles the audio interrupt. **Avoid splitting audio DSP across cores** — sharing sample data between cores adds significant complexity (lock-free FIFOs, ring buffers, cache coherence concerns) for marginal gain. The cores share RAM, but any shared variable must be `volatile` and access must be thread-safe (use the hardware FIFO between cores, or a lock-free ring buffer if needed). Arduino: don't use `loop1`/`setup1` — use `multicore_launch_core1` as in the `second_core` example.
-3. **Flash writes** require `multicore_lockout_start_blocking()` + disable interrupts + `PICO_COPY_TO_RAM`.
-4. **Read knob/CV only inside ProcessSample.** Reading outside causes interrupt safety issues.
+1. **Search the repo before writing new code.** Before inventing a solution, look at how existing cards and examples handle the same problem. The `Demonstrations+HelloWorlds/` and `releases/` directories contain working, tested implementations of common patterns — build setup, CMakeLists structure, flash storage, web editors, multicore use, DSP techniques, LED feedback, and more. Borrow and adapt proven code rather than starting from scratch. The Key examples table (§2) is a good starting point; `ComputerCard.h` and the ComputerCard README are the authoritative API and DSP references. If a pattern already exists in the repo, follow it.
+2. **`int32_t` for everything.** `float` is software-emulated. Multiply + `>>` instead of division. `sinf()` not `sin()`, `float` not `double`. `-Wdouble-promotion` catches accidental doubles.
+3. **Multicore — remember the second core is available.** The RP2040 has two cores; use them. USB/MIDI *must* be on a separate core. Beyond that, the second core is well-suited to **control-rate logic** (LFO computation, parameter smoothing, UI/LED updates, sequencer state) while core 0 handles the audio interrupt. **Avoid splitting audio DSP across cores** — sharing sample data between cores adds significant complexity (lock-free FIFOs, ring buffers, cache coherence concerns) for marginal gain. The cores share RAM, but any shared variable must be `volatile` and access must be thread-safe (use the hardware FIFO between cores, or a lock-free ring buffer if needed). Arduino: don't use `loop1`/`setup1` — use `multicore_launch_core1` as in the `second_core` example.
+4. **Flash writes** require `multicore_lockout_start_blocking()` + disable interrupts + `PICO_COPY_TO_RAM`.
+5. **Read knob/CV only inside ProcessSample.** Reading outside causes interrupt safety issues.
 
 ### Gotchas (community-learned)
 
