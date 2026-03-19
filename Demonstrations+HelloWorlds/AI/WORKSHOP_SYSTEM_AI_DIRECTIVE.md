@@ -3,7 +3,7 @@ description: Complete AI coding directive for the Music Thing Modular Workshop S
 alwaysApply: true
 ---
 
-### Workshop System — AI Coding Directive (V1.7)
+### Workshop System — AI Coding Directive (V1.8)
 
 **You are a developer and collaborator for the Computer section of the Music Thing Modular Workshop System.**
 
@@ -194,7 +194,7 @@ pico_add_extra_outputs(name)
 ### Programming guidance
 
 1. **`int32_t` for everything.** `float` is software-emulated. Multiply + `>>` instead of division. `sinf()` not `sin()`, `float` not `double`. `-Wdouble-promotion` catches accidental doubles.
-2. **Multicore:** USB/MIDI must be on a separate core. Use `volatile` for shared vars. Arduino: don't use `loop1`/`setup1` — use `multicore_launch_core1` as in the `second_core` example.
+2. **Multicore — remember the second core is available.** The RP2040 has two cores; use them. USB/MIDI *must* be on a separate core. Beyond that, the second core is well-suited to **control-rate logic** (LFO computation, parameter smoothing, UI/LED updates, sequencer state) while core 0 handles the audio interrupt. **Avoid splitting audio DSP across cores** — sharing sample data between cores adds significant complexity (lock-free FIFOs, ring buffers, cache coherence concerns) for marginal gain. The cores share RAM, but any shared variable must be `volatile` and access must be thread-safe (use the hardware FIFO between cores, or a lock-free ring buffer if needed). Arduino: don't use `loop1`/`setup1` — use `multicore_launch_core1` as in the `second_core` example.
 3. **Flash writes** require `multicore_lockout_start_blocking()` + disable interrupts + `PICO_COPY_TO_RAM`.
 4. **Read knob/CV only inside ProcessSample.** Reading outside causes interrupt safety issues.
 
@@ -300,7 +300,7 @@ Capability examples:
 | 2× `sinf()` calls (software float) | ~100% |
 | Double-precision (`sin()`, `double`) | Too slow |
 
-Second core is free for USB/MIDI or parallelizable DSP.
+Second core is free for USB/MIDI, control logic, or parallelizable computation — but keep audio DSP on a single core (see §2 Multicore).
 
 ### DSP patterns
 
@@ -349,6 +349,21 @@ Editor: https://url (optional)
 ```
 
 Automation: `update-readme.yml` regenerates `releases/README.md`; `pages.yml` builds the site.
+
+### Version control discipline
+
+**Every project must use a git repository.** If the working directory is not already a git repo, initialise one before writing code. Treat git as the safety net for the entire development cycle.
+
+**Commit at every significant checkpoint**, including but not limited to:
+- Initial project scaffold / skeleton
+- Each feature or behaviour that compiles and runs
+- Before and after any risky refactor
+- Every successful build (especially before flashing hardware)
+- Bug fixes, with commit messages that reference the symptom
+
+Write clear, concise commit messages that describe *what changed and why*. Small, frequent commits are far better than one large commit at the end — they make it easy to bisect problems and recover from mistakes.
+
+If the user has not set up a repo yet, **prompt them to do so** before proceeding with code changes.
 
 ### Contribution flow
 
@@ -406,6 +421,8 @@ A web editor is not required for every card. Use one when:
 Config: last 4kB page, 4kB-aligned. Writes need `multicore_lockout` + disable interrupts + `PICO_COPY_TO_RAM`.
 
 ### AI etiquette
+
+**Confirm your understanding before starting work.** Before undertaking any non-trivial task, restate what you believe the user is asking for — the goal, scope, constraints, and any assumptions you are making — and wait for confirmation. This catches misunderstandings early and avoids wasted effort on the wrong thing. For small, unambiguous changes (a one-line fix, a rename) this is unnecessary; use judgement.
 
 State AI-generated parts. Confirm it builds. Verify controls match docs. LLM code may invent APIs — check `ComputerCard.h`. **If you can't explain the code, don't submit it.**
 

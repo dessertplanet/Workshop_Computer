@@ -35,4 +35,4 @@ Nope. That's partly the point. If you can describe what you want a program card 
 
 ## Version
 
-Current version: **V1.7**
+Current version: **V1.8**
