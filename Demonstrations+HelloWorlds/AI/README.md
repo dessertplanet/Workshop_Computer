@@ -4,9 +4,9 @@
 
 ## What is this?
 
-The Workshop System has a lot of quirks — specific hardware limits, a particular way its code framework works, and real-world gotchas that only become obvious after you've hit them. That's a lot for anyone (or any AI) to keep track of.
+The Workshop System Computer has quirks — specific hardware limits, a particular way its code framework works, and real-world gotchas that only become obvious after you've hit them. That's a lot for anyone (or any AI) to keep track of.
 
-This directive file is a structured reference document that AI coding tools (like Claude, Cursor, Copilot, etc.) can read before they start writing code for you. It gives them the context they need to produce code that actually builds, runs, and sounds right on real hardware.
+This directive file is a structured reference document that AI coding tools (like Claude, Cursor, Copilot, etc.) can read before they start writing code for you. It gives them the context and knowledge they need to produce code that actually builds, runs, and sounds right on real hardware.
 
 Think of it like handing a new bandmate the setlist, the tuning, and a note that says "don't touch the red cable."
 
@@ -17,16 +17,17 @@ Think of it like handing a new bandmate the setlist, the tuning, and a note that
 - **Hardware errata** — known chip-level quirks (like the ADC dead zones on every RP2040)
 - **DSP guidance** — performance budgets, integer math patterns, what fits in 20 microseconds
 - **Contribution standards** — how to structure and comment code so others can learn from it
+- **Coding Methods for best result** — Instructions to look to other cards for examples, using GIT for version control and other tips to steer the AI to help you get better results and have a smoother coding experience.
 
 ## How do I use it?
 
 It depends on your AI tool:
 
-- **Claude Code / Claude Projects** — add the directive file as project knowledge or drop it into your repo as a `CLAUDE.md` file. Claude will read it automatically.
+- **Claude Code / Claude Projects** — add the directive file as project knowledge or copy it into your repo as a `CLAUDE.md` file. Claude will read it automatically.
 - **Cursor / Copilot / other AI editors** — add it as a rules file or context document (check your tool's docs for the exact method).
-- **Chatting with an AI directly** — paste the contents into your conversation before asking it to write Workshop System code.
+- **Chatting with an AI directly** — paste the contents into your conversation and explain that these are the rules for this project before asking it to write Workshop System code.
 
-The key idea: **give your AI this file before you ask it to write code**, and the output will be dramatically better — fewer invented APIs, correct audio ranges, proper integer math, and code that respects the 20-microsecond interrupt deadline.
+The key idea: **give your AI this rules file before you ask it to write code**, and the output will be dramatically better — fewer invented APIs, correct audio ranges, proper integer math, and code that respects the 20-microsecond interrupt deadline.
 
 ## Do I need to be a coder to use this?
 
