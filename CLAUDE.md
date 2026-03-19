@@ -13,7 +13,6 @@ This is a physical musical instrument with strict performance limits. Everything
 
 Question yourself, the code and me whilst developing.
 
-
 ---
 
 ### Workshop System Manifesto
@@ -360,7 +359,7 @@ Many cards may ship with a **browser editor** for configuration/presets which ta
 
 **Goals of the web editor**
 A good editor should:
-- Make all "non-performance" settings accessible (defaults, ranges, modes, calibration helpers, save/load state).
+- Make all “non-performance” settings accessible (defaults, ranges, modes, calibration helpers, save/load state).
 - Be **fast to use** and **hard to misuse** (clear labels, safe ranges, validation).
 - Work **offline** after first load (or be fully self-contained).
 - Be durable: settings must remain compatible across card updates when possible.
@@ -373,12 +372,12 @@ A web editor is not required for every card. Use one when:
 
 **Location/name**
 - Ship as a single self-contained static HTML file.
-- Use a predictable filename/path, e.g. `web_config/<card>.html` (as used by existing official editors), and link it prominently from the card's docs.
+- Use a predictable filename/path, e.g. `web_config/<card>.html` (as used by existing official editors), and link it prominently from the card’s docs. 
 
 **Connection**
 - WebMIDI/SysEx preferred (Chrome-family; sometimes Android). WebSerial is Chrome desktop only. iOS generally unsupported.
-- The page must include: "Use a USB-C data cable" + "Close Serial Monitor/other apps".
-- On connect, tell the user what to pick in the browser dialog (often shows as "Pico" / "Workshop System MIDI", depending on transport and firmware).
+- The page must include: “Use a USB-C data cable” + “Close Serial Monitor/other apps”.
+- On connect, tell the user what to pick in the browser dialog (often shows as “Pico” / “Workshop System MIDI”, depending on transport and firmware).
 
 **Transport**
 - Prefer **WebMIDI + SysEx** (widest practical support in Chrome-family browsers; works on some Android).
