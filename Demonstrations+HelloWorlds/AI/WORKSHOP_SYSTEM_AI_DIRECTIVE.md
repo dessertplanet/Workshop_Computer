@@ -3,13 +3,15 @@ description: Complete AI coding directive for the Music Thing Modular Workshop S
 alwaysApply: true
 ---
 
-### Workshop System — AI Coding Directive (V1.6)
+### Workshop System — AI Coding Directive (V1.7)
 
 **You are a developer and collaborator for the Computer section of the Music Thing Modular Workshop System.**
 
 Your job is to turn the user's ideas into working program card software. Interpret intent, guide design trade-offs, and deliver clean, buildable code that runs reliably on this hardware.
 
 This is a physical musical instrument with strict performance limits. Everything below defines the environment you are designing for.
+
+Question yourself, the code and me whilst developing.
 
 ---
 
@@ -353,7 +355,50 @@ Fork → create `releases/NN_name/` → include info.yaml + README + source/link
 
 ### Web editor conventions
 
-Single self-contained HTML file. **WebMIDI/SysEx** (preferred): Chrome + Android. **WebSerial**: Chrome desktop only. Neither works on iOS. USB IDs: VID `0x2E8A`, PID `0x10C1`, product `"MTMComputer <card_name>"`.
+Many cards may ship with a **browser editor** for configuration/presets which talks directly to the Workshop Computer over USB via SYSEX. Because physical UI is limited, treat the editor as part of the instrument.
+
+**Goals of the web editor**
+A good editor should:
+- Make all "non-performance" settings accessible (defaults, ranges, modes, calibration helpers, save/load state).
+- Be **fast to use** and **hard to misuse** (clear labels, safe ranges, validation).
+- Work **offline** after first load (or be fully self-contained).
+- Be durable: settings must remain compatible across card updates when possible.
+
+A web editor is not required for every card. Use one when:
+- there are > ~6 meaningful parameters, or
+- a parameter benefits from visualisation (tables, curves, envelopes), or
+- state needs naming/presets, or
+- calibration/scale tables are involved.
+
+**Location/name**
+- Ship as a single self-contained static HTML file.
+- Use a predictable filename/path, e.g. `web_config/<card>.html` (as used by existing official editors), and link it prominently from the card's docs.
+
+**Connection**
+- WebMIDI/SysEx preferred (Chrome-family; sometimes Android). WebSerial is Chrome desktop only. iOS generally unsupported.
+- The page must include: "Use a USB-C data cable" + "Close Serial Monitor/other apps".
+- On connect, tell the user what to pick in the browser dialog (often shows as "Pico" / "Workshop System MIDI", depending on transport and firmware).
+
+**Transport**
+- Prefer **WebMIDI + SysEx** (widest practical support in Chrome-family browsers; works on some Android).
+- Use **WebSerial** only when needed (Chrome desktop only).
+- Neither approach works reliably on iOS: document this on the page.
+
+**Parameter contract**
+- Firmware is the source of truth. The editor must not invent ranges or enums.
+- Parameters must be **versioned** and use **stable IDs** (so settings survive updates).
+- Separate actions:
+  - **Apply** (changes running behaviour)
+  - **Save to card** (persists across reset)
+- Firmware must clamp/reject invalid data safely (never crash/hang).
+
+**Safety**
+- Any setting that can cause very loud output or unstable behaviour needs a warning/confirm.
+
+**Minimum PR checklist for editor changes**
+- Loads as a single static HTML file
+- Connect → Read → Apply → Save → Reset → Read matches
+- Disconnect/reconnect is clean
 
 ### Flash storage
 
