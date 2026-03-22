@@ -4,6 +4,8 @@ Knots is a six-engine oscillator firmware for the Music Thing Workshop System th
 
 The original repo with lots more build details and some tools is [here](https://github.com/fletchjeff/mtws)
 
+Video overview:
+
 [![Watch the video](https://img.youtube.com/vi/mE8FjwyQ3GQ/hqdefault.jpg)](https://youtu.be/mE8FjwyQ3GQ)
 
 ![MTWS](docs/MTWS_800.png)
