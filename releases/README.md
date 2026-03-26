@@ -20,7 +20,7 @@
 | 23_SlowMod | Chaotic quad-LFO with VCAs | 0.1<br>Released | C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE. | divmod/@olt |
 | 24_crafted_volts | Manually set control voltages (CV) with the input knobs and switch. It also attenuverts (attenuates and inverts) incoming voltages. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
 | 25_utility_pair | 25 small utilities, which can be combined in pairs | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
-| 27_Siren | Multi-algorithm drone oscillator. Inspired by the Forge TME Vhikk X. | 0.1<br>Functional but WIP | C++ (ComputerCard) | Moses Hoyt |
+| 27_Siren | Multi-algorithm drone oscillator. Inspired by the Forge TME Vhikk X. | 0.2<br>Functional but WIP | C++ (ComputerCard) | Moses Hoyt |
 | 28_eighties_bass | Bass-oriented complete monosynth voice consisting of five detuned saw wave oscillators with mixable white noise and adjustable resonant filter. | 0.1<br>Functional but WIP | arduino-pico core and Mozzi 2 library | @todbot / Tod Kurt |
 | 30_cirpy_wavetable | Wavetable oscillator that using wavetables from Plaits, Braids, and Microwave, | 0.1<br>Functional but WIP | Circuit Python | @todbot / Tod Kurt |
 | 31_esp | A MS-20-style External Signal Processor that includes a preamp, bandpass filter, envelope follower, gate, and 1v/oct pitch outs. | 1.0<br>Released | C++(ComputerCard) | Ben Regnier |
