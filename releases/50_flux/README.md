@@ -2,15 +2,15 @@
 
 Effects Processor, Synthesizer and Utility Card for the Music Thing Workshop Computer
 
-It started as a port of PiPicoFX (https://github.com/StoneRose35/cortexguitarfx/tree/rp2040_v1). I modified it to stereo and added more effects (Shimmer Reverb, Lossy Audio, Resonator, etc.). Then I realized there was another core on the Pico, so I added a synthesizer, and then another one and another one, and a sampler. I also ported a part of AMY (https://github.com/shorepine/amy/tree/main) (piano and FM synth). Now I only had to figure out what to do with the CV and pulse outs—they got MIDI to CV, two sequencers, and a port of Mutable Instruments Grids.
+It started as a port of PiPicoFX (https://github.com/StoneRose35/cortexguitarfx/tree/rp2040_v1). I modified it to be in stereo and added more effects (Shimmer Reverb, Lossy Audio, Resonator, etc.). Then I realized there was another core on the Pico, so I added a synthesizer, and then another one and another one, and some samplers. I also ported a part of AMY (https://github.com/shorepine/amy/tree/main) (piano and FM synth). Now I only had to figure out what to do with the CV and pulse outs - they got configurable MIDI to CV, an LFO two sequencers, and a port of Mutable Instruments Grids.
 
-This is a bit of a packed card, and that doesnt make the UI very straight forward, so I included optional voice annoucements. The card can also be locked, so the effects and synths cant be changed (useful if you want to have a simplified version of the card). Thism together with a lot of other settigns, Sample Management, Midi mapping (yes Flux is 4 voice polyphonic over midi) and the output config can be done on the web UI:
+This is a bit of a packed card and that doesn't make the UI very straight forward, so I included optional voice annoucements. To simplify it, the card can also be locked, so the effects and synths can't be changed. This together with a lot of other settings, Sample Management, Midi mapping (yes Flux is 4 voice polyphonic over midi) and the output config can be done in the web UI:
 https://vincentmaurer.de/flux/flux_manager.html
 
 
 ## Basic Operation
 
-The physical switch controls what the knobs do:
+The switch controls what the knobs do:
 
 | Switch Position | Mode | Main Knob | Knob X | Knob Y |
 | :--- | :--- | :--- | :--- | :--- |
@@ -18,6 +18,14 @@ The physical switch controls what the knobs do:
 | **MIDDLE** | **Effect** | Wet/ Dry | Parameter 1 (Time, Decay, etc) | Parameter 2 (Tone, Feedback etc) |
 | **DOWN (Hold)** | **Select Effect/ Synth** | Change Effect | Change Synth | Extra Synth Parameter  |
 | **DOUBLE DOWN (Hold)** | **Performance** | Internal Tempo | Parameter 1 (Sequence A Length, Randomness) | Parameter 2  (Sequence B Length, Randomness)|
+
+Audio 1 & 2 In: Either audio (mono or stereo) in or synth pitch and timbre/ secondary pitch/ external audio
+CV 1 & 2 In: Effects X and Y parameter modulation
+Pulse 1 & 2 In: Synth Gate and clock source for utilities
+
+Audio ! & 2 Out: Stereo audio
+CV 1 & 2 Out: Cofigurable
+Pulse 1 & 2 Out: Cofigurable
 
 ---
 
@@ -27,17 +35,17 @@ Pulse 1 (and optionally 2) trigger the synth. Can also be polyphonically trigger
 
 0. **External Input**: Passthrough external audio input.
 1. **Wavetable**: Morphing Triangle ➔ Saw ➔ Square ➔ Pulse.
-2. **Virtual Analog**: Osc stack through a resonant 24dB filter. **Y** = Cutoff.
+2. **Virtual Analog**: Osc stack through a resonant filter. **Y** = Cutoff.
 3. **Strings**: Karplus-Strong physical modeling. **Y** = Stiffness/Bowing.
 4. **Piano**: Additive synthesis spectral piano. **Y** = Brightness.
 5. **Modal**: Metallic bells and percussion. **Y** = Harmonic structure.
 6. **FM Synth**: 6-op DX7 style engine. **Main** = Env Speed, **Y** = Mod Depth.
 7. **Noise**: White noise through a LPG. **Y** = Filter.
-8. **Sampler One-Shot**: Triggered samples from flash. **Y** = Start Pos.
-9. **Sampler Loop**: Looping samples. **Main** = Length/Dir, **X** = Pitch, **Y** = Start.
+8. **Sampler One-Shot**: Triggered samples from flash. **Main** = Decay, **X** = Pitch, **Y** = Sample Select.
+9. **Sampler Loop**: Looping samples. **Main** = Decay, **X** = Pitch, **Y** = Sample Select.
 10. **Sampler Player**: Looping Player. **Main** = Length/Dir, **X** = Pitch, **Y** = Start.
-11. **Sampler Drums**: 4-voice kit. Trigger via Pulse 1/2 or Audio L/R. **Y** = Kit select.
-12. **Granular**: Shared grain pool. **Main** = Splatter, **X** = Pitch, **Y** = Position.
+11. **Sampler Drums**: 4-voice sample kit. Trigger via Pulse 1/2 or Audio L/R. **Y** = Kit select.
+12. **Granular**: Shared grain pool. **Main** = Density, **X** = Pitch, **Y** = Position.
 13. **Drum Synth**: Synthesized drum sounds. **Main** = Kick, **X** = Snare, **Y** = OH/ CH.
 
 
