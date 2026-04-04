@@ -90,3 +90,6 @@ Connect via USB and visit the **Flux Manager** to:
 *   **Save and share settings**: Export settings as patch cards and build custom cards
 ---
 
+Created for the Music Thing Modular Workshop System by Vincent Maurer (https://github.com/vincent-maurer/) with assistance from Google Gemini.
+
+Thank you to everyone on the Workshop System Discord server, that helped testing and especially to Chris Johnson (https://github.com/chrisgjohnson) for the ComputerCard library and the great support.
