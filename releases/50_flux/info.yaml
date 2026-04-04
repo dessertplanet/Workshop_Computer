@@ -1,0 +1,7 @@
+Description: Effects, Synthesizer and Utility
+Name: Flux
+Language: C++ (RPi Pico SDK), C
+Creator: Vincent Maurer (vincentmaurer.de)
+Version: 1.0
+Status: Release
+Editor: https://vincentmaurer.de/flux/flux_manager.html
