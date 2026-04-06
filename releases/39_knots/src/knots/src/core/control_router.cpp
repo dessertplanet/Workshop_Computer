@@ -7,6 +7,8 @@ constexpr uint32_t kBasePhaseInc10Hz = 894785U;  // 10 * 2^32 / 48k
 constexpr uint32_t kMaxPhaseInc10kHz = 894784853U;  // 10000 * 2^32 / 48k
 constexpr uint32_t kMaxU12 = 4095U;
 constexpr uint32_t kUnityQ12 = 4096U;
+constexpr int32_t kPitchCVScaleNumerator = 6;
+constexpr int32_t kPitchCVScaleDenominator = 5;
 // ComputerCard audio/CV signals span approximately +/-6 V over -2048..2047.
 // The modulation and VCA paths should reach full scale by +5 V, so use the
 // nearest signed input code for 2047 * 5 / 6 as the practical patch range.
@@ -35,6 +37,25 @@ inline uint16_t ClampU12(int32_t v) {
   if (v > int32_t(kMaxU12)) return kMaxU12;
   return uint16_t(v);
 }
+
+// Converts the raw CV1 board code into the pitch-code delta used by Main.
+// The card exposes about 12 V over the full CV input span, while the pitch
+// control covers 10 octaves over the same 12-bit code range, so we scale the
+// raw delta by 6/5. This makes 1 V land on 1 octave instead of the current
+// 10-semitone response. A float slope or per-board calibration would be more
+// flexible, but this integer ratio is cheaper and keeps the control path simple.
+constexpr int32_t MapPitchCVInputToPitchCodeDelta(int32_t input_code) {
+  if (input_code >= 0) {
+    return (input_code * kPitchCVScaleNumerator + (kPitchCVScaleDenominator / 2)) /
+           kPitchCVScaleDenominator;
+  }
+  return -(((-input_code) * kPitchCVScaleNumerator + (kPitchCVScaleDenominator / 2)) /
+           kPitchCVScaleDenominator);
+}
+
+static_assert(MapPitchCVInputToPitchCodeDelta(0) == 0, "Pitch CV zero should stay centered.");
+static_assert(MapPitchCVInputToPitchCodeDelta(1706) == 2047, "Positive pitch CV scale drifted.");
+static_assert(MapPitchCVInputToPitchCodeDelta(-1706) == -2047, "Negative pitch CV scale drifted.");
 
 // Clamps one bipolar board-domain input code into the intended -5 V..+5 V
 // modulation range so hotter sources saturate instead of overdriving the macro.
@@ -125,7 +146,7 @@ GlobalControlFrame ControlRouter::BuildGlobalFrame(const UISnapshot& ui, const M
 
   out.selected_slot = (ui.selected_slot < kNumOscillatorSlots) ? ui.selected_slot : 0;
 
-  int32_t pitch_local = int32_t(ui.knob_main) + int32_t(ui.cv1);
+  int32_t pitch_local = int32_t(ui.knob_main) + MapPitchCVInputToPitchCodeDelta(int32_t(ui.cv1));
   uint16_t pitch_code = ClampU12(pitch_local);
 
   uint32_t base_inc = BasePhaseIncrementFromPitchCode(pitch_code);

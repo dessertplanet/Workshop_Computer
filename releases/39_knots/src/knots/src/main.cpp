@@ -95,6 +95,7 @@ class MTWSApp : public ComputerCard {
         switch_candidate_(Middle),
         switch_stable_(Middle),
         switch_stable_count_(0),
+        switch_inputs_primed_(false),
         pulse2_high_prev_(false),
         panel_alt_latched_(false),
         selected_slot_(0),
@@ -197,9 +198,27 @@ class MTWSApp : public ComputerCard {
   }
 
   inline void __not_in_flash_func(CaptureUISnapshotAndHandleSwitching)() {
-    Switch prev_stable = switch_stable_;
     const uint16_t knob_x = ClampKnobU12(KnobVal(Knob::X));
     Switch sw = SwitchVal();
+    const bool pulse2_high_now = Connected(Input::Pulse2) && PulseIn2();
+
+    // Prime the app-level switch and Pulse2 histories from live hardware on
+    // the first control snapshot. This avoids turning startup settling into a
+    // fake Z down->middle tap or a synthetic Pulse2 rising edge.
+    if (!switch_inputs_primed_) {
+      switch_candidate_ = sw;
+      switch_stable_ = sw;
+      switch_stable_count_ = 0;
+      pulse2_high_prev_ = pulse2_high_now;
+      if (sw == Up) {
+        panel_alt_latched_ = true;
+      } else if (sw == Middle) {
+        panel_alt_latched_ = false;
+      }
+      switch_inputs_primed_ = true;
+    }
+
+    Switch prev_stable = switch_stable_;
     if (sw != switch_candidate_) {
       switch_candidate_ = sw;
       switch_stable_count_ = 0;
@@ -235,7 +254,7 @@ class MTWSApp : public ComputerCard {
       }
     }
 
-    const bool pulse2_high = Connected(Input::Pulse2) && PulseIn2();
+    const bool pulse2_high = pulse2_high_now;
     const bool pulse2_rising = pulse2_high && !pulse2_high_prev_;
     pulse2_high_prev_ = pulse2_high;
     // Keep Pulse2 slot switching masked for the entire Z-down gesture,
@@ -443,6 +462,7 @@ class MTWSApp : public ComputerCard {
   Switch switch_candidate_;
   Switch switch_stable_;
   uint8_t switch_stable_count_;
+  bool switch_inputs_primed_;
   bool pulse2_high_prev_;
   bool panel_alt_latched_;
   uint8_t selected_slot_;
