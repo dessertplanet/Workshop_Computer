@@ -1,7 +1,7 @@
 /*
 ComputerCard  - by Chris Johnson
 
-version 0.2.7   -  2025/03/08
+version 0.2.8   -  9 Feb 2026
 
 ComputerCard is a header-only C++ library, providing a class that
 manages the hardware aspects of the Music Thing Modular Workshop
@@ -340,8 +340,8 @@ private:
 
 	uint64_t uniqueID;
 	
-	uint8_t ReadByteFromEEPROM(unsigned int eeAddress);
-	int ReadIntFromEEPROM(unsigned int eeAddress);
+	uint8_t ReadByteFromEEPROM(unsigned int eeAddress, bool &failed);
+	int ReadIntFromEEPROM(unsigned int eeAddress, bool &failed);
 	void CalcCalCoeffs(int channel);
 	int ReadEEPROM();
 	uint32_t MIDIToDAC(int midiNote, int channel);
@@ -963,23 +963,34 @@ ComputerCard::ComputerCard()
 
 
 // Read a byte from EEPROM
-uint8_t ComputerCard::ReadByteFromEEPROM(unsigned int eeAddress)
+uint8_t ComputerCard::ReadByteFromEEPROM(unsigned int eeAddress, bool &failed)
 {
 	uint8_t deviceAddress = EEPROM_PAGE_ADDRESS | ((eeAddress >> 8) & 0x0F);
 	uint8_t data = 0xFF;
 
 	uint8_t addr_low_byte = eeAddress & 0xFF;
-	i2c_write_blocking(i2c0, deviceAddress, &addr_low_byte, 1, false);
+   
+	if (i2c_write_timeout_us(i2c0, deviceAddress, &addr_low_byte, 1, false, 10000) <= 0)
+	{
+		failed = true;
+		return 0;
+	}
 
-	i2c_read_blocking(i2c0, deviceAddress, &data, 1, false);
+	if (i2c_read_timeout_us(i2c0, deviceAddress, &data, 1, false, 10000) <= 0)
+	{
+		failed = true;
+		return 0;
+	}
+
 	return data;
 }
 
 // Read a 16-bit integer from EEPROM
-int ComputerCard::ReadIntFromEEPROM(unsigned int eeAddress)
+int ComputerCard::ReadIntFromEEPROM(unsigned int eeAddress, bool &failed)
 {
-	uint8_t highByte = ReadByteFromEEPROM(eeAddress);
-	uint8_t lowByte = ReadByteFromEEPROM(eeAddress + 1);
+	uint8_t highByte = ReadByteFromEEPROM(eeAddress, failed);
+	uint8_t lowByte = ReadByteFromEEPROM(eeAddress + 1, failed);
+
 	return (highByte << 8) | lowByte;
 }
 
@@ -1008,52 +1019,53 @@ uint16_t ComputerCard::CRCencode(const uint8_t *data, int length)
 int ComputerCard::ReadEEPROM()
 {
 	// Set up default values in the calibration table,
-	// to be used if EEPROM read fails
-	calibrationTable[0][0].voltage = -20; // -2V
-	calibrationTable[0][0].dacSetting = 347700;
-	calibrationTable[0][1].voltage = 0; // 0V
-	calibrationTable[0][1].dacSetting = 261200;
-	calibrationTable[0][2].voltage = 20; // +2V
-	calibrationTable[0][2].dacSetting = 174400;
+	// to be used if we can't read valid calibration from EEPROM
+	for (unsigned channel = 0; channel < calMaxChannels; channel++)
+	{	
+		numCalibrationPoints[channel] = 3;
+		calibrationTable[channel][0].voltage = -20; // -2V
+		calibrationTable[channel][0].dacSetting = 347700;
+		calibrationTable[channel][1].voltage = 0; // 0V
+		calibrationTable[channel][1].dacSetting = 261200;
+		calibrationTable[channel][2].voltage = 20; // +2V
+		calibrationTable[channel][2].dacSetting = 174400;
+		CalcCalCoeffs(channel); // calculate the coefficients
+	}
 
-	calibrationTable[1][0].voltage = -20; // -2V
-	calibrationTable[1][0].dacSetting = 347700;
-	calibrationTable[1][1].voltage = 0; // 0V
-	calibrationTable[1][1].dacSetting = 261200;
-	calibrationTable[1][2].voltage = 20; // +2V
-	calibrationTable[1][2].dacSetting = 174400;
-
-	if (ReadIntFromEEPROM(EEPROM_ADDR_ID) != EEPROM_VAL_ID)
+	// Read magic number
+	// Failure here could occur if I2C failed, or if incorrect/no magic number stored in EEPROM
+	bool i2cFailed = false;
+	if (ReadIntFromEEPROM(EEPROM_ADDR_ID, i2cFailed) != EEPROM_VAL_ID)
 	{
 		return 1;
 	}
+
+	// Read the EEPROM into RAM
 	uint8_t buf[EEPROM_NUM_BYTES];
 	for (int i = 0; i < EEPROM_NUM_BYTES; i++)
 	{
-		buf[i] = ReadByteFromEEPROM(i);
+		buf[i] = ReadByteFromEEPROM(i, i2cFailed);
 	}
 
-
+	// Check CRC and fail if incorrect
 	uint16_t calculatedCRC = CRCencode(buf, 86);
 	uint16_t foundCRC = ((uint16_t)buf[EEPROM_ADDR_CRC_H] << 8) | buf[EEPROM_ADDR_CRC_L];
-
 	if (calculatedCRC != foundCRC)
 	{
 		return 1;
 	}
 
-	int bufferIndex = 4;
-
+	// CRC passed, so now read the calibration information
 	for (uint8_t channel = 0; channel < calMaxChannels; channel++)
 	{
-		int channelOffset = bufferIndex + (41 * channel); // channel 0 = 4, channel 1 = 45
+		int channelOffset = 4 + (41 * channel); // channel 0 = 4, channel 1 = 45
 		numCalibrationPoints[channel] = buf[channelOffset++];
 		for (uint8_t point = 0; point < numCalibrationPoints[channel]; point++)
 		{
 			// Unpack Pack targetVoltage (int8_t) from buf
 			int8_t targetVoltage = (int8_t)buf[channelOffset++];
 
-			// Unack dacSetting (uint32_t) from buf (4 bytes)
+			// Unpack dacSetting (uint32_t) from buf (4 bytes)
 			uint32_t dacSetting = 0;
 			dacSetting |= ((uint32_t)buf[channelOffset++]) << 24; // MSB
 			dacSetting |= ((uint32_t)buf[channelOffset++]) << 16;
@@ -1064,6 +1076,9 @@ int ComputerCard::ReadEEPROM()
 			calibrationTable[channel][point].voltage = targetVoltage;
 			calibrationTable[channel][point].dacSetting = dacSetting;
 		}
+		
+		// Now calculate the calibration coeffs that are actually used
+		// by the calibrated CVOut functions
 		CalcCalCoeffs(channel);
 	}
 

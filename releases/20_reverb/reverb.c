@@ -1495,9 +1495,10 @@ void __not_in_flash_func(process_sample)()
 
 int main()
 {
-	// Run at 200MHz, certified max clock as of pico-sdk 2.1.1
+	// Run at 192MHz, near max clock as of pico-sdk 2.1.1
+	// Divides sample rate of 48kHz exactly, which helps remove tones in ADC input.
 	// https://github.com/raspberrypi/pico-sdk/releases/tag/2.1.1
-	set_sys_clock_khz(200000, true);
+	set_sys_clock_khz(192000, true);
 
 	adc_run(false);
 	adc_select_input(0);

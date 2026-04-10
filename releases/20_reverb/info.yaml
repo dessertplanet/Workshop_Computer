@@ -2,6 +2,6 @@ Description: Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurabl
 Name: Reverb+
 Language: C (RPi Pico SDK)
 Creator: Chris Johnson
-Version: 1.3
+Version: 1.4
 Status: Released
 Editor: https://www.musicthing.co.uk/web_config/reverb.html

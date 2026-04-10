@@ -118,6 +118,10 @@ public:
 		// Handle MIDI note on/off and mod wheel
 		// Real MIDI note on/off handling should be more sophisticated, at least counting
 		// the number of notes down, or possibly tracking the entire set of notes held down.
+
+		// This approach does not cope with long messages (e.g. SysEx), or, potentially, with
+		// very high message rates when tud_midi_stream_write doesn't write (all) bytes.
+		// See web_interface demo for a way of resolving this.
 		switch (m.command)
 		{
 		case MIDIMessage::NoteOn:

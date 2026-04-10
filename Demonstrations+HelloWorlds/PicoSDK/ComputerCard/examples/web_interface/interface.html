@@ -7,19 +7,40 @@
 	
 	<meta name="description" content="Web interface demo for ComputerCard, for the Music Thing Modular Workshop System Computer">
 
+	<style>
+	  body
+	  {
+		  font-family: monospace;
+	  }
+	  #content
+	  {
+		  width: 200px;
+		  margin: 30px auto;
+		  display:flex;
+		  flex-direction:column;
+		  justify-content: space-between;
+		  gap: 50px;
+		  text-align:center
+	  }
+	  #statusDiv
+	  {
+		  position: absolute;
+		  top: 10px;
+		  right: 10px;
+	  }
+	</style>
 	
 	<script lang="javascript">
 
 
 	  /*
-		Fairly minimal web interface demo using WebMIDI and SysEx
-		to transfer data both ways between Workshop System and the browser.
-
+		Web interface demo using WebMIDI and SysEx to transfer data both ways
+		between Workshop System and the browser.
 
 		Both the Javascript in interface.html and C++ firmware in main.cpp
 		provide two functions:
-		   SendSysEx
-           ProcessIncomingSysEx
+		SendSysEx
+		ProcessIncomingSysEx
 		which take an array of bytes (values 0 to 127) and provide bidirectional
 		communication between the web interface and WS Computer firmware.
 
@@ -36,74 +57,116 @@
 
 
 		Here a very simple protocol is used where the first byte of the message
-		is used to indicate what type of message it is (not really necessary
-		here as there is only one type of message going in each direction).
+		is used to indicate what type of message it is.
 		All sorts of alternatives are possible, including sending 
 		(7-bit ascii) text such as JSON.
 
-
-		In a real card, it would also be sensible to have messages for checking
-		that the card is correct and version number is consistent between
-		HTML interface and firmware.
-
+		On the firmware side, both MIDI sends and receives are designed to cope
+		with long SysEx messages. This mandates an approach where the message may
+		span multiple tud_midi_stream_read calls, and where tud_midi_stream_write
+		may not be able to write all bytes of a message at once.
 	   */
 
+	  
 	  ////////////////////////////////////////////////////////////
 	  // This code is fairly generic code that might be present
 	  // in many web interfaces. It sets up the MIDI connection to the
 	  // WS computer, and provides the SendSysEx function.
 
-	  // InterfaceName corresponds to the USB product descriptor string -
-	  // see usb_descriptors.c
-	  const interfaceName = "MTMComputer";
 
-	  
+	  // Variables to store midi input/output objects for WS computer,
+	  // and boolean to indicate whether WS computer is connected.
 	  var midiOutput = null, midiInput = null;
 	  var midiActive = false;
 	  
-      // MIDI Setup                                                                                               
-	  async function MIDISetup()
+      // WebMIDI Setup
+      // Establishes WebMIDI and sets up calls to BindDevices
+	  async function MIDISetup(interfaceName, onConnect = () => {}, onDisconnect = () => {})
 	  {
 		  try
 		  {
-			  const midiAccess = await navigator.requestMIDIAccess({ sysex: true });
-			  midiOutput = null;
-			  midiInput = null;
-			  for (const output of midiAccess.outputs.values())
-			  {
-				  if (output.name.indexOf(interfaceName) != -1)
-				  {
-					  midiOutput = output;
-				  }
-              }                         
-			  for (const input of midiAccess.inputs.values())
-			  {
-				  if (input.name.indexOf(interfaceName) != -1)
-				  {
-					  midiInput = input;
-
-					  // Set up listener for incoming SysEx
-					  midiInput.onmidimessage = (event) =>
-					  {
-						  const data = Array.from(event.data);
-						  if (data.length>3
-							  && data[0] === 0xF0
-							  && data[1] === 0x7D
-							  && data[data.length - 1] === 0xF7)
-						  {
-							  ProcessIncomingSysEx(data.slice(2, data.length-1));
-						  }
-					  };
-				  }
-              }
-			  midiActive = (midiInput != null && midiOutput != null);
-			  document.getElementById('connectedStatus').innerHTML = midiActive?'Connected':'No computer found';
+			  const midi = await navigator.requestMIDIAccess({ sysex: true });
+			  
+			  // run once at startup
+			  BindDevices(midi, interfaceName, onConnect, onDisconnect);
+			  
+			  // run whenever devices change
+			  midi.addEventListener('statechange', (e) => {
+				  BindDevices(midi, interfaceName, onConnect, onDisconnect);
+			  });			  
 		  }
 		  catch (error)
 		  {
 			  document.getElementById('connectedStatus').innerHTML = 'WebMIDI error ('+error+')';
           }
-      }
+
+	  }
+
+	  // Called on WebMIDI initialisation, and whenever a device is connected or disconnected
+	  // Ignores non-WS MIDI devices, but does not handle multiple Workshop Systems.
+	  function BindDevices(midi, interfaceName, onConnect, onDisconnect)
+	  {
+		  // If we already have a MIDI connection, check if it has been disconnected
+		  if (midiActive)
+		  {
+			  const foundInput = [...midi.inputs.values()].some(input =>
+				  input.name.includes(interfaceName) &&
+					  input.state === "connected"
+			  );
+
+			  const foundOutput = [...midi.outputs.values()].some(output =>
+				  output.name.includes(interfaceName) &&
+					  output.state === "connected"
+			  );
+
+			  if (!foundInput || !foundOutput)
+			  {
+				  midiActive = false;
+				  midiOutput = undefined;
+				  midiInput = undefined;
+				  onDisconnect();
+			  }
+		  }
+		  else // if we don't have a MIDI connection to the WS, see if we can now create one.
+		  {
+			  midiInput = [...midi.inputs.values()].find(input =>
+				  input.name.includes(interfaceName) &&
+					  input.state === "connected");
+			  
+			  midiOutput = [...midi.outputs.values()].find(output =>
+				  output.name.includes(interfaceName) &&
+					  output.state === "connected");
+			  
+			  if (midiInput && midiOutput)
+			  {
+				  midiInput.onmidimessage = HandleMIDI;
+				  midiActive = true;
+				  onConnect();
+			  }
+			  else
+			  {
+				  // Clear both inputs/outputs, in the event that we only found interface for one of them
+				  midiOutput = undefined;
+				  midiInput = undefined;
+			  }
+		  }		  
+	  }
+
+
+	  // Called when MIDI received from Workshop system
+	  function HandleMIDI(event)
+	  {
+		  // Send SysEx data on to ProcessIncomingSysEx. Ignore other MIDI messages.
+		  const data = Array.from(event.data);
+		  if (data.length>3
+			  && data[0] === 0xF0
+			  && data[1] === 0x7D
+			  && data[data.length - 1] === 0xF7)
+		  {
+			  ProcessIncomingSysEx(data.slice(2, data.length-1));
+		  }
+	  }
+	  
 
 	  // Used to check that we're not sending data outside of permitted 0x00-0x7F range in sysex
 	  function Assert7BitArray(arr, name)
@@ -144,59 +207,112 @@
 	  ////////////////////////////////////////////////////////////
 	  // All code below here is specific to this particular interface
 
+	  const MESSAGE_MAIN_KNOB_POSITION = 0x01; // firmware -> HTML
+	  const MESSAGE_SLIDER_POSITION = 0x02; // HTML -> firmware
+	  const MESSAGE_INTERFACE_VERSION = 0x03; // HTML -> firmware
+	  const MESSAGE_FIRMWARE_VERSION = 0x04;  // firmware -> HTML
+	  
+	  const INTERFACE_VERSION_MAJOR = 0x00;
+	  const INTERFACE_VERSION_MINOR = 0x01;
+	  const INTERFACE_VERSION_PATCH = 0x00;
+
+	  var firmwareVersionMajor=0, firmwareVersionMinor=0, firmwareVersionPatch=0;
 	  
 	  // In this interface we start WebMIDI automatically as soon as page is loaded
-	  window.onload = async function()
+	  window.onload = function()
 	  {
-		  // Use 'await' here to wait until MIDISetup has finished,
-		  // then enable the UI elements if connection succeeded
-		  await MIDISetup();
-		  if (midiActive)
-		  {
-			  document.getElementById('myslider').disabled = false;
-		  }
+		  // Initialise WebMIDI and create callbacks for when computer is connected/disconnected
+		  // First parameter corresponds to the USB product descriptor string -
+		  // see usb_descriptors.c in the firmware
+		  MIDISetup("MTMComputer", ConnectToComputer, DisconnectFromComputer);
+	  }
+  	
+	  // Callback whenever we have found the Workshop Computer and connected to it
+	  function ConnectToComputer()
+	  {
+		  document.getElementById('myslider').disabled = false;  
+		  document.getElementById('connectedStatus').innerHTML = '<span style="color:green">Connected</span>';
+		  SendVersionNumber();
+	  }
+	  
+	  // Callback whenever the Workshop Computer is disconnected
+	  function DisconnectFromComputer()
+	  {
+		  document.getElementById('myslider').disabled = true;
+		  document.getElementById('connectedStatus').innerHTML = '<span style="color:red">Disconnected</span>';
+		  DisplayVersionNumbers();
 	  }
 
-	  // Called whenever slider is dragged in the HTML interface
-	  function SendSliderValue(val)
-	  {
-		  // Send a two-byte message starting with 0x02
-		  // containing the value of the slider
-		  SendSysEx([0x02, val]);
-	  }
-
+	  
 	  // All interfaces would need to implement this function.
-	  // Called whenever SysEx message is sent from the Workshop System to the web interface
+	  // Called whenever a SysEx message is sent from the Workshop System to the web interface
 	  function ProcessIncomingSysEx(dataBytes)
 	  {
-		  // If first data byte is 1, this is a message from the Workshop Computer
-		  // to report the main knob position, packing the 12-bit position into
+		  // Messages from the Workshop Computer
+
+		  // Report the main knob position, packing the 12-bit position into
 		  // the next two (7-bit) SysEx bytes.
-		  if (dataBytes.length == 3 && dataBytes[0] == 0x01)
+		  if (dataBytes[0] == MESSAGE_MAIN_KNOB_POSITION && dataBytes.length == 3)
 		  {
 			  var mainKnob = dataBytes[1]*32 + dataBytes[2];
 			  SetDialValue(mainKnob);
 		  }
+
+		  // Report the firmware version number
+		  if (dataBytes[0] == MESSAGE_FIRMWARE_VERSION && dataBytes.length == 4)
+		  {
+			  firmwareVersionMajor = dataBytes[1];
+			  firmwareVersionMinor = dataBytes[2];
+			  firmwareVersionPatch = dataBytes[3];
+			  DisplayVersionNumbers();
+		  }
 	  }
+
 	  
-	  // Update the fancy dial showing main knob position
+	  // Sent interface version number.
+	  // Called when connection to computer is established
+	  function SendVersionNumber()
+	  {
+		  SendSysEx([MESSAGE_INTERFACE_VERSION,
+					 INTERFACE_VERSION_MAJOR,
+					 INTERFACE_VERSION_MINOR,
+					 INTERFACE_VERSION_PATCH]);
+	  }
+
+	  // Send HTML slider value
+	  // Called whenever slider is dragged in the HTML interface
+	  function SendSliderValue(val)
+	  {
+		  SendSysEx([MESSAGE_SLIDER_POSITION, val]);
+	  }
+
+	  
+	  // Display version numbers in the top-right of the interface
+	  function DisplayVersionNumbers()
+	  {
+		  d = document.getElementById('versionDiv');
+		  d.innerHTML = 'Interface: v' +
+			  INTERFACE_VERSION_MAJOR + '.' +
+			  INTERFACE_VERSION_MINOR + '.' +
+			  INTERFACE_VERSION_PATCH + '<br>'
+			  +'Firmware: ';
+		  if (midiActive)
+		  {
+			  d.innerHTML += 'v' + firmwareVersionMajor
+				  + '.' + firmwareVersionMinor
+				  + '.' + firmwareVersionPatch;
+		  }
+		  else
+		  {
+			  d.innerHTML += 'N/A';
+		  }
+	  }
+
+	  // Update the dial showing main knob position
 	  function SetDialValue(v)
 	  {
-		  const MIN = 0;
-		  const MAX = 4095;
-		  const START_ANGLE = -142;
-		  const SWEEP = 285;
-		  
-		  v = Number(v);
-		  if (v < MIN) v = MIN;
-		  if (v > MAX) v = MAX;
-
-		  const norm = (v - MIN) / (MAX - MIN);
-		  const angle = START_ANGLE + norm * SWEEP;
-
-		  const pointer = document.getElementById("pointer");
-		  pointer.setAttribute("transform", `rotate(${angle} 50 50)`);
-
+		  const angle = ((v/4095)-0.5)*285;
+		  document.getElementById("pointer").setAttribute("transform", `rotate(${angle} 50 50)`);
 		  document.getElementById("valueText").textContent = v;
 	  }
 
@@ -205,56 +321,52 @@
 
 
   
-  <body style='font-family: monospace;'>
-	<div style=' width: 200px; margin: 30px auto; display:flex; flex-direction:column; justify-content: space-between; gap: 50px; text-align:center'>
+  <body>
+	
+	<!-- Status indicator in top right corner -->
+	<div id="statusDiv">
+	  <div id="connectedStatus">Loading...</div>
+	  <div id="versionDiv"></div>
+	</div>
+
+	
+	<div id='content'>
+
 	  <div>
-		Status:
-		<div id="connectedStatus">Disconnected</div>
-	  </div>
-	  <div>
-		<div>
-		  Drag slider and watch<br>
-		  Workshop System LEDs:
-		</div>
+		Drag slider and watch<br>
+		Workshop System LEDs:
 		<input id='myslider' type="range" min="0" max="127" value="0" disabled oninput="SendSliderValue(this.value)">
+	  </div>
+	 
+	  <div>
+		Turn the main knob<br>
+		and watch this dial:
+		<svg id="dial" width="100" height="100" viewBox="0 0 100 100">
+		  <!-- dial face -->
+		  <circle cx="50" cy="50" r="45" fill = "#FFF" stroke="#888" stroke-width="1"/>
+
+		  <!-- pointer -->
+		  <line id="pointer"
+				x1="50" y1="50"
+				x2="50" y2="15"
+				stroke="#000"
+				stroke-linecap="round"
+				stroke-width="3"/>
+		  
+		  <!-- numeric display -->
+		  <text id="valueText"
+				x="50" y="85"
+				text-anchor="middle"
+				font-size="9"
+				font-family="monospace"></text>
+		</svg>
 	  </div>
 	  
 	  <div>
-		<div>
-		  Turn the main knob<br>
-		  and watch this dial:
-		</div>
-		<div>
-		  
-		  <svg id="dial" width="100" height="100" viewBox="0 0 100 100">
-			<!-- dial face -->
-			<circle cx="50" cy="50" r="45" fill = "#FFF" stroke="#333" stroke-width="1"/>
-
-			<!-- pointer -->
-			<line id="pointer"
-				  x1="50" y1="50"
-				  x2="50" y2="15"
-				  stroke="#000"
-				  stroke-width="2"
-				  stroke-linecap="round"
-				  transform="rotate(-135 50 50)" />
-
-			<!-- center hub -->
-			<circle cx="50" cy="50" r="6" fill="#333"/>
-
-			<!-- numeric display -->
-			<text id="valueText"
-				  x="50" y="75"
-				  text-anchor="middle"
-				  font-size="9"
-				  font-family="monospace">0</text>
-		  </svg>
-		</div>
+		Run this in Chrome (or Chrome-based browsers) for WebMIDI support.
+		It should run on Windows, Mac, Linux and Android, but not iOS.
 	  </div>
-	  <div>
-		Run this in Chrome (or Chrome-based browsers) for WebMIDI support.<br>
-		It should run on Windows/Mac/Linux/Android, but not iOS.
-	  </div>
+	  
 	</div>
   </body>
   

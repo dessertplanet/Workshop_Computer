@@ -1,5 +1,5 @@
 Description: Takes USB midi, sends it to pulse and CV outputs, also sends knob positions and CV inputs back to the computer as CC values. 
 Language: Arduino-Pico
 Creator: Tom Whitwell
-Version: 0.5
+Version: 0.6.6
 Status: Working but simple

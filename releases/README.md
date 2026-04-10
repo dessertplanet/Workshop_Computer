@@ -1,7 +1,7 @@
 # Releases  
 | Folder Name | Description | Version | Language | Creator | Editor | Name | Status |
 | ----------- | ----------- | ------- | -------- | ------- | ------ | ---- | ------ |
-| 00_Simple_MIDI | Takes USB midi, sends it to pulse and CV outputs, also sends knob positions and CV inputs back to the computer as CC values. | 0.5 | Arduino-Pico | Tom Whitwell |  |  | Working but simple |
+| 00_Simple_MIDI | Takes USB midi, sends it to pulse and CV outputs, also sends knob positions and CV inputs back to the computer as CC values. | 0.6.6 | Arduino-Pico | Tom Whitwell |  |  | Working but simple |
 | 03_Turing_Machine | Turing Machine with tap tempo clock, 2 x pulse outputs, 4 x CV outputs | 0.1 | Arduino-Pico | Tom Whitwell | https://www.musicthing.co.uk/web_config/turing.html |  | Working but Simple |
 | 04_BYO_Benjolin | Rungler, Chaotic VCO, Noise Source, Turing Machine, Quantizer | 1.0 | Pico SDK | Dune Desormeaux |  |  | Released |
 | 05_chord_blimey | Generates CV/Pulse arpeggios | 0.9 | C (RPi Pico SDK) | Tom Waters |  |  | Mostly complete (for now) |
@@ -13,7 +13,7 @@
 | 12_am_coupler | AM radio transmitter / coupler | 1.0 | C++ (ComputerCard) | Chris Johnson |  | AM Coupler | Released |
 | 13_noisebox |  |  |  |  |  |  |  |
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0 | C++ (ComputerCard) | Chris Johnson |  | CVMod | Released |
-| 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface. | 1.3 | C (RPi Pico SDK) | Chris Johnson | https://www.musicthing.co.uk/web_config/reverb.html | Reverb+ | Released |
+| 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface. | 1.4 | C (RPi Pico SDK) | Chris Johnson | https://www.musicthing.co.uk/web_config/reverb.html | Reverb+ | Released |
 | 21_resonator | Karplus-Strong based sympathetic resonator. Can be used for resonant droning as well as plucking sounds. | 1.1.1 | C++ (ComputerCard) | Johan Eklund | https://johaneklund.io/resonator| Resonator | Released |
 | 22_sheep | A time-stretching and pitch-shifting granular processor and digital degradation playground with 2 fidelity options. | 1.1 | Pico SDK | Dune Desormeaux |  |  | Released |
 | 23_SlowMod | Chaotic quad-LFO with VCAs | 0.1 | C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE. | divmod/@olt |  |  | Released |
