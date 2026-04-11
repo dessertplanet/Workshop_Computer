@@ -375,7 +375,7 @@ The Pico SDK provides random number generation functions through the [`pico_rand
 
 ## Euclidean rhythms and sigma-delta modulation
 
-Curiously, the algorithm used to create Euclidean rhythms in Utility Pair is exactly the same as the algorithm used to generate precise 19-bit CV outputs (ComputerCard `CVOutPrecise` functions) from 11 bits of PWM resolution.
+Curiously, the algorithm used to create Euclidean rhythms in Utility Pair is exactly the same as the algorithm used to generate precise 19-bit CV outputs (ComputerCard `CVOutPrecise` functions) from 11 bits of PWM resolution. More to come here...
 
 ## Antiderivative antialiasing
 When an audio signal is sampled at some sample rate $f_s$, all frequencies in the signal up to the half the sample rate ($f_N=f_s/2$, the Nyquist frequency) are represented in the sampled signal. Any frequencies in the original signal above $f_N$ are reflected into the frequency range $0$ to $f_N$, a phenomenon called [aliasing](https://en.wikipedia.org/wiki/Aliasing), and are mixed together with the signals originally in this frequency band. Once aliasing occurs, it is usually impossible to remove the spurious aliased frequencies from the sampled signal, and so quite a lot of effort is expended in DSP programming to remove or reduce the amplitude of frequencies that would alias, before such aliasing occurs.
