@@ -1,6 +1,6 @@
 Description: Turing Machine with tap tempo clock, 2 x pulse outputs, 4 x CV outputs  
-Language: Arduino-Pico
+Language: C++ (ComputerCard)
 Creator: Tom Whitwell
-Version: 0.1
+Version: 1.5.3
 Status: Working but Simple
 Editor: https://www.musicthing.co.uk/web_config/turing.html
