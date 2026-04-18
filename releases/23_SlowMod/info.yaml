@@ -1,5 +1,5 @@
 Description: Chaotic quad-LFO with VCAs
 Language: C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE.
-Creator: divmod/@olt
+Creator: divmod
 Version: 0.1
 Status: Released
