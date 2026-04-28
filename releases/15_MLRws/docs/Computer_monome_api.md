@@ -1,8 +1,8 @@
 # Monome Grid for Workshop System Computer
 
-Use a [monome grid](https://monome.org/docs/grid/) (or arc) with the
+This document describes the monome API used by the MLRws firmware on the
 [Music Thing Modular Workshop System](https://www.musicthing.co.uk/workshopsystem/)
-Computer card, over USB host.
+Computer card.
 
 Compatible with **all monome grid hardware** — modern CDC/RP2040 grids and older
 FTDI-based editions (including DIY Neotrellis grids).
@@ -18,97 +18,17 @@ FTDI-based editions (including DIY Neotrellis grids).
 | `main.cpp` | MLRws card firmware (grid-driven sample looper) |
 | `CMakeLists.txt` | Build configuration |
 
-## Quick start
-
-### 1. Copy files into your card folder
-
-```
-monome_mext.h
-monome_mext.c
-MonomeGrid.h
-tusb_config.h
-```
-
-### 2. Update your CMakeLists.txt
-
-Add `monome_mext.c` to your sources and link the required libraries:
-
-```cmake
-add_executable(my_card
-    main.cpp
-    monome_mext.c
-)
-
-target_link_libraries(my_card
-    pico_stdlib
-    pico_multicore
-    hardware_adc hardware_clocks hardware_dma hardware_flash
-    hardware_gpio hardware_i2c hardware_irq hardware_pwm hardware_spi
-    tinyusb_host
-    tinyusb_board
-)
-```
-
-If your `tusb_config.h` also enables device mode (`CFG_TUD_CDC`), add
-`tinyusb_device` to `target_link_libraries` as well.
-
-```cmake
-```
-
-### 3. Write your card
-
-```cpp
-#include "ComputerCard.h"
-#include "MonomeGrid.h"
-
-class MyCard : public ComputerCard
-{
-public:
-    MyCard()
-    {
-        grid.begin();  // initialises mext + launches USB host on core 1
-    }
-
-    void ProcessSample() override
-    {
-        grid.poll();  // drain event queue — call once per sample
-
-        // React to key presses
-        if (grid.keyDown()) {
-            uint8_t x = grid.lastX();
-            uint8_t y = grid.lastY();
-            grid.ledToggle(x, y);
-        }
-
-        // Gate output when any key is held
-        PulseOut1(grid.anyHeld());
-    }
-
-private:
-    MonomeGrid grid;
-};
-
-int main()
-{
-    MyCard card;
-    card.Run();
-}
-```
-
-### 4. Build and flash
-
-```bash
-cd your_card_folder
-make build    # or: make flash (if OpenOCD is running)
-```
-
 ## API reference — MonomeGrid.h (C++)
+
+MLRws uses the `MonomeGrid` wrapper in host mode, but it does not use the
+`grid.begin()` convenience path. Instead, the firmware performs explicit
+`mext_init(...)` setup and runs the USB loop itself.
 
 ### Lifecycle
 
 | Method | Description |
 |---|---|
-| `grid.begin()` | Init + launch USB host on core 1. Call in constructor. |
+| `grid.begin()` | Convenience helper for standalone use. MLRws does not call this. |
 | `grid.ready()` | `true` once grid dimensions are discovered |
 | `grid.connected()` | `true` if a device is physically connected |
 | `grid.cols()` | Grid width (0 before discovery) |
@@ -116,11 +36,12 @@ make build    # or: make flash (if OpenOCD is running)
 
 ### Events
 
-Call `grid.poll()` once at the top of `ProcessSample()`.
+MLRws calls `grid.poll()` during its UI-control pass, not every audio sample.
+That happens at a reduced rate controlled by `MAIN_CTRL_DIV`.
 
 | Method | Description |
 |---|---|
-| `grid.poll()` | Drain event queue. Call once per sample. |
+| `grid.poll()` | Drain event queue. In MLRws, call during the UI-control tick. |
 | `grid.keyDown()` | `true` if a key was pressed this sample |
 | `grid.keyUp()` | `true` if a key was released this sample |
 | `grid.anyHeld()` | `true` if any key is currently held |
@@ -130,8 +51,8 @@ Call `grid.poll()` once at the top of `ProcessSample()`.
 
 ### LEDs
 
-LED changes are buffered and automatically flushed to the grid at ~60 fps
-by the USB host loop on core 1.
+LED changes are buffered and flushed by the USB host loop on core 1.
+In MLRws, redraws typically end with `grid.markDirty()`.
 
 | Method | Description |
 |---|---|
@@ -158,7 +79,8 @@ by the USB host loop on core 1.
 
 ## Low-level C API — monome_mext.h
 
-For developers who want full control (e.g., custom core 1 loop, arc support):
+For developers who want full control. This is the path MLRws follows in its
+USB/mode setup:
 
 ```cpp
 #include "pico/multicore.h"
@@ -244,13 +166,14 @@ ComputerCard::Run()             board_init() + tusb_init()
 | Grid (2021–2023) | FTDI FT232R | `CFG_TUH_CDC_FTDI` | ✓ |
 | Grid (older) | FTDI FT230X | `CFG_TUH_CDC_FTDI` | ✓ |
 | Neotrellis DIY | FTDI | `CFG_TUH_CDC_FTDI` | ✓ |
-| Arc | Same as above | Same as above | Partial (events only) |
+| Arc | Same as above | Same as above | Partial (events only; not used by MLRws) |
 
 ## Protocol notes
 
-The mext serial protocol is used by all monome devices. Key implementation
-details (learned from [dessertplanet/viii](https://github.com/dessertplanet/viii)
-and [monome/ansible](https://github.com/monome/ansible)):
+The mext serial protocol is used for monome grid communication in this
+firmware. Key implementation details (learned from
+[dessertplanet/viii](https://github.com/dessertplanet/viii) and
+[monome/ansible](https://github.com/monome/ansible)):
 
 - **LED commands are padded to 64 bytes** with `0xFF` for USB bulk packet alignment.
   This is essential for reliable operation across all hardware versions.

@@ -6,15 +6,15 @@
  * Row 7 is output VU in grid mode.
  *
  * Pages (selected via row 0):
- *   REC (col 0): per-track speed, reverse, stop/start, clear
- *   CUT (col 1): playhead cutting, loop-a-section
+ *   CUT (col 0): playhead cutting, loop-a-section
+ *   REC (col 1): per-track speed, reverse, volume, record arm
  *
  * Row 0 layout (both pages):
- *   Col 0     = REC page
- *   Col 1     = CUT page
+ *   Col 0     = CUT page
+ *   Col 1     = REC page
  *   Cols 4–7  = Pattern 1–4 (timed motion recorders)
- *   Cols 8–11 = Recall 1–4 (instant snapshot slots)
- *   Col 15    = ALT modifier
+ *   Cols 9–12 = Recall 1–4 (instant snapshot slots)
+ *   Col 14    = ALT modifier
  *
  * Recording: hold col 0 on a track row + switch up/down.
  *   Speed-linked — tape speed controls both record and playback rate.
