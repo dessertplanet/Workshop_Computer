@@ -606,8 +606,7 @@ public:
 				/* detect grid size once ready (latched) */
 				if (!grid_size_latched_ && grid.ready()) {
 					grid_size_latched_ = true;
-					small_grid_ = true;  /* TESTING: force 8x8 layout even on 16x8 */
-					// small_grid_ = (grid.cols() <= 8);  /* production: detect from discovery */
+					small_grid_ = (grid.cols() <= 8);
 				}
 
 				if (play_page == PAGE_REC)
