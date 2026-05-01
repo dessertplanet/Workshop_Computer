@@ -423,7 +423,8 @@ public:
 		/* ---- page navigation + pattern/recall buttons (row 0, always active) ---- */
 		if (run_ui_control && grid.keyDown() && grid.lastY() == 0) {
 			int col = grid.lastX();
-			bool alt_held = grid.held(14, 0);
+			bool alt_held = grid.held(alt_col(), 0);
+			int pcs = pat_col_start();
 			if (col == 0) {
 				play_page = PAGE_CUT;
 			}
@@ -437,9 +438,9 @@ public:
 					}
 				}
 			}
-			else if (col >= 4 && col <= 7) {
+			else if (col >= pcs && col <= pcs + 3) {
 				/* pattern buttons */
-				int p = col - 4;
+				int p = col - pcs;
 				if (alt_held) {
 					mlr_pattern_rec_stop(p);
 					mlr_pattern_play_stop(p);
@@ -462,8 +463,8 @@ public:
 				} else if (mlr_patterns[p].state == MLR_PAT_STOPPED) {
 					mlr_pattern_play_start(p);
 				}
-			} else if (col >= 9 && col <= 12) {
-				/* recall/scene buttons */
+			} else if (!small_grid_ && col >= 9 && col <= 12) {
+				/* recall/scene buttons (16-wide only) */
 				int r = col - 9;
 				if (alt_held) {
 					mlr_recall_clear(r);
@@ -484,7 +485,7 @@ public:
 
 		/* ---- page interaction (always active) ---- */
 		if (run_ui_control) {
-			process_gate_hold();  /* col 0/15 play/stop/gate on both pages */
+			process_gate_hold();  /* col 0/play_col play/stop/gate on both pages */
 			if (play_page == PAGE_REC)
 				process_page_rec();
 			else
@@ -602,6 +603,13 @@ public:
 				LedBrightness(3, vu_out_peak_ > 600 ? (uint16_t)((vu_out_peak_ - 600) * 3) : 0);
 				LedBrightness(1, vu_out_peak_ > 1400 ? (uint16_t)((vu_out_peak_ - 1400) * 6) : 0);
 
+				/* detect grid size once ready (latched) */
+				if (!grid_size_latched_ && grid.ready()) {
+					grid_size_latched_ = true;
+					small_grid_ = true;  /* TESTING: force 8x8 layout even on 16x8 */
+					// small_grid_ = (grid.cols() <= 8);  /* production: detect from discovery */
+				}
+
 				if (play_page == PAGE_REC)
 					update_grid_page_rec();
 				else
@@ -701,9 +709,11 @@ private:
 	uint32_t   rec_start_lockout_samples_ = 0;
 	bool       was_flushing_ = false; /* edge detect for flush completion */
 	bool       gate_mode[MLR_NUM_TRACKS] = {};    /* per-track gate playback mode */
-	uint32_t   col15_hold_time[MLR_NUM_TRACKS] = {};  /* sample counter for col 15 hold */
-	bool       col15_armed[MLR_NUM_TRACKS] = {};  /* true while col 15 is held in REC */
+	uint32_t   play_col_hold_time[MLR_NUM_TRACKS] = {};  /* sample counter for play-col hold */
+	bool       play_col_armed[MLR_NUM_TRACKS] = {};  /* true while play-col is held */
 	bool       gate_entered[MLR_NUM_TRACKS] = {}; /* true once hold crossed threshold */
+	bool       small_grid_ = false;  /* true when connected grid is 8x8 or smaller */
+	bool       grid_size_latched_ = false;  /* true once grid size has been detected */
 	uint16_t   gate_pulse = 0;       /* free-running counter for gate LED pulse */
 	adpcm_state_t mon_enc_ = {0, 0}; /* monitor codec encoder state */
 	adpcm_state_t mon_dec_ = {0, 0}; /* monitor codec decoder state */
@@ -763,6 +773,62 @@ private:
 	bool       gl_audio2_mod_rearm_required_ = false;
 	bool       gl_audio1_seen_disconnect_ = false;
 	bool       gl_audio2_seen_disconnect_ = false;
+
+	/* ---- 8x8 grid layout helpers ---- */
+
+	/** Play/stop/gate column (rightmost on grid). */
+	int play_col() const { return small_grid_ ? 7 : 15; }
+	/** ALT/delete column on row 0. */
+	int alt_col() const { return small_grid_ ? 7 : 14; }
+	/** Number of CUT scrub columns (between arm and play cols). */
+	int cut_cols() const { return small_grid_ ? 6 : 14; }
+	/** First cut column index on the grid. */
+	int cut_col_start() const { return 1; }
+	/** Last cut column index on the grid. */
+	int cut_col_end() const { return small_grid_ ? 6 : 14; }
+	/** First pattern button column on row 0. */
+	int pat_col_start() const { return small_grid_ ? 3 : 4; }
+	/** First recall button column on row 0. */
+	int recall_col_start() const { return 9; /* only on 16-wide */ }
+
+	/** Map an 8x8 CUT grid column (1-6) to internal column (0-13). */
+	int cut_grid_to_internal(int grid_col) const {
+		if (!small_grid_) return grid_col - 1;  /* 16x8: grid 1-14 → internal 0-13 */
+		int pos = grid_col - 1;  /* 0..5 */
+		return (pos * (MLR_GRID_COLS - 1) + 2) / (cut_cols() - 1);  /* 0..13 spread */
+	}
+
+	/** Map an internal column (0-13) to a CUT display column (1-N). */
+	int cut_internal_to_grid(int internal_col) const {
+		if (!small_grid_) return internal_col + 1;  /* 16x8: internal 0-13 → grid 1-14 */
+		return (internal_col * cut_cols() / MLR_GRID_COLS) + 1;  /* grid 1-6 */
+	}
+
+	/** Map 8x8 REC speed column (2-6) to speed_shift. */
+	static constexpr int8_t kSmallSpeedShifts[5] = { -3, -2, 0, 2, 3 };
+
+	int speed_col_to_shift_small(int col) const {
+		int idx = col - 2;
+		if (idx < 0) idx = 0;
+		if (idx > 4) idx = 4;
+		return kSmallSpeedShifts[idx];
+	}
+
+	/** Map a speed_shift to an 8x8 REC display column. */
+	int speed_shift_to_col_small(int shift) const {
+		for (int i = 0; i < 5; i++) {
+			if (kSmallSpeedShifts[i] == shift) return i + 2;
+		}
+		/* fallback: find nearest */
+		int best = 2;
+		int best_d = 99;
+		for (int i = 0; i < 5; i++) {
+			int d = shift - kSmallSpeedShifts[i];
+			if (d < 0) d = -d;
+			if (d < best_d) { best_d = d; best = i + 2; }
+		}
+		return best;
+	}
 
 	int knob_index(Knob knob)
 	{
@@ -1387,12 +1453,13 @@ private:
 		if (!grid.keyDown()) return;
 		if (grid.lastY() != row) return;
 
+		int max_col = small_grid_ ? 7 : 15;
 		int col = grid.lastX();
 		if (col < 0) col = 0;
-		if (col > 15) col = 15;
+		if (col > max_col) col = max_col;
 
-		int inv = 15 - col;  /* left=15, right=0 */
-		uint16_t raw = (uint16_t)(((uint32_t)inv * 4095u + 7u) / 15u);
+		int inv = max_col - col;  /* left=max, right=0 */
+		uint16_t raw = (uint16_t)(((uint32_t)inv * 4095u + (uint32_t)(max_col / 2)) / (uint32_t)max_col);
 		if (raw > 4095u) raw = 4095u;
 		mlr_master_level_raw = raw;
 		master_knob_arm_raw_ = KnobVal(Knob::Main);
@@ -1513,24 +1580,26 @@ private:
 	}
 
 	/* ================================================================ */
-	/* Gate mode: col 15 hold detection (runs every sample, any page)  */
+	/* Gate mode: play-col hold detection (runs every sample, any page) */
 	/* ================================================================ */
 
 	void __not_in_flash("process_gate_hold") process_gate_hold()
 	{
-		/* Arm on key-down of col 15 on any track row */
-		if (grid.keyDown() && grid.lastX() == 15 && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
+		int pc = play_col();
+
+		/* Arm on key-down of play col on any track row */
+		if (grid.keyDown() && grid.lastX() == pc && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track = grid.lastY() - 1;
-			col15_armed[track] = true;
-			col15_hold_time[track] = 0;
+			play_col_armed[track] = true;
+			play_col_hold_time[track] = 0;
 			gate_entered[track] = false;
 		}
 
 		/* Increment hold counters and enter gate mode at threshold */
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-			if (col15_armed[t]) {
-				col15_hold_time[t] += MAIN_CTRL_DIV;
-				if (col15_hold_time[t] >= GATE_HOLD_THRESHOLD && !gate_entered[t]) {
+			if (play_col_armed[t]) {
+				play_col_hold_time[t] += MAIN_CTRL_DIV;
+				if (play_col_hold_time[t] >= GATE_HOLD_THRESHOLD && !gate_entered[t]) {
 					gate_entered[t] = true;
 					gate_mode[t] = true;
 					/* Stop the track when entering gate mode */
@@ -1542,10 +1611,10 @@ private:
 			}
 		}
 
-		/* Key-up of col 15: short press action */
-		if (grid.keyUp() && grid.lastX() == 15 && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
+		/* Key-up of play col: short press action */
+		if (grid.keyUp() && grid.lastX() == pc && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track = grid.lastY() - 1;
-			if (col15_armed[track] && !gate_entered[track]) {
+			if (play_col_armed[track] && !gate_entered[track]) {
 				/* Short press */
 				if (gate_mode[track]) {
 					/* Disable gate mode and stop the track */
@@ -1573,15 +1642,17 @@ private:
 					}
 				}
 			}
-			col15_armed[track] = false;
-			col15_hold_time[track] = 0;
+			play_col_armed[track] = false;
+			play_col_hold_time[track] = 0;
 			gate_entered[track] = false;
 		}
 	}
 
 	/* ================================================================ */
-	/* REC page: col 7 = reverse, cols 8–14 = speed (11 = 1x),         */
-	/*           col 15 = stop/start                                   */
+	/* ================================================================ */
+	/* REC page key handler                                            */
+	/* 16x8: col 0=arm, 1-6=mixer, 7=reverse, 8-14=speed, 15=play     */
+	/* 8x8:  col 0=arm, 1=reverse, 2-6=speed, 7=play                  */
 	/* ================================================================ */
 
 	void __not_in_flash("process_page_rec") process_page_rec()
@@ -1602,7 +1673,7 @@ private:
 
 		int track  = grid.lastY() - 1;
 		int column = grid.lastX();
-		bool alt_held = grid.held(14, 0);
+		bool alt_held = grid.held(alt_col(), 0);
 
 		if (column == 0) {
 			if (alt_held) {
@@ -1632,23 +1703,37 @@ private:
 				}
 			}
 			return;
-		} else if (column >= 1 && column <= 6) {
-			/* volume mixer: col 1 = unity (slot 0), col 6 = quietest (slot 5) */
-			int slot = column - 1;
-			mlr_set_volume(track, slot);
-			dispatch_event(MLR_EVT_VOLUME, (uint8_t)track, (int8_t)slot, 0);
-		} else if (column == 7) {
-			/* toggle reverse */
-			bool new_rev = !mlr_tracks[track].reverse;
-			mlr_set_reverse(track, new_rev);
-			dispatch_event(MLR_EVT_REVERSE, (uint8_t)track, new_rev ? 1 : 0, 0);
-		} else if (column >= 8 && column <= 14) {
-			/* speed slots: -2 oct, -1 oct, -5th, 1x, +5th, +1 oct, +2 oct */
-			int speed = column - 11;  /* -3 .. +3 */
-			mlr_set_speed(track, speed);
-			dispatch_event(MLR_EVT_SPEED, (uint8_t)track, (int8_t)speed, 0);
 		}
-		/* col 15 is handled by process_gate_hold() */
+
+		if (small_grid_) {
+			/* 8x8 REC: col 1=reverse, cols 2-6=speed, col 7=play (gate_hold) */
+			if (column == 1) {
+				bool new_rev = !mlr_tracks[track].reverse;
+				mlr_set_reverse(track, new_rev);
+				dispatch_event(MLR_EVT_REVERSE, (uint8_t)track, new_rev ? 1 : 0, 0);
+			} else if (column >= 2 && column <= 6) {
+				int speed = speed_col_to_shift_small(column);
+				mlr_set_speed(track, speed);
+				dispatch_event(MLR_EVT_SPEED, (uint8_t)track, (int8_t)speed, 0);
+			}
+			/* col 7 is handled by process_gate_hold() */
+		} else {
+			/* 16x8 REC: cols 1-6=mixer, col 7=reverse, cols 8-14=speed, col 15=play */
+			if (column >= 1 && column <= 6) {
+				int slot = column - 1;
+				mlr_set_volume(track, slot);
+				dispatch_event(MLR_EVT_VOLUME, (uint8_t)track, (int8_t)slot, 0);
+			} else if (column == 7) {
+				bool new_rev = !mlr_tracks[track].reverse;
+				mlr_set_reverse(track, new_rev);
+				dispatch_event(MLR_EVT_REVERSE, (uint8_t)track, new_rev ? 1 : 0, 0);
+			} else if (column >= 8 && column <= 14) {
+				int speed = column - 11;  /* -3 .. +3 */
+				mlr_set_speed(track, speed);
+				dispatch_event(MLR_EVT_SPEED, (uint8_t)track, (int8_t)speed, 0);
+			}
+			/* col 15 is handled by process_gate_hold() */
+		}
 	}
 
 	/* ================================================================ */
@@ -1657,14 +1742,16 @@ private:
 
 	void __not_in_flash("process_page_cut") process_page_cut()
 	{
-		bool alt_held = grid.held(14, 0) || grid.held(0, 0);
+		int pc = play_col();
+		int ce = cut_col_end();
+		bool alt_held = grid.held(alt_col(), 0) || grid.held(0, 0);
 
 		/* --- key-up on track rows --- */
 		if (grid.keyUp() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track = grid.lastY() - 1;
 
-			/* gated recording: stop on col 0 or 15 release */
-			if ((grid.lastX() == 0 || grid.lastX() == 15) && mlr_rec_track == track && rec_gated) {
+			/* gated recording: stop on col 0 or play-col release */
+			if ((grid.lastX() == 0 || grid.lastX() == pc) && mlr_rec_track == track && rec_gated) {
 				mlr_stop_record();
 				rec_speed_accum = 0;
 				rec_gated = false;
@@ -1673,8 +1760,9 @@ private:
 			/* gated playback: stop when last key released */
 			if (gate_mode[track] && mlr_tracks[track].playing) {
 				int row = track + 1;
+				int gw = small_grid_ ? 8 : 16;
 				bool any_held = false;
-				for (int c = 0; c < 16; c++) {
+				for (int c = 0; c < gw; c++) {
 					if (grid.held((uint8_t)c, (uint8_t)row)) { any_held = true; break; }
 				}
 				if (!any_held) {
@@ -1693,8 +1781,7 @@ private:
 			int track  = grid.lastY() - 1;
 			int column = grid.lastX();
 
-			/* col 0 and 15 are utility keys */
-			/* col 0: record functions, col 15: play/gate (handled by process_gate_hold) */
+			/* col 0: record functions, play_col: play/gate (handled by process_gate_hold) */
 			if (column == 0) {
 				if (alt_held) {
 					mlr_clear_track(track);
@@ -1721,7 +1808,7 @@ private:
 				}
 				return;
 			}
-			if (column == 15) {
+			if (column == pc) {
 				if (alt_held) {
 					mlr_clear_track(track);
 					if (rec_armed_track == track) {
@@ -1732,6 +1819,9 @@ private:
 				return;  /* play/stop/gate handled by process_gate_hold */
 			}
 
+			/* ignore columns outside the cut zone */
+			if (column < 1 || column > ce) return;
+
 			if (alt_held) {
 				if (mlr_tracks[track].playing) {
 					mlr_stop_track(track);
@@ -1740,8 +1830,8 @@ private:
 				return;
 			}
 
-			/* Remap grid cols 1–14 → internal cols 0–13 */
-			int cut_col = column - 1;
+			/* Remap grid col to internal col (0–13) */
+			int cut_col = cut_grid_to_internal(column);
 
 			if (rec_armed_track == track) {
 				rec_armed_track = -1;
@@ -1757,17 +1847,17 @@ private:
 			dispatch_event(MLR_EVT_CUT, (uint8_t)track, (int8_t)cut_col, 0);
 		}
 
-		/* ---- loop-a-section: detect 2+ held keys per track row (cols 1–14 only) ---- */
+		/* ---- loop-a-section: detect 2+ held keys per track row ---- */
 		if (grid.keyDown() || grid.keyUp()) {
 			for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 				int row = t + 1;
 				int held_count = 0;
 				int held_min = 16, held_max = -1;
 
-				for (int c = 1; c <= 14; c++) {
+				for (int c = 1; c <= ce; c++) {
 					if (grid.held((uint8_t)c, (uint8_t)row)) {
 						held_count++;
-						int ic = c - 1;  /* internal col */
+						int ic = cut_grid_to_internal(c);
 						if (ic < held_min) held_min = ic;
 						if (ic > held_max) held_max = ic;
 					}
@@ -1787,7 +1877,9 @@ private:
 
 	void __not_in_flash("draw_row0_nav") draw_row0_nav()
 	{
-		/* pattern buttons: cols 4–7 (brighter at rest than recall keys) */
+		int pcs = pat_col_start();
+
+		/* pattern buttons */
 		static uint8_t pat_blink = 0;
 		pat_blink++;
 		for (int p = 0; p < MLR_NUM_PATTERNS; p++) {
@@ -1805,19 +1897,22 @@ private:
 			case MLR_PAT_STOPPED:   b = 6;  break;
 			default:                b = 2;  break;
 			}
-			grid.led(p + 4, 0, b);
+			grid.led(p + pcs, 0, b);
 		}
 
-		/* recall buttons: cols 9–12 */
-		for (int r = 0; r < MLR_NUM_RECALLS; r++) {
-			int b = 2;
-			if (mlr_recall_active == r)           b = 15;  /* selected */
-			else if (mlr_recalls[r].has_data)     b = 5;   /* has data */
-			grid.led(r + 9, 0, b);
+		if (!small_grid_) {
+			/* recall buttons: cols 9–12 (16-wide only) */
+			for (int r = 0; r < MLR_NUM_RECALLS; r++) {
+				int b = 2;
+				if (mlr_recall_active == r)           b = 15;  /* selected */
+				else if (mlr_recalls[r].has_data)     b = 5;   /* has data */
+				grid.led(r + 9, 0, b);
+			}
 		}
 
 		/* ALT */
-		grid.led(14, 0, grid.held(14, 0) ? 12 : 2);
+		int ac = alt_col();
+		grid.led(ac, 0, grid.held(ac, 0) ? 12 : 2);
 	}
 
 	/* Grid bottom row (row 7 when 6 tracks): master gradient bar.
@@ -1827,21 +1922,17 @@ private:
 		int row = MLR_NUM_TRACKS + 1;
 		if (row > 7) return;
 
-		uint8_t cell[16] = {};
+		int gw = small_grid_ ? 8 : 16;
 
 		/* Master volume from latched master value (0..4095) as gradient bar right->left.
 		 * Full scale reaches col 0. */
 		uint32_t master_raw = (uint32_t)mlr_master_level_raw;
-		uint32_t master_segs = ((master_raw * 16u) + 4094u) / 4095u;  /* ceil */
-		if (master_segs > 16u) master_segs = 16u;
+		uint32_t master_segs = ((master_raw * (uint32_t)gw) + 4094u) / 4095u;  /* ceil */
+		if (master_segs > (uint32_t)gw) master_segs = (uint32_t)gw;
 		for (uint32_t i = 0; i < master_segs; i++) {
-			int col = 15 - (int)i;
-			uint8_t g = (uint8_t)(2u + (i * 10u) / 15u);  /* smooth 2..12 ramp */
-			cell[col] = g;
-		}
-
-		for (int col = 0; col < 16; col++) {
-			grid.led(col, row, cell[col]);
+			int col = (gw - 1) - (int)i;
+			uint8_t g = (uint8_t)(2u + (i * 10u) / (uint32_t)(gw - 1));  /* smooth 2..12 ramp */
+			grid.led(col, row, g);
 		}
 	}
 
@@ -1857,6 +1948,8 @@ private:
 		bool recording = (mlr_rec_track >= 0);
 		bool rec_pos = (SwitchVal() == Switch::Up || SwitchVal() == Switch::Down);
 		bool gated_rec_ready = rec_pos && rec_armed_track < 0;
+
+		int pc = play_col();
 
 		/* row 0: navigation — REC highlighted */
 		grid.led(0, 0,  4);  /* CUT = dim */
@@ -1883,45 +1976,70 @@ private:
 			}
 			grid.led(0, row, col0_bright);
 
-			/* col 15: play/stop/gate indicator */
-			uint8_t col15_bright;
+			/* play col: play/stop/gate indicator */
+			uint8_t play_bright;
 			if (gate_mode[t]) {
-				col15_bright = (gate_pulse & 8) ? 12 : 4;
-				if (mlr_tracks[t].playing) col15_bright = 15;
+				play_bright = (gate_pulse & 8) ? 12 : 4;
+				if (mlr_tracks[t].playing) play_bright = 15;
 			} else {
-				col15_bright = mlr_tracks[t].playing ? 15 : (has ? 6 : 3);
+				play_bright = mlr_tracks[t].playing ? 15 : (has ? 6 : 3);
 			}
-			grid.led(15, row, col15_bright);
+			grid.led(pc, row, play_bright);
 
-			/* record progress: cols 1–6 (overlays mixer during recording) */
-			if (actively_rec) {
-				uint32_t progress = mlr_get_rec_progress() * 6 / MLR_MAX_SAMPLES;
-				if (progress > 6) progress = 6;
-				for (uint32_t c = 0; c < progress; c++)
-					grid.led(c + 1, row, 12);
-				if (progress < 6)
-					grid.led(progress + 1, row, (rec_blink & 2) ? 8 : 0);
-			} else if (has || armed) {
-				/* volume mixer: cols 1–6, slot 2 (col 3) = unity */
-				static uint8_t vol_gradient[6] = { 12, 9, 7, 5, 3, 1 };
-				uint8_t cur_slot = mlr_tracks[t].volume_slot;
-				for (int c = 0; c < 6; c++) {
-					if ((uint8_t)c == cur_slot)
-						grid.led(c + 1, row, 14);  /* active level */
-					else if ((uint8_t)c > cur_slot)
-						grid.led(c + 1, row, vol_gradient[c]);
-					/* cols above current level stay off */
+			if (small_grid_) {
+				/* 8x8 REC: col 1=reverse, cols 2-6=speed */
+				/* record progress: cols 1-6 during recording */
+				if (actively_rec) {
+					uint32_t progress = mlr_get_rec_progress() * 6 / MLR_MAX_SAMPLES;
+					if (progress > 6) progress = 6;
+					for (uint32_t c = 0; c < progress; c++)
+						grid.led(c + 1, row, 12);
+					if (progress < 6)
+						grid.led(progress + 1, row, (rec_blink & 2) ? 8 : 0);
+				} else {
+					/* reverse: col 1 */
+					grid.led(1, row, mlr_tracks[t].reverse ? 12 : 4);
+
+					/* speed: cols 2-6 (5 slots) */
+					int scol = speed_shift_to_col_small(mlr_tracks[t].speed_shift);
+					if (scol >= 2 && scol <= 6)
+						grid.led(scol, row, 14);
+					/* dim 1x indicator (col 4) when not selected */
+					if (scol != 4)
+						grid.led(4, row, 3);
 				}
+			} else {
+				/* 16x8 REC: cols 1-6=mixer, col 7=reverse, cols 8-14=speed */
+				/* record progress: cols 1–6 (overlays mixer during recording) */
+				if (actively_rec) {
+					uint32_t progress = mlr_get_rec_progress() * 6 / MLR_MAX_SAMPLES;
+					if (progress > 6) progress = 6;
+					for (uint32_t c = 0; c < progress; c++)
+						grid.led(c + 1, row, 12);
+					if (progress < 6)
+						grid.led(progress + 1, row, (rec_blink & 2) ? 8 : 0);
+				} else if (has || armed) {
+					/* volume mixer: cols 1–6, slot 2 (col 3) = unity */
+					static uint8_t vol_gradient[6] = { 12, 9, 7, 5, 3, 1 };
+					uint8_t cur_slot = mlr_tracks[t].volume_slot;
+					for (int c = 0; c < 6; c++) {
+						if ((uint8_t)c == cur_slot)
+							grid.led(c + 1, row, 14);  /* active level */
+						else if ((uint8_t)c > cur_slot)
+							grid.led(c + 1, row, vol_gradient[c]);
+						/* cols above current level stay off */
+					}
+				}
+
+				grid.led(7,  row, mlr_tracks[t].reverse ? 12 : 4);
+
+				/* cols 8–14: speed selection (col 11 = 1x) — show for all tracks */
+				int speed_col = mlr_tracks[t].speed_shift + 11;
+				if (speed_col >= 8 && speed_col <= 14)
+					grid.led(speed_col, row, 14);
+				if (speed_col != 11)
+					grid.led(11, row, 3);  /* dim 1x indicator when not selected */
 			}
-
-			grid.led(7,  row, mlr_tracks[t].reverse ? 12 : 4);
-
-			/* cols 8–14: speed selection (col 11 = 1x) — show for all tracks */
-			int speed_col = mlr_tracks[t].speed_shift + 11;
-			if (speed_col >= 8 && speed_col <= 14)
-				grid.led(speed_col, row, 14);
-			if (speed_col != 11)
-				grid.led(11, row, 3);  /* dim 1x indicator when not selected */
 		}
 		draw_bottom_vu_row();
 		grid.markDirty();
@@ -1940,12 +2058,15 @@ private:
 		bool rec_pos_cut = (SwitchVal() == Switch::Up || SwitchVal() == Switch::Down);
 		bool gated_rec_ready_cut = rec_pos_cut && rec_armed_track < 0;
 
+		int pc = play_col();
+		int nc = cut_cols();
+
 		/* row 0: navigation — CUT highlighted */
 		grid.led(0, 0, 15);  /* CUT = active */
 		grid.led(1, 0,  4);  /* REC = dim */
 		draw_row0_nav();
 
-		/* rows 1–6: playhead chase (cols 1–14) */
+		/* rows 1–6: playhead chase */
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 			int row = t + 1;
 			bool has = mlr_tracks[t].has_content;
@@ -1965,23 +2086,23 @@ private:
 			}
 			grid.led(0, row, col0_bright);
 
-			/* col 15: play/stop/gate indicator */
-			uint8_t col15_bright;
+			/* play col: play/stop/gate indicator */
+			uint8_t play_bright;
 			if (gate_mode[t]) {
-				col15_bright = (gate_pulse & 8) ? 12 : 4;
-				if (mlr_tracks[t].playing) col15_bright = 15;
+				play_bright = (gate_pulse & 8) ? 12 : 4;
+				if (mlr_tracks[t].playing) play_bright = 15;
 			} else {
-				col15_bright = mlr_tracks[t].playing ? 15 : (has ? 6 : 3);
+				play_bright = mlr_tracks[t].playing ? 15 : (has ? 6 : 3);
 			}
-			grid.led(15, row, col15_bright);
+			grid.led(pc, row, play_bright);
 
-			/* recording track: progress bar on cols 1–14 */
+			/* recording track: progress bar on cut columns */
 			if (actively_rec) {
-				uint32_t progress = mlr_get_rec_progress() * 14 / MLR_MAX_SAMPLES;
-				if (progress > 14) progress = 14;
+				uint32_t progress = mlr_get_rec_progress() * (uint32_t)nc / MLR_MAX_SAMPLES;
+				if (progress > (uint32_t)nc) progress = (uint32_t)nc;
 				for (uint32_t c = 0; c < progress; c++)
 					grid.led(c + 1, row, 12);
-				if (progress < 14)
+				if (progress < (uint32_t)nc)
 					grid.led(progress + 1, row, (rec_blink & 2) ? 8 : 0);
 				continue;
 			}
@@ -1990,15 +2111,19 @@ private:
 			int loop_s = -1, loop_e = -1;
 			mlr_get_loop_cols(t, &loop_s, &loop_e);
 			if (loop_s >= 0 && !(loop_s == 0 && loop_e == MLR_GRID_COLS - 1)) {
-				for (int c = loop_s; c <= loop_e; c++)
-					grid.led(c + 1, row, 4);  /* +1 offset */
+				/* remap internal loop cols to display cols */
+				int ds = cut_internal_to_grid(loop_s);
+				int de = cut_internal_to_grid(loop_e);
+				for (int c = ds; c <= de; c++)
+					grid.led(c, row, 4);
 			}
 
 			/* only the bright playhead depends on active playback */
 			if (!has || !mlr_tracks[t].playing) continue;
 
-			int col = mlr_get_column(t);  /* 0–13 internal */
-			grid.led(col + 1, row, 15);  /* +1 offset */
+			int icol = mlr_get_column(t);  /* 0–13 internal */
+			int gcol = cut_internal_to_grid(icol);
+			grid.led(gcol, row, 15);
 		}
 		draw_bottom_vu_row();
 		grid.markDirty();
@@ -2010,11 +2135,12 @@ private:
 		if (!grid.ready()) return;
 		grid.clear();
 
-		/* saving animation: sweep across cols 1–14 */
+		int nc = cut_cols();
+		/* saving animation: sweep across cut columns */
 		static uint8_t sweep = 0;
-		sweep = (sweep + 1) % 14;
+		sweep = (sweep + 1) % nc;
 		int row = (mlr_get_flush_track() >= 0) ? mlr_get_flush_track() + 1 : 1;
-		for (int c = 0; c < 14; c++) {
+		for (int c = 0; c < nc; c++) {
 			int dist = (c - sweep);
 			if (dist < 0) dist = -dist;
 			int bright = 15 - dist * 2;
