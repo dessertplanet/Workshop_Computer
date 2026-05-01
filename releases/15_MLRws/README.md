@@ -37,7 +37,7 @@ Note that MLRws does NOT use [iii](https://monome.org/docs/iii), and any grid de
 
 ### Grid mode (USB host)
 
-(gif of animation)
+![grid_host_mov](docs/images/Grid_host.mov)
 
 [Detailed grid doc here](docs/Gridful.md)
 
@@ -47,7 +47,7 @@ Note that the Workshop Computer determines whether it is in USB Host or USB Devi
 
 ### Grid mode (USB device)
 
-(gif of animation)
+![grid_device_mov](docs/images/Grid_device.mov)
 
 In order to support the broadest-possible range of grid devices, MLRws has a Grid-interaction mode that uses exactly the same protocol as the host-mode but allows a different usb host. The primary use case for this would be using a norns device as a host running the midigrid mod that allows you to use alternative grid controllers. To do this you will also need my purpose-built [gridproxy](https://github.com/dessertplanet/gridproxy) mod, that passes grid device traffic over to the Workshop Computer. install the mod from maiden with `;install https://github.com/dessertplanet/gridproxy` and then restart norns.
 
@@ -55,6 +55,6 @@ Once you have your devices communicating, everything else is identical to the US
 
 ### Gridless mode (no USB device required)
 
-(gif of animation)
+![gridless_mov](docs/images/Gridless.mov)
 
 I wanted to make MLRws fun even for folks who don't have a grid- and also thought it would be interesting to design an interface for 6 tracks of audio using only the things on the Computer panel. For this I consulted the discord community and some very wild ideas came in! Where this mode landed is something like if a minimal MTM Radio Music (thanks Tom!) and a Make Noise RxMx had a baby. It's weird and modulatable and fun!
