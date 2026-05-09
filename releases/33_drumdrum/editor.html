@@ -11,9 +11,13 @@
   html, body { margin: 0; padding: 0; background: #f3f1ea; height: 100%; }
   body { font-family: 'Space Grotesk', system-ui, sans-serif;
          display: flex; align-items: center; justify-content: center;
-         min-height: 100vh; padding: 28px; }
+         min-height: 100vh; padding: 28px;
+         -webkit-text-size-adjust: 100%; }
   #root { width: 100%; max-width: 1180px; }
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.45 } }
+  @media (max-width: 720px) {
+    body { padding: 10px; align-items: flex-start; }
+  }
 </style>
 </head>
 <body>
@@ -34,6 +38,18 @@ function noteName(n) {
   return NOTE_NAMES[n % 12] + oct;
 }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// Track viewport width so layouts can collapse below a phone-sized breakpoint.
+function useIsMobile(bp = 720) {
+  const get = () => typeof window !== 'undefined' && window.innerWidth < bp;
+  const [m, setM] = React.useState(get);
+  React.useEffect(() => {
+    const on = () => setM(get());
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
+  }, []);
+  return m;
+}
 
 // ─── SysEx protocol (matches midi_sysex.h on the firmware) ───────────
 const SYSEX_MFR              = 0x7D;
@@ -211,6 +227,7 @@ function App({ dark, setDark }) {
   const p = usePattern();
   const [sel, setSel] = React.useState(0);
   const c = theme(dark);
+  const m = useIsMobile();
 
   React.useEffect(() => { document.body.style.background = c.bg; }, [dark]);
 
@@ -257,67 +274,84 @@ function App({ dark, setDark }) {
 
   return (
     <div style={{
-      backgroundColor: c.paper, borderRadius: 18, padding: 32,
+      backgroundColor: c.paper, borderRadius: m ? 14 : 18, padding: m ? 16 : 32,
       boxShadow: dark
         ? '0 1px 0 rgba(255,255,255,0.03), 0 30px 60px rgba(0,0,0,0.5)'
         : '0 1px 0 rgba(0,0,0,0.04), 0 30px 60px rgba(20,15,10,0.06)',
       border: `1px solid ${c.line}`,
-      color: c.ink, display: 'flex', flexDirection: 'column', gap: 22,
+      color: c.ink, display: 'flex', flexDirection: 'column', gap: m ? 16 : 22,
     }}>
-      <Header p={p} c={c} dark={dark} setDark={setDark} />
-      <LengthRibbon p={p} c={c} />
-      <Chart p={p} c={c} sel={sel} setSel={setSel} />
-      <StepDetail p={p} c={c} sel={sel} setSel={setSel} />
-      <Footer c={c} />
+      <Header p={p} c={c} m={m} dark={dark} setDark={setDark} />
+      <LengthRibbon p={p} c={c} m={m} />
+      <Chart p={p} c={c} m={m} sel={sel} setSel={setSel} />
+      <StepDetail p={p} c={c} m={m} sel={sel} setSel={setSel} />
+      <Footer c={c} m={m} />
     </div>
   );
 }
 
 // ─── Header ──────────────────────────────────────────────────────────
-function Header({ p, c, dark, setDark }) {
+function Header({ p, c, m, dark, setDark }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+    <div style={{
+      display: 'flex',
+      flexDirection: m ? 'column' : 'row',
+      justifyContent: 'space-between',
+      alignItems: m ? 'stretch' : 'flex-end',
+      gap: m ? 12 : 0,
+    }}>
       <div>
-        <div style={{ fontSize: 11, color: c.mute, letterSpacing: '0.22em',
+        <div style={{ fontSize: m ? 10 : 11, color: c.mute, letterSpacing: '0.22em',
           textTransform: 'uppercase', fontWeight: 600 }}>
           Workshop Computer · DFAM-style sequencer
         </div>
-        <div style={{ fontSize: 44, fontWeight: 700, letterSpacing: '-0.03em',
+        <div style={{ fontSize: m ? 32 : 44, fontWeight: 700, letterSpacing: '-0.03em',
           marginTop: 4, lineHeight: 1, fontFamily: '"Space Grotesk", sans-serif',
           color: c.ink,
         }}>
           drumdrum<span style={{ color: c.accent }}>.</span>
         </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-        <Status c={c} conn={p.conn} />
-        <ThemeToggle dark={dark} setDark={setDark} c={c} />
-        <Transport p={p} c={c} />
+      <div style={{
+        display: 'flex', alignItems: 'center',
+        gap: m ? 10 : 14, flexWrap: 'wrap',
+        justifyContent: m ? 'space-between' : 'flex-end',
+      }}>
+        <Status c={c} conn={p.conn} m={m} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: m ? 10 : 14 }}>
+          <ThemeToggle dark={dark} setDark={setDark} c={c} />
+          <Transport p={p} c={c} m={m} />
+        </div>
       </div>
     </div>
   );
 }
 
-function Status({ c, conn }) {
+function Status({ c, conn, m }) {
   const tones = {
     connected:  { bg: c.okBg,   bd: c.okBd,   fg: c.ok   },
     searching:  { bg: c.warnBg, bd: c.warnBd, fg: c.warn },
     disconnect: { bg: c.badBg,  bd: c.badBd,  fg: c.bad  },
   };
   const t = tones[conn.tone] || tones.searching;
+  // On mobile the connected label includes the long port name; trim to keep
+  // the badge from forcing the row wider than the viewport.
+  const label = (m && conn.tone === 'connected') ? 'Connected' : conn.label;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8,
       fontSize: 12, color: t.fg, fontWeight: 600,
       fontFamily: '"JetBrains Mono", monospace',
       padding: '7px 12px', backgroundColor: t.bg, borderRadius: 99,
       border: `1px solid ${t.bd}`,
+      minWidth: 0, maxWidth: '100%',
+      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     }}>
       <span style={{
         width: 8, height: 8, borderRadius: 99, backgroundColor: t.fg,
-        boxShadow: `0 0 8px ${t.fg}`,
+        boxShadow: `0 0 8px ${t.fg}`, flexShrink: 0,
         animation: conn.tone === 'searching' ? 'pulse 1.4s ease-in-out infinite' : 'none',
       }} />
-      {conn.label}
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
     </div>
   );
 }
@@ -343,14 +377,14 @@ function ThemeToggle({ dark, setDark, c }) {
   );
 }
 
-function Transport({ p, c }) {
+function Transport({ p, c, m }) {
   return (
     <button onClick={() => p.setPlaying(!p.playing)} style={{
       fontFamily: '"Space Grotesk", sans-serif', fontSize: 14, fontWeight: 700,
       letterSpacing: '0.08em', textTransform: 'uppercase',
-      padding: '14px 28px', border: 'none', borderRadius: 10, cursor: 'pointer',
+      padding: m ? '12px 20px' : '14px 28px', border: 'none', borderRadius: 10, cursor: 'pointer',
       backgroundColor: c.primary, color: c.primaryFg,
-      display: 'inline-flex', alignItems: 'center', gap: 10, minWidth: 130,
+      display: 'inline-flex', alignItems: 'center', gap: 10, minWidth: m ? 110 : 130,
       boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
     }}>
       {p.playing ? (
@@ -373,7 +407,7 @@ function Transport({ p, c }) {
 }
 
 // ─── Length ribbon ───────────────────────────────────────────────────
-function LengthRibbon({ p, c }) {
+function LengthRibbon({ p, c, m }) {
   const ribRef = React.useRef(null);
   const dragging = React.useRef(false);
   const setLenFromX = (x) => {
@@ -395,11 +429,12 @@ function LengthRibbon({ p, c }) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between',
-        alignItems: 'baseline', marginBottom: 10 }}>
+        alignItems: 'baseline', marginBottom: 10, gap: 8 }}>
         <Label c={c}>Length</Label>
-        <span style={{ fontSize: 12, color: c.mute,
-          fontFamily: '"JetBrains Mono", monospace' }}>
-          drag the orange handle · or click a number
+        <span style={{ fontSize: m ? 10 : 12, color: c.mute,
+          fontFamily: '"JetBrains Mono", monospace',
+          textAlign: 'right', minWidth: 0 }}>
+          {m ? 'drag · or tap' : 'drag the orange handle · or click a number'}
         </span>
       </div>
       <div ref={ribRef} onPointerDown={onDown} onPointerMove={onMove}
@@ -446,28 +481,31 @@ function LengthRibbon({ p, c }) {
 }
 
 // ─── Bar chart ───────────────────────────────────────────────────────
-function Chart({ p, c, sel, setSel }) {
+function Chart({ p, c, m, sel, setSel }) {
   return (
     <div style={{
       backgroundColor: c.paper, border: `1px solid ${c.line}`, borderRadius: 14,
-      padding: '20px 22px 12px', position: 'relative',
+      padding: m ? '14px 12px 8px' : '20px 22px 12px', position: 'relative',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between',
-        alignItems: 'baseline', marginBottom: 14 }}>
+        alignItems: 'baseline', marginBottom: m ? 10 : 14, gap: 8, flexWrap: 'wrap' }}>
         <Label c={c}>Pattern</Label>
-        <Legend c={c} />
+        {!m && <Legend c={c} />}
       </div>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch',
-        height: 280, position: 'relative' }}>
-        <div style={{ display: 'flex', flexDirection: 'column',
-          justifyContent: 'space-between', fontSize: 9, color: c.mute,
-          paddingRight: 4, fontFamily: '"JetBrains Mono", monospace',
-          textAlign: 'right', minWidth: 24,
-        }}>
-          <span>127</span><span>96</span><span>64</span><span>32</span><span>0</span>
-        </div>
-        <div style={{ flex: 1, display: 'flex', gap: 10,
+      <div style={{ display: 'flex', gap: m ? 6 : 12, alignItems: 'stretch',
+        height: m ? 220 : 280, position: 'relative' }}>
+        {!m && (
+          <div style={{ display: 'flex', flexDirection: 'column',
+            justifyContent: 'space-between', fontSize: 9, color: c.mute,
+            paddingRight: 4, fontFamily: '"JetBrains Mono", monospace',
+            textAlign: 'right', minWidth: 24,
+          }}>
+            <span>127</span><span>96</span><span>64</span><span>32</span><span>0</span>
+          </div>
+        )}
+        <div style={{ flex: 1, display: 'flex', gap: m ? 4 : 10,
           alignItems: 'stretch', position: 'relative', paddingTop: 14,
+          minWidth: 0,
         }}>
           {[0.25, 0.5, 0.75].map(t => (
             <div key={t} style={{
@@ -476,7 +514,7 @@ function Chart({ p, c, sel, setSel }) {
             }} />
           ))}
           {Array.from({ length: 8 }).map((_, i) => (
-            <Bar key={i} idx={i} p={p} c={c} sel={sel} setSel={setSel} />
+            <Bar key={i} idx={i} p={p} c={c} m={m} sel={sel} setSel={setSel} />
           ))}
         </div>
       </div>
@@ -506,7 +544,7 @@ function Swatch({ c, color, alpha = 1, ring = false }) {
   );
 }
 
-function Bar({ idx, p, c, sel, setSel }) {
+function Bar({ idx, p, c, m, sel, setSel }) {
   const inLen = idx < p.seqLength;
   const isSel = sel === idx;
   const isNow = p.playing && idx === p.step;
@@ -546,70 +584,93 @@ function Bar({ idx, p, c, sel, setSel }) {
         )}
       </div>
       <div style={{
-        marginTop: 8, paddingTop: 10,
+        marginTop: m ? 6 : 8, paddingTop: m ? 6 : 10,
         borderTop: `2px solid ${isSel ? c.accent : (inLen ? c.ink : c.line)}`,
-        display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-        opacity: inLen ? 1 : 0.4,
+        display: 'flex',
+        flexDirection: m ? 'column' : 'row',
+        justifyContent: 'space-between',
+        alignItems: m ? 'center' : 'baseline',
+        gap: m ? 2 : 0,
+        opacity: inLen ? 1 : 0.4, minWidth: 0,
       }}>
-        <span style={{ fontSize: 18, fontWeight: 700,
+        <span style={{ fontSize: m ? 14 : 18, fontWeight: 700,
           color: isSel ? c.accent : c.ink,
           fontFamily: '"Space Grotesk", sans-serif',
         }}>
           {String(idx + 1).padStart(2, '0')}
         </span>
-        <span style={{ fontSize: 10, color: c.mute,
-          fontFamily: '"JetBrains Mono", monospace' }}>
-          {noteName(pitch)}
-        </span>
+        {!m && (
+          <span style={{ fontSize: 10, color: c.mute,
+            fontFamily: '"JetBrains Mono", monospace' }}>
+            {noteName(pitch)}
+          </span>
+        )}
       </div>
     </button>
   );
 }
 
 // ─── Step detail ─────────────────────────────────────────────────────
-function StepDetail({ p, c, sel, setSel }) {
+function StepDetail({ p, c, m, sel, setSel }) {
   const pitch = p.pitch[sel];
   const vel = p.velocity[sel];
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: '180px 1fr 1fr', gap: 22,
+      display: m ? 'flex' : 'grid',
+      flexDirection: m ? 'column' : undefined,
+      gridTemplateColumns: m ? undefined : '180px 1fr 1fr',
+      gap: m ? 18 : 22,
       backgroundColor: c.paper, border: `1px solid ${c.line}`, borderRadius: 14,
-      padding: 22,
+      padding: m ? 16 : 22,
     }}>
-      <div>
-        <Label c={c}>Editing</Label>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 6 }}>
-          <span style={{ fontSize: 11, color: c.mute,
-            fontFamily: '"JetBrains Mono", monospace' }}>step</span>
-          <span style={{ fontSize: 56, lineHeight: 1, fontWeight: 700,
-            color: c.accent, fontFamily: '"Space Grotesk", sans-serif',
-            letterSpacing: '-0.04em',
-          }}>{String(sel + 1).padStart(2, '0')}</span>
+      <div style={{
+        display: m ? 'flex' : 'block',
+        alignItems: m ? 'center' : undefined,
+        justifyContent: m ? 'space-between' : undefined,
+        gap: 14,
+      }}>
+        <div>
+          <Label c={c}>Editing</Label>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 6 }}>
+            <span style={{ fontSize: 11, color: c.mute,
+              fontFamily: '"JetBrains Mono", monospace' }}>step</span>
+            <span style={{ fontSize: m ? 40 : 56, lineHeight: 1, fontWeight: 700,
+              color: c.accent, fontFamily: '"Space Grotesk", sans-serif',
+              letterSpacing: '-0.04em',
+            }}>{String(sel + 1).padStart(2, '0')}</span>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-          <NavBtn c={c} onClick={() => setSel((sel + p.seqLength - 1) % p.seqLength)}>←</NavBtn>
-          <NavBtn c={c} onClick={() => setSel((sel + 1) % p.seqLength)}>→</NavBtn>
-          <span style={{ fontSize: 10, color: c.mute, alignSelf: 'center',
-            marginLeft: 4, fontFamily: '"JetBrains Mono", monospace' }}>←/→</span>
+        <div style={{
+          display: 'flex', gap: 6,
+          marginTop: m ? 0 : 12,
+          alignItems: 'center',
+        }}>
+          <NavBtn c={c} m={m} onClick={() => setSel((sel + p.seqLength - 1) % p.seqLength)}>←</NavBtn>
+          <NavBtn c={c} m={m} onClick={() => setSel((sel + 1) % p.seqLength)}>→</NavBtn>
+          {!m && (
+            <span style={{ fontSize: 10, color: c.mute, alignSelf: 'center',
+              marginLeft: 4, fontFamily: '"JetBrains Mono", monospace' }}>←/→</span>
+          )}
         </div>
       </div>
-      <PitchEditor c={c} pitch={pitch} onChange={(v) => p.setStepPitch(sel, v)} />
-      <VelocityEditor c={c} vel={vel} onChange={(v) => p.setStepVel(sel, v)} />
+      <PitchEditor c={c} m={m} pitch={pitch} onChange={(v) => p.setStepPitch(sel, v)} />
+      <VelocityEditor c={c} m={m} vel={vel} onChange={(v) => p.setStepVel(sel, v)} />
     </div>
   );
 }
 
-function NavBtn({ c, children, onClick }) {
+function NavBtn({ c, m, children, onClick }) {
   return (
     <button onClick={onClick} style={{
-      width: 36, height: 32, border: `1px solid ${c.line}`, backgroundColor: c.paper,
-      borderRadius: 6, fontSize: 14, fontWeight: 600, cursor: 'pointer',
+      width: m ? 44 : 36, height: m ? 40 : 32,
+      border: `1px solid ${c.line}`, backgroundColor: c.paper,
+      borderRadius: 6, fontSize: 16, fontWeight: 600, cursor: 'pointer',
       color: c.ink, fontFamily: '"JetBrains Mono", monospace',
     }}>{children}</button>
   );
 }
 
-function PitchEditor({ c, pitch, onChange }) {
+function PitchEditor({ c, m, pitch, onChange }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -619,20 +680,23 @@ function PitchEditor({ c, pitch, onChange }) {
           {noteName(pitch)} <span style={{ color: c.mute, fontWeight: 400 }}>· {pitch}</span>
         </span>
       </div>
-      <PianoStrip c={c} value={pitch} onChange={onChange} />
-      <BigSlider c={c} min={0} max={127} value={pitch} onChange={onChange} />
+      <PianoStrip c={c} m={m} value={pitch} onChange={onChange} />
+      <BigSlider c={c} m={m} min={0} max={127} value={pitch} onChange={onChange} />
     </div>
   );
 }
 
-function PianoStrip({ c, value, onChange }) {
-  const center = clamp(value, 18, 108);
+function PianoStrip({ c, m, value, onChange }) {
+  // Show fewer keys on mobile so each one is large enough to tap.
+  const span = m ? 24 : 36;
+  const half = Math.floor(span / 2);
+  const center = clamp(value, half, 127 - half);
   const startOct = Math.floor(center / 12) - 1;
-  const startNote = startOct * 12;
-  const notes = Array.from({ length: 36 }, (_, i) => startNote + i);
+  const startNote = clamp(startOct * 12, 0, 128 - span);
+  const notes = Array.from({ length: span }, (_, i) => startNote + i);
   return (
     <div style={{
-      position: 'relative', height: 56, backgroundColor: c.lineSoft,
+      position: 'relative', height: m ? 72 : 56, backgroundColor: c.lineSoft,
       border: `1px solid ${c.line}`, borderRadius: 8, overflow: 'hidden',
       display: 'flex',
     }}>
@@ -668,7 +732,7 @@ function PianoStrip({ c, value, onChange }) {
   );
 }
 
-function VelocityEditor({ c, vel, onChange }) {
+function VelocityEditor({ c, m, vel, onChange }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -679,7 +743,7 @@ function VelocityEditor({ c, vel, onChange }) {
         </span>
       </div>
       <div style={{
-        position: 'relative', height: 56, backgroundColor: c.lineSoft,
+        position: 'relative', height: m ? 72 : 56, backgroundColor: c.lineSoft,
         border: `1px solid ${c.line}`, borderRadius: 8, overflow: 'hidden',
       }}>
         <div style={{
@@ -689,7 +753,7 @@ function VelocityEditor({ c, vel, onChange }) {
         }} />
         <ScrubFill c={c} value={vel} max={255} onChange={onChange} />
       </div>
-      <BigSlider c={c} min={0} max={255} value={vel} onChange={onChange} />
+      <BigSlider c={c} m={m} min={0} max={255} value={vel} onChange={onChange} />
     </div>
   );
 }
@@ -731,7 +795,7 @@ function ScrubFill({ c, value, max, onChange }) {
   );
 }
 
-function BigSlider({ c, min, max, value, onChange }) {
+function BigSlider({ c, m, min, max, value, onChange }) {
   const ref = React.useRef(null);
   const dragging = React.useRef(false);
   const set = (e) => {
@@ -750,21 +814,25 @@ function BigSlider({ c, min, max, value, onChange }) {
     e.currentTarget.releasePointerCapture?.(e.pointerId);
   };
   const t = (value - min) / (max - min);
+  const trackH = m ? 12 : 8;
+  const handleW = m ? 22 : 14;
+  const handlePad = m ? 6 : 4;
   return (
     <div ref={ref}
       onPointerDown={onDown} onPointerMove={onMove}
       onPointerUp={onUp} onPointerCancel={onUp}
       style={{
-        position: 'relative', height: 8, backgroundColor: c.lineSoft,
+        position: 'relative', height: trackH, backgroundColor: c.lineSoft,
         borderRadius: 4, cursor: 'pointer', touchAction: 'none',
+        marginTop: m ? 6 : 0, marginBottom: m ? 6 : 0,
       }}>
       <div style={{
         position: 'absolute', left: 0, top: 0, bottom: 0,
         width: `${t * 100}%`, backgroundColor: c.accent, borderRadius: 4,
       }} />
       <div style={{
-        position: 'absolute', top: -4, bottom: -4,
-        left: `calc(${t * 100}% - 7px)`, width: 14,
+        position: 'absolute', top: -handlePad, bottom: -handlePad,
+        left: `calc(${t * 100}% - ${handleW / 2}px)`, width: handleW,
         backgroundColor: c.ink, borderRadius: 3,
         boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
       }} />
@@ -773,7 +841,15 @@ function BigSlider({ c, min, max, value, onChange }) {
 }
 
 // ─── Footer ──────────────────────────────────────────────────────────
-function Footer({ c }) {
+function Footer({ c, m }) {
+  if (m) {
+    return (
+      <div style={{ textAlign: 'center', fontSize: 10, color: c.mute,
+        fontFamily: '"JetBrains Mono", monospace' }}>
+        SysEx · 7D · MIDI thru WebMIDI
+      </div>
+    );
+  }
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between',
       alignItems: 'center', fontSize: 11, color: c.mute,

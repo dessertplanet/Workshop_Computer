@@ -4,13 +4,14 @@ A DFAM-style 8-step sequencer for the [Music Thing Modular Workshop System Compu
 
 drumdrum gives you a dual-VCO pitch sequencer with per-step velocity, white noise, step triggers, and end-of-cycle triggers — the core building blocks of a DFAM-style percussion voice, all from a single program card. Sequence data is randomised on every reset, so you can roll the dice on a new pattern any time.
 
-You can drive the sequencer three ways, all sharing the same state:
+You can drive the sequencer four ways, all sharing the same state:
 
 - **The card itself** — three knobs, the switch, and the six panel LEDs (always available).
 - **A Monome Grid** (16×8) plugged into the front USB jack for hands-on visual editing.
+- **A [Music Thing 8mu](https://www.musicthing.co.uk/8mu)** plugged into the front USB jack for fader-based control of all 8 steps at once.
 - **A browser editor** in Chrome/Edge over WebMIDI when the card is connected to a computer.
 
-The card decides between Grid and browser at boot from the USB-C cable orientation: peripheral plugged in → Grid mode, computer plugged in → browser mode. Power-cycle to switch. Panel knobs and switch keep working in all modes.
+The card decides between host mode (Grid / 8mu) and device mode (browser) at boot from the USB-C cable orientation: peripheral plugged in → host mode, computer plugged in → browser mode. Within host mode, Grid vs 8mu is auto-detected from the device's USB class — no configuration needed. Power-cycle to switch between host and device. Panel knobs and switch keep working in all modes.
 
 ## Controls
 
@@ -97,6 +98,34 @@ row 7  │ ▓▓▓▓▓▓▓▓ steps 1..8 ▓▓▓▓▓▓▓▓ │     
 - **Rows 6–7: velocity bar.** 16 cells from bottom-left (low) to top-right (high). Cells fill row 7 first then row 6 as velocity climbs.
 
 Edits made on the Grid persist — the panel knob will not overwrite them unless you actually turn it (the knob has a "must move to take over" guard so a parked knob can't silently clobber Grid changes).
+
+## Music Thing 8mu mode
+
+Plug a [Music Thing 8mu](https://www.musicthing.co.uk/8mu) into the card's front USB-C jack and the eight faders become live edit controls for the eight sequencer steps. Same auto-detection as the Grid — the firmware notices it's a class-compliant USB MIDI device (rather than CDC) and routes accordingly. Panel knobs and switch keep working in parallel.
+
+### Default mapping
+
+The 8mu's factory faders send CC 34–41, which is what the firmware listens for out of the box. Buttons and the second velocity bank need configuration in the [8mu web editor](https://www.musicthing.co.uk/8mu) — point each control at the CC numbers below.
+
+| CC      | Source           | Effect                                              |
+|---------|------------------|-----------------------------------------------------|
+| **34–41** | faders (factory) | Step pitches 1–8 (raw 7-bit value), or step velocities (`value × 2`) when in velocity-edit mode |
+| **50–57** | faders (alt bank) | Step velocities 1–8, regardless of edit mode        |
+| **28**    | fader            | Edit cursor (0 → step 1, 127 → step 8)              |
+| **22**    | button (press)   | Toggle pitch ↔ velocity edit mode                   |
+| **23**    | button (press)   | Toggle play/pause                                   |
+| **24**    | button (press)   | Reset to step 1                                     |
+
+Buttons act on the rising edge (CC value crossing ≥ 64), so a press registers once even if your button sends a release event afterwards.
+
+A typical 8mu setup uses banks: bank 1 = pitches (factory faders + buttons mapped to CC 22–24); bank 2 = velocities (faders re-mapped to CC 50–57, same buttons); bank 3 = edit cursor + transport (one fader on CC 28, buttons on CC 22–24).
+
+### Notes
+
+- The 8mu sends data only when something changes, so step parameters stay at whatever they were until you actually move a fader. Toggling pitch ↔ velocity mode does not reset values; just sweep the fader for the step you want to change.
+- Pitch changes are 7-bit (0–127, the full MIDI range, 1:1 with fader position). Velocity changes are 8-bit (0–254, computed as `CC × 2`).
+- The 4 buttons and the 6-axis accelerometer (CC 42–49) beyond CC 22–24 are ignored in this firmware. Only CC messages are recognised — note-on / note-off / sysex are dropped.
+- 8mu and Grid can't be plugged into the front jack at the same time; pick one per session.
 
 ## Browser editor (WebMIDI)
 
@@ -262,15 +291,15 @@ Flash the resulting `drumdrum.uf2` to the Workshop Computer by holding BOOT whil
 ## Technical Details
 
 - **Core 0** runs the sequencer and audio DSP in `ProcessSample()` at 48 kHz in interrupt context. Pure integer arithmetic, no float, no division.
-- **Core 1** owns the USB stack — TinyUSB host (Monome Grid via the vendored mext serial protocol) or device (USB MIDI for the browser editor), decided once at boot from the USB-C CC pins via `USBPowerState()`.
-- All three control surfaces share a single `SharedState` struct (`shared_state.h`); cross-core writes are atomic on the M0+, no locks needed. `tickEpoch` is the cross-core "something changed" signal.
+- **Core 1** owns the USB stack — TinyUSB host (Monome Grid via the vendored mext serial protocol, or 8mu via a small in-tree class-compliant USB MIDI host driver since TinyUSB 0.18 doesn't ship one) or device (USB MIDI for the browser editor), decided once at boot from the USB-C CC pins via `USBPowerState()`.
+- All four control surfaces (panel, Grid, 8mu, browser editor) share a single `SharedState` struct (`shared_state.h`); cross-core writes are atomic on the M0+, no locks needed. `tickEpoch` is the cross-core "something changed" signal.
 - White noise via xorshift32 PRNG, seeded from the hardware timer on each boot.
 - CV Out 1 uses EEPROM-calibrated `CVOutMIDINote()` for accurate 1V/oct tracking.
 - Audio Out 2 approximates 1V/oct on the 12-bit audio DAC (~28.4 DAC units/semitone, uncalibrated).
 - System clock set to 144 MHz to reduce ADC tonal artifacts; all code copied to RAM (`copy_to_ram`) to eliminate flash cache jitter.
 - 150 ms boot mute holds audio + pulse outputs at zero so DAC settling and the first trigger don't click.
 
-**Source files:** `main.cpp` (sequencer + audio + role select), `shared_state.h` (cross-core data), `usb_core1.cpp` (USB task pump), `tusb_config.h` + `usb_descriptors.c` (TinyUSB), `monome_mext.c/h` (Grid serial protocol, vendored from MLRws), `grid_ui.cpp/h` (Grid layout + key dispatch), `midi_sysex.cpp/h` (browser-protocol parser/encoder), `editor.html` (browser editor).
+**Source files:** `main.cpp` (sequencer + audio + role select), `shared_state.h` (cross-core data), `usb_core1.cpp` (USB task pump), `tusb_config.h` + `usb_descriptors.c` (TinyUSB), `monome_mext.c/h` (Grid serial protocol, vendored from MLRws), `grid_ui.cpp/h` (Grid layout + key dispatch), `midi_host.cpp/h` (in-tree class-compliant USB MIDI host driver for 8mu), `midi_sysex.cpp/h` (browser-protocol parser/encoder), `editor.html` (browser editor).
 
 ## License
 
