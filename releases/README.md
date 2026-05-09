@@ -26,7 +26,7 @@
 | 30_cirpy_wavetable | Wavetable oscillator that using wavetables from Plaits, Braids, and Microwave, | 0.1<br>Functional but WIP | Circuit Python | @todbot / Tod Kurt |
 | 31_esp | A MS-20-style External Signal Processor that includes a preamp, bandpass filter, envelope follower, gate, and 1v/oct pitch outs. | 1.0<br>Released | C++(ComputerCard) | Ben Regnier |
 | 32_vink | Dual delay loops with sigmoid saturation for Jaap Vink / Roland Kayn style feedback patching | 1.1<br>Functional | C++(ComputerCard) | Ben Regnier |
-| 33_drumdrum | DFAM-style 8-step sequencer<br>[Web editor](https://mohoyt.com/drumdrum.html) | 1.1.0<br>Functional but WIP | C++ (ComputerCard) | Moses Hoyt |
+| 33_drumdrum | DFAM-style 8-step sequencer<br>[Web editor](https://mohoyt.com/drumdrum.html) | 1.2.0<br>Functional but WIP | C++ (ComputerCard) | Moses Hoyt |
 | 37_compulidean | Generative Euclidean drum + sample player. | (see source repo)<br>Functional, but WIP | C++/Arduino, with vscode+platformio. | Tristan Rowley |
 | 38_od | Loopable chaotic Lorenz attractor trajectories and zero-crossings as CV and pulses, with sensitivity to initial conditions. | 1.0<br>Released | MicroPython | M. John Mills |
 | 39_knots | Six-engine oscillator firmware for the Music Thing Workshop System | 0.2<br>Released | C++ (RPi Pico SDK / ComputerCard) | Jeff Fletcher |
