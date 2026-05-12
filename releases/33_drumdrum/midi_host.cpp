@@ -7,6 +7,7 @@
 #include "tusb.h"
 #include "host/usbh_pvt.h"
 #include "class/midi/midi.h"
+#include "pico/time.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -36,6 +37,41 @@ static inline bool button_press_edge(uint8_t* prev, uint8_t value) {
     bool press = (value >= 64) && (*prev < 64);
     *prev = value;
     return press;
+}
+
+// Core-1-local xorshift32 PRNG used for the randomize button. Distinct
+// from the audio ISR's PRNG on Core 0 — they don't need to share state,
+// and a separate generator means a randomize press doesn't perturb the
+// white-noise stream. Seeded lazily on first use from the hardware us
+// counter, which has effectively unbounded entropy by the time someone
+// presses a button.
+static uint32_t s_rng = 0;
+static uint32_t midi_xorshift(void) {
+    if (s_rng == 0) {
+        s_rng = time_us_32();
+        if (s_rng == 0) s_rng = 0xDEADBEEF;
+    }
+    s_rng ^= s_rng << 13;
+    s_rng ^= s_rng >> 17;
+    s_rng ^= s_rng << 5;
+    return s_rng;
+}
+
+// Re-roll all 8 step pitches and velocities. Matches the constructor's
+// boot randomisation in main.cpp: pitches in C2..B4 (the musical sweet
+// spot of the MIDI range) and velocities biased toward the upper half
+// so every step stays audible. Bumps tickEpoch once at the end so a
+// future browser/Grid replug sees the new pattern in one go.
+//
+// Single-byte writes are atomic on M0+, so the audio ISR reading a
+// pitch/velocity mid-randomize may see one new value and one old —
+// that's fine. At 48 kHz the whole loop is over in under a hundred
+// samples; sonically it's an instant scramble, which is what we want.
+static void randomize_pattern(void) {
+    for (int i = 0; i < 8; i++) {
+        gState.pitch[i]    = (uint8_t)(36 + (midi_xorshift() % 36));
+        gState.velocity[i] = (uint8_t)(100 + (midi_xorshift() % 156));
+    }
 }
 
 static void handle_cc(uint8_t cc, uint8_t v) {
@@ -80,13 +116,49 @@ static void handle_cc(uint8_t cc, uint8_t v) {
     if (changed) gState.tickEpoch++;
 }
 
+// 8mu factory button mappings. The 8mu firmware sends note-on with a
+// velocity byte for press and either a note-off OR a note-on with
+// velocity 0 (running-status convention) for release. We act on press
+// only — drop anything with velocity 0.
+static void handle_note_on(uint8_t note, uint8_t vel) {
+    if (vel == 0) return;
+    bool changed = true;
+    switch (note) {
+        case 36:  // button 1 — C2
+            gState.midiHostVelocityMode ^= 1;
+            break;
+        case 48:  // button 2 — C3
+            gState.playing ^= 1;
+            break;
+        case 60:  // button 3 — C4 (middle C)
+            // Mirrors Pulse In 2 reset (and the CC 24 alt mapping).
+            gState.currentStep = 0;
+            break;
+        case 72:  // button 4 — C5
+            randomize_pattern();
+            break;
+        default:
+            changed = false;
+            break;
+    }
+    if (changed) gState.tickEpoch++;
+}
+
 static void rearm_rx(void) {
     if (!s_connected || s_ep_in == 0) return;
     if (!usbh_edpt_claim(s_dev_addr, s_ep_in)) return;
     uint16_t const len = (s_ep_in_size > sizeof(s_rx_buf))
         ? (uint16_t)sizeof(s_rx_buf) : s_ep_in_size;
     if (!usbh_edpt_xfer(s_dev_addr, s_ep_in, s_rx_buf, len)) {
-        // claim is rolled back inside usbh_edpt_xfer on failure
+        // The internal usbh_edpt_xfer (class-driver-level) does NOT
+        // roll back the claim on failure — only the app-level
+        // tuh_edpt_xfer does. Without an explicit release here, a
+        // transient submit failure would leave the IN endpoint
+        // permanently claimed and every subsequent rearm_rx() would
+        // bail at the claim step above, silently stopping all MIDI
+        // input until the 8mu is unplugged. Caught by Codex review
+        // on PR #8.
+        usbh_edpt_release(s_dev_addr, s_ep_in);
     }
 }
 
@@ -235,10 +307,12 @@ static bool driver_xfer_cb(uint8_t dev_addr, uint8_t ep_addr,
             if (cin == MIDI_CIN_CONTROL_CHANGE) {
                 handle_cc((uint8_t)(s_rx_buf[i + 2] & 0x7F),
                           (uint8_t)(s_rx_buf[i + 3] & 0x7F));
+            } else if (cin == MIDI_CIN_NOTE_ON) {
+                // 8mu's factory button defaults send these.
+                handle_note_on((uint8_t)(s_rx_buf[i + 2] & 0x7F),
+                               (uint8_t)(s_rx_buf[i + 3] & 0x7F));
             }
-            // Other CINs (note on/off, sysex, pitch bend, etc.) are
-            // silently dropped — 8mu's button defaults could be notes,
-            // but our v1 protocol uses CC 22-24 as documented.
+            // CIN 8 (NOTE_OFF), sysex, pitch bend, etc. are dropped.
         }
     }
     // Always re-arm: a stalled or aborted xfer should still try again.

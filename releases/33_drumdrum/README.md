@@ -103,28 +103,39 @@ Edits made on the Grid persist — the panel knob will not overwrite them unless
 
 Plug a [Music Thing 8mu](https://www.musicthing.co.uk/8mu) into the card's front USB-C jack and the eight faders become live edit controls for the eight sequencer steps. Same auto-detection as the Grid — the firmware notices it's a class-compliant USB MIDI device (rather than CDC) and routes accordingly. Panel knobs and switch keep working in parallel.
 
-### Default mapping
+### Default mapping (factory 8mu)
 
-The 8mu's factory faders send CC 34–41, which is what the firmware listens for out of the box. Buttons and the second velocity bank need configuration in the [8mu web editor](https://www.musicthing.co.uk/8mu) — point each control at the CC numbers below.
+Out of the box, an unmodified 8mu drives drumdrum without touching the [8mu web editor](https://www.musicthing.co.uk/8mu). Faders send their factory CCs and buttons send their factory notes.
 
-| CC      | Source           | Effect                                              |
-|---------|------------------|-----------------------------------------------------|
-| **34–41** | faders (factory) | Step pitches 1–8 (raw 7-bit value), or step velocities (`value × 2`) when in velocity-edit mode |
-| **50–57** | faders (alt bank) | Step velocities 1–8, regardless of edit mode        |
-| **28**    | fader            | Edit cursor (0 → step 1, 127 → step 8)              |
-| **22**    | button (press)   | Toggle pitch ↔ velocity edit mode                   |
-| **23**    | button (press)   | Toggle play/pause                                   |
-| **24**    | button (press)   | Reset to step 1                                     |
+| Control  | Factory message     | Effect                                              |
+|----------|---------------------|-----------------------------------------------------|
+| Faders 1–8 | CC 34–41          | Step pitches 1–8 (raw 7-bit), or step velocities (`value × 2`) when in velocity-edit mode |
+| Button 1 | Note 36 (C2)        | Toggle pitch ↔ velocity edit mode                   |
+| Button 2 | Note 48 (C3)        | Toggle play/pause                                   |
+| Button 3 | Note 60 (C4)        | Reset to step 1                                     |
+| Button 4 | Note 72 (C5)        | Randomize all 8 step pitches + velocities           |
 
-Buttons act on the rising edge (CC value crossing ≥ 64), so a press registers once even if your button sends a release event afterwards.
+Notes are channel-agnostic; only `note-on` with non-zero velocity acts (a `note-on` with velocity 0 is the running-status note-off and is treated as a release).
 
-A typical 8mu setup uses banks: bank 1 = pitches (factory faders + buttons mapped to CC 22–24); bank 2 = velocities (faders re-mapped to CC 50–57, same buttons); bank 3 = edit cursor + transport (one fader on CC 28, buttons on CC 22–24).
+### Optional CC alt-bank (configure in the 8mu web editor)
+
+If you'd rather keep one bank for pitches and another for velocities — or you want to drive drumdrum from a non-8mu controller — the firmware also listens to a parallel CC range that you can wire up in the 8mu web editor (or any other MIDI source).
+
+| Alt CC  | Effect                                                              |
+|---------|---------------------------------------------------------------------|
+| 22      | Toggle pitch ↔ velocity edit mode (same as note 36)                 |
+| 23      | Toggle play/pause (same as note 48)                                 |
+| 24      | Reset to step 1 (same as note 60)                                   |
+| 28      | Edit cursor (0 → step 1, 127 → step 8)                              |
+| 50–57   | Step velocities 1–8 (always, regardless of edit mode)               |
+
+CC buttons act on the rising edge (value crossing ≥ 64), so a press registers once even if your button sends a release event afterwards. There is currently no CC equivalent of the randomize action.
 
 ### Notes
 
 - The 8mu sends data only when something changes, so step parameters stay at whatever they were until you actually move a fader. Toggling pitch ↔ velocity mode does not reset values; just sweep the fader for the step you want to change.
 - Pitch changes are 7-bit (0–127, the full MIDI range, 1:1 with fader position). Velocity changes are 8-bit (0–254, computed as `CC × 2`).
-- The 4 buttons and the 6-axis accelerometer (CC 42–49) beyond CC 22–24 are ignored in this firmware. Only CC messages are recognised — note-on / note-off / sysex are dropped.
+- The 6-axis accelerometer (CC 42–49) is ignored in this firmware. Pitch bend, sysex, and program-change messages are also dropped.
 - 8mu and Grid can't be plugged into the front jack at the same time; pick one per session.
 
 ## Browser editor (WebMIDI)
