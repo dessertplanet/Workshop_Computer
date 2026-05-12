@@ -19,6 +19,7 @@
 #include "midi_sysex.h"
 #include "monome_mext.h"
 #include "grid_ui.h"
+#include "midi_host.h"
 
 #include "tusb.h"
 #include "bsp/board_api.h"
@@ -26,10 +27,16 @@
 
 volatile uint8_t gUsbHostMode = 0;
 
-static void run_grid_loop(void)
+static void run_host_loop(void)
 {
     board_init();
+    // Both host paths coexist: a Grid plugged in fires CDC mount cbs
+    // into mext, an 8mu (or any class-compliant USB MIDI device) fires
+    // our app-registered MIDI driver. Whichever shows up wins; the
+    // other path stays idle. mext_task() drives tuh_task(), which is
+    // what dispatches the MIDI driver's xfer callbacks.
     mext_init(MEXT_TRANSPORT_HOST, 0);
+    midi_host_init();
     tusb_init();
     grid_ui_init();
     while (true) {
@@ -52,7 +59,7 @@ static void run_device_loop(void)
 extern "C" void core1_entry(void)
 {
     if (gUsbHostMode) {
-        run_grid_loop();    // never returns
+        run_host_loop();    // never returns
     } else {
         run_device_loop();  // never returns
     }

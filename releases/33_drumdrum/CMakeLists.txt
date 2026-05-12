@@ -27,6 +27,7 @@ add_executable(drumdrum
     midi_sysex.cpp
     monome_mext.c
     grid_ui.cpp
+    midi_host.cpp
 )
 
 # Warnings: catch accidental double-precision and other issues

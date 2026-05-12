@@ -27,6 +27,7 @@ struct SharedState {
     uint8_t  editStep;      // 0..7    selected step for editing
     uint8_t  currentStep;   // 0..7    playback position
     uint8_t  playing;       // 0/1     playback enable
+    uint8_t  midiHostVelocityMode; // 0=8mu faders edit pitch, 1=velocity
     uint32_t tickEpoch;     // ++ on every step advance (cross-core signal)
 };
 

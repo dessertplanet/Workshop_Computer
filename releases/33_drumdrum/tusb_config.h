@@ -28,7 +28,7 @@ extern "C" {
 #define CFG_TUD_MIDI_TX_BUFSIZE     128
 #define CFG_TUD_MIDI_EP_BUFSIZE     64
 
-// ── Host stack (Monome Grid over CDC + FTDI) ─────────────────
+// ── Host stack (Monome Grid over CDC + FTDI, Music Thing 8mu over MIDI) ─────
 #define CFG_TUH_ENUMERATION_BUFSIZE 256
 #define CFG_TUH_HUB                 1
 #define CFG_TUH_DEVICE_MAX          (CFG_TUH_HUB ? 4 : 1)
@@ -39,6 +39,13 @@ extern "C" {
 #define CFG_TUH_HID                 0
 #define CFG_TUH_MSC                 0
 #define CFG_TUH_VENDOR              0
+
+// TinyUSB 0.18 (shipped with Pico SDK 2.2.0) has no MIDI host class driver,
+// only a one-block descriptor-parser hint that groups class-compliant USB
+// MIDI's Audio-Control + MIDIStreaming interfaces under a single driver
+// (usbh.c:1681). CFG_TUH_MIDI=1 turns that hint on; the actual driver is
+// our own minimal one in midi_host.cpp, registered via usbh_app_driver_get_cb.
+#define CFG_TUH_MIDI                1
 
 // Modern Monome Grids assert DTR/RTS on enumeration; older FTDI-based
 // units expect 115200 8N1. Both are mext-protocol grids on the wire.
