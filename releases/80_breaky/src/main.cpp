@@ -21,6 +21,7 @@ class Breaky : public ComputerCard {
     }
 
     handle_switch_jump();
+    update_external_clock();
     update_playback_rate();
 
     const uint32_t frame = current_frame();
@@ -48,6 +49,11 @@ class Breaky : public ComputerCard {
   static constexpr uint32_t kTempoMinBpm = 100u;
   static constexpr uint32_t kTempoRangeBpm = 100u;
   static constexpr uint32_t kControlUpdateDivider = BREAKY_SAMPLE_RATE / 1000u;
+  static constexpr uint32_t kExternalClockMinIntervalSamples = BREAKY_SAMPLE_RATE / 1000u;
+  static constexpr uint32_t kExternalClockMinTimeoutSamples = BREAKY_SAMPLE_RATE / 2u;
+  static constexpr uint32_t kExternalClockTimeoutMultiplier = 4u;
+  static constexpr uint32_t kPulseFlashSamples = BREAKY_SAMPLE_RATE / 20u;
+  static constexpr uint32_t kExternalClockPpqn = 2u;
   static constexpr uint16_t kSwitchDebounceSamples = 96u;
 
   struct StereoFrame {
@@ -60,7 +66,12 @@ class Breaky : public ComputerCard {
   uint32_t led_divider_ = 0;
   uint32_t control_update_divider_ = kControlUpdateDivider;
   uint32_t boot_mute_samples_ = kBootMuteSamples;
+  uint32_t clock_age_samples_ = 0;
+  uint32_t clock_timeout_samples_ = kExternalClockMinTimeoutSamples;
+  uint32_t pulse_flash_samples_ = 0;
   uint16_t switch_down_samples_ = 0;
+  bool clock_seen_once_ = false;
+  bool external_clock_active_ = false;
   bool switch_jump_armed_ = true;
 
   static int16_t sign_extend_12(uint16_t value) {
@@ -105,6 +116,11 @@ class Breaky : public ComputerCard {
   }
 
   void update_playback_rate() {
+    if (external_clock_active_) {
+      control_update_divider_ = kControlUpdateDivider;
+      return;
+    }
+
     if (control_update_divider_ < kControlUpdateDivider) {
       ++control_update_divider_;
       return;
@@ -115,6 +131,49 @@ class Breaky : public ComputerCard {
     const uint32_t target_bpm =
         kTempoMinBpm + ((knob * kTempoRangeBpm) + (kKnobMax / 2u)) / kKnobMax;
     phase_inc_q32_ = (static_cast<uint64_t>(target_bpm) << 32u) / BREAKY_SOURCE_BPM;
+  }
+
+  void update_external_clock() {
+    if (clock_age_samples_ < UINT32_MAX) {
+      ++clock_age_samples_;
+    }
+    if (pulse_flash_samples_ > 0) {
+      --pulse_flash_samples_;
+    }
+
+    if (PulseIn1RisingEdge()) {
+      pulse_flash_samples_ = kPulseFlashSamples;
+
+      const uint32_t interval = clock_age_samples_;
+      clock_age_samples_ = 0;
+
+      if (clock_seen_once_ && interval >= kExternalClockMinIntervalSamples) {
+        set_external_clock_interval(interval);
+      }
+      clock_seen_once_ = true;
+    }
+
+    if (external_clock_active_ && clock_age_samples_ > clock_timeout_samples_) {
+      external_clock_active_ = false;
+      clock_seen_once_ = false;
+      control_update_divider_ = kControlUpdateDivider;
+      update_leds(true);
+    }
+  }
+
+  void set_external_clock_interval(uint32_t interval) {
+    const uint64_t numerator =
+        static_cast<uint64_t>(60u * BREAKY_SAMPLE_RATE / kExternalClockPpqn)
+        << 32u;
+    phase_inc_q32_ =
+        numerator / (static_cast<uint64_t>(interval) * BREAKY_SOURCE_BPM);
+
+    clock_timeout_samples_ = interval * kExternalClockTimeoutMultiplier;
+    if (clock_timeout_samples_ < kExternalClockMinTimeoutSamples) {
+      clock_timeout_samples_ = kExternalClockMinTimeoutSamples;
+    }
+    external_clock_active_ = true;
+    update_leds(true);
   }
 
   void handle_switch_jump() {
@@ -152,6 +211,25 @@ class Breaky : public ComputerCard {
     const uint32_t segment =
         static_cast<uint32_t>((static_cast<uint64_t>(current_frame()) * kNumLeds) /
                               BREAKY_FRAME_COUNT);
+    if (pulse_flash_samples_ > 0) {
+      for (int i = 0; i < kNumLeds; ++i) {
+        LedOn(i, true);
+      }
+      return;
+    }
+
+    if (external_clock_active_) {
+      const uint32_t inner_segment =
+          static_cast<uint32_t>((static_cast<uint64_t>(current_frame()) * 4u) /
+                                BREAKY_FRAME_COUNT);
+      LedOn(0, true);
+      LedOn(5, true);
+      for (int i = 1; i < 5; ++i) {
+        LedOn(i, static_cast<uint32_t>(i - 1) == inner_segment);
+      }
+      return;
+    }
+
     for (int i = 0; i < kNumLeds; ++i) {
       LedOn(i, static_cast<uint32_t>(i) == segment);
     }
