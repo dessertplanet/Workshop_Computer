@@ -44,11 +44,8 @@ Main), and re-tasks every knob to operate on that track:
   forward. The further from center, the faster, up to roughly ±2 octaves
   (¼× ↔ 4×) at the extremes. A small region near center mutes the track to
   give you a clean "stop".
-- **X knob:** per-track volume slot, six discrete steps matching the grid
-  mode mixer (left = quietest, ~−15 dB; right = loudest, ~+6 dB; third from
-  the left = unity).
-- **Y knob:** **reset start position** for this track — picks the column
-  (0–13) that the track will jump back to whenever you trigger a reset (see
+- **X knob:** per-track volume 
+- **Y knob:** **reset start position** for this track — picks the position that will be jumped to on the recording when you  trigger a reset (see
   below). Setting Y while the track is playing doesn't move the playhead by
   itself; it stores the start position for the next reset.
 
