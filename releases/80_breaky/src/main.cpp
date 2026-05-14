@@ -21,6 +21,7 @@ class Breaky : public ComputerCard {
     }
 
     handle_switch_jump();
+    handle_left_cv_jump();
     update_external_clock();
     update_playback_rate();
 
@@ -55,6 +56,12 @@ class Breaky : public ComputerCard {
   static constexpr uint32_t kPulseFlashSamples = BREAKY_SAMPLE_RATE / 20u;
   static constexpr uint32_t kExternalClockPpqn = 2u;
   static constexpr uint16_t kSwitchDebounceSamples = 96u;
+  static constexpr uint32_t kCvJumpUpdateDivider = BREAKY_SAMPLE_RATE / 1000u;
+  static constexpr uint8_t kCvJumpConnectTicks = 32u;
+  static constexpr uint8_t kCvJumpConfirmTicks = 2u;
+  static constexpr int16_t kCvJumpThreshold = 64;
+  static constexpr int16_t kCvMin = -2048;
+  static constexpr int16_t kCvMax = 2047;
 
   struct StereoFrame {
     int16_t left;
@@ -69,10 +76,15 @@ class Breaky : public ComputerCard {
   uint32_t clock_age_samples_ = 0;
   uint32_t clock_timeout_samples_ = kExternalClockMinTimeoutSamples;
   uint32_t pulse_flash_samples_ = 0;
+  uint32_t cv_jump_update_divider_ = kCvJumpUpdateDivider;
   uint16_t switch_down_samples_ = 0;
+  uint8_t cv_jump_connected_ticks_ = 0;
+  uint8_t cv_jump_change_ticks_ = 0;
+  int16_t last_accepted_cv_ = 0;
   bool clock_seen_once_ = false;
   bool external_clock_active_ = false;
   bool switch_jump_armed_ = true;
+  bool cv_jump_tracking_ = false;
 
   static int16_t sign_extend_12(uint16_t value) {
     value &= 0x0FFFu;
@@ -86,6 +98,16 @@ class Breaky : public ComputerCard {
     const int32_t diff = static_cast<int32_t>(b) - static_cast<int32_t>(a);
     return static_cast<int16_t>(
         static_cast<int32_t>(a) + static_cast<int32_t>((static_cast<int64_t>(diff) * frac) >> 32u));
+  }
+
+  static int16_t clamp_cv(int32_t value) {
+    if (value < kCvMin) {
+      return kCvMin;
+    }
+    if (value > kCvMax) {
+      return kCvMax;
+    }
+    return static_cast<int16_t>(value);
   }
 
   static StereoFrame read_frame(uint32_t frame) {
@@ -193,10 +215,72 @@ class Breaky : public ComputerCard {
     }
   }
 
+  void handle_left_cv_jump() {
+    if (cv_jump_update_divider_ < kCvJumpUpdateDivider) {
+      ++cv_jump_update_divider_;
+      return;
+    }
+    cv_jump_update_divider_ = 0;
+
+    if (Disconnected(Input::CV1)) {
+      reset_left_cv_jump();
+      return;
+    }
+
+    const int16_t cv = clamp_cv(CVIn1());
+    if (cv_jump_connected_ticks_ < kCvJumpConnectTicks) {
+      ++cv_jump_connected_ticks_;
+      if (cv_jump_connected_ticks_ >= kCvJumpConnectTicks) {
+        last_accepted_cv_ = cv;
+        cv_jump_change_ticks_ = 0;
+        cv_jump_tracking_ = true;
+      }
+      return;
+    }
+
+    if (!cv_jump_tracking_) {
+      last_accepted_cv_ = cv;
+      cv_jump_change_ticks_ = 0;
+      cv_jump_tracking_ = true;
+      return;
+    }
+
+    const int32_t diff = static_cast<int32_t>(cv) - static_cast<int32_t>(last_accepted_cv_);
+    const int32_t abs_diff = diff < 0 ? -diff : diff;
+    if (abs_diff < kCvJumpThreshold) {
+      cv_jump_change_ticks_ = 0;
+      return;
+    }
+
+    if (cv_jump_change_ticks_ < kCvJumpConfirmTicks) {
+      ++cv_jump_change_ticks_;
+    }
+
+    if (cv_jump_change_ticks_ >= kCvJumpConfirmTicks) {
+      jump_to_cv_position(cv);
+      last_accepted_cv_ = cv;
+      cv_jump_change_ticks_ = 0;
+    }
+  }
+
+  void reset_left_cv_jump() {
+    cv_jump_connected_ticks_ = 0;
+    cv_jump_change_ticks_ = 0;
+    cv_jump_tracking_ = false;
+  }
+
   void jump_to_main_knob_position() {
     const uint32_t knob = static_cast<uint32_t>(KnobVal(Main));
     const uint32_t frame = static_cast<uint32_t>(
         (static_cast<uint64_t>(knob) * (BREAKY_FRAME_COUNT - 1u)) / kKnobMax);
+    phase_q32_ = static_cast<uint64_t>(frame) << 32u;
+    update_leds(true);
+  }
+
+  void jump_to_cv_position(int16_t cv) {
+    const uint32_t normalized_cv = static_cast<uint32_t>(cv - kCvMin);
+    const uint32_t frame = static_cast<uint32_t>(
+        (static_cast<uint64_t>(normalized_cv) * (BREAKY_FRAME_COUNT - 1u)) / kKnobMax);
     phase_q32_ = static_cast<uint64_t>(frame) << 32u;
     update_leds(true);
   }
@@ -241,5 +325,6 @@ int main() {
   stdio_init_all();
 
   Breaky card;
+  card.EnableNormalisationProbe();
   card.Run();
 }
