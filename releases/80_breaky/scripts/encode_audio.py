@@ -2,6 +2,7 @@
 import argparse
 import datetime as _datetime
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -82,7 +83,17 @@ def encode(raw):
     return packed, frame_count, peak
 
 
-def write_header(output_path, input_path, packed, frame_count, peak):
+def infer_bpm(input_path):
+    match = re.search(r"bpm[_-]?(\d+(?:\.\d+)?)", os.path.basename(input_path), re.IGNORECASE)
+    if not match:
+        return None
+    bpm = round(float(match.group(1)))
+    if bpm <= 0:
+        return None
+    return bpm
+
+
+def write_header(output_path, input_path, source_bpm, packed, frame_count, peak):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     generated = _datetime.datetime.now(_datetime.timezone.utc).isoformat()
     with open(output_path, "w", encoding="utf-8") as out:
@@ -93,6 +104,7 @@ def write_header(output_path, input_path, packed, frame_count, peak):
         out.write("#include <stdint.h>\n")
         out.write("#include \"pico/platform.h\"\n\n")
         out.write(f"#define BREAKY_SAMPLE_RATE {SAMPLE_RATE}u\n")
+        out.write(f"#define BREAKY_SOURCE_BPM {source_bpm}u\n")
         out.write(f"#define BREAKY_FRAME_COUNT {frame_count}u\n")
         out.write(f"#define BREAKY_AUDIO_BYTES {len(packed)}u\n")
         out.write(f"#define BREAKY_SOURCE_PEAK_16BIT {peak}u\n\n")
@@ -112,17 +124,26 @@ def write_header(output_path, input_path, packed, frame_count, peak):
 
 def main():
     parser = argparse.ArgumentParser(description="Encode Breaky audio as packed 12-bit stereo.")
+    parser.add_argument("--bpm", type=float, help="source audio BPM; defaults to inferring bpmNNN from filename")
     parser.add_argument("input")
     parser.add_argument("output")
     args = parser.parse_args()
 
+    source_bpm = round(args.bpm) if args.bpm is not None else infer_bpm(args.input)
+    if source_bpm is None:
+        print("error: source BPM not provided and could not infer bpmNNN from filename", file=sys.stderr)
+        raise SystemExit(1)
+    if source_bpm <= 0:
+        print("error: source BPM must be positive", file=sys.stderr)
+        raise SystemExit(1)
+
     raw = run_sox(args.input)
     packed, frame_count, peak = encode(raw)
-    write_header(args.output, args.input, packed, frame_count, peak)
+    write_header(args.output, args.input, source_bpm, packed, frame_count, peak)
     seconds = frame_count / SAMPLE_RATE
     print(
         f"encoded {frame_count} stereo frames ({seconds:.2f}s), "
-        f"{len(packed)} bytes, source peak {peak}/32767"
+        f"{len(packed)} bytes, source bpm {source_bpm}, source peak {peak}/32767"
     )
 
 

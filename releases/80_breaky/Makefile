@@ -3,6 +3,7 @@ export PICO_SDK_PATH := $(CURDIR)/pico-sdk
 PROJECT := breaky
 BUILD_DIR := build
 PORT ?= /dev/ttyACM0
+SOURCE_BPM ?=
 PICO_SDK_VERSION := 2.2.0
 PICO_SDK_STAMP := pico-sdk/.breaky-sdk-$(PICO_SDK_VERSION)
 NPROCS := $(shell nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
@@ -19,7 +20,7 @@ upload: build
 encode: src/breaky_audio.h
 
 src/breaky_audio.h: data/amen_bpm170_freak.wav scripts/encode_audio.py
-	python3 scripts/encode_audio.py data/amen_bpm170_freak.wav src/breaky_audio.h
+	python3 scripts/encode_audio.py $(if $(SOURCE_BPM),--bpm $(SOURCE_BPM),) data/amen_bpm170_freak.wav src/breaky_audio.h
 
 $(BUILD_DIR)/Makefile: CMakeLists.txt pico_sdk_import.cmake src/main.cpp src/ComputerCard.h src/breaky_audio.h $(PICO_SDK_STAMP)
 	cmake -S . -B $(BUILD_DIR)
