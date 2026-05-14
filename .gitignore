@@ -16,3 +16,9 @@ Icon?
 .vscode/
 site/
 tools/sitegen/node_modules/
+
+# 80_breaky local build/reference artifacts
+releases/80_breaky/build/
+releases/80_breaky/pico-sdk/
+releases/80_breaky/src/breaky_audio.h
+releases/80_breaky/reference/
