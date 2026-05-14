@@ -24,20 +24,13 @@ class Breaky : public ComputerCard {
     handle_left_cv_jump();
     update_external_clock();
     update_playback_rate();
+    update_timestretch();
 
-    const uint32_t frame = current_frame();
-    const uint32_t next_frame = frame + 1u < BREAKY_FRAME_COUNT ? frame + 1u : 0u;
-    const uint32_t frac = static_cast<uint32_t>(phase_q32_);
+    const StereoFrame output =
+        timestretch_active_ ? render_stretched_sample() : render_direct_sample();
 
-    const StereoFrame a = read_frame(frame);
-    const StereoFrame b = read_frame(next_frame);
-    const int16_t left = interpolate(a.left, b.left, frac);
-    const int16_t right = interpolate(a.right, b.right, frac);
-
-    AudioOut1(left);
-    AudioOut2(right);
-
-    advance_phase();
+    AudioOut1(output.left);
+    AudioOut2(output.right);
 
     update_leds();
   }
@@ -62,29 +55,47 @@ class Breaky : public ComputerCard {
   static constexpr int16_t kCvJumpThreshold = 64;
   static constexpr int16_t kCvMin = -2048;
   static constexpr int16_t kCvMax = 2047;
+  static constexpr uint32_t kStretchQ8One = 256u;
+  static constexpr uint32_t kStretchQ8Bypass = (11u * kStretchQ8One + 5u) / 10u;
+  static constexpr uint32_t kStretchQ8Max = 10u * kStretchQ8One;
+  static constexpr uint32_t kGrainLengthSamples = 2048u;
+  static constexpr uint32_t kGrainHopSamples = 1024u;
+  static constexpr uint32_t kGrainHopShift = 10u;
 
   struct StereoFrame {
     int16_t left;
     int16_t right;
   };
 
+  struct Grain {
+    uint64_t start_phase_q32;
+    uint64_t phase_inc_q32;
+    uint16_t age;
+  };
+
   uint64_t phase_q32_ = 0;
   uint64_t phase_inc_q32_ = 1ull << 32u;
+  uint64_t timestretch_source_inc_q32_ = 1ull << 32u;
   uint32_t led_divider_ = 0;
   uint32_t control_update_divider_ = kControlUpdateDivider;
+  uint32_t stretch_update_divider_ = kControlUpdateDivider;
   uint32_t boot_mute_samples_ = kBootMuteSamples;
   uint32_t clock_age_samples_ = 0;
   uint32_t clock_timeout_samples_ = kExternalClockMinTimeoutSamples;
   uint32_t pulse_flash_samples_ = 0;
   uint32_t cv_jump_update_divider_ = kCvJumpUpdateDivider;
+  uint32_t stretch_q8_ = kStretchQ8One;
   uint16_t switch_down_samples_ = 0;
   uint8_t cv_jump_connected_ticks_ = 0;
   uint8_t cv_jump_change_ticks_ = 0;
   int16_t last_accepted_cv_ = 0;
+  Grain grains_[2] = {{0, 1ull << 32u, 0}, {0, 1ull << 32u, kGrainHopSamples}};
   bool clock_seen_once_ = false;
   bool external_clock_active_ = false;
   bool switch_jump_armed_ = true;
   bool cv_jump_tracking_ = false;
+  bool timestretch_active_ = false;
+  bool grains_initialized_ = false;
 
   static int16_t sign_extend_12(uint16_t value) {
     value &= 0x0FFFu;
@@ -110,6 +121,37 @@ class Breaky : public ComputerCard {
     return static_cast<int16_t>(value);
   }
 
+  static uint64_t loop_len_q32() {
+    return static_cast<uint64_t>(BREAKY_FRAME_COUNT) << 32u;
+  }
+
+  static uint64_t wrap_phase(uint64_t phase) {
+    const uint64_t loop_len = loop_len_q32();
+    while (phase >= loop_len) {
+      phase -= loop_len;
+    }
+    return phase;
+  }
+
+  static uint64_t subtract_phase(uint64_t phase, uint64_t amount) {
+    const uint64_t loop_len = loop_len_q32();
+    amount %= loop_len;
+    if (phase >= amount) {
+      return phase - amount;
+    }
+    return loop_len - (amount - phase);
+  }
+
+  static uint32_t grain_window(uint16_t age) {
+    if (age >= kGrainLengthSamples) {
+      return 0;
+    }
+    if (age <= kGrainHopSamples) {
+      return age;
+    }
+    return kGrainLengthSamples - age;
+  }
+
   static StereoFrame read_frame(uint32_t frame) {
     const uint32_t byte_index = frame * 3u;
     const uint8_t b0 = breaky_audio_data[byte_index];
@@ -125,16 +167,29 @@ class Breaky : public ComputerCard {
     return {left, right};
   }
 
+  static StereoFrame read_interpolated_phase(uint64_t phase_q32) {
+    phase_q32 = wrap_phase(phase_q32);
+    const uint32_t frame = static_cast<uint32_t>(phase_q32 >> 32u);
+    const uint32_t next_frame = frame + 1u < BREAKY_FRAME_COUNT ? frame + 1u : 0u;
+    const uint32_t frac = static_cast<uint32_t>(phase_q32);
+
+    const StereoFrame a = read_frame(frame);
+    const StereoFrame b = read_frame(next_frame);
+    const int16_t left = interpolate(a.left, b.left, frac);
+    const int16_t right = interpolate(a.right, b.right, frac);
+    return {left, right};
+  }
+
   uint32_t current_frame() const {
     return static_cast<uint32_t>(phase_q32_ >> 32u);
   }
 
   void advance_phase() {
-    phase_q32_ += phase_inc_q32_;
-    const uint64_t loop_len_q32 = static_cast<uint64_t>(BREAKY_FRAME_COUNT) << 32u;
-    while (phase_q32_ >= loop_len_q32) {
-      phase_q32_ -= loop_len_q32;
-    }
+    advance_phase_by(phase_inc_q32_);
+  }
+
+  void advance_phase_by(uint64_t increment_q32) {
+    phase_q32_ = wrap_phase(phase_q32_ + increment_q32);
   }
 
   void update_playback_rate() {
@@ -153,6 +208,46 @@ class Breaky : public ComputerCard {
     const uint32_t target_bpm =
         kTempoMinBpm + ((knob * kTempoRangeBpm) + (kKnobMax / 2u)) / kKnobMax;
     phase_inc_q32_ = (static_cast<uint64_t>(target_bpm) << 32u) / BREAKY_SOURCE_BPM;
+  }
+
+  void update_timestretch() {
+    if (stretch_update_divider_ < kControlUpdateDivider) {
+      ++stretch_update_divider_;
+      return;
+    }
+    stretch_update_divider_ = 0;
+
+    const uint32_t knob = static_cast<uint32_t>(KnobVal(Y));
+    const bool was_active = timestretch_active_;
+    const uint32_t target_stretch_q8 = stretch_from_y_knob_q8(knob);
+    if (target_stretch_q8 < kStretchQ8Bypass) {
+      timestretch_active_ = false;
+      stretch_q8_ = kStretchQ8One;
+      timestretch_source_inc_q32_ = phase_inc_q32_;
+      if (was_active) {
+        invalidate_timestretch_grains();
+      }
+      return;
+    }
+
+    timestretch_active_ = true;
+    stretch_q8_ = target_stretch_q8;
+    refresh_timestretch_source_inc();
+    if (!was_active) {
+      invalidate_timestretch_grains();
+    }
+  }
+
+  static uint32_t stretch_from_y_knob_q8(uint32_t knob) {
+    const uint64_t eased_knob = static_cast<uint64_t>(knob) * knob * knob;
+    const uint64_t eased_max = static_cast<uint64_t>(kKnobMax) * kKnobMax * kKnobMax;
+    const uint64_t range = kStretchQ8Max - kStretchQ8One;
+    return static_cast<uint32_t>(
+        kStretchQ8One + ((eased_knob * range) + (eased_max / 2u)) / eased_max);
+  }
+
+  void refresh_timestretch_source_inc() {
+    timestretch_source_inc_q32_ = (phase_inc_q32_ << 8u) / stretch_q8_;
   }
 
   void update_external_clock() {
@@ -189,6 +284,9 @@ class Breaky : public ComputerCard {
         << 32u;
     phase_inc_q32_ =
         numerator / (static_cast<uint64_t>(interval) * BREAKY_SOURCE_BPM);
+    if (timestretch_active_) {
+      refresh_timestretch_source_inc();
+    }
 
     clock_timeout_samples_ = interval * kExternalClockTimeoutMultiplier;
     if (clock_timeout_samples_ < kExternalClockMinTimeoutSamples) {
@@ -274,6 +372,7 @@ class Breaky : public ComputerCard {
     const uint32_t frame = static_cast<uint32_t>(
         (static_cast<uint64_t>(knob) * (BREAKY_FRAME_COUNT - 1u)) / kKnobMax);
     phase_q32_ = static_cast<uint64_t>(frame) << 32u;
+    invalidate_timestretch_grains();
     update_leds(true);
   }
 
@@ -282,7 +381,71 @@ class Breaky : public ComputerCard {
     const uint32_t frame = static_cast<uint32_t>(
         (static_cast<uint64_t>(normalized_cv) * (BREAKY_FRAME_COUNT - 1u)) / kKnobMax);
     phase_q32_ = static_cast<uint64_t>(frame) << 32u;
+    invalidate_timestretch_grains();
     update_leds(true);
+  }
+
+  StereoFrame render_direct_sample() {
+    invalidate_timestretch_grains();
+    const StereoFrame output = read_interpolated_phase(phase_q32_);
+    advance_phase();
+    return output;
+  }
+
+  StereoFrame render_stretched_sample() {
+    if (!grains_initialized_) {
+      initialize_timestretch_grains();
+    }
+
+    int32_t left = 0;
+    int32_t right = 0;
+    accumulate_grain(grains_[0], left, right);
+    accumulate_grain(grains_[1], left, right);
+
+    advance_phase_by(timestretch_source_inc_q32_);
+    advance_grain(grains_[0]);
+    advance_grain(grains_[1]);
+
+    return {static_cast<int16_t>(left >> kGrainHopShift),
+            static_cast<int16_t>(right >> kGrainHopShift)};
+  }
+
+  void initialize_timestretch_grains() {
+    const uint64_t previous_grain_offset =
+        static_cast<uint64_t>(kGrainHopSamples) * phase_inc_q32_;
+    grains_[0] = {phase_q32_, phase_inc_q32_, 0};
+    grains_[1] = {subtract_phase(phase_q32_, previous_grain_offset),
+                  phase_inc_q32_, static_cast<uint16_t>(kGrainHopSamples)};
+    grains_initialized_ = true;
+  }
+
+  void invalidate_timestretch_grains() {
+    grains_initialized_ = false;
+  }
+
+  void accumulate_grain(const Grain& grain, int32_t& left, int32_t& right) const {
+    const uint32_t weight = grain_window(grain.age);
+    if (weight == 0) {
+      return;
+    }
+
+    const uint64_t grain_phase =
+        grain.start_phase_q32 +
+        (static_cast<uint64_t>(grain.age) * grain.phase_inc_q32);
+    const StereoFrame sample = read_interpolated_phase(grain_phase);
+    left += static_cast<int32_t>(sample.left) * static_cast<int32_t>(weight);
+    right += static_cast<int32_t>(sample.right) * static_cast<int32_t>(weight);
+  }
+
+  void advance_grain(Grain& grain) {
+    ++grain.age;
+    if (grain.age < kGrainLengthSamples) {
+      return;
+    }
+
+    grain.start_phase_q32 = phase_q32_;
+    grain.phase_inc_q32 = phase_inc_q32_;
+    grain.age = 0;
   }
 
   void update_leds(bool force = false) {
