@@ -6,84 +6,78 @@ import re
 import struct
 import subprocess
 import sys
+import tempfile
 
 
-SAMPLE_RATE = 48000
-CHANNELS = 2
-BYTES_PER_SAMPLE = 2
+SAMPLE_RATE = 24000
+CHANNELS = 1
+BITS_PER_SAMPLE = 8
+BYTES_PER_SAMPLE = 1
+LOWPASS_HZ = 12000
+INPUT_HEADROOM = "0.5"
+BPM_MIN = 100
+BPM_MAX = 200
+LOOP_BEAT_COUNTS = (4, 8, 16, 32, 48, 64, 72, 96)
 
 
 def run_sox(input_path):
-    cmd = [
-        "sox",
-        input_path,
-        "-r",
-        str(SAMPLE_RATE),
-        "-c",
-        str(CHANNELS),
-        "-b",
-        "16",
-        "-e",
-        "signed-integer",
-        "-L",
-        "-t",
-        "raw",
-        "-",
-        "gain",
-        "-n",
-        "-3",
-    ]
-    try:
-        return subprocess.check_output(cmd)
-    except FileNotFoundError:
-        print("error: sox is required to encode breaky audio", file=sys.stderr)
-        raise SystemExit(1)
-    except subprocess.CalledProcessError as exc:
-        print("error: sox failed while encoding audio", file=sys.stderr)
-        if exc.output:
-            print(exc.output.decode("utf-8", errors="replace"), file=sys.stderr)
-        raise SystemExit(exc.returncode)
-
-
-def clamp12(value):
-    if value < -2048:
-        return -2048
-    if value > 2047:
-        return 2047
-    return value
-
-
-def sign_to_12bit(value):
-    return value & 0x0FFF
-
-
-def pack_frame(left, right):
-    left12 = sign_to_12bit(clamp12(left >> 4))
-    right12 = sign_to_12bit(clamp12(right >> 4))
-    return (
-        left12 & 0xFF,
-        ((left12 >> 8) & 0x0F) | ((right12 & 0x0F) << 4),
-        (right12 >> 4) & 0xFF,
-    )
+    with tempfile.TemporaryDirectory() as temp_dir:
+        filtered_path = os.path.join(temp_dir, "filtered.wav")
+        filter_cmd = [
+            "sox",
+            "-v",
+            INPUT_HEADROOM,
+            input_path,
+            filtered_path,
+            "lowpass",
+            str(LOWPASS_HZ),
+            "gain",
+            "-n",
+            "-3",
+        ]
+        convert_cmd = [
+            "sox",
+            filtered_path,
+            "-r",
+            str(SAMPLE_RATE),
+            "-c",
+            str(CHANNELS),
+            "-b",
+            str(BITS_PER_SAMPLE),
+            "-e",
+            "signed-integer",
+            "-L",
+            "-t",
+            "raw",
+            "-",
+        ]
+        try:
+            subprocess.check_call(filter_cmd)
+            return subprocess.check_output(convert_cmd)
+        except FileNotFoundError:
+            print("error: sox is required to encode breaky audio", file=sys.stderr)
+            raise SystemExit(1)
+        except subprocess.CalledProcessError as exc:
+            print("error: sox failed while encoding audio", file=sys.stderr)
+            raise SystemExit(exc.returncode)
 
 
 def encode(raw):
     frame_size = CHANNELS * BYTES_PER_SAMPLE
     if len(raw) % frame_size != 0:
-        raise ValueError("raw audio length is not an even number of stereo frames")
+        raise ValueError("raw audio length is not an even number of mono frames")
 
     packed = bytearray()
     peak = 0
     frame_count = len(raw) // frame_size
     for index in range(frame_count):
-        offset = index * frame_size
-        left, right = struct.unpack_from("<hh", raw, offset)
-        peak = max(peak, abs(left), abs(right))
-        packed.extend(pack_frame(left, right))
+        sample = struct.unpack_from("<b", raw, index * frame_size)[0]
+        peak = max(peak, abs(sample))
+        packed.append(sample & 0xFF)
     return packed, frame_count, peak
 
 
-def infer_bpm(input_path):
+def infer_bpm_from_filename(input_path):
     match = re.search(r"bpm[_-]?(\d+(?:\.\d+)?)", os.path.basename(input_path), re.IGNORECASE)
     if not match:
         return None
@@ -91,6 +85,29 @@ def infer_bpm(input_path):
     if bpm <= 0:
         return None
     return bpm
+
+
+def estimate_bpm_from_loop(frame_count):
+    seconds = frame_count / SAMPLE_RATE
+    candidates = []
+    for beats in LOOP_BEAT_COUNTS:
+        bpm = (beats * 60.0) / seconds
+        clamped_bpm = min(max(bpm, BPM_MIN), BPM_MAX)
+        range_error = abs(bpm - clamped_bpm)
+        rounded_bpm = round(clamped_bpm)
+        integer_error = abs(clamped_bpm - rounded_bpm)
+        if BPM_MIN <= bpm <= BPM_MAX:
+            candidates.append((0.0, integer_error, -beats, rounded_bpm, beats, bpm))
+        else:
+            candidates.append((range_error, integer_error, -beats, rounded_bpm, beats, bpm))
+
+    if not candidates:
+        raise ValueError(
+            f"could not estimate BPM from {seconds:.3f}s"
+        )
+
+    _, _, _, rounded_bpm, beats, exact_bpm = min(candidates)
+    return rounded_bpm, beats, exact_bpm
 
 
 def write_header(output_path, input_path, source_bpm, packed, frame_count, peak):
@@ -104,10 +121,13 @@ def write_header(output_path, input_path, source_bpm, packed, frame_count, peak)
         out.write("#include <stdint.h>\n")
         out.write("#include \"pico/platform.h\"\n\n")
         out.write(f"#define BREAKY_SAMPLE_RATE {SAMPLE_RATE}u\n")
+        out.write(f"#define BREAKY_AUDIO_CHANNELS {CHANNELS}u\n")
+        out.write(f"#define BREAKY_AUDIO_BITS {BITS_PER_SAMPLE}u\n")
+        out.write(f"#define BREAKY_LOWPASS_HZ {LOWPASS_HZ}u\n")
         out.write(f"#define BREAKY_SOURCE_BPM {source_bpm}u\n")
         out.write(f"#define BREAKY_FRAME_COUNT {frame_count}u\n")
         out.write(f"#define BREAKY_AUDIO_BYTES {len(packed)}u\n")
-        out.write(f"#define BREAKY_SOURCE_PEAK_16BIT {peak}u\n\n")
+        out.write(f"#define BREAKY_SOURCE_PEAK_8BIT {peak}u\n\n")
         out.write(
             "static const uint8_t __in_flash(\"breaky_audio\") "
             "breaky_audio_data[BREAKY_AUDIO_BYTES] = {\n"
@@ -123,27 +143,49 @@ def write_header(output_path, input_path, source_bpm, packed, frame_count, peak)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Encode Breaky audio as packed 12-bit stereo.")
-    parser.add_argument("--bpm", type=float, help="source audio BPM; defaults to inferring bpmNNN from filename")
+    parser = argparse.ArgumentParser(description="Encode Breaky audio as signed 8-bit mono.")
+    parser.add_argument(
+        "--bpm",
+        type=float,
+        help=(
+            "source audio BPM; defaults to inferring bpmNNN from filename, "
+            f"then estimating from duration as one of {LOOP_BEAT_COUNTS} beats "
+            f"between {BPM_MIN} and {BPM_MAX} BPM"
+        ),
+    )
     parser.add_argument("input")
     parser.add_argument("output")
     args = parser.parse_args()
 
-    source_bpm = round(args.bpm) if args.bpm is not None else infer_bpm(args.input)
-    if source_bpm is None:
-        print("error: source BPM not provided and could not infer bpmNNN from filename", file=sys.stderr)
-        raise SystemExit(1)
-    if source_bpm <= 0:
+    if args.bpm is not None and args.bpm <= 0:
         print("error: source BPM must be positive", file=sys.stderr)
         raise SystemExit(1)
 
     raw = run_sox(args.input)
     packed, frame_count, peak = encode(raw)
+    if args.bpm is not None:
+        source_bpm = round(args.bpm)
+        bpm_note = "from --bpm"
+    else:
+        source_bpm = infer_bpm_from_filename(args.input)
+        if source_bpm is not None:
+            bpm_note = "from filename"
+        else:
+            try:
+                source_bpm, beats, exact_bpm = estimate_bpm_from_loop(frame_count)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                raise SystemExit(1)
+            bpm_note = f"estimated from {beats} beats at exact {exact_bpm:.2f} BPM"
+            if source_bpm != round(exact_bpm):
+                bpm_note += f", clamped to {source_bpm}"
+
     write_header(args.output, args.input, source_bpm, packed, frame_count, peak)
     seconds = frame_count / SAMPLE_RATE
     print(
-        f"encoded {frame_count} stereo frames ({seconds:.2f}s), "
-        f"{len(packed)} bytes, source bpm {source_bpm}, source peak {peak}/32767"
+        f"encoded {frame_count} mono frames ({seconds:.2f}s), "
+        f"{len(packed)} bytes, source bpm {source_bpm} ({bpm_note}), "
+        f"source peak {peak}/127"
     )
 
 

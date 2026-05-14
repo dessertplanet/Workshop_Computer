@@ -37,19 +37,20 @@ class Breaky : public ComputerCard {
 
  private:
   static constexpr int kNumLeds = 6;
-  static constexpr uint32_t kBootMuteSamples = BREAKY_SAMPLE_RATE / 10u;
+  static constexpr uint32_t kAudioOutputSampleRate = 48000u;
+  static constexpr uint32_t kBootMuteSamples = kAudioOutputSampleRate / 10u;
   static constexpr uint32_t kLedUpdateDivider = 1024u;
   static constexpr uint32_t kKnobMax = 4095u;
   static constexpr uint32_t kTempoMinBpm = 100u;
   static constexpr uint32_t kTempoRangeBpm = 100u;
-  static constexpr uint32_t kControlUpdateDivider = BREAKY_SAMPLE_RATE / 1000u;
-  static constexpr uint32_t kExternalClockMinIntervalSamples = BREAKY_SAMPLE_RATE / 1000u;
-  static constexpr uint32_t kExternalClockMinTimeoutSamples = BREAKY_SAMPLE_RATE / 2u;
+  static constexpr uint32_t kControlUpdateDivider = kAudioOutputSampleRate / 1000u;
+  static constexpr uint32_t kExternalClockMinIntervalSamples = kAudioOutputSampleRate / 1000u;
+  static constexpr uint32_t kExternalClockMinTimeoutSamples = kAudioOutputSampleRate / 2u;
   static constexpr uint32_t kExternalClockTimeoutMultiplier = 4u;
-  static constexpr uint32_t kPulseFlashSamples = BREAKY_SAMPLE_RATE / 20u;
+  static constexpr uint32_t kPulseFlashSamples = kAudioOutputSampleRate / 20u;
   static constexpr uint32_t kExternalClockPpqn = 2u;
   static constexpr uint16_t kSwitchDebounceSamples = 96u;
-  static constexpr uint32_t kCvJumpUpdateDivider = BREAKY_SAMPLE_RATE / 1000u;
+  static constexpr uint32_t kCvJumpUpdateDivider = kAudioOutputSampleRate / 1000u;
   static constexpr uint8_t kCvJumpConnectTicks = 32u;
   static constexpr uint8_t kCvJumpConfirmTicks = 2u;
   static constexpr int16_t kCvJumpThreshold = 64;
@@ -61,6 +62,8 @@ class Breaky : public ComputerCard {
   static constexpr uint32_t kGrainLengthSamples = 2048u;
   static constexpr uint32_t kGrainHopSamples = 1024u;
   static constexpr uint32_t kGrainHopShift = 10u;
+  static constexpr uint64_t kSourceFrameIncQ32 =
+      (static_cast<uint64_t>(BREAKY_SAMPLE_RATE) << 32u) / kAudioOutputSampleRate;
 
   struct StereoFrame {
     int16_t left;
@@ -74,8 +77,8 @@ class Breaky : public ComputerCard {
   };
 
   uint64_t phase_q32_ = 0;
-  uint64_t phase_inc_q32_ = 1ull << 32u;
-  uint64_t timestretch_source_inc_q32_ = 1ull << 32u;
+  uint64_t phase_inc_q32_ = kSourceFrameIncQ32;
+  uint64_t timestretch_source_inc_q32_ = kSourceFrameIncQ32;
   uint32_t led_divider_ = 0;
   uint32_t control_update_divider_ = kControlUpdateDivider;
   uint32_t stretch_update_divider_ = kControlUpdateDivider;
@@ -89,7 +92,8 @@ class Breaky : public ComputerCard {
   uint8_t cv_jump_connected_ticks_ = 0;
   uint8_t cv_jump_change_ticks_ = 0;
   int16_t last_accepted_cv_ = 0;
-  Grain grains_[2] = {{0, 1ull << 32u, 0}, {0, 1ull << 32u, kGrainHopSamples}};
+  Grain grains_[2] = {{0, kSourceFrameIncQ32, 0},
+                      {0, kSourceFrameIncQ32, kGrainHopSamples}};
   bool clock_seen_once_ = false;
   bool external_clock_active_ = false;
   bool switch_jump_armed_ = true;
@@ -97,12 +101,9 @@ class Breaky : public ComputerCard {
   bool timestretch_active_ = false;
   bool grains_initialized_ = false;
 
-  static int16_t sign_extend_12(uint16_t value) {
-    value &= 0x0FFFu;
-    if (value & 0x0800u) {
-      value |= 0xF000u;
-    }
-    return static_cast<int16_t>(value);
+  static int16_t decode_sample(uint8_t value) {
+    const int16_t signed_sample = static_cast<int8_t>(value);
+    return static_cast<int16_t>(signed_sample * 16);
   }
 
   static int16_t interpolate(int16_t a, int16_t b, uint32_t frac) {
@@ -153,18 +154,8 @@ class Breaky : public ComputerCard {
   }
 
   static StereoFrame read_frame(uint32_t frame) {
-    const uint32_t byte_index = frame * 3u;
-    const uint8_t b0 = breaky_audio_data[byte_index];
-    const uint8_t b1 = breaky_audio_data[byte_index + 1u];
-    const uint8_t b2 = breaky_audio_data[byte_index + 2u];
-
-    const int16_t left = sign_extend_12(static_cast<uint16_t>(b0) |
-                                        ((static_cast<uint16_t>(b1) & 0x0Fu)
-                                         << 8u));
-    const int16_t right =
-        sign_extend_12(((static_cast<uint16_t>(b1) >> 4u) & 0x0Fu) |
-                       (static_cast<uint16_t>(b2) << 4u));
-    return {left, right};
+    const int16_t sample = decode_sample(breaky_audio_data[frame]);
+    return {sample, sample};
   }
 
   static StereoFrame read_interpolated_phase(uint64_t phase_q32) {
@@ -207,7 +198,9 @@ class Breaky : public ComputerCard {
     const uint32_t knob = static_cast<uint32_t>(KnobVal(X));
     const uint32_t target_bpm =
         kTempoMinBpm + ((knob * kTempoRangeBpm) + (kKnobMax / 2u)) / kKnobMax;
-    phase_inc_q32_ = (static_cast<uint64_t>(target_bpm) << 32u) / BREAKY_SOURCE_BPM;
+    phase_inc_q32_ =
+        ((static_cast<uint64_t>(BREAKY_SAMPLE_RATE) * target_bpm) << 32u) /
+        (static_cast<uint64_t>(kAudioOutputSampleRate) * BREAKY_SOURCE_BPM);
   }
 
   void update_timestretch() {
@@ -280,10 +273,10 @@ class Breaky : public ComputerCard {
 
   void set_external_clock_interval(uint32_t interval) {
     const uint64_t numerator =
-        static_cast<uint64_t>(60u * BREAKY_SAMPLE_RATE / kExternalClockPpqn)
-        << 32u;
+        (static_cast<uint64_t>(60u) * BREAKY_SAMPLE_RATE) << 32u;
     phase_inc_q32_ =
-        numerator / (static_cast<uint64_t>(interval) * BREAKY_SOURCE_BPM);
+        numerator / (static_cast<uint64_t>(interval) * BREAKY_SOURCE_BPM *
+                     kExternalClockPpqn);
     if (timestretch_active_) {
       refresh_timestretch_source_inc();
     }

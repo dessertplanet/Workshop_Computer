@@ -10,12 +10,17 @@ NPROCS := $(shell nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || 
 
 .PHONY: build upload clean pico-sdk encode
 
+
 build: $(PICO_SDK_STAMP) src/breaky_audio.h $(BUILD_DIR)/Makefile
 	cmake --build $(BUILD_DIR) --parallel $(NPROCS)
 	test -f $(BUILD_DIR)/$(PROJECT).uf2
 
 upload: build
 	./scripts/upload_uf2.sh "$(BUILD_DIR)/$(PROJECT).uf2" "$(PORT)"
+
+clean: 
+	rm -rf $(BUILD_DIR)
+	rm -f src/breaky_audio.h
 
 encode: src/breaky_audio.h
 
