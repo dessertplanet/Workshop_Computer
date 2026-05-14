@@ -20,6 +20,8 @@ class Breaky : public ComputerCard {
       return;
     }
 
+    handle_switch_jump();
+
     const uint32_t byte_index = frame_ * 3u;
     const uint8_t b0 = breaky_audio_data[byte_index];
     const uint8_t b1 = breaky_audio_data[byte_index + 1u];
@@ -47,10 +49,14 @@ class Breaky : public ComputerCard {
   static constexpr int kNumLeds = 6;
   static constexpr uint32_t kBootMuteSamples = BREAKY_SAMPLE_RATE / 10u;
   static constexpr uint32_t kLedUpdateDivider = 1024u;
+  static constexpr uint32_t kKnobMax = 4095u;
+  static constexpr uint16_t kSwitchDebounceSamples = 96u;
 
   uint32_t frame_ = 0;
   uint32_t led_divider_ = 0;
   uint32_t boot_mute_samples_ = kBootMuteSamples;
+  uint16_t switch_down_samples_ = 0;
+  bool switch_jump_armed_ = true;
 
   static int16_t sign_extend_12(uint16_t value) {
     value &= 0x0FFFu;
@@ -60,9 +66,33 @@ class Breaky : public ComputerCard {
     return static_cast<int16_t>(value);
   }
 
-  void update_leds() {
+  void handle_switch_jump() {
+    if (SwitchVal() != Down) {
+      switch_down_samples_ = 0;
+      switch_jump_armed_ = true;
+      return;
+    }
+
+    if (switch_down_samples_ < kSwitchDebounceSamples) {
+      ++switch_down_samples_;
+    }
+
+    if (switch_jump_armed_ && switch_down_samples_ >= kSwitchDebounceSamples) {
+      jump_to_main_knob_position();
+      switch_jump_armed_ = false;
+    }
+  }
+
+  void jump_to_main_knob_position() {
+    const uint32_t knob = static_cast<uint32_t>(KnobVal(Main));
+    frame_ = static_cast<uint32_t>(
+        (static_cast<uint64_t>(knob) * (BREAKY_FRAME_COUNT - 1u)) / kKnobMax);
+    update_leds(true);
+  }
+
+  void update_leds(bool force = false) {
     ++led_divider_;
-    if (led_divider_ < kLedUpdateDivider) {
+    if (!force && led_divider_ < kLedUpdateDivider) {
       return;
     }
     led_divider_ = 0;
