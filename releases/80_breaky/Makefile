@@ -3,10 +3,14 @@ export PICO_SDK_PATH := $(CURDIR)/pico-sdk
 PROJECT := breaky
 BUILD_DIR := build
 PORT ?= /dev/ttyACM0
-SOURCE_BPM ?=
 PICO_SDK_VERSION := 2.2.0
 PICO_SDK_STAMP := pico-sdk/.breaky-sdk-$(PICO_SDK_VERSION)
 NPROCS := $(shell nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+AUDIO_SOURCES := \
+	data/amen_bpm170_freak.wav \
+	data/09\ Amen\ Bomb.wav \
+	data/19\ Amen\ Raptor.wav \
+	data/38\ Eyes\ of\ Evil.wav
 
 .PHONY: build upload clean pico-sdk encode
 
@@ -18,14 +22,10 @@ build: $(PICO_SDK_STAMP) src/breaky_audio.h $(BUILD_DIR)/Makefile
 upload: build
 	./scripts/upload_uf2.sh "$(BUILD_DIR)/$(PROJECT).uf2" "$(PORT)"
 
-clean: 
-	rm -rf $(BUILD_DIR)
-	rm -f src/breaky_audio.h
-
 encode: src/breaky_audio.h
 
-src/breaky_audio.h: data/amen_bpm170_freak.wav scripts/encode_audio.py
-	python3 scripts/encode_audio.py $(if $(SOURCE_BPM),--bpm $(SOURCE_BPM),) data/amen_bpm170_freak.wav src/breaky_audio.h
+src/breaky_audio.h: $(AUDIO_SOURCES) scripts/encode_audio.py
+	python3 scripts/encode_audio.py "data/amen_bpm170_freak.wav" "data/09 Amen Bomb.wav" "data/19 Amen Raptor.wav" "data/38 Eyes of Evil.wav" src/breaky_audio.h
 
 $(BUILD_DIR)/Makefile: CMakeLists.txt pico_sdk_import.cmake src/main.cpp src/ComputerCard.h src/breaky_audio.h $(PICO_SDK_STAMP)
 	cmake -S . -B $(BUILD_DIR)

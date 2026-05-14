@@ -20,7 +20,7 @@ class Breaky : public ComputerCard {
       return;
     }
 
-    handle_switch_jump();
+    handle_switch_actions();
     handle_left_cv_jump();
     update_external_clock();
     update_playback_rate();
@@ -84,19 +84,23 @@ class Breaky : public ComputerCard {
   uint32_t stretch_update_divider_ = kControlUpdateDivider;
   uint32_t boot_mute_samples_ = kBootMuteSamples;
   uint32_t clock_age_samples_ = 0;
+  uint32_t last_external_clock_interval_ = 0;
   uint32_t clock_timeout_samples_ = kExternalClockMinTimeoutSamples;
   uint32_t pulse_flash_samples_ = 0;
   uint32_t cv_jump_update_divider_ = kCvJumpUpdateDivider;
   uint32_t stretch_q8_ = kStretchQ8One;
   uint16_t switch_down_samples_ = 0;
+  uint16_t switch_up_samples_ = 0;
   uint8_t cv_jump_connected_ticks_ = 0;
   uint8_t cv_jump_change_ticks_ = 0;
+  uint8_t active_sample_ = 0;
   int16_t last_accepted_cv_ = 0;
   Grain grains_[2] = {{0, kSourceFrameIncQ32, 0},
                       {0, kSourceFrameIncQ32, kGrainHopSamples}};
   bool clock_seen_once_ = false;
   bool external_clock_active_ = false;
   bool switch_jump_armed_ = true;
+  bool switch_change_armed_ = true;
   bool cv_jump_tracking_ = false;
   bool timestretch_active_ = false;
   bool grains_initialized_ = false;
@@ -122,11 +126,15 @@ class Breaky : public ComputerCard {
     return static_cast<int16_t>(value);
   }
 
-  static uint64_t loop_len_q32() {
-    return static_cast<uint64_t>(BREAKY_FRAME_COUNT) << 32u;
+  const BreakyAudioSample& current_sample() const {
+    return breaky_audio_samples[active_sample_];
   }
 
-  static uint64_t wrap_phase(uint64_t phase) {
+  uint64_t loop_len_q32() const {
+    return static_cast<uint64_t>(current_sample().frame_count) << 32u;
+  }
+
+  uint64_t wrap_phase(uint64_t phase) const {
     const uint64_t loop_len = loop_len_q32();
     while (phase >= loop_len) {
       phase -= loop_len;
@@ -134,7 +142,7 @@ class Breaky : public ComputerCard {
     return phase;
   }
 
-  static uint64_t subtract_phase(uint64_t phase, uint64_t amount) {
+  uint64_t subtract_phase(uint64_t phase, uint64_t amount) const {
     const uint64_t loop_len = loop_len_q32();
     amount %= loop_len;
     if (phase >= amount) {
@@ -153,15 +161,17 @@ class Breaky : public ComputerCard {
     return kGrainLengthSamples - age;
   }
 
-  static StereoFrame read_frame(uint32_t frame) {
-    const int16_t sample = decode_sample(breaky_audio_data[frame]);
+  StereoFrame read_frame(uint32_t frame) const {
+    const int16_t sample =
+        decode_sample(breaky_audio_data[current_sample().offset + frame]);
     return {sample, sample};
   }
 
-  static StereoFrame read_interpolated_phase(uint64_t phase_q32) {
+  StereoFrame read_interpolated_phase(uint64_t phase_q32) const {
     phase_q32 = wrap_phase(phase_q32);
     const uint32_t frame = static_cast<uint32_t>(phase_q32 >> 32u);
-    const uint32_t next_frame = frame + 1u < BREAKY_FRAME_COUNT ? frame + 1u : 0u;
+    const uint32_t frame_count = current_sample().frame_count;
+    const uint32_t next_frame = frame + 1u < frame_count ? frame + 1u : 0u;
     const uint32_t frac = static_cast<uint32_t>(phase_q32);
 
     const StereoFrame a = read_frame(frame);
@@ -195,12 +205,19 @@ class Breaky : public ComputerCard {
     }
     control_update_divider_ = 0;
 
+    refresh_free_playback_rate();
+  }
+
+  void refresh_free_playback_rate() {
     const uint32_t knob = static_cast<uint32_t>(KnobVal(X));
     const uint32_t target_bpm =
         kTempoMinBpm + ((knob * kTempoRangeBpm) + (kKnobMax / 2u)) / kKnobMax;
     phase_inc_q32_ =
         ((static_cast<uint64_t>(BREAKY_SAMPLE_RATE) * target_bpm) << 32u) /
-        (static_cast<uint64_t>(kAudioOutputSampleRate) * BREAKY_SOURCE_BPM);
+        (static_cast<uint64_t>(kAudioOutputSampleRate) * current_sample().source_bpm);
+    if (timestretch_active_) {
+      refresh_timestretch_source_inc();
+    }
   }
 
   void update_timestretch() {
@@ -272,15 +289,8 @@ class Breaky : public ComputerCard {
   }
 
   void set_external_clock_interval(uint32_t interval) {
-    const uint64_t numerator =
-        (static_cast<uint64_t>(60u) * BREAKY_SAMPLE_RATE) << 32u;
-    phase_inc_q32_ =
-        numerator / (static_cast<uint64_t>(interval) * BREAKY_SOURCE_BPM *
-                     kExternalClockPpqn);
-    if (timestretch_active_) {
-      refresh_timestretch_source_inc();
-    }
-
+    last_external_clock_interval_ = interval;
+    refresh_external_playback_rate(interval);
     clock_timeout_samples_ = interval * kExternalClockTimeoutMultiplier;
     if (clock_timeout_samples_ < kExternalClockMinTimeoutSamples) {
       clock_timeout_samples_ = kExternalClockMinTimeoutSamples;
@@ -289,20 +299,37 @@ class Breaky : public ComputerCard {
     update_leds(true);
   }
 
-  void handle_switch_jump() {
-    if (SwitchVal() != Down) {
+  void refresh_external_playback_rate(uint32_t interval) {
+    const uint64_t numerator =
+        (static_cast<uint64_t>(60u) * BREAKY_SAMPLE_RATE) << 32u;
+    phase_inc_q32_ =
+        numerator / (static_cast<uint64_t>(interval) * current_sample().source_bpm *
+                     kExternalClockPpqn);
+    if (timestretch_active_) {
+      refresh_timestretch_source_inc();
+    }
+  }
+
+  void handle_switch_actions() {
+    const Switch switch_value = SwitchVal();
+    if (switch_value != Down) {
       switch_down_samples_ = 0;
       switch_jump_armed_ = true;
-      return;
-    }
-
-    if (switch_down_samples_ < kSwitchDebounceSamples) {
+    } else if (switch_down_samples_ < kSwitchDebounceSamples) {
       ++switch_down_samples_;
-    }
-
-    if (switch_jump_armed_ && switch_down_samples_ >= kSwitchDebounceSamples) {
+    } else if (switch_jump_armed_) {
       jump_to_main_knob_position();
       switch_jump_armed_ = false;
+    }
+
+    if (switch_value != Up) {
+      switch_up_samples_ = 0;
+      switch_change_armed_ = true;
+    } else if (switch_up_samples_ < kSwitchDebounceSamples) {
+      ++switch_up_samples_;
+    } else if (switch_change_armed_) {
+      change_sample_from_main_knob_position();
+      switch_change_armed_ = false;
     }
   }
 
@@ -362,8 +389,9 @@ class Breaky : public ComputerCard {
 
   void jump_to_main_knob_position() {
     const uint32_t knob = static_cast<uint32_t>(KnobVal(Main));
+    const uint32_t frame_count = current_sample().frame_count;
     const uint32_t frame = static_cast<uint32_t>(
-        (static_cast<uint64_t>(knob) * (BREAKY_FRAME_COUNT - 1u)) / kKnobMax);
+        (static_cast<uint64_t>(knob) * (frame_count - 1u)) / kKnobMax);
     phase_q32_ = static_cast<uint64_t>(frame) << 32u;
     invalidate_timestretch_grains();
     update_leds(true);
@@ -371,9 +399,43 @@ class Breaky : public ComputerCard {
 
   void jump_to_cv_position(int16_t cv) {
     const uint32_t normalized_cv = static_cast<uint32_t>(cv - kCvMin);
+    const uint32_t frame_count = current_sample().frame_count;
     const uint32_t frame = static_cast<uint32_t>(
-        (static_cast<uint64_t>(normalized_cv) * (BREAKY_FRAME_COUNT - 1u)) / kKnobMax);
+        (static_cast<uint64_t>(normalized_cv) * (frame_count - 1u)) / kKnobMax);
     phase_q32_ = static_cast<uint64_t>(frame) << 32u;
+    invalidate_timestretch_grains();
+    update_leds(true);
+  }
+
+  uint8_t sample_from_main_knob_position() {
+    const uint32_t knob = static_cast<uint32_t>(KnobVal(Main));
+    const uint32_t scaled =
+        (static_cast<uint64_t>(knob) * BREAKY_SAMPLE_COUNT) / (kKnobMax + 1u);
+    return static_cast<uint8_t>((BREAKY_SAMPLE_COUNT - 1u) - scaled);
+  }
+
+  void change_sample_from_main_knob_position() {
+    const uint8_t next_sample = sample_from_main_knob_position();
+    if (next_sample == active_sample_) {
+      return;
+    }
+
+    const uint32_t old_frame_count = current_sample().frame_count;
+    const uint32_t old_frame = static_cast<uint32_t>(phase_q32_ >> 32u);
+    const uint32_t old_frac = static_cast<uint32_t>(phase_q32_);
+    active_sample_ = next_sample;
+    const uint32_t new_frame_count = current_sample().frame_count;
+
+    const uint64_t new_frame =
+        (static_cast<uint64_t>(old_frame) * new_frame_count) / old_frame_count;
+    const uint64_t new_frac =
+        (static_cast<uint64_t>(old_frac) * new_frame_count) / old_frame_count;
+    phase_q32_ = wrap_phase((new_frame << 32u) + new_frac);
+    if (external_clock_active_ && last_external_clock_interval_ > 0) {
+      refresh_external_playback_rate(last_external_clock_interval_);
+    } else {
+      refresh_free_playback_rate();
+    }
     invalidate_timestretch_grains();
     update_leds(true);
   }
@@ -448,9 +510,10 @@ class Breaky : public ComputerCard {
     }
     led_divider_ = 0;
 
+    const uint32_t frame_count = current_sample().frame_count;
     const uint32_t segment =
         static_cast<uint32_t>((static_cast<uint64_t>(current_frame()) * kNumLeds) /
-                              BREAKY_FRAME_COUNT);
+                              frame_count);
     if (pulse_flash_samples_ > 0) {
       for (int i = 0; i < kNumLeds; ++i) {
         LedOn(i, true);
@@ -461,7 +524,7 @@ class Breaky : public ComputerCard {
     if (external_clock_active_) {
       const uint32_t inner_segment =
           static_cast<uint32_t>((static_cast<uint64_t>(current_frame()) * 4u) /
-                                BREAKY_FRAME_COUNT);
+                                frame_count);
       LedOn(0, true);
       LedOn(5, true);
       for (int i = 1; i < 5; ++i) {
