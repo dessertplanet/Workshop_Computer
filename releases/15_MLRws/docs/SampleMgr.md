@@ -1,0 +1,123 @@
+# Sample manager
+
+The MLRws sample manager is a tiny web app that runs in your browser and talks
+to the Workshop Computer over USB-serial. You use it to upload audio files
+from your (non-Workshop) computer onto the card, pull recordings *off* the
+card as WAVs, audition or clear individual tracks, and trim/select regions
+before upload. It is the simplest way to put curated source material on the
+card without having to play it into the audio input.
+
+- Web app: <https://dessertplanet.github.io/MLRws-web/>
+- Source: [`dessertplanet/MLRws-web`](https://github.com/dessertplanet/MLRws-web)
+
+## Getting connected
+
+1. Power-cycle the Workshop Computer into a **USB-device** mode. The easiest
+   path is to power up with nothing else plugged into the Computer's USB-C
+   port — MLRws comes up in [Gridless mode](Gridless.md) and will transition
+   to sample-manager mode automatically once the web app connects. (If you
+   power up *while already plugged into your host computer*, MLRws can also
+   boot straight into sample-manager mode.)
+2. Plug the Computer into your laptop/desktop with USB-C.
+3. Open the web app, click **Connect**, and pick the Computer's serial port
+   from the browser prompt. The status line will report `Connected (mono)` or
+   `Connected (stereo)` depending on which UF2 is installed, and then read
+   each existing track from the card so you can see and audition them.
+
+> [!NOTE]
+> This web app requires the Web Serial API to communicate with the WS computer, so a Chromium-based browser is required. [Details below](#browser-and-web-serial-caveats)
+
+## What you see per track
+
+For each of the six tracks the app shows:
+
+- A **Speed** dropdown — see [Record speed and length](#record-speed-and-length).
+- A **Gain** slider (with the value shown in dB), applied to the audio before
+  upload and preview so you can hear the result before committing.
+- A **waveform** view with the current crop selection drawn in blue.
+- The action buttons described below.
+- A small info line showing the current selection length, the maximum length
+  at the chosen speed, and — for tracks that were originally recorded on the
+  Computer panel — the speed they were recorded at (e.g. `rec 0.5×`).
+
+You can load source audio by clicking **Load Audio** to pick a file, or by
+**dragging an audio file straight onto the track row** — both work the same
+way and accept whatever the browser can decode (WAV/AIFF/MP3/FLAC/etc.).
+
+## Waveform interaction
+
+The app runs a transient detector on every loaded file and draws each
+transient as a small tick on the waveform. The transients become **sector
+boundaries** for selection:
+
+- **Click** a sector to select just that sector as the crop region.
+- **Click-and-drag** across the waveform to expand the selection to all
+  sectors between the start and end of the drag.
+- **Right-click** anywhere on the waveform to add a manual sector boundary at
+  that position (useful if the auto-detected transients miss a cut point).
+
+When you change the Speed dropdown while a long file is loaded, the app will
+snap the end of the crop to the nearest transient before the per-speed length
+limit (or hard-clamp if no good transient is available).
+
+## The action buttons
+
+- **Load Audio** — open a file picker. (Drag-and-drop onto the row works too.)
+- **Upload** — ADPCM-encode the current selection at the chosen record speed
+  with the chosen gain and write it to the card for this track. Replaces any
+  existing audio.
+- **Download** — read whatever is currently on the card for this track,
+  decode it, and save it as `trackN.wav` via your browser's download flow.
+- **Crop** — commit the current crop selection to the audio buffer in the
+  browser (a destructive trim of the *working* file, not the card). Useful
+  for refining the selection before re-cropping or uploading.
+- **Clear** — erase this track on the card. The browser will ask you to
+  confirm first.
+- **Preview** — play the current track buffer through your laptop's audio
+  output using Web Audio, encoded exactly the way it would be uploaded, with
+  a playhead drawn on the waveform. The button becomes **Stop** while
+  playing; changing the speed or gain while playing automatically re-starts
+  the preview at the new settings.
+
+## Record speed and length
+
+The Speed dropdown controls the **record speed** the audio is encoded at, in
+the same sense as recording on the grid mode REC page. Slower record speeds
+fit more seconds onto the card in exchange for fidelity (ADPCM at a lower
+sample rate). The options are **0.25×**, **0.5×**, **0.67×** and **1×**
+(default).
+
+See the table in the [main README](../README.md#sample-manager-web-app) for
+the exact maximum length per speed for mono and stereo cards. When recording
+on the Computer panel itself (grid mode REC page) you can pick faster-than-1×
+speeds too — those tracks will still be displayed and downloadable here, but
+the dropdown for uploads is capped at 1× because going faster doesn't give
+you anything useful for a pre-prepared sample.
+
+## Mono and stereo cards
+
+The card identifies itself automatically as **mono**  or **stereo** on connect, and the app adapts:
+
+- **Mono card:** stereo source files are automatically downmixed to mono
+  before encoding.
+- **Stereo card:** stereo sources are encoded with a Mid-Side ADPCM scheme
+  that splits the storage budget between the two channels.
+
+Maximum sample length per track is roughly halved on stereo cards because
+each frame stores two channels.
+
+## Browser and Web Serial caveats
+
+The app talks to the Computer via the [Web Serial API], which is not as
+universally supported as the rest of the web. Things to know:
+
+- Use a **Chromium-based browser**: Chrome, Edge, Brave, Opera, Arc, etc.
+  **Firefox and Safari do not support Web Serial** as of this writing and
+  the Connect button will do nothing useful there.
+- Only **one tab** can hold the serial port at a time. If a previous tab is
+  still connected (or a different app like the Arduino IDE is), you'll need
+  to close it before connecting.
+- On Linux, your user typically needs to be in the `dialout` (or `tty`) group
+  to access serial devices. macOS and Windows generally work out of the box.
+
+[Web Serial API]: https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API

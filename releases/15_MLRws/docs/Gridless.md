@@ -1,0 +1,131 @@
+# Gridless mode
+
+Gridless mode is what MLRws falls back to when the Computer powers up as a USB
+device and nothing on the other end is talking to it (no grid, no
+sample manager). The whole six-track instrument is driven from the Computer's
+own panel — switch, three knobs, CV/Audio/Pulse jacks, and the six LEDs.
+
+## At a glance
+
+- Every track that already has audio on it **plays and loops continuously**.
+  There is no start/stop — the panel only changes which track is "active" and
+  how everything sounds.
+- One track is always the **active track**. The panel's knobs and switch shape
+  that track's playback (or, in global mode, shape the mix around it).
+- The Main knob on the Computer is used to select the active channel.
+- The X knob sets the level of the current active channel (this only ever applies to the **current** active channel).
+- The Y knob is an RxMx style "radiate" control that set the level of tracks **adjacent** to the active channel. Y at 0 means only the active channel plays (Radio Music style). Y at full means **all** channels play at the level set by the X knob.
+
+
+## Two switch positions, two roles for the knobs
+
+The three-position switch picks the role of the knobs. 
+
+### Switch Middle — Global mode
+
+- **Main knob:** active-track select. The knob travels through tracks 1–6 left
+  to right.
+- **X knob:** playback-layer gain. Centered = unity, fully left = silent, fully
+  right = roughly +6 dB. This is a master-style gain that sits on top of every
+  track's own volume slot.
+- **Y knob:** *radiate*. Fully left, only the active track is heard. As you
+  turn right, neighboring tracks fade in around the active one until, fully
+  right, all six tracks are heard at the same level. Combined with Main
+  sweeping the active track, this gives a soft cross-fade between tracks and
+  a kind of swept ensemble.
+
+### Switch Up — Channel mode
+
+Flipping the switch up **locks** the active track (it will no longer follow
+Main), and re-tasks every knob to operate on that track:
+
+- **Main knob:** bipolar **speed and direction** with a center deadzone.
+  Center = muted hold; turning left plays reverse and turning right plays
+  forward. The further from center, the faster, up to roughly ±2 octaves
+  (¼× ↔ 4×) at the extremes. A small region near center mutes the track to
+  give you a clean "stop".
+- **X knob:** per-track volume slot, six discrete steps matching the grid
+  mode mixer (left = quietest, ~−15 dB; right = loudest, ~+6 dB; third from
+  the left = unity).
+- **Y knob:** **reset start position** for this track — picks the column
+  (0–13) that the track will jump back to whenever you trigger a reset (see
+  below). Setting Y while the track is playing doesn't move the playhead by
+  itself; it stores the start position for the next reset.
+
+### Switch Down
+
+- **Tap:** reset the active track to its stored start position. Pulse Out 1
+  emits a single trigger to echo the reset.
+- **Hold for two seconds:** arm record mode. While you hold the switch down,
+  the LEDs fill from one to all six as a progress bar; at six LEDs you are
+  armed and the active track's LED begins a slow flash. See
+  [Recording](#recording) below.
+
+## CV, Audio In, and Pulse modulation
+
+The CV and pulse jacks add modulation on top of whatever the knobs and switch
+are doing. CV ranges are the standard Workshop Computer ±6 V.
+
+- **CV In 1** adds to the **X knob** (after the panel value, before the X-knob
+  role kicks in). So in global mode it modulates playback-layer gain; in
+  channel mode it modulates the active track's volume slot. While a CV is
+  patched, hard-takeover is bypassed on that knob so the CV can take over
+  smoothly.
+- **CV In 2** adds to the **Y knob** the same way — radiate in global mode,
+  start-column in channel mode.
+- **Audio In 1**, when patched, offsets the active-track selection by an
+  audio-driven amount (0..6 channels, full-scale). This wraps around the six
+  tracks, so loud audio sweeps the active track through the rotation. Useful
+  for envelopes, LFOs, or rhythmic triggers feeding the channel select.
+- **Audio In 2**, when patched, modulates the active track's **playback
+  speed**, always forward: −6 V → 0.25×, 0 V → 1×, +6 V → 4×. This overrides
+  the speed set by Main (channel mode) for as long as it is patched.
+- **Pulse In 1** rising edge: reset the active track to its stored start
+  column (same as a switch-down tap). Pulse Out 1 echoes it.
+- **Pulse In 2** rising edge: advance the active track to the next one (wraps
+  6→1). Pulse Out 2 fires on any track change, whether triggered by Pulse In 2,
+  by the Main knob, or by Audio In 1 modulation.
+
+A note about audio-driven modulation after recording: once you finish a
+recording pass, Audio In modulation is held off on each input independently
+until you unplug and re-plug that input. This stops a still-patched recording
+source from immediately modulating playback the instant recording stops.
+
+## Recording
+
+There is no per-track arm in gridless mode; recording always targets the
+**currently active track**. Recording is fixed at 1× speed.
+
+1. Hold the switch **Down** for two seconds. The card LEDs fill from one to
+   six as you hold. At six LEDs you are armed: the active track's LED flashes
+   slowly.
+2. While armed, flip the switch **Up** to cancel — you return to normal
+   playback with no recording made.
+3. While armed, push the switch **Down again** to start recording into the
+   active track. The active track's LED flashes fast.
+4. **Knob X** during recording is the input gain (and monitor level), exactly
+   like the grid-mode armed-record flow.
+5. Return the switch to **Middle** to stop the recording, or let the track
+   fill to its maximum length — it will auto-stop. After a brief settling
+   delay (~½ second while the new audio is written to flash) the new
+   recording begins looping from the start.
+
+The MLRws sample-manager web app still works in gridless mode: just plug the
+Computer into a computer running the web app and MLRws will silently switch
+into sample-manager mode for the duration of the connection, then return to
+gridless when you disconnect. See [SampleMgr.md](SampleMgr.md) for details.
+
+## LEDs
+
+Brightness shows each track's **effective level** (volume slot × radiate ×
+playback-layer gain), so you can see at a glance which tracks are loud, which
+are being radiated into, and where the active track sits. When MLRws is armed
+for recording or actively recording, only the active track's LED is shown and
+it flashes (fast = recording, slow = armed/idle).
+
+Tracks are arranged:
+```
+1 4
+2 5
+3 6
+```
