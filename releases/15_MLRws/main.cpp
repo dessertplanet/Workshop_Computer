@@ -1914,12 +1914,25 @@ private:
 			}
 
 #ifndef MLR_STEREO
-			/* Mono build, 16-wide grid: column directly selects the recorded
-			 * channel (col 0 = ch1, col 1 = ch2). On 8x8 only col 0 is usable
-			 * here, so channel picking is grid-driven only on 16-wide. */
-			if (!small_grid_ && !mlr_tracks[track].has_content) {
-				mlr_tracks[track].recorded_channel    = (uint8_t)column;
-				mlr_tracks[track].channel_user_chosen = true;
+			/* Mono build, 16-wide grid: col 0 = ch1, col 1 = ch2.
+			 *   – Track armed, tapped the OTHER channel → switch channel
+			 *     and stay armed. Works whether or not the track already
+			 *     has content (you're preparing to record over it).
+			 *   – Track armed, tapped the SAME channel → fall through to
+			 *     the disarm path below.
+			 *   – Track NOT armed → record the channel pick now so a
+			 *     subsequent arm/gated-rec uses it. */
+			if (!small_grid_) {
+				if (rec_armed_track == track &&
+				    mlr_tracks[track].recorded_channel != (uint8_t)column) {
+					mlr_tracks[track].recorded_channel    = (uint8_t)column;
+					mlr_tracks[track].channel_user_chosen = true;
+					return;  /* keep arm; just moved the indicator */
+				}
+				if (rec_armed_track != track) {
+					mlr_tracks[track].recorded_channel    = (uint8_t)column;
+					mlr_tracks[track].channel_user_chosen = true;
+				}
 			}
 #endif
 
