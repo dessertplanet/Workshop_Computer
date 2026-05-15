@@ -16,7 +16,7 @@ The behaviour and layout are identical in both modes.
 
 In grid mode, the interface on the Computer itself is very simple. Mono or Stereo audio in at the audio inputs, mono or stereo audio out at the audio outputs. Mono vs. stereo depends on which UF2 is installed. X knob is the input gain. Main knob is the main output volume.
 
-CV in/out and the Y knob are not used in grid mode. Pulse in jacks are used for transport-style triggers (see [Pulse inputs](#pulse-inputs) below). Pulse outputs are unused.
+CV in/out are not used in grid mode. In the stereo build, the Y knob controls record pan/balance while a track is armed or recording. Pulse in jacks are used for transport-style triggers (see [Pulse inputs](#pulse-inputs) below). Pulse outputs are unused.
 
 ![grid computer](images/MLR_grid_ws.jpg)
 
@@ -90,8 +90,8 @@ in normal playback mode. Gate-mode state is saved alongside the scene, so each t
 
 Multiple tracks can be linked into a **group** so that CUT, play/pause, loop, gated-playback, and reset commands apply to every member at once. Each member acts on the **same grid column**, which produces proportional positions in each track's own length — useful for keeping arrangements of differently-sized samples in sync.
 
-- **Create a group**: hold two or more play keys (right-most column) at the same time. As soon as a second play key joins, MLRws cancels the pending gated-playback long-press timer on every held key, so none of them will accidentally enter gated playback. When you start releasing the keys, the **first release** commits the group — every play key that was simultaneously held at that moment becomes a group, and their play LEDs flash rapidly to confirm. (The remaining held keys' releases are absorbed silently.) Hold just one play key by itself and the original long-press → gated-playback behaviour is unchanged.
-- **Dissolve a group**: hold the **DELETE** key (row 0 ALT). While DELETE is held, MLRws cycles through every existing group, fast-blinking each group's play keys in turn (~½ second per group) so you can see which tracks belong to which group. Tap the play key on any member to dissolve that group; the former members' play LEDs blink twice quickly to confirm. Note: this gesture used to clear a track's recorded audio — that has moved off the play column. Audio is still cleared via DELETE + the record-arm column (col 0).
+- **Create a group**: hold two or more populated play keys (right-most column) at the same time. Tracks without recorded audio are ignored for grouping. As soon as a second populated play key joins, MLRws cancels the pending gated-playback long-press timer on every held key, so none of them will accidentally enter gated playback. When you start releasing the keys, the **first release** commits the group — every populated play key that was simultaneously held at that moment becomes a group, and their play LEDs flash rapidly to confirm. (The remaining held keys' releases are absorbed silently.) Hold just one play key by itself and the original long-press → gated-playback behaviour is unchanged.
+- **Dissolve a group**: hold the **DELETE** key (row 0 ALT). While DELETE is held, MLRws cycles through every existing group, fast-blinking each group's play keys in turn. Each group flashes twice before moving to the next one so you can see which tracks belong to which group. Tap the play key on any member to dissolve that group; the former members' play LEDs blink twice quickly to confirm. Note: this gesture used to clear a track's recorded audio — that has moved off the play column. Audio is still cleared via DELETE + the record-arm column (col 0).
 - **Group sync**: while a group is active, CUT taps, loop-a-section, play/pause toggles, gated-playback toggles, and the Pulse In 1 reset all broadcast to every member. Members act on the same grid column number; each maps that column to its own playhead position proportionally. Play/pause is **state-synced**: whichever member you tap, every member snaps to the opposite of *that* member's current play state — so a group can never drift out of phase after a single tap.
 - **Joining a new group**: a track joining a new group leaves any previous group it belonged to. The remaining members of the previous group stay grouped together.
 - **Recording over a member**: starting a recording on a member of a group automatically removes that track from the group. The remaining members stay grouped.
@@ -125,18 +125,26 @@ Recording from the CUT page is the same as on the REC page: see
 
 ![CUT page](images/cut.jpg)
 
-## REC page — mixer, reverse, and speed
+## REC page — input channel, mixer, reverse, and speed
 
-The REC page (page 2) is the per-track parameter editor. We will break this page into three parts for simplicity below.
+The REC page (page 2) is the per-track parameter editor. We will break this page into parts for simplicity below.
 
 ![REC page overview](images/rec_overview.jpg)
 
+### Record arm and input channel
+
+On all grids, col 0 arms a track for recording. On 16-wide grids in the mono build, cols 0 and 1 also choose which input/output bus the track uses: col 0 = Audio In/Out 1, col 1 = Audio In/Out 2. The selected channel is shown on recorded tracks, and while a track is armed or actively recording the selected channel LED carries the record-arm flash.
+
+If you have not manually picked a channel for a track, MLRws will auto-select the plugged input when exactly one of Audio In 1 or Audio In 2 is connected. With both or neither connected, it keeps the track's previous channel.
+
+In the stereo build on 16-wide grids, cols 0 and 1 show the stereo record pan/balance instead. A hard-left recording lights col 0, a hard-right recording lights col 1, and center/balanced stereo recordings light both.
+
 ### Mixer
 
-Six discrete level slots. The left side is the loudest (about +6 dB), the right side is the
-quietest (about −15 dB), the third column from the left (the default, shown below) is unity gain. 
+Five discrete level slots. The left side is the loudest (about +3 dB), the right side is the
+quietest (about −15 dB), the second column from the left (the default, shown below) is unity gain.
 
-While a track is **actively recording**, cols 1–6 turn into a record-progress
+While a track is **actively recording**, the mixer area turns into a record-progress
 bar instead of a mixer, indicating how much recording time remains at the current recording speed.
 
 ![REC mixer](images/rec_mixer.jpg)
@@ -157,7 +165,7 @@ Seven discrete pitch slots, symmetric around 1× speed. From the left, with the 
 - 2/3x speed (−5th)
 - 1×
 - 3/2x speed (+5th)
-- 2x soeed (+1 oct)
+- 2x speed (+1 oct)
 - 4x speed (+2 oct)
 
 Note that these intervals change depending on what speed you originally recorded the track.
@@ -176,6 +184,8 @@ While a track is armed or recording, **Knob X** controls how loud the input
 is recorded. The same level is applied to the monitor mix so what you hear
 matches what you'll capture. Note the track level from the grid mixer is also applied both to the monitor and the recording.
 
+In the stereo build, **Knob Y** becomes record pan/balance while a track is armed or recording. With exactly one audio input connected, Y pans that mono source into the stereo recording. With both audio inputs connected, Y acts as balance between the left and right inputs.
+
 When the maximum recording length is reached the track auto-stops.
 
 The card writes the new audio to flash after the switch
@@ -187,11 +197,11 @@ There are two ways to record:
 
 1. While the switch is at **Middle**, tap col 0 on the desired track row.
    The arm LED starts a slow flash. Any track that was playing on that row
-   stops so you can hear what you're about to capture. and input monitoring is enabled.
+   stops so you do not record over itself, and input monitoring is enabled.
 2. Move the switch **Up or Down**. Recording starts immediately, the arm LED
-   goes to a fast blink, and cols 1–6 (REC page) or 1–14 (CUT page) become a
+   goes to a fast blink, and the mixer area (REC page) or cols 1–14 (CUT page) become a
    progress bar.
-3. Return the switch to Middle to stop. The track is automatically disarmed and playback starts immediately
+3. Return the switch to Middle to stop. The track is automatically disarmed and playback starts immediately. Other tracks that were already playing keep playing while you record.
 
 ### Gated recording
 
