@@ -104,3 +104,7 @@ To enter Tape Mode, hold the momentary switch **DOWN** during the power-up seque
 - **LED 5:** Indicates Tape Mode is active.
 - **LEDs 0, 1, 3, 2:** Circular progress bar showing the current playhead position.
 - **Slot Menu:** Displays the current slot in 4-bit binary (LEDs 1-4) while the switch is held down.
+
+Created for the Music Thing Modular Workshop System by Vincent Maurer (https://github.com/vincent-maurer/) with assistance from Google Gemini.
+
+Thank you to everyone on the Workshop System Discord server and especially to Tom Whitwell for the module and Chris Johnson (https://github.com/chrisgjohnson) for the ComputerCard library and the great support.
