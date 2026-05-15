@@ -267,7 +267,7 @@ void mlr_init(void)
 		}
 	}
 
-	/* load saved scenes + patterns (not track state — defaults stay) */
+	/* load saved scene (track state + patterns + recalls) */
 	mlr_scene_load();
 }
 
@@ -1603,7 +1603,8 @@ void mlr_scene_load(void)
 	/* deserialize */
 	uint32_t pos = 8;
 
-	/* track states — read but don't restore speed/volume/reverse (reset to defaults) */
+	/* track states — restore speed, reverse, and per-track mix; also restore
+	 * master volume (track 0) and any active loop boundaries. */
 	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 		mlr_track_scene_t ts;
 		memcpy(&ts, flash + pos, sizeof(ts)); pos += sizeof(ts);
@@ -1614,7 +1615,15 @@ void mlr_scene_load(void)
 			mlr_master_level_raw = raw;
 		}
 
-		/* only restore loop boundaries */
+		/* Restore per-track playback state via canonical setters so any
+		 * derived fields (speed_frac, volume_target, fill re-seek) stay
+		 * consistent. Apply before mlr_set_loop so loop math sees the
+		 * intended speed. Setters clamp invalid values defensively. */
+		mlr_set_speed(t, ts.speed_shift);
+		mlr_set_reverse(t, ts.reverse != 0);
+		mlr_set_volume(t, ts.volume_slot);
+
+		/* restore loop boundaries */
 		if (ts.loop_col_start >= 0 && ts.loop_col_end >= 0 &&
 		    mlr_tracks[t].has_content) {
 			mlr_set_loop(t, ts.loop_col_start, ts.loop_col_end);
