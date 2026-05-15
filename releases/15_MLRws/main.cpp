@@ -56,7 +56,7 @@ extern "C" {
 
 /* How long to highlight each group when DELETE is held (in gate_pulse ticks;
  * gate_pulse advances at the LED refresh rate, ~60 Hz). */
-#define GROUP_CYCLE_TICKS             32    /* ~533 ms per group */
+#define GROUP_CYCLE_TICKS             16    /* two blink pulses per group */
 #define KNOB_HARD_TAKEOVER_THRESHOLD 80  /* ADC counts (0..4095) — must exceed ADC noise floor */
 #define GRIDLESS_REC_HOLD_SAMPLES 96000u  /* 2 seconds at 48 kHz */
 #define RECORD_REARM_DELAY_SAMPLES 24000u /* 0.5 seconds at 48 kHz */
@@ -387,10 +387,6 @@ public:
 		    mlr_tracks[rec_armed_track].playing) {
 			resume_after_arm_track_ = rec_armed_track;
 			mlr_stop_track(rec_armed_track);
-		}
-
-		if (run_ui_control) {
-			update_record_monitor_window(sw);
 		}
 
 		/* ---- Pulse In handling (gridful mode) ----
@@ -844,7 +840,6 @@ public:
 
 		/* ---- detect flush completion: stop gated tracks from auto-playing ---- */
 		if (was_flushing_ && !mlr_flushing && prev_rec_track >= 0) {
-			record_history_push(prev_rec_track);
 			if (mlr_gate_mode[prev_rec_track] && mlr_tracks[prev_rec_track].playing) {
 				mlr_stop_track(prev_rec_track);
 			}
@@ -946,11 +941,6 @@ private:
 	int        resume_after_arm_track_ = -1; /* track auto-stopped due to arm; resume on disarm */
 	bool       rec_gated = false;    /* true during press-to-record (gated) */
 	bool       rec_pulse_gated_ = false; /* true while recording was started by Pulse In 1 rising edge */
-	bool       rec_monitor_window_active_ = false;
-	bool       rec_monitor_prev_playing_[MLR_NUM_TRACKS] = {};
-	int8_t     rec_recent_tracks_[4] = {-1, -1, -1, -1};
-	bool       rec_monitor_restore_pending_ = false;
-	uint8_t    rec_monitor_restore_idx_ = 0;
 	int        master_knob_arm_raw_ = -1;
 	int        master_knob_last_raw_ = -1;
 	bool       master_knob_takeover_armed_ = false;
@@ -1789,93 +1779,26 @@ private:
 		}
 	}
 
-	void record_history_push(int track)
-	{
-		if (track < 0 || track >= MLR_NUM_TRACKS) return;
-
-		int8_t ordered[4] = {(int8_t)track, -1, -1, -1};
-		int w = 1;
-		for (int i = 0; i < 4 && w < 4; i++) {
-			int prev = rec_recent_tracks_[i];
-			if (prev < 0 || prev == track) continue;
-			ordered[w++] = (int8_t)prev;
-		}
-		for (int i = 0; i < 4; i++)
-			rec_recent_tracks_[i] = ordered[i];
-	}
-
-	bool in_recent_record_window(int track) const
-	{
-		for (int i = 0; i < 4; i++) {
-			if (rec_recent_tracks_[i] == track) return true;
-		}
-		return false;
-	}
-
-	void update_record_monitor_window(int sw)
-	{
-		bool hold_window = (mlr_rec_track >= 0 || mlr_flushing);
-
-		if (hold_window && !rec_monitor_window_active_) {
-			rec_monitor_restore_pending_ = false;
-			rec_monitor_restore_idx_ = 0;
-			for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-				rec_monitor_prev_playing_[t] = mlr_tracks[t].playing;
-				if (!in_recent_record_window(t) && mlr_tracks[t].playing)
-					mlr_stop_track(t);
-			}
-			rec_monitor_window_active_ = true;
-			return;
-		}
-
-		if (hold_window && rec_monitor_window_active_) {
-			for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-				if (!in_recent_record_window(t) && mlr_tracks[t].playing)
-					mlr_stop_track(t);
-			}
-			return;
-		}
-
-		if (!hold_window && rec_monitor_window_active_) {
-			rec_monitor_window_active_ = false;
-			rec_monitor_restore_pending_ = true;
-			rec_monitor_restore_idx_ = 0;
-		}
-
-		if (rec_monitor_restore_pending_ && sw == Switch::Middle) {
-			for (; rec_monitor_restore_idx_ < MLR_NUM_TRACKS; rec_monitor_restore_idx_++) {
-				int t = rec_monitor_restore_idx_;
-				if (!rec_monitor_prev_playing_[t])
-					continue;
-
-				rec_monitor_prev_playing_[t] = false;
-				if (mlr_tracks[t].has_content && !mlr_tracks[t].playing) {
-					int col = mlr_get_column(t);
-					if (col < 0) col = 0;
-					if (col >= MLR_GRID_COLS) col = MLR_GRID_COLS - 1;
-					mlr_cut(t, col);
-				}
-
-				rec_monitor_restore_idx_++;
-				break;  /* restore max one track per control tick */
-			}
-
-			if (rec_monitor_restore_idx_ >= MLR_NUM_TRACKS) {
-				rec_monitor_restore_pending_ = false;
-				rec_monitor_restore_idx_ = 0;
-			}
-		}
-	}
-
 	/* ================================================================ */
 	/* Track-group helpers                                              */
 	/* ================================================================ */
 
-	/* Apply a fresh group membership. Each track u in new_mask leaves
-	 * its previous group (the rest of which stays together) and joins
-	 * new_mask. */
+	/* Apply a fresh group membership. Only populated tracks are eligible;
+	 * each included track leaves its previous group (the rest of which stays
+	 * together) and joins new_mask. */
 	void __not_in_flash("set_group") set_group(uint8_t new_mask)
 	{
+		uint8_t groupable_mask = 0;
+		int popcount = 0;
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if ((new_mask & (1u << u)) && mlr_tracks[u].has_content) {
+				groupable_mask |= (uint8_t)(1u << u);
+				popcount++;
+			}
+		}
+		if (popcount < 2) return;
+		new_mask = groupable_mask;
+
 		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
 			if (!(new_mask & (1u << u))) continue;
 			uint8_t self = (uint8_t)(1u << u);
@@ -2017,24 +1940,33 @@ private:
 		int pc = play_col();
 		bool alt_held = grid.held(alt_col(), 0);
 
-		/* Snapshot of which play-col keys are currently held. */
+		/* Snapshot of which play-col keys are currently held. Empty tracks
+		 * may be tapped normally, but they are not eligible for grouping. */
 		uint8_t held_now = 0;
+		uint8_t groupable_held = 0;
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-			if (grid.held((uint8_t)pc, (uint8_t)(t + 1)))
+			if (grid.held((uint8_t)pc, (uint8_t)(t + 1))) {
 				held_now |= (uint8_t)(1u << t);
+				if (mlr_tracks[t].has_content)
+					groupable_held |= (uint8_t)(1u << t);
+			}
 		}
 
-		/* Detect multi-hold: if at any moment 2+ play-col keys are held,
+		/* Detect multi-hold: if at any moment 2+ populated play-col keys are held,
 		 * cancel any pending long-press timers (so no gate_mode side-effect
 		 * fires) and accumulate the participants into group_gesture_mask_.
 		 * The group commits on the first release of a participating key. */
 		int held_count = 0;
 		for (int t = 0; t < MLR_NUM_TRACKS; t++)
-			if (held_now & (1u << t)) held_count++;
+			if (groupable_held & (1u << t)) held_count++;
 		if (held_count >= 2) {
-			group_gesture_mask_ |= held_now;
+			if (group_gesture_committed_ && (groupable_held & (uint8_t)~group_gesture_mask_)) {
+				group_gesture_mask_ = 0;
+				group_gesture_committed_ = false;
+			}
+			group_gesture_mask_ |= groupable_held;
 			for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-				if (group_gesture_mask_ & (1u << t)) {
+				if (held_now & (1u << t)) {
 					play_col_armed[t] = false;
 					play_col_hold_time[t] = 0;
 					gate_entered[t] = false;
@@ -2045,7 +1977,7 @@ private:
 		/* Arm on key-down of play col on any track row (single-hold path). */
 		if (grid.keyDown() && grid.lastX() == pc && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track = grid.lastY() - 1;
-			if (!(group_gesture_mask_ & (1u << track))) {
+			if (group_gesture_mask_ == 0) {
 				play_col_armed[track] = true;
 				play_col_hold_time[track] = 0;
 				gate_entered[track] = false;
@@ -2083,8 +2015,8 @@ private:
 				if (!group_gesture_committed_) {
 					uint8_t mask = group_gesture_mask_;
 					/* Defensive recount (the mask is built from held-now
-					 * snapshots and always contains >=2 bits by
-					 * construction). */
+					 * snapshots of populated tracks and always contains
+					 * >=2 bits by construction). */
 					int popcount = 0;
 					for (int u = 0; u < MLR_NUM_TRACKS; u++)
 						if (mask & (1u << u)) popcount++;
