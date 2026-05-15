@@ -120,13 +120,15 @@ static inline uint16_t speed_shift_to_frac(int8_t s)
  * intentional soft clipping into the ADPCM codec. */
 static inline uint16_t volume_slot_to_frac(uint8_t slot)
 {
+	/* 5 levels mapped to grid cols 2..6. Slot 1 = unity. The previous loudest
+	 * +6 dB slot was removed (the new col 0/1 region carries the per-track
+	 * input-channel indicator instead). */
 	static uint16_t kVolFrac[MLR_NUM_VOL_SLOTS] = {
-		512,  /* 0: +6 dB  (boost)  */
-		362,  /* 1: +3 dB  (boost)  */
-		256,  /* 2: unity  (0 dB)   */
-		181,  /* 3:        (-3 dB)  */
-		128,  /* 4:        (-6 dB)  */
-		45,   /* 5:        (-15 dB) */
+		362,  /* 0: +3 dB  (boost) — grid col 2  */
+		256,  /* 1: unity  (0 dB)  — grid col 3  */
+		181,  /* 2:        (-3 dB) — grid col 4  */
+		128,  /* 3:        (-6 dB) — grid col 5  */
+		45,   /* 4:        (-15 dB)— grid col 6  */
 	};
 	if (slot >= MLR_NUM_VOL_SLOTS) slot = MLR_NUM_VOL_SLOTS - 1;
 	return kVolFrac[slot];
@@ -223,9 +225,12 @@ void mlr_init(void)
 		tr->speed_accum = 0;
 		reset_track_audio_state(tr);
 		tr->reverse     = false;
-		tr->volume_slot = 2;
+		tr->volume_slot = 1;
 		tr->volume_frac = 256;
 		tr->volume_target = 256;
+		tr->recorded_channel  = 0;
+		tr->pan_class         = 0;
+		tr->channel_user_chosen = false;
 
 		if (hdr->magic == MLR_MAGIC &&
 		    hdr->sample_count > 0 &&
@@ -237,6 +242,8 @@ void mlr_init(void)
 			tr->length_bytes   = hdr->adpcm_bytes;
 			tr->num_keyframes  = hdr->num_keyframes;
 			tr->record_speed_shift = hdr->record_speed_shift;
+			tr->recorded_channel   = hdr->recorded_channel & 0x01;
+			tr->pan_class          = (hdr->pan_class <= 2) ? hdr->pan_class : 0;
 			tr->playing        = false;
 			tr->playhead       = 0;
 
@@ -286,9 +293,12 @@ void mlr_rescan_track(int track)
 	reset_track_audio_state(tr);
 	tr->reverse     = false;
 	tr->loop_active = false;
-	tr->volume_slot = 2;
+	tr->volume_slot = 1;
 	tr->volume_frac = 256;
 	tr->volume_target = 256;
+	tr->recorded_channel  = 0;
+	tr->pan_class         = 0;
+	tr->channel_user_chosen = false;
 	tr->fill_seek_pending = false;
 
 	if (hdr->magic == MLR_MAGIC &&
@@ -301,6 +311,8 @@ void mlr_rescan_track(int track)
 		tr->length_bytes   = hdr->adpcm_bytes;
 		tr->num_keyframes  = hdr->num_keyframes;
 		tr->record_speed_shift = hdr->record_speed_shift;
+		tr->recorded_channel   = hdr->recorded_channel & 0x01;
+		tr->pan_class          = (hdr->pan_class <= 2) ? hdr->pan_class : 0;
 		tr->playhead       = 0;
 
 		memcpy(tr->keyframes, hdr->keyframes,
@@ -333,6 +345,17 @@ void __not_in_flash_func(mlr_start_record)(int track)
 	/* fresh recording — stop any existing playback */
 	tr->playing = false;
 	tr->has_content = false;
+
+	/* Any previously saved loop-a-section on this track refers to the
+	 * old sample range; clear it so the freshly recorded loop starts in
+	 * "no sub-loop" state. Without this, a track that had a CUT-page loop
+	 * saved (via scene load or held over from before) would keep the loop
+	 * boundaries pointing at stale sample positions in the new recording. */
+	tr->loop_active       = false;
+	tr->loop_start_sample = 0;
+	tr->loop_end_sample   = 0;
+	tr->loop_col_start    = -1;
+	tr->loop_col_end      = -1;
 
 	tr->pcm.w = 0;
 	tr->pcm.r = 0;
@@ -596,6 +619,107 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 	if (mix < -32768) mix = -32768;
 	return (int16_t)(mix >> 4);
 }
+
+#ifndef MLR_STEREO
+/* Grid-mode dual-output mix for mono builds.
+ *
+ * Walks the same tracks as mlr_play_mix() but routes each track's contribution
+ * to L or R based on tr->recorded_channel (0 = L/AudioOut1, 1 = R/AudioOut2).
+ * Multiple tracks on the same channel sum on that bus; the other bus stays
+ * silent for those tracks. This keeps gridless mode untouched (which still
+ * uses the single-output mlr_play_mix). */
+int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_right)
+{
+	int32_t mixL = 0, mixR = 0;
+
+	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+		mlr_track_t *tr = &mlr_tracks[t];
+		if (!tr->has_content || (!tr->playing && !tr->stop_pending)) continue;
+
+		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
+		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+		bool wrapped = false;
+
+		if (!tr->stop_pending) {
+			tr->speed_accum += tr->speed_frac;
+			while (tr->speed_accum >= 256) {
+				tr->speed_accum -= 256;
+				if (pcm_ring_avail(&tr->pcm) > 0) {
+					tr->interp_prev[0] = tr->last_pcm[0];
+					tr->last_pcm[0] = tr->pcm.buf[(tr->pcm.r % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS];
+					tr->pcm.r++;
+					if (tr->reverse) {
+						if (tr->playhead <= wrap_start) {
+							tr->playhead = wrap_end > 0 ? wrap_end - 1 : 0;
+							wrapped = true;
+						} else {
+							tr->playhead--;
+						}
+					} else {
+						tr->playhead++;
+						if (tr->playhead >= wrap_end) {
+							tr->playhead = wrap_start;
+							wrapped = true;
+						}
+					}
+				}
+			}
+			if (wrapped) begin_track_declick(tr, false);
+		}
+
+		int32_t sample_out = 0;
+		if (!tr->stop_pending) {
+			uint32_t avail = pcm_ring_avail(&tr->pcm);
+			int16_t x0 = tr->last_pcm[0];
+			int16_t x1 = x0;
+			if (avail > 0) {
+				uint32_t idx1 = (tr->pcm.r % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS;
+				x1 = tr->pcm.buf[idx1];
+			}
+			sample_out = linear_interp_q8(x0, x1, (uint8_t)tr->speed_accum);
+		}
+
+		if (tr->volume_frac < tr->volume_target) {
+			tr->volume_frac += 4;
+			if (tr->volume_frac > tr->volume_target)
+				tr->volume_frac = tr->volume_target;
+		} else if (tr->volume_frac > tr->volume_target) {
+			if (tr->volume_frac < 4)
+				tr->volume_frac = tr->volume_target;
+			else
+				tr->volume_frac -= 4;
+			if (tr->volume_frac < tr->volume_target)
+				tr->volume_frac = tr->volume_target;
+		}
+		sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
+		if (tr->declick_count > 0) {
+			sample_out = apply_declick_sample(tr, 0, sample_out);
+			tr->declick_count--;
+			if (tr->declick_count == 0 && tr->stop_pending) {
+				finish_pending_stop(tr);
+				sample_out = 0;
+			}
+		}
+		int16_t out_sample[MLR_NUM_CHANNELS] = {(int16_t)sample_out};
+		push_track_output(tr, out_sample);
+
+		if (!tr->muted) {
+			if (tr->recorded_channel == 1) mixR += sample_out;
+			else                            mixL += sample_out;
+		}
+	}
+
+	mixL = (mixL * (int32_t)volume) >> 8;
+	mixR = (mixR * (int32_t)volume) >> 8;
+	if (mixL > 32767)  mixL = 32767;
+	if (mixL < -32768) mixL = -32768;
+	if (mixR > 32767)  mixR = 32767;
+	if (mixR < -32768) mixR = -32768;
+	*out_right = (int16_t)(mixR >> 4);
+	return (int16_t)(mixL >> 4);
+}
+#endif
+
 #ifdef MLR_STEREO
 int16_t __not_in_flash_func(mlr_play_mix_stereo)(uint8_t volume, int16_t *out_right)
 {
@@ -901,9 +1025,12 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	memset(tr->last_pcm, 0, sizeof(tr->last_pcm));
 	memset(tr->interp_prev, 0, sizeof(tr->interp_prev));
 	tr->reverse     = false;
-	tr->volume_slot = 2;
+	tr->volume_slot = 1;
 	tr->volume_frac = 256;
 	tr->volume_target = 256;
+	tr->recorded_channel    = 0;
+	tr->pan_class           = 0;
+	tr->channel_user_chosen = false;
 	tr->pcm.w = 0;
 	tr->pcm.r = 0;
 
@@ -1807,6 +1934,9 @@ static void write_track_header(int t)
 	hdr->adpcm_bytes         = tr->length_bytes;
 	hdr->num_keyframes       = tr->num_keyframes;
 	hdr->record_speed_shift  = tr->record_speed_shift;
+	hdr->recorded_channel    = (uint8_t)(tr->recorded_channel & 0x01);
+	hdr->pan_class           = (uint8_t)((tr->pan_class <= 2) ? tr->pan_class : 0);
+	hdr->_hdr_pad[0]         = 0xFF;
 	memcpy(hdr->keyframes, tr->keyframes,
 	       tr->num_keyframes * sizeof(mlr_keyframe_stereo_t));
 

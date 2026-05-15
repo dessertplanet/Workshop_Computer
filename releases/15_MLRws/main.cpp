@@ -382,8 +382,82 @@ public:
 			update_record_monitor_window(sw);
 		}
 
+#ifdef MLR_STEREO
+		/* ---- Stereo: detect mono-pan / balance recording state + poll Y knob for pan ---- */
+		{
+			bool a1 = Connected(Input::Audio1);
+			bool a2 = Connected(Input::Audio2);
+			bool exactly_one = (a1 != a2);  /* xor: exactly one plug present */
+			bool both        = (a1 && a2);
+			uint8_t mono_src = a1 ? 0 : (a2 ? 1 : 0);
+
+			/* While armed (and not yet recording), Y knob = live pan.
+			 * Mirror the pan-mode flags into arm_is_* so the latch at
+			 * record start uses the cached, stable values rather than
+			 * re-probing Connected() at that instant — a momentary norm-
+			 * probe flicker would otherwise drop rec_is_mono_pan_ and
+			 * push the recording into the balance branch (which silences
+			 * the disconnected side, sounding like a hard pan). */
+			if (mlr_rec_track < 0 && rec_armed_track >= 0 && (exactly_one || both)) {
+				int knob_y_raw = KnobVal(Knob::Y);  /* 0..4095 */
+				arm_pan_q12_ = (int16_t)(knob_y_raw - 2048);
+				arm_is_mono_pan_  = exactly_one;
+				arm_is_balance_   = both;
+				arm_mono_pan_src_ = mono_src;
+				if (exactly_one) {
+					mlr_tracks[rec_armed_track].recorded_channel    = mono_src;
+					mlr_tracks[rec_armed_track].channel_user_chosen = true;
+				} else {
+					mlr_tracks[rec_armed_track].recorded_channel    = 0;
+				}
+			}
+
+			/* Latch the arm-state into the recording-state. Use a track-id
+			 * sentinel rather than a -1→track edge so we don't depend on
+			 * prev_rec_track timing (e.g., a stop/start within one sample).
+			 * Read Y knob raw here as well so the latched pan reflects the
+			 * pot's current position even if the polling cache above hasn't
+			 * tracked it (e.g., if the track was armed for less than one
+			 * sample, or the arm-update condition was momentarily false). */
+			if (mlr_rec_track >= 0 && rec_pan_latched_for_track_ != mlr_rec_track) {
+				rec_is_mono_pan_  = arm_is_mono_pan_;
+				rec_is_balance_   = arm_is_balance_;
+				rec_mono_pan_src_ = arm_mono_pan_src_;
+				int knob_y_raw    = KnobVal(Knob::Y);  /* 0..4095 */
+				rec_pan_q12_      = (int16_t)(knob_y_raw - 2048);
+				arm_pan_q12_      = rec_pan_q12_;
+				if (rec_is_mono_pan_)
+					mlr_tracks[mlr_rec_track].recorded_channel = arm_mono_pan_src_;
+				else
+					mlr_tracks[mlr_rec_track].recorded_channel = 0;
+				/* Classify the committed pan into 3 buckets for the post-
+				 * recording grid display: hard L / hard R / both. Threshold
+				 * is the outer ~7% of the Y knob travel on each side; in
+				 * between (including center) reads as "both". The class is
+				 * persisted in the track header so it survives a reboot. */
+				if (rec_pan_q12_ <= -1900)      mlr_tracks[mlr_rec_track].pan_class = 1;
+				else if (rec_pan_q12_ >= 1900)  mlr_tracks[mlr_rec_track].pan_class = 2;
+				else                            mlr_tracks[mlr_rec_track].pan_class = 0;
+				rec_pan_latched_for_track_ = mlr_rec_track;
+			}
+			if (mlr_rec_track < 0) {
+				rec_is_mono_pan_           = false;
+				rec_is_balance_            = false;
+				rec_pan_latched_for_track_ = -1;
+			}
+		}
+#endif
+
 		/* ---- speed-linked recording ---- */
-		int16_t dry_in = notch_filter_input(AudioIn1());
+		int16_t dry_in;
+		{
+			int audio_in1 = notch_filter_input(AudioIn1());
+			int audio_in2 = (int)AudioIn2();
+			uint8_t rec_ch = 0;
+			int route_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
+			if (route_track >= 0) rec_ch = mlr_tracks[route_track].recorded_channel;
+			dry_in = (rec_ch == 1) ? (int16_t)audio_in2 : (int16_t)audio_in1;
+		}
 #ifdef MLR_STEREO
 		int16_t dry_in_r = AudioIn2();
 #endif
@@ -395,9 +469,34 @@ public:
 			if (scaled > 2047) scaled = 2047;
 			if (scaled < -2048) scaled = -2048;
 #ifdef MLR_STEREO
-			int32_t scaled_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
-			scaled_r = (scaled_r * (int32_t)mlr_tracks[mlr_rec_track].volume_frac) >> 8;
-			if (scaled_r > 2047) scaled_r = 2047;
+			int32_t scaled_r;
+			if (rec_is_mono_pan_) {
+				/* Single-input recording with locked pan: synthesise L/R
+				 * from the mono source already in `scaled`. The mono signal
+				 * is rec_mono_pan_src_'s input, and dry_in was selected
+				 * from that input above via mlr_tracks[].recorded_channel. */
+				uint16_t gL, gR;
+				pan_gains_q8(rec_pan_q12_, &gL, &gR);
+				int32_t mono = scaled;
+				scaled   = (mono * (int32_t)gL) >> 8;
+				scaled_r = (mono * (int32_t)gR) >> 8;
+			} else if (rec_is_balance_) {
+				/* Two-input recording with balance: each side stays on its
+				 * own input but is attenuated by pan_gains_q8. Pan-left
+				 * keeps L at unity and ducks R; pan-right vice versa. */
+				uint16_t gL, gR;
+				pan_gains_q8(rec_pan_q12_, &gL, &gR);
+				scaled_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
+				scaled_r = (scaled_r * (int32_t)mlr_tracks[mlr_rec_track].volume_frac) >> 8;
+				scaled   = (scaled   * (int32_t)gL) >> 8;
+				scaled_r = (scaled_r * (int32_t)gR) >> 8;
+			} else {
+				scaled_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
+				scaled_r = (scaled_r * (int32_t)mlr_tracks[mlr_rec_track].volume_frac) >> 8;
+			}
+			if (scaled   > 2047)  scaled   = 2047;
+			if (scaled   < -2048) scaled   = -2048;
+			if (scaled_r > 2047)  scaled_r = 2047;
 			if (scaled_r < -2048) scaled_r = -2048;
 #endif
 			uint16_t spd = mlr_tracks[mlr_rec_track].speed_frac;
@@ -521,23 +620,77 @@ public:
 		int32_t outR = (int32_t)mix_r;
 		if (dry_level > 0 && (rec_armed_track >= 0 || sw == Switch::Up)) {
 			/* monitor input through ADPCM codec round-trip to filter USB noise.
-			 * Apply armed/recording track volume so monitor matches what's recorded. */
-			uint16_t mon_vol = 256;  /* unity default */
+			 * Apply armed/recording track volume so monitor matches what's
+			 * recorded. If we're in mono-pan mode (armed or recording with
+			 * exactly one input plugged in), synthesise the L/R monitor by
+			 * panning a single mono source — live pan from arm_pan_q12_ if
+			 * not yet recording, locked rec_pan_q12_ once recording is in
+			 * progress, so the user hears exactly what is being committed. */
+			uint16_t mon_vol = 256;
 			int mon_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
 			if (mon_track >= 0) mon_vol = mlr_tracks[mon_track].volume_frac;
-			int32_t in_l = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
-			in_l = (in_l * (int32_t)mon_vol) >> 8;
-			int32_t in_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
-			in_r = (in_r * (int32_t)mon_vol) >> 8;
-			int16_t in16l = (int16_t)(in_l << 4);
-			uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
-			int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
-			outL += (int32_t)(cleanL >> 4);
 
-			int16_t in16r = (int16_t)(in_r << 4);
-			uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
-			int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
-			outR += (int32_t)(cleanR >> 4);
+			bool armed_one_plug = (mlr_rec_track < 0 && rec_armed_track >= 0
+				&& (Connected(Input::Audio1) != Connected(Input::Audio2)));
+			bool armed_both    = (mlr_rec_track < 0 && rec_armed_track >= 0
+				&& Connected(Input::Audio1) && Connected(Input::Audio2));
+			bool mono_pan_mon = rec_is_mono_pan_ || armed_one_plug;
+			bool balance_mon  = rec_is_balance_  || armed_both;
+
+			if (mono_pan_mon) {
+				int16_t pan_now = (mlr_rec_track >= 0) ? rec_pan_q12_ : arm_pan_q12_;
+				uint16_t gL, gR;
+				pan_gains_q8(pan_now, &gL, &gR);
+				/* dry_in is already routed to the mono source above
+				 * (recorded_channel was set to the plugged input). */
+				int32_t mono_scaled = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
+				mono_scaled = (mono_scaled * (int32_t)mon_vol) >> 8;
+
+				int32_t in_l_q = (mono_scaled * (int32_t)gL) >> 8;
+				int32_t in_r_q = (mono_scaled * (int32_t)gR) >> 8;
+				int16_t in16l = (int16_t)(in_l_q << 4);
+				int16_t in16r = (int16_t)(in_r_q << 4);
+				uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
+				int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
+				uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
+				int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
+				outL += (int32_t)(cleanL >> 4);
+				outR += (int32_t)(cleanR >> 4);
+			} else if (balance_mon) {
+				/* Two inputs + balance: each side stays on its own input
+				 * but is attenuated by pan_gains_q8. */
+				int16_t pan_now = (mlr_rec_track >= 0) ? rec_pan_q12_ : arm_pan_q12_;
+				uint16_t gL, gR;
+				pan_gains_q8(pan_now, &gL, &gR);
+				int32_t in_l = ((int32_t)dry_in   * (int32_t)dry_level) >> 8;
+				int32_t in_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
+				in_l = (in_l * (int32_t)mon_vol) >> 8;
+				in_r = (in_r * (int32_t)mon_vol) >> 8;
+				in_l = (in_l * (int32_t)gL) >> 8;
+				in_r = (in_r * (int32_t)gR) >> 8;
+				int16_t in16l = (int16_t)(in_l << 4);
+				int16_t in16r = (int16_t)(in_r << 4);
+				uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
+				int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
+				uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
+				int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
+				outL += (int32_t)(cleanL >> 4);
+				outR += (int32_t)(cleanR >> 4);
+			} else {
+				int32_t in_l = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
+				in_l = (in_l * (int32_t)mon_vol) >> 8;
+				int32_t in_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
+				in_r = (in_r * (int32_t)mon_vol) >> 8;
+				int16_t in16l = (int16_t)(in_l << 4);
+				uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
+				int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
+				outL += (int32_t)(cleanL >> 4);
+
+				int16_t in16r = (int16_t)(in_r << 4);
+				uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
+				int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
+				outR += (int32_t)(cleanR >> 4);
+			}
 		}
 		outL = (outL * (int32_t)master_level) >> 8;
 		outR = (outR * (int32_t)master_level) >> 8;
@@ -546,25 +699,39 @@ public:
 		AudioOut1((int16_t)outL);
 		AudioOut2((int16_t)outR);
 #else
-		int16_t mix = mlr_play_mix(255);
-		int32_t out = (int32_t)mix;
+		int16_t mix_r;
+		int16_t mix = mlr_play_mix_dual(255, &mix_r);
+		int32_t outL = (int32_t)mix;
+		int32_t outR = (int32_t)mix_r;
 		if (dry_level > 0 && (rec_armed_track >= 0 || sw == Switch::Up)) {
 			/* monitor input through ADPCM codec round-trip to filter USB noise.
-			 * Apply armed/recording track volume so monitor matches what's recorded. */
+			 * Apply armed/recording track volume so monitor matches what's recorded.
+			 * Route the monitor to whichever output the armed/recording track is
+			 * routed to, so the user hears the input on the bus that will receive
+			 * the recorded loop. */
 			uint16_t mon_vol = 256;
+			uint8_t mon_ch  = 0;
 			int mon_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
-			if (mon_track >= 0) mon_vol = mlr_tracks[mon_track].volume_frac;
+			if (mon_track >= 0) {
+				mon_vol = mlr_tracks[mon_track].volume_frac;
+				mon_ch  = mlr_tracks[mon_track].recorded_channel;
+			}
 			int32_t in_scaled = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
 			in_scaled = (in_scaled * (int32_t)mon_vol) >> 8;
 			int16_t in16 = (int16_t)(in_scaled << 4);
 			uint8_t nyb = adpcm_encode(in16, &mon_enc_);
 			int16_t clean = adpcm_decode(nyb, &mon_dec_);
-			out += (int32_t)(clean >> 4);
+			if (mon_ch == 1) outR += (int32_t)(clean >> 4);
+			else             outL += (int32_t)(clean >> 4);
 		}
-		out = (out * (int32_t)master_level) >> 8;
-		if (out > 2047)  out = 2047;
-		if (out < -2048) out = -2048;
-		AudioOut1((int16_t)out);
+		outL = (outL * (int32_t)master_level) >> 8;
+		outR = (outR * (int32_t)master_level) >> 8;
+		if (outL > 2047)  outL = 2047;
+		if (outL < -2048) outL = -2048;
+		if (outR > 2047)  outR = 2047;
+		if (outR < -2048) outR = -2048;
+		AudioOut1((int16_t)outL);
+		AudioOut2((int16_t)outR);
 #endif
 
 		/* ---- tick pattern playback (~5ms resolution) ---- */
@@ -637,7 +804,9 @@ public:
 			int32_t out_abs_r = outR < 0 ? -outR : outR;
 			if (out_abs_r > out_abs) out_abs = out_abs_r;
 #else
-			int32_t out_abs = out < 0 ? -out : out;
+			int32_t out_abs = outL < 0 ? -outL : outL;
+			int32_t out_abs_r = outR < 0 ? -outR : outR;
+			if (out_abs_r > out_abs) out_abs = out_abs_r;
 #endif
 			if (out_abs > vu_out_accum_) vu_out_accum_ = out_abs;
 		}
@@ -646,6 +815,26 @@ public:
 	}
 
 private:
+#ifdef MLR_STEREO
+	/* Linear-balance pan: one side at unity, the other scales down to zero
+	 * as pan moves toward the opposite extreme. pan_q12 ∈ [-2048, 2047].
+	 * gL/gR are Q8 (256 = unity). At center both are 256, so the monitor
+	 * keeps full level when no pan is applied. */
+	static inline void pan_gains_q8(int16_t pan_q12, uint16_t *gL, uint16_t *gR)
+	{
+		int32_t p = pan_q12;
+		if (p < -2048) p = -2048;
+		if (p >  2047) p =  2047;
+		if (p <= 0) {
+			*gL = 256;
+			*gR = (uint16_t)(256 + ((p * 256) / 2048));  /* p<=0 reduces gR toward 0 */
+		} else {
+			*gL = (uint16_t)(256 - ((p * 256) / 2048));
+			*gR = 256;
+		}
+	}
+#endif
+
 	/** Read the switch position directly via ADC (safe before Run()/ISR).
 	 *  The switch is on the analog mux at position 3 (MX_A=1, MX_B=1),
 	 *  read through MUX_IO_1 (ADC input 2, GPIO 28). */
@@ -719,6 +908,29 @@ private:
 #ifdef MLR_STEREO
 	adpcm_state_t mon_enc_r_ = {0, 0}; /* right channel monitor encoder */
 	adpcm_state_t mon_dec_r_ = {0, 0}; /* right channel monitor decoder */
+
+	/* Stereo build, single-input recording: Y knob = pan. arm_pan_q12_
+	 * is updated live by the Y knob while armed (-2048 = full L,
+	 * +2047 = full R, 0 = center). rec_pan_q12_ is latched at record
+	 * start so pan is committed for the duration of the recording.
+	 * rec_is_mono_pan_ records whether the currently in-progress recording
+	 * is one-input + pan, in which case the right input is synthesised
+	 * from the left via the locked pan instead of read from AudioIn2. */
+	int16_t  arm_pan_q12_       = 0;
+	int16_t  rec_pan_q12_       = 0;
+	bool     rec_is_mono_pan_   = false;
+	bool     rec_is_balance_    = false; /* true when recording with both inputs + pan-balance */
+	uint8_t  rec_mono_pan_src_  = 0; /* 0 = AudioIn1, 1 = AudioIn2 (when mono-pan) */
+	int      rec_pan_latched_for_track_ = -1; /* tracks which mlr_rec_track has had pan latched */
+
+	/* Live "arm state" mirrors of the recording flags, updated each sample
+	 * while a track is armed (and not yet recording). Latching at record
+	 * start reads from these instead of probing Connected() in the same
+	 * sample, so a momentary norm-probe flicker can't trigger the wrong
+	 * pan-mode for the recording. */
+	bool     arm_is_mono_pan_   = false;
+	bool     arm_is_balance_    = false;
+	uint8_t  arm_mono_pan_src_  = 0;
 #endif
 	inline static int32_t notch_x1_ = 0;
 	inline static int32_t notch_x2_ = 0;
@@ -900,13 +1112,13 @@ private:
 
 	void gridless_apply_level_layers()
 	{
+		/* Mirrors kVolFrac in mlr.c — keep these tables in sync. */
 		static const uint16_t kSlotFrac[MLR_NUM_VOL_SLOTS] = {
-			512,  /* slot 0: +6 dB */
-			362,  /* slot 1: +3 dB */
-			256,  /* slot 2: unity */
-			181,  /* slot 3: -3 dB */
-			128,  /* slot 4: -6 dB */
-			45,   /* slot 5: -15 dB */
+			362,  /* slot 0: +3 dB */
+			256,  /* slot 1: unity */
+			181,  /* slot 2: -3 dB */
+			128,  /* slot 3: -6 dB */
+			45,   /* slot 4: -15 dB */
 		};
 
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
@@ -1498,6 +1710,17 @@ private:
 			resume_armed_track_if_needed(rec_armed_track);
 
 		rec_armed_track = track;
+
+		/* Plug auto-detect: if the user has not explicitly picked a channel
+		 * for this track, and exactly one of Audio1/Audio2 is connected,
+		 * auto-select that channel. With both or neither plugged, leave the
+		 * track's previous recorded_channel in place. */
+		if (track >= 0 && !mlr_tracks[track].channel_user_chosen) {
+			bool a1 = Connected(Input::Audio1);
+			bool a2 = Connected(Input::Audio2);
+			if (a1 && !a2)      mlr_tracks[track].recorded_channel = 0;
+			else if (!a1 && a2) mlr_tracks[track].recorded_channel = 1;
+		}
 	}
 
 	void record_history_push(int track)
@@ -1656,8 +1879,8 @@ private:
 
 	void __not_in_flash("process_page_rec") process_page_rec()
 	{
-		/* --- gated recording: no track armed + switch in rec + key up on col 0 = stop --- */
-		if (grid.keyUp() && grid.lastX() == 0 && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
+		/* --- gated recording: no track armed + switch in rec + key up on col 0 (or col 1 on 16-wide) = stop --- */
+		if (grid.keyUp() && (grid.lastX() == 0 || (!small_grid_ && grid.lastX() == 1)) && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track = grid.lastY() - 1;
 			if (mlr_rec_track == track && rec_gated) {
 				/* gated recording stop on key release */
@@ -1674,31 +1897,47 @@ private:
 		int column = grid.lastX();
 		bool alt_held = grid.held(alt_col(), 0);
 
-		if (column == 0) {
-			if (alt_held) {
+		/* Cols 0 / 1 (16-wide only): combined channel-select + record-arm.
+		 * On 8x8 grids col 1 is reverse, so we only honor the channel-pick
+		 * on the second column when running with a 16-wide grid. */
+		bool is_arm_col = (column == 0) || (!small_grid_ && column == 1);
+
+		if (is_arm_col) {
+			if (alt_held && column == 0) {
 				/* alt + col 0 = clear track */
 				mlr_clear_track(track);
 				if (rec_armed_track == track) {
 					rec_armed_track = -1;
 					if (resume_after_arm_track_ == track) resume_after_arm_track_ = -1;
 				}
-			} else {
-				int sw_now = SwitchVal();
-				bool rec_pos = (sw_now == Switch::Up || sw_now == Switch::Down);
-				if (rec_pos && rec_armed_track < 0 && mlr_rec_track < 0 && !mlr_flushing && !rec_limit_latched && rec_start_lockout_samples_ == 0) {
-					/* gated recording: start immediately on press */
-					mlr_start_record(track);
-					rec_speed_accum = 0;
-					rec_gated = true;
-				} else if (!rec_pos || rec_armed_track >= 0) {
-					/* toggle record arm for this track */
-					if (rec_armed_track == track) {
-						set_armed_track(-1);  /* disarm and resume if this track was auto-stopped */
-						rec_limit_latched = false;
-					} else {
-						set_armed_track(track);  /* arm this track, resuming any previously armed track */
-						rec_limit_latched = false;
-					}
+				return;
+			}
+
+#ifndef MLR_STEREO
+			/* Mono build, 16-wide grid: column directly selects the recorded
+			 * channel (col 0 = ch1, col 1 = ch2). On 8x8 only col 0 is usable
+			 * here, so channel picking is grid-driven only on 16-wide. */
+			if (!small_grid_ && !mlr_tracks[track].has_content) {
+				mlr_tracks[track].recorded_channel    = (uint8_t)column;
+				mlr_tracks[track].channel_user_chosen = true;
+			}
+#endif
+
+			int sw_now = SwitchVal();
+			bool rec_pos = (sw_now == Switch::Up || sw_now == Switch::Down);
+			if (rec_pos && rec_armed_track < 0 && mlr_rec_track < 0 && !mlr_flushing && !rec_limit_latched && rec_start_lockout_samples_ == 0) {
+				/* gated recording: start immediately on press */
+				mlr_start_record(track);
+				rec_speed_accum = 0;
+				rec_gated = true;
+			} else if (!rec_pos || rec_armed_track >= 0) {
+				/* toggle record arm for this track */
+				if (rec_armed_track == track) {
+					set_armed_track(-1);  /* disarm and resume if this track was auto-stopped */
+					rec_limit_latched = false;
+				} else {
+					set_armed_track(track);  /* arm this track, resuming any previously armed track */
+					rec_limit_latched = false;
 				}
 			}
 			return;
@@ -1717,9 +1956,10 @@ private:
 			}
 			/* col 7 is handled by process_gate_hold() */
 		} else {
-			/* 16x8 REC: cols 1-6=mixer, col 7=reverse, cols 8-14=speed, col 15=play */
-			if (column >= 1 && column <= 6) {
-				int slot = column - 1;
+			/* 16x8 REC: cols 0-1=channel+arm (above), cols 2-6=mixer (5 slots),
+			 * col 7=reverse, cols 8-14=speed, col 15=play. */
+			if (column >= 2 && column <= 6) {
+				int slot = column - 2;
 				mlr_set_volume(track, slot);
 				dispatch_event(MLR_EVT_VOLUME, (uint8_t)track, (int8_t)slot, 0);
 			} else if (column == 7) {
@@ -1962,18 +2202,83 @@ private:
 			bool armed = (rec_armed_track == t);
 			bool actively_rec = (recording && t == mlr_rec_track);
 
-			/* col 0: record arm/status indicator */
-			uint8_t col0_bright;
+			/* col 0 (and col 1 on 16-wide): paired channel-select + arm/status indicator.
+			 * On 8x8 grids only col 0 is the arm indicator. */
+			uint8_t state_bright;
 			if (actively_rec) {
-				col0_bright = (rec_blink & 2) ? 15 : 4;
+				state_bright = (rec_blink & 2) ? 15 : 4;
 			} else if (armed) {
-				col0_bright = (rec_blink & 8) ? 12 : 3;
+				state_bright = (rec_blink & 8) ? 12 : 3;
 			} else if (gated_rec_ready) {
-				col0_bright = (rec_blink & 4) ? 10 : 3;
+				state_bright = (rec_blink & 4) ? 10 : 3;
 			} else {
-				col0_bright = has ? 6 : 3;
+				state_bright = has ? 6 : 3;
 			}
-			grid.led(0, row, col0_bright);
+			if (small_grid_) {
+				/* 8x8: col 0 alone keeps today's record-arm semantics. */
+				grid.led(0, row, state_bright);
+			} else {
+				uint8_t ch = mlr_tracks[t].recorded_channel;
+				bool user_chosen = mlr_tracks[t].channel_user_chosen;
+				uint8_t col0_bright, col1_bright;
+#ifdef MLR_STEREO
+				(void)user_chosen;
+				(void)ch;
+				/* If this track is the armed (or actively recording) track
+				 * in mono-pan mode, modulate the col0/col1 split by the
+				 * current pan so the user can see pan position in the
+				 * armed flash. Otherwise fall back to the channel-flag
+				 * split (both lit for stereo, one favoured for mono-pan
+				 * recordings already on the track). */
+				bool show_live_pan = false;
+				int16_t pan_now = 0;
+				if (actively_rec && t == mlr_rec_track && (rec_is_mono_pan_ || rec_is_balance_)) {
+					show_live_pan = true;
+					pan_now = rec_pan_q12_;
+				} else if (armed) {
+					bool a1c = Connected(Input::Audio1);
+					bool a2c = Connected(Input::Audio2);
+					if ((a1c != a2c) || (a1c && a2c)) {
+						show_live_pan = true;
+						pan_now = arm_pan_q12_;
+					}
+				}
+
+				if (show_live_pan) {
+					uint16_t gL, gR;
+					pan_gains_q8(pan_now, &gL, &gR);
+					col0_bright = (uint8_t)(((uint32_t)state_bright * gL) >> 8);
+					col1_bright = (uint8_t)(((uint32_t)state_bright * gR) >> 8);
+				} else {
+					/* Post-recording / non-armed state: classify by the
+					 * pan committed at record time. Hard left → col 0
+					 * only, hard right → col 1 only, anything in between
+					 * (and empty / stereo / balance recordings) → both. */
+					uint8_t pc = mlr_tracks[t].pan_class;
+					if (pc == 1) {
+						col0_bright = state_bright;
+						col1_bright = 0;
+					} else if (pc == 2) {
+						col0_bright = 0;
+						col1_bright = state_bright;
+					} else {
+						col0_bright = state_bright;
+						col1_bright = state_bright;
+					}
+				}
+#else
+				uint8_t selected = state_bright;
+				uint8_t other    = 0;
+				if (!user_chosen && state_bright > 4) {
+					other    = 2;
+					selected = (uint8_t)(state_bright - 1);
+				}
+				if (ch == 1) { col0_bright = other;    col1_bright = selected; }
+				else         { col0_bright = selected; col1_bright = other;    }
+#endif
+				grid.led(0, row, col0_bright);
+				grid.led(1, row, col1_bright);
+			}
 
 			/* play col: play/stop/gate indicator */
 			uint8_t play_bright;
@@ -2008,24 +2313,26 @@ private:
 						grid.led(4, row, 3);
 				}
 			} else {
-				/* 16x8 REC: cols 1-6=mixer, col 7=reverse, cols 8-14=speed */
-				/* record progress: cols 1–6 (overlays mixer during recording) */
+				/* 16x8 REC: cols 0-1=channel+arm indicator (drawn above),
+				 * cols 2-6=mixer (5 slots), col 7=reverse, cols 8-14=speed */
+				/* record progress: cols 2–6 (overlays mixer during recording) */
 				if (actively_rec) {
-					uint32_t progress = mlr_get_rec_progress() * 6 / MLR_MAX_SAMPLES;
-					if (progress > 6) progress = 6;
+					uint32_t progress = mlr_get_rec_progress() * 5 / MLR_MAX_SAMPLES;
+					if (progress > 5) progress = 5;
 					for (uint32_t c = 0; c < progress; c++)
-						grid.led(c + 1, row, 12);
-					if (progress < 6)
-						grid.led(progress + 1, row, (rec_blink & 2) ? 8 : 0);
+						grid.led(c + 2, row, 12);
+					if (progress < 5)
+						grid.led(progress + 2, row, (rec_blink & 2) ? 8 : 0);
 				} else if (has || armed) {
-					/* volume mixer: cols 1–6, slot 2 (col 3) = unity */
-					static uint8_t vol_gradient[6] = { 12, 9, 7, 5, 3, 1 };
+					/* volume mixer: 5 slots on cols 2..6, slot 1 (col 3) = unity */
+					static uint8_t vol_gradient[MLR_NUM_VOL_SLOTS] = { 12, 9, 6, 3, 1 };
 					uint8_t cur_slot = mlr_tracks[t].volume_slot;
-					for (int c = 0; c < 6; c++) {
+					if (cur_slot >= MLR_NUM_VOL_SLOTS) cur_slot = MLR_NUM_VOL_SLOTS - 1;
+					for (int c = 0; c < MLR_NUM_VOL_SLOTS; c++) {
 						if ((uint8_t)c == cur_slot)
-							grid.led(c + 1, row, 14);  /* active level */
+							grid.led(c + 2, row, 14);  /* active level */
 						else if ((uint8_t)c > cur_slot)
-							grid.led(c + 1, row, vol_gradient[c]);
+							grid.led(c + 2, row, vol_gradient[c]);
 						/* cols above current level stay off */
 					}
 				}

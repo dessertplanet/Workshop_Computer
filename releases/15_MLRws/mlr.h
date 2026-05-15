@@ -110,8 +110,8 @@ extern "C" {
 #define MLR_EVT_RECALL_UNDO  12   /* undo last recall */
 #define MLR_EVT_MASTER       13   /* master volume: raw=((track<<8)|param_a), 0..4095 */
 
-/* Volume slots: 6 levels (cols 1–6 on REC page) */
-#define MLR_NUM_VOL_SLOTS      6
+/* Volume slots: 5 levels (cols 2–6 on REC page). Slot 1 = unity. */
+#define MLR_NUM_VOL_SLOTS      5
 
 /* Pattern states */
 #define MLR_PAT_IDLE           0
@@ -151,7 +151,11 @@ typedef struct {
 	uint32_t              adpcm_bytes;
 	uint32_t              num_keyframes;
 	int8_t                record_speed_shift;  /* speed at time of recording */
-	uint8_t               _hdr_pad[3];
+	uint8_t               recorded_channel;    /* 0 = Audio1 (Out1), 1 = Audio2 (Out2). Mono build only;
+	                                            * in stereo build this is always 0 and pan is baked into the samples. */
+	uint8_t               pan_class;           /* Stereo build: 0 = both/center, 1 = hard left, 2 = hard right.
+	                                            * Classified from rec_pan_q12_ at record start. Mono build: 0. */
+	uint8_t               _hdr_pad[1];
 	mlr_keyframe_stereo_t keyframes[MLR_MAX_KEYFRAMES];
 } mlr_track_header_t;
 
@@ -198,7 +202,7 @@ typedef struct {
 	uint8_t        reverse;        /* bool stored as byte for alignment */
 	int8_t         loop_col_start; /* -1 = no loop */
 	int8_t         loop_col_end;
-	uint8_t        volume_slot;    /* 0 = unity (col 1), 5 = quietest (col 6) */
+	uint8_t        volume_slot;    /* 0..4: mixer column index (grid cols 2..6); slot 1 = unity */
 	uint8_t        _pad[3];        /* align to 8 bytes */
 } mlr_track_scene_t;
 
@@ -265,9 +269,19 @@ typedef struct {
 	bool           muted;               /* true = skip mix, keep position */
 
 	/* per-track volume (set by core 0) */
-	uint8_t        volume_slot;         /* 0..5: mixer column index       */
+	uint8_t        volume_slot;         /* 0..4: mixer column index (grid cols 2..6); slot 1 = unity */
 	uint16_t       volume_frac;         /* fixed 8.8: current (slewed)    */
 	uint16_t       volume_target;       /* fixed 8.8: target from slot    */
+
+	/* per-track input/output channel routing (set by core 0).
+	 *   Mono build: 0 = Audio1/Out1, 1 = Audio2/Out2. Persisted in the track header.
+	 *   Stereo build: 0 = stereo recording (both ch), 1 = mono-pan recording (pan baked into samples).
+	 * In mono build, playback routes the track's mix to AudioOut1 or AudioOut2 accordingly.
+	 * In stereo build, pan is committed at record time and not stored separately. */
+	uint8_t        recorded_channel;
+	uint8_t        pan_class;            /* Stereo build only: 0 = both, 1 = hard left, 2 = hard right */
+	bool           channel_user_chosen;  /* RAM-only: true once the user has explicitly picked
+	                                      * a channel on the grid; suppresses auto-detect override */
 
 	/* keyframes (copied to RAM at boot) */
 	uint32_t          num_keyframes;
@@ -304,6 +318,11 @@ int16_t  mlr_play_mix_stereo(uint8_t volume, int16_t *out_right);
 #endif
 void     mlr_stop_record(void);
 int16_t  mlr_play_mix(uint8_t volume);
+#ifndef MLR_STEREO
+/* Mono build only: route per-track playback to L (recorded_channel=0) or R
+ * (recorded_channel=1). Used by grid mode for stereo-output routing. */
+int16_t  mlr_play_mix_dual(uint8_t volume, int16_t *out_right);
+#endif
 void     mlr_cut(int track, int column);
 void     mlr_cut_sample(int track, uint32_t sample_pos);
 void     mlr_stop_track(int track);

@@ -705,7 +705,16 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 
 			for (int i=0; i<6; i++)
 			{
-				connected[i] = (np != plug_state[i]);
+				// Count number of differing bits between probe signal and received signal
+				// Allow up to 4 bit errors to handle noise (e.g., from USB)
+				uint32_t n = np ^ plug_state[i];
+				int count = 0;
+				while (n)
+				{
+					n &= (n - 1);
+					count++;
+				}
+				connected[i] = (count > 4);
 			}
 		}
 		
