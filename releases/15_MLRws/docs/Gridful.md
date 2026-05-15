@@ -16,9 +16,18 @@ The behaviour and layout are identical in both modes.
 
 In grid mode, the interface on the Computer itself is very simple. Mono or Stereo audio in at the audio inputs, mono or stereo audio out at the audio outputs. Mono vs. stereo depends on which UF2 is installed. X knob is the input gain. Main knob is the main output volume.
 
-CV in/out, Pulse in/out, Y knob are not used in grid mode.
+CV in/out and the Y knob are not used in grid mode. Pulse in jacks are used for transport-style triggers (see [Pulse inputs](#pulse-inputs) below). Pulse outputs are unused.
 
 ![grid computer](images/MLR_grid_ws.jpg)
+
+## Pulse inputs
+
+Both pulse-in jacks act as transport-style triggers in grid mode:
+
+- **Pulse In 1** — *loop reset*. A rising edge resets the playhead of every track that is currently playing **and** has an active CUT-page loop, jumping each one to the loop's start column. The loop remains active; only the playhead jumps. Tracks without an active loop, and stopped tracks, are unaffected. (Matches gridless mode, where Pulse In 1 is also the reset trigger.)
+- **Pulse In 2** — *gated record*. While a track is armed via the REC page, holding Pulse In 2 high records into that track for as long as the gate is high. Recording starts on the rising edge and stops on the falling edge. The usual record gates still apply (a track must be armed, recording must not already be in progress, and the per-recording sample limit must not have been reached). While pulse-gated recording is active, the front-panel switch will not interrupt it.
+
+Pulse Out 1 and Pulse Out 2 are unused in grid mode and remain low.
 
 ## Track layout
 
@@ -75,7 +84,19 @@ The delete key is used to clear data from various places in MLRws. Hold it down 
 The right side of the grid always controls the playback state of each track. Short press any key in the right-most column on the grid and the corresponding track playback is toggled on/off. Long press one of these and the playback key will flash, indicating "gated playback" mode. In this mode, playback will only occur while a key in the CUT page is held down. Very useful for percussive sounds and very fun to record with the pattern looper. 
 
 Gate mode is per-track, so you can have some rows in gate mode and others
-in normal playback mode.
+in normal playback mode. Gate-mode state is saved alongside the scene, so each track returns to its last gated/normal setting after a power cycle.
+
+### Track groups
+
+Multiple tracks can be linked into a **group** so that CUT, play/pause, loop, gated-playback, and reset commands apply to every member at once. Each member acts on the **same grid column**, which produces proportional positions in each track's own length — useful for keeping arrangements of differently-sized samples in sync.
+
+- **Create a group**: hold two or more play keys (right-most column) at the same time. As soon as a second play key joins, MLRws cancels the pending gated-playback long-press timer on every held key, so none of them will accidentally enter gated playback. When you start releasing the keys, the **first release** commits the group — every play key that was simultaneously held at that moment becomes a group, and their play LEDs flash rapidly to confirm. (The remaining held keys' releases are absorbed silently.) Hold just one play key by itself and the original long-press → gated-playback behaviour is unchanged.
+- **Dissolve a group**: hold the **DELETE** key (row 0 ALT). While DELETE is held, MLRws cycles through every existing group, fast-blinking each group's play keys in turn (~½ second per group) so you can see which tracks belong to which group. Tap the play key on any member to dissolve that group; the former members' play LEDs blink twice quickly to confirm. Note: this gesture used to clear a track's recorded audio — that has moved off the play column. Audio is still cleared via DELETE + the record-arm column (col 0).
+- **Group sync**: while a group is active, CUT taps, loop-a-section, play/pause toggles, gated-playback toggles, and the Pulse In 1 reset all broadcast to every member. Members act on the same grid column number; each maps that column to its own playhead position proportionally. Play/pause is **state-synced**: whichever member you tap, every member snaps to the opposite of *that* member's current play state — so a group can never drift out of phase after a single tap.
+- **Joining a new group**: a track joining a new group leaves any previous group it belonged to. The remaining members of the previous group stay grouped together.
+- **Recording over a member**: starting a recording on a member of a group automatically removes that track from the group. The remaining members stay grouped.
+- **Persistence**: groups survive a power cycle (saved with the scene blob).
+- Solo tracks behave exactly as before.
 
 ### Grid-based main volume control
 

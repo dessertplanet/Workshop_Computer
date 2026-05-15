@@ -47,6 +47,16 @@ extern "C" {
 #define PAT_TICK_INTERVAL     48  /* ~1 ms at 48 kHz → pattern playback resolution */
 #define MAIN_CTRL_DIV        4    /* 48 kHz / 4 = 12 kHz UI/control polling */
 #define GATE_HOLD_THRESHOLD 48000  /* 1 second at 48 kHz sample rate */
+
+/* Group-creation/dissolve flash feedback (samples at 48 kHz). */
+#define GROUP_FLASH_CREATE_SAMPLES   24000  /* ~500 ms total */
+#define GROUP_FLASH_CREATE_PERIOD     6000  /* ~125 ms half-period (~4 Hz blink) */
+#define GROUP_FLASH_DISSOLVE_SAMPLES 24000  /* ~500 ms total (twice as fast as before) */
+#define GROUP_FLASH_DISSOLVE_PERIOD   6000  /* ~125 ms half-period (~4 Hz blink) */
+
+/* How long to highlight each group when DELETE is held (in gate_pulse ticks;
+ * gate_pulse advances at the LED refresh rate, ~60 Hz). */
+#define GROUP_CYCLE_TICKS             32    /* ~533 ms per group */
 #define KNOB_HARD_TAKEOVER_THRESHOLD 80  /* ADC counts (0..4095) — must exceed ADC noise floor */
 #define GRIDLESS_REC_HOLD_SAMPLES 96000u  /* 2 seconds at 48 kHz */
 #define RECORD_REARM_DELAY_SAMPLES 24000u /* 0.5 seconds at 48 kHz */
@@ -345,6 +355,7 @@ public:
 				resume_after_arm_track_ = -1;
 			rec_armed_track = -1;  /* disarm if flushing */
 			rec_gated = false;
+			rec_pulse_gated_ = false;
 		}
 
 		/* Stop gated recording if switch returns to middle */
@@ -362,7 +373,7 @@ public:
 			rec_speed_accum = 0;
 		}
 		/* Stop recording if switch returns to middle or armed track changes */
-		if (mlr_rec_track >= 0 && !rec_gated && (!rec_modifier || rec_armed_track != mlr_rec_track)) {
+		if (mlr_rec_track >= 0 && !rec_gated && !rec_pulse_gated_ && (!rec_modifier || rec_armed_track != mlr_rec_track)) {
 			mlr_stop_record();
 			rec_speed_accum = 0;
 			if (rec_armed_track >= 0 && rec_modifier && rec_armed_track != mlr_rec_track && !mlr_flushing && !rec_limit_latched && rec_start_lockout_samples_ == 0) {
@@ -380,6 +391,53 @@ public:
 
 		if (run_ui_control) {
 			update_record_monitor_window(sw);
+		}
+
+		/* ---- Pulse In handling (gridful mode) ----
+		 * Pulse In 1: rising edge resets the playhead to loop_col_start
+		 *   for every track that is currently playing AND has an active
+		 *   loop. Loop stays active. (Mirrors gridless Pulse In 1 = reset.)
+		 * Pulse In 2: gate-style record for the armed track. Rising edge
+		 *   starts recording (same gates as switch-driven start); falling
+		 *   edge stops it. While pulse-gated, the switch-stop path is
+		 *   bypassed (see !rec_pulse_gated_ guard above).
+		 * Pulse Out 1/2 are intentionally left idle in gridful mode. */
+		if (rec_pulse_gated_ && mlr_rec_track < 0) {
+			/* Orphaned flag (rec ended via some other path) — clear. */
+			rec_pulse_gated_ = false;
+		}
+		if (PulseIn1RisingEdge()) {
+			for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+				if (mlr_tracks[t].playing && mlr_tracks[t].loop_active) {
+					mlr_cut(t, mlr_tracks[t].loop_col_start);
+				}
+			}
+		}
+		if (PulseIn2RisingEdge()) {
+			if (rec_armed_track >= 0 && mlr_rec_track < 0 && !mlr_flushing &&
+			    !rec_limit_latched && rec_start_lockout_samples_ == 0) {
+				if (mlr_tracks[rec_armed_track].playing) {
+					resume_after_arm_track_ = rec_armed_track;
+					mlr_stop_track(rec_armed_track);
+				}
+				mlr_start_record(rec_armed_track);
+				rec_speed_accum = 0;
+				rec_pulse_gated_ = true;
+			}
+		}
+		if (PulseIn2FallingEdge()) {
+			if (rec_pulse_gated_ && mlr_rec_track >= 0) {
+				mlr_stop_record();
+				rec_speed_accum = 0;
+				rec_pulse_gated_ = false;
+			}
+		}
+
+		/* ---- Group create/dissolve flash countdown ---- */
+		if (group_flash_samples_remaining_ > 0) {
+			group_flash_samples_remaining_--;
+			if (group_flash_samples_remaining_ == 0)
+				group_flash_mask_ = 0;
 		}
 
 #ifdef MLR_STEREO
@@ -514,6 +572,7 @@ public:
 					rec_limit_latched = true;
 					rec_armed_track = -1;  /* disarm when limit reached */
 					rec_gated = false;
+					rec_pulse_gated_ = false;
 					break;
 				}
 			}
@@ -531,7 +590,7 @@ public:
 				play_page = PAGE_REC;
 				/* stop all gated tracks when leaving CUT page */
 				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-					if (gate_mode[t] && mlr_tracks[t].playing) {
+					if (mlr_gate_mode[t] && mlr_tracks[t].playing) {
 						mlr_stop_track(t);
 						dispatch_event(MLR_EVT_STOP, (uint8_t)t, 0, 0);
 					}
@@ -786,7 +845,7 @@ public:
 		/* ---- detect flush completion: stop gated tracks from auto-playing ---- */
 		if (was_flushing_ && !mlr_flushing && prev_rec_track >= 0) {
 			record_history_push(prev_rec_track);
-			if (gate_mode[prev_rec_track] && mlr_tracks[prev_rec_track].playing) {
+			if (mlr_gate_mode[prev_rec_track] && mlr_tracks[prev_rec_track].playing) {
 				mlr_stop_track(prev_rec_track);
 			}
 			rec_start_lockout_samples_ = RECORD_REARM_DELAY_SAMPLES;
@@ -886,6 +945,7 @@ private:
 	int        rec_armed_track = -1; /* armed track for recording (-1 = none) */
 	int        resume_after_arm_track_ = -1; /* track auto-stopped due to arm; resume on disarm */
 	bool       rec_gated = false;    /* true during press-to-record (gated) */
+	bool       rec_pulse_gated_ = false; /* true while recording was started by Pulse In 1 rising edge */
 	bool       rec_monitor_window_active_ = false;
 	bool       rec_monitor_prev_playing_[MLR_NUM_TRACKS] = {};
 	int8_t     rec_recent_tracks_[4] = {-1, -1, -1, -1};
@@ -896,13 +956,19 @@ private:
 	bool       master_knob_takeover_armed_ = false;
 	uint32_t   rec_start_lockout_samples_ = 0;
 	bool       was_flushing_ = false; /* edge detect for flush completion */
-	bool       gate_mode[MLR_NUM_TRACKS] = {};    /* per-track gate playback mode */
 	uint32_t   play_col_hold_time[MLR_NUM_TRACKS] = {};  /* sample counter for play-col hold */
 	bool       play_col_armed[MLR_NUM_TRACKS] = {};  /* true while play-col is held */
 	bool       gate_entered[MLR_NUM_TRACKS] = {}; /* true once hold crossed threshold */
 	bool       small_grid_ = false;  /* true when connected grid is 8x8 or smaller */
 	bool       grid_size_latched_ = false;  /* true once grid size has been detected */
 	uint16_t   gate_pulse = 0;       /* free-running counter for gate LED pulse */
+
+	/* Track-group gesture and visual-feedback state. */
+	uint8_t    group_gesture_mask_ = 0;           /* tracks participating in current multi-hold gesture */
+	bool       group_gesture_committed_ = false;  /* true after first release in a multi-hold gesture */
+	uint8_t    group_flash_mask_ = 0;             /* tracks whose play LED is currently flashing */
+	uint32_t   group_flash_samples_remaining_ = 0;  /* countdown for confirmation blink */
+	uint16_t   group_flash_period_ = GROUP_FLASH_CREATE_PERIOD;  /* current blink half-period */
 	adpcm_state_t mon_enc_ = {0, 0}; /* monitor codec encoder state */
 	adpcm_state_t mon_dec_ = {0, 0}; /* monitor codec decoder state */
 #ifdef MLR_STEREO
@@ -1802,71 +1868,267 @@ private:
 	}
 
 	/* ================================================================ */
+	/* Track-group helpers                                              */
+	/* ================================================================ */
+
+	/* Apply a fresh group membership. Each track u in new_mask leaves
+	 * its previous group (the rest of which stays together) and joins
+	 * new_mask. */
+	void __not_in_flash("set_group") set_group(uint8_t new_mask)
+	{
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if (!(new_mask & (1u << u))) continue;
+			uint8_t self = (uint8_t)(1u << u);
+			uint8_t old = mlr_track_groups[u];
+			if (old == self) continue;
+			uint8_t remainder = (uint8_t)(old & ~self);
+			for (int v = 0; v < MLR_NUM_TRACKS; v++) {
+				if (remainder & (1u << v))
+					mlr_track_groups[v] = remainder;
+			}
+			mlr_track_groups[u] = self;
+		}
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if (new_mask & (1u << u))
+				mlr_track_groups[u] = new_mask;
+		}
+	}
+
+	/* Dissolve the group containing track t. Returns the prior mask so
+	 * callers can drive a confirmation blink across former members. */
+	uint8_t __not_in_flash("dissolve_group") dissolve_group(int t)
+	{
+		if (t < 0 || t >= MLR_NUM_TRACKS) return 0;
+		uint8_t old = mlr_track_groups[t];
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if (old & (1u << u))
+				mlr_track_groups[u] = (uint8_t)(1u << u);
+		}
+		return old;
+	}
+
+	/* When DELETE is held, find the currently-highlighted group (cycled over
+	 * time). Returns 0 if no multi-member groups exist. */
+	uint8_t __not_in_flash("cycled_group_mask") cycled_group_mask()
+	{
+		uint8_t seen[MLR_NUM_TRACKS];
+		int n = 0;
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			uint8_t m = mlr_track_groups[t];
+			if (m == (uint8_t)(1u << t)) continue;
+			bool dup = false;
+			for (int i = 0; i < n; i++) if (seen[i] == m) { dup = true; break; }
+			if (!dup) seen[n++] = m;
+		}
+		if (n == 0) return 0;
+		int idx = (gate_pulse / GROUP_CYCLE_TICKS) % n;
+		return seen[idx];
+	}
+
+	/* --- Per-action broadcast helpers. Each defers to the engine-level
+	 *     mlr_group_* wrapper so all members are affected, and dispatches
+	 *     exactly one event using the touched track. Patterns/recalls
+	 *     therefore store a single event per gesture and replay through
+	 *     the group at playback time, picking up the current membership
+	 *     of the touched track. --- */
+
+	void __not_in_flash("group_cut") group_cut(int t, int col)
+	{
+		mlr_group_clear_loop(t);
+		mlr_group_cut(t, col);
+		dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)t, 0, 0);
+		dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)col, 0);
+	}
+
+	void __not_in_flash("group_set_loop") group_set_loop(int t, int a, int b)
+	{
+		if (!mlr_tracks[t].has_content) return;  /* engine guards each member anyway */
+		mlr_group_set_loop(t, a, b);
+		dispatch_event(MLR_EVT_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
+	}
+
+	void __not_in_flash("group_stop_track") group_stop_track(int t)
+	{
+		bool any_was_playing = false;
+		uint8_t mask = mlr_track_groups[t];
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if ((mask & (1u << u)) && mlr_tracks[u].playing) { any_was_playing = true; break; }
+		}
+		mlr_group_stop_track(t);
+		if (any_was_playing)
+			dispatch_event(MLR_EVT_STOP, (uint8_t)t, 0, 0);
+	}
+
+	/* Snap all group members to a single play/pause state derived from the
+	 * tapped track's *current* state. Members start at their own
+	 * loop_col_start (or 0). Dispatches a single START/STOP event on the
+	 * touched track so patterns capture one event per gesture and replay
+	 * broadcasts through the group at playback time. */
+	void __not_in_flash("group_play_toggle") group_play_toggle(int t)
+	{
+		uint8_t mask = mlr_track_groups[t];
+		bool target_start = !mlr_tracks[t].playing;
+		if (target_start) {
+			for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+				if (!(mask & (1u << u))) continue;
+				if (!mlr_tracks[u].has_content || mlr_tracks[u].playing) continue;
+				if (rec_armed_track == u) {
+					rec_armed_track = -1;
+					if (resume_after_arm_track_ == u) resume_after_arm_track_ = -1;
+					rec_limit_latched = false;
+				}
+				int start_col = 0;
+				if (mlr_tracks[u].loop_active)
+					start_col = mlr_tracks[u].loop_col_start;
+				mlr_cut(u, start_col);  /* single-track call — no re-broadcast */
+			}
+			dispatch_event(MLR_EVT_START, (uint8_t)t, 0, 0);
+		} else {
+			mlr_group_stop_track(t);
+			dispatch_event(MLR_EVT_STOP, (uint8_t)t, 0, 0);
+		}
+	}
+
+	/* Sync gate_mode across the group. on=true sets gate_mode and stops
+	 * each playing member (mirroring the threshold-entry behaviour);
+	 * on=false clears gate_mode without stopping. Not recorded as an
+	 * event today. */
+	void __not_in_flash("group_set_gate_mode") group_set_gate_mode(int t, bool on)
+	{
+		uint8_t mask = mlr_track_groups[t];
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if (!(mask & (1u << u))) continue;
+			if (on) {
+				mlr_gate_mode[u] = true;
+			} else {
+				mlr_gate_mode[u] = false;
+			}
+		}
+		if (on)
+			mlr_group_stop_track(t);
+	}
+
+	/* ================================================================ */
 	/* Gate mode: play-col hold detection (runs every sample, any page) */
 	/* ================================================================ */
 
 	void __not_in_flash("process_gate_hold") process_gate_hold()
 	{
 		int pc = play_col();
+		bool alt_held = grid.held(alt_col(), 0);
 
-		/* Arm on key-down of play col on any track row */
-		if (grid.keyDown() && grid.lastX() == pc && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
-			int track = grid.lastY() - 1;
-			play_col_armed[track] = true;
-			play_col_hold_time[track] = 0;
-			gate_entered[track] = false;
+		/* Snapshot of which play-col keys are currently held. */
+		uint8_t held_now = 0;
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			if (grid.held((uint8_t)pc, (uint8_t)(t + 1)))
+				held_now |= (uint8_t)(1u << t);
 		}
 
-		/* Increment hold counters and enter gate mode at threshold */
+		/* Detect multi-hold: if at any moment 2+ play-col keys are held,
+		 * cancel any pending long-press timers (so no gate_mode side-effect
+		 * fires) and accumulate the participants into group_gesture_mask_.
+		 * The group commits on the first release of a participating key. */
+		int held_count = 0;
+		for (int t = 0; t < MLR_NUM_TRACKS; t++)
+			if (held_now & (1u << t)) held_count++;
+		if (held_count >= 2) {
+			group_gesture_mask_ |= held_now;
+			for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+				if (group_gesture_mask_ & (1u << t)) {
+					play_col_armed[t] = false;
+					play_col_hold_time[t] = 0;
+					gate_entered[t] = false;
+				}
+			}
+		}
+
+		/* Arm on key-down of play col on any track row (single-hold path). */
+		if (grid.keyDown() && grid.lastX() == pc && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
+			int track = grid.lastY() - 1;
+			if (!(group_gesture_mask_ & (1u << track))) {
+				play_col_armed[track] = true;
+				play_col_hold_time[track] = 0;
+				gate_entered[track] = false;
+			}
+		}
+
+		/* Increment hold counters and enter gate mode at threshold (only
+		 * for tracks not part of a multi-hold gesture). */
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			if (group_gesture_mask_ & (1u << t)) continue;
 			if (play_col_armed[t]) {
 				play_col_hold_time[t] += MAIN_CTRL_DIV;
 				if (play_col_hold_time[t] >= GATE_HOLD_THRESHOLD && !gate_entered[t]) {
 					gate_entered[t] = true;
-					gate_mode[t] = true;
-					/* Stop the track when entering gate mode */
-					if (mlr_tracks[t].playing) {
-						mlr_stop_track(t);
-						dispatch_event(MLR_EVT_STOP, (uint8_t)t, 0, 0);
-					}
+					/* Single-track long-press: enable gate_mode for this
+					 * track (or sync the whole group if it's already in
+					 * one) and stop. */
+					group_set_gate_mode(t, true);
 				}
 			}
 		}
 
-		/* Key-up of play col: short press action */
+		/* Key-up of play col */
 		if (grid.keyUp() && grid.lastX() == pc && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track = grid.lastY() - 1;
-			if (play_col_armed[track] && !gate_entered[track]) {
-				/* Short press */
-				if (gate_mode[track]) {
-					/* Disable gate mode and stop the track */
-					gate_mode[track] = false;
-					if (mlr_tracks[track].playing) {
-						mlr_stop_track(track);
-						dispatch_event(MLR_EVT_STOP, (uint8_t)track, 0, 0);
-					}
-				} else {
-					/* Normal play/stop toggle */
-					if (mlr_tracks[track].playing) {
-						mlr_stop_track(track);
-						dispatch_event(MLR_EVT_STOP, (uint8_t)track, 0, 0);
-					} else if (mlr_tracks[track].has_content) {
-						if (rec_armed_track == track) {
-							rec_armed_track = -1;
-							if (resume_after_arm_track_ == track) resume_after_arm_track_ = -1;
-							rec_limit_latched = false;
-						}
-						int start_col = 0;
-						if (mlr_tracks[track].loop_active)
-							start_col = mlr_tracks[track].loop_col_start;
-						mlr_cut(track, start_col);
-						dispatch_event(MLR_EVT_START, (uint8_t)track, 0, 0);
-					}
-				}
-			}
+			bool was_armed = play_col_armed[track];
+			bool was_gate_entered = gate_entered[track];
+
 			play_col_armed[track] = false;
 			play_col_hold_time[track] = 0;
 			gate_entered[track] = false;
+
+			if (group_gesture_mask_ & (1u << track)) {
+				/* This release participates in the multi-hold gesture. */
+				if (!group_gesture_committed_) {
+					uint8_t mask = group_gesture_mask_;
+					/* Defensive recount (the mask is built from held-now
+					 * snapshots and always contains >=2 bits by
+					 * construction). */
+					int popcount = 0;
+					for (int u = 0; u < MLR_NUM_TRACKS; u++)
+						if (mask & (1u << u)) popcount++;
+					if (popcount >= 2) {
+						set_group(mask);
+						group_flash_mask_ = mask;
+						group_flash_samples_remaining_ = GROUP_FLASH_CREATE_SAMPLES;
+						group_flash_period_ = GROUP_FLASH_CREATE_PERIOD;
+					}
+					group_gesture_committed_ = true;
+				}
+				group_gesture_mask_ &= (uint8_t)~(1u << track);
+				if (group_gesture_mask_ == 0)
+					group_gesture_committed_ = false;
+				return;  /* suppress play-toggle for this key-up */
+			}
+
+			if (alt_held) {
+				/* ALT + play_col tap: dissolve group (or no-op if solo). */
+				uint8_t old_mask = mlr_track_groups[track];
+				int popcount = 0;
+				for (int u = 0; u < MLR_NUM_TRACKS; u++)
+					if (old_mask & (1u << u)) popcount++;
+				if (popcount >= 2) {
+					dissolve_group(track);
+					group_flash_mask_ = old_mask;
+					group_flash_samples_remaining_ = GROUP_FLASH_DISSOLVE_SAMPLES;
+					group_flash_period_ = GROUP_FLASH_DISSOLVE_PERIOD;
+				}
+				return;
+			}
+
+			if (was_armed && !was_gate_entered) {
+				/* Short press only — a completed long-press already entered
+				 * gate_mode at threshold and the key-up here is a no-op. */
+				if (mlr_gate_mode[track]) {
+					/* Disable gate mode across the whole group and stop. */
+					group_set_gate_mode(track, false);
+					group_stop_track(track);
+				} else {
+					/* Normal play/stop toggle, state-synced across group. */
+					group_play_toggle(track);
+				}
+			}
 		}
 	}
 
@@ -2010,7 +2272,7 @@ private:
 			}
 
 			/* gated playback: stop when last key released */
-			if (gate_mode[track] && mlr_tracks[track].playing) {
+			if (mlr_gate_mode[track] && mlr_tracks[track].playing) {
 				int row = track + 1;
 				int gw = small_grid_ ? 8 : 16;
 				bool any_held = false;
@@ -2018,12 +2280,21 @@ private:
 					if (grid.held((uint8_t)c, (uint8_t)row)) { any_held = true; break; }
 				}
 				if (!any_held) {
-					if (mlr_tracks[track].loop_active) {
-						mlr_clear_loop(track);
+					/* Broadcast: clear loops and stop across the whole group.
+					 * Single event each so pattern recording captures one
+					 * gesture; replay broadcasts through the group. */
+					bool any_loop = false;
+					uint8_t mask = mlr_track_groups[track];
+					for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+						if ((mask & (1u << u)) && mlr_tracks[u].loop_active) {
+							any_loop = true; break;
+						}
+					}
+					if (any_loop) {
+						mlr_group_clear_loop(track);
 						dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)track, 0, 0);
 					}
-					mlr_stop_track(track);
-					dispatch_event(MLR_EVT_STOP, (uint8_t)track, 0, 0);
+					group_stop_track(track);
 				}
 			}
 		}
@@ -2061,24 +2332,17 @@ private:
 				return;
 			}
 			if (column == pc) {
-				if (alt_held) {
-					mlr_clear_track(track);
-					if (rec_armed_track == track) {
-						rec_armed_track = -1;
-						if (resume_after_arm_track_ == track) resume_after_arm_track_ = -1;
-					}
-				}
-				return;  /* play/stop/gate handled by process_gate_hold */
+				/* ALT + play_col is now reserved for group dissolve, which
+				 * is handled by process_gate_hold on key-up. Audio-clear via
+				 * this gesture is removed. */
+				return;
 			}
 
 			/* ignore columns outside the cut zone */
 			if (column < 1 || column > ce) return;
 
 			if (alt_held) {
-				if (mlr_tracks[track].playing) {
-					mlr_stop_track(track);
-					dispatch_event(MLR_EVT_STOP, (uint8_t)track, 0, 0);
-				}
+				group_stop_track(track);
 				return;
 			}
 
@@ -2091,12 +2355,10 @@ private:
 				rec_limit_latched = false;
 			}
 
-			/* immediate cut — clears any active loop.
-			 * For gated tracks this is monophonic: last key wins. */
-			mlr_clear_loop(track);
-			mlr_cut(track, cut_col);
-			dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)track, 0, 0);
-			dispatch_event(MLR_EVT_CUT, (uint8_t)track, (int8_t)cut_col, 0);
+			/* immediate cut — clears any active loop. For gated tracks this is
+			 * monophonic: last key wins. Broadcast to the whole group so each
+			 * member cuts to the same grid column (proportional position). */
+			group_cut(track, cut_col);
 		}
 
 		/* ---- loop-a-section: detect 2+ held keys per track row ---- */
@@ -2116,8 +2378,7 @@ private:
 				}
 
 				if (held_count >= 2 && mlr_tracks[t].has_content) {
-					mlr_set_loop(t, held_min, held_max);
-					dispatch_event(MLR_EVT_LOOP, (uint8_t)t, (int8_t)held_min, (int8_t)held_max);
+					group_set_loop(t, held_min, held_max);
 				}
 			}
 		}
@@ -2202,6 +2463,8 @@ private:
 		bool gated_rec_ready = rec_pos && rec_armed_track < 0;
 
 		int pc = play_col();
+		bool alt_held = grid.held((uint8_t)alt_col(), 0);
+		uint8_t cycled = alt_held ? cycled_group_mask() : 0;
 
 		/* row 0: navigation — REC highlighted */
 		grid.led(0, 0,  4);  /* CUT = dim */
@@ -2295,11 +2558,21 @@ private:
 
 			/* play col: play/stop/gate indicator */
 			uint8_t play_bright;
-			if (gate_mode[t]) {
+			if (mlr_gate_mode[t]) {
 				play_bright = (gate_pulse & 8) ? 12 : 4;
 				if (mlr_tracks[t].playing) play_bright = 15;
 			} else {
 				play_bright = mlr_tracks[t].playing ? 15 : (has ? 6 : 3);
+			}
+			if (cycled && (cycled & (1u << t))) {
+				/* DELETE is held: cycle through existing groups, fast-blinking
+				 * each group's members in turn so the user can see which play
+				 * keys would dissolve which group. */
+				play_bright = (gate_pulse & 4) ? 15 : 2;
+			}
+			if ((group_flash_mask_ & (1u << t)) && group_flash_samples_remaining_ > 0) {
+				bool on = (group_flash_samples_remaining_ / group_flash_period_) & 1;
+				play_bright = on ? 15 : 0;
 			}
 			grid.led(pc, row, play_bright);
 
@@ -2379,6 +2652,8 @@ private:
 
 		int pc = play_col();
 		int nc = cut_cols();
+		bool alt_held = grid.held((uint8_t)alt_col(), 0);
+		uint8_t cycled = alt_held ? cycled_group_mask() : 0;
 
 		/* row 0: navigation — CUT highlighted */
 		grid.led(0, 0, 15);  /* CUT = active */
@@ -2407,11 +2682,21 @@ private:
 
 			/* play col: play/stop/gate indicator */
 			uint8_t play_bright;
-			if (gate_mode[t]) {
+			if (mlr_gate_mode[t]) {
 				play_bright = (gate_pulse & 8) ? 12 : 4;
 				if (mlr_tracks[t].playing) play_bright = 15;
 			} else {
 				play_bright = mlr_tracks[t].playing ? 15 : (has ? 6 : 3);
+			}
+			if (cycled && (cycled & (1u << t))) {
+				/* DELETE is held: cycle through existing groups, fast-blinking
+				 * each group's members in turn so the user can see which play
+				 * keys would dissolve which group. */
+				play_bright = (gate_pulse & 4) ? 15 : 2;
+			}
+			if ((group_flash_mask_ & (1u << t)) && group_flash_samples_remaining_ > 0) {
+				bool on = (group_flash_samples_remaining_ / group_flash_period_) & 1;
+				play_bright = on ? 15 : 0;
 			}
 			grid.led(pc, row, play_bright);
 

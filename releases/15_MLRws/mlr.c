@@ -35,6 +35,14 @@ mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
 volatile bool   mlr_scene_saving = false;
 volatile int    mlr_recall_active = -1;
 
+/* Per-track group membership bitmask. Invariant: every member of a group
+ * has the same mask; the mask always contains the member's own bit.
+ * Default = solo, i.e. mlr_track_groups[t] == (1 << t). */
+uint8_t         mlr_track_groups[MLR_NUM_TRACKS];
+
+/* Per-track gated-playback flag (set by main.cpp UI; persisted via scene). */
+bool            mlr_gate_mode[MLR_NUM_TRACKS];
+
 /* Recording state */
 static int      rec_track_idx     = -1;
 static uint32_t rec_flash_offset;       /* next flash write offset */
@@ -196,6 +204,82 @@ static inline void finish_pending_stop(mlr_track_t *tr)
 }
 
 /* ------------------------------------------------------------------ */
+/* Track group helpers                                                */
+/* ------------------------------------------------------------------ */
+
+void mlr_groups_default(void)
+{
+	for (int t = 0; t < MLR_NUM_TRACKS; t++)
+		mlr_track_groups[t] = (uint8_t)(1u << t);
+}
+
+/* Remove track t from its current group; the remaining members stay
+ * grouped together. No-op for solo tracks. */
+void mlr_leave_group(int t)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	uint8_t self = (uint8_t)(1u << t);
+	uint8_t old = mlr_track_groups[t];
+	if (old == self) return;  /* already solo */
+	uint8_t remainder = (uint8_t)(old & ~self);
+	for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+		if (remainder & (1u << u))
+			mlr_track_groups[u] = remainder;
+	}
+	mlr_track_groups[t] = self;
+}
+
+/* ------------------------------------------------------------------ */
+/* Group-broadcast wrappers — apply an action to every member of the  */
+/* group containing track t, using each member's own state where the  */
+/* operation is naturally per-track (e.g. lengths in mlr_cut).        */
+/* Forward declarations of the single-track engine ops follow below.  */
+/* ------------------------------------------------------------------ */
+
+void mlr_cut(int track, int column);
+void mlr_stop_track(int track);
+void mlr_set_loop(int track, int col_start, int col_end);
+void mlr_clear_loop(int track);
+
+/* Use volatile function pointers to force real calls and stop the compiler
+ * from inlining/unrolling 6 copies of mlr_cut/etc. into each wrapper. */
+void mlr_group_cut(int t, int col)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	void (*volatile fn)(int, int) = mlr_cut;
+	uint8_t mask = mlr_track_groups[t];
+	for (int u = 0; u < MLR_NUM_TRACKS; u++)
+		if (mask & (1u << u)) fn(u, col);
+}
+
+void mlr_group_stop_track(int t)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	void (*volatile fn)(int) = mlr_stop_track;
+	uint8_t mask = mlr_track_groups[t];
+	for (int u = 0; u < MLR_NUM_TRACKS; u++)
+		if (mask & (1u << u)) fn(u);
+}
+
+void mlr_group_set_loop(int t, int a, int b)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	void (*volatile fn)(int, int, int) = mlr_set_loop;
+	uint8_t mask = mlr_track_groups[t];
+	for (int u = 0; u < MLR_NUM_TRACKS; u++)
+		if (mask & (1u << u)) fn(u, a, b);
+}
+
+void mlr_group_clear_loop(int t)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	void (*volatile fn)(int) = mlr_clear_loop;
+	uint8_t mask = mlr_track_groups[t];
+	for (int u = 0; u < MLR_NUM_TRACKS; u++)
+		if (mask & (1u << u)) fn(u);
+}
+
+/* ------------------------------------------------------------------ */
 /* Init — load track metadata from flash, pre-fill rings              */
 /* ------------------------------------------------------------------ */
 
@@ -209,6 +293,9 @@ void mlr_init(void)
 	mlr_flushing   = false;
 	mlr_scene_saving = false;
 	rec_track_idx  = -1;
+
+	mlr_groups_default();
+	memset(mlr_gate_mode, 0, sizeof(mlr_gate_mode));
 
 	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 		const mlr_track_header_t *hdr = (const mlr_track_header_t *)
@@ -339,6 +426,10 @@ void mlr_rescan_track(int track)
 void __not_in_flash_func(mlr_start_record)(int track)
 {
 	if (track < 0 || track >= MLR_NUM_TRACKS) return;
+
+	/* Recording over a grouped track removes it from its group; the rest
+	 * of the group stays grouped together. Safe for solo tracks. */
+	mlr_leave_group(track);
 
 	mlr_track_t *tr = &mlr_tracks[track];
 
@@ -831,7 +922,18 @@ void __not_in_flash_func(mlr_cut)(int track, int column)
 	mlr_track_t *tr = &mlr_tracks[track];
 	if (!tr->has_content) return;
 
-	uint32_t target = (uint32_t)column * tr->length_samples / MLR_GRID_COLS;
+	uint32_t target;
+	if (tr->reverse) {
+		/* In reverse, land at the *end* of the tapped column's range so
+		 * playback going backwards stays inside the visually-pressed cell
+		 * for that column's duration before crossing into the previous
+		 * column. Without this, the playhead lands at the column's first
+		 * sample and immediately steps into the column to its left. */
+		uint32_t next = (uint32_t)(column + 1) * tr->length_samples / MLR_GRID_COLS;
+		target = (next > 0) ? next - 1 : 0;
+	} else {
+		target = (uint32_t)column * tr->length_samples / MLR_GRID_COLS;
+	}
 	if (target >= tr->length_samples) target = tr->length_samples - 1;
 
 	/* signal core 1 to refill from this position */
@@ -1067,13 +1169,13 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 {
 	switch (e->type) {
 	case MLR_EVT_CUT:
-		mlr_cut(e->track, e->param_a);
+		mlr_group_cut(e->track, e->param_a);
 		break;
 	case MLR_EVT_STOP:
-		mlr_stop_track(e->track);
+		mlr_group_stop_track(e->track);
 		break;
 	case MLR_EVT_START:
-		mlr_cut(e->track, 0);  /* start from beginning */
+		mlr_group_cut(e->track, 0);  /* start from beginning */
 		break;
 	case MLR_EVT_SPEED:
 		mlr_set_speed(e->track, e->param_a);
@@ -1082,10 +1184,10 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 		mlr_set_reverse(e->track, e->param_a != 0);
 		break;
 	case MLR_EVT_LOOP:
-		mlr_set_loop(e->track, e->param_a, e->param_b);
+		mlr_group_set_loop(e->track, e->param_a, e->param_b);
 		break;
 	case MLR_EVT_LOOP_CLR:
-		mlr_clear_loop(e->track);
+		mlr_group_clear_loop(e->track);
 		break;
 	case MLR_EVT_VOLUME:
 		mlr_set_volume(e->track, e->param_a);
@@ -1569,6 +1671,16 @@ static uint32_t scene_serialize(void)
 		}
 	}
 
+	/* track groups (appended at v1 — readers gate on pos < data_len) */
+	scene_blob[pos++] = 1;  /* groups_version */
+	for (int t = 0; t < MLR_NUM_TRACKS; t++)
+		scene_blob[pos++] = mlr_track_groups[t];
+
+	/* per-track gate_mode (appended at v1; gate-mode block follows groups) */
+	scene_blob[pos++] = 1;  /* gate_mode version */
+	for (int t = 0; t < MLR_NUM_TRACKS; t++)
+		scene_blob[pos++] = mlr_gate_mode[t] ? 1 : 0;
+
 	/* write data_len */
 	uint32_t data_len = pos - 8;
 	memcpy(&scene_blob[len_pos], &data_len, 4);
@@ -1676,6 +1788,46 @@ void mlr_scene_load(void)
 		if (sz > 0) {
 			memcpy(mlr_recalls[r].events, flash + pos, sz);
 			pos += sz;
+		}
+	}
+
+	/* track groups (appended in v1). Older scenes have no bytes here; we
+	 * leave the solo defaults set by mlr_init/mlr_groups_default. */
+	uint32_t end = 8 + data_len;
+	if (pos + 1 + MLR_NUM_TRACKS <= end) {
+		uint8_t groups_version = flash[pos++];
+		(void)groups_version;  /* reserved for future format bumps */
+
+		uint8_t loaded[MLR_NUM_TRACKS];
+		for (int t = 0; t < MLR_NUM_TRACKS; t++)
+			loaded[t] = flash[pos++];
+
+		/* Validate: each mask must include the track's own bit and every
+		 * other member must carry an identical mask. Otherwise demote that
+		 * track to solo. */
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			uint8_t mask = loaded[t];
+			uint8_t self = (uint8_t)(1u << t);
+			if (!(mask & self)) {
+				mlr_track_groups[t] = self;
+				continue;
+			}
+			bool consistent = true;
+			for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+				if (u == t) continue;
+				if (mask & (1u << u)) {
+					if (loaded[u] != mask) { consistent = false; break; }
+				}
+			}
+			mlr_track_groups[t] = consistent ? mask : self;
+		}
+
+		/* per-track gate_mode (follows groups; same data_len-bounded read) */
+		if (pos + 1 + MLR_NUM_TRACKS <= end) {
+			uint8_t gate_version = flash[pos++];
+			(void)gate_version;
+			for (int t = 0; t < MLR_NUM_TRACKS; t++)
+				mlr_gate_mode[t] = flash[pos++] != 0;
 		}
 	}
 }

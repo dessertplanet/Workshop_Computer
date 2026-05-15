@@ -304,6 +304,12 @@ extern mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
 extern volatile bool   mlr_scene_saving;  /* true during flash scene write */
 extern volatile int    mlr_recall_active;  /* currently selected recall (-1=none) */
 
+/* Per-track group-membership bitmask (see mlr.c for invariant). */
+extern uint8_t         mlr_track_groups[MLR_NUM_TRACKS];
+
+/* Per-track gated-playback flag — toggled by the UI, persisted with the scene. */
+extern bool            mlr_gate_mode[MLR_NUM_TRACKS];
+
 /* ------------------------------------------------------------------ */
 /* Core 0 API                                                         */
 /* ------------------------------------------------------------------ */
@@ -338,6 +344,19 @@ int      mlr_get_column(int track);
 void     mlr_get_loop_cols(int track, int *col_start, int *col_end);
 uint32_t mlr_get_rec_progress(void);
 int      mlr_get_flush_track(void);
+
+/* ---- Track groups ---- */
+void     mlr_groups_default(void);              /* reset every track to solo */
+void     mlr_leave_group(int track);            /* remove track from its group */
+
+/* Broadcast wrappers: apply an action to every member of the group
+ * containing `track`. Used by gesture handlers and pattern replay so
+ * patterns recorded under a group automatically follow the group's
+ * current membership at playback time. */
+void     mlr_group_cut(int track, int column);
+void     mlr_group_stop_track(int track);
+void     mlr_group_set_loop(int track, int col_start, int col_end);
+void     mlr_group_clear_loop(int track);
 
 /* ---- Pattern engine (core 0) ---- */
 void     mlr_pattern_event(const mlr_event_t *e);  /* record into active patterns + recalls */
