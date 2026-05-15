@@ -34,6 +34,7 @@
 | 42_backyard_rain | Nature soundscape audio. A cozy rain ambience mix for background listening. You control the intensity. This card plays rain ambience which was recorded in my backyard. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
 | 47_NZT | Grain Noise and Noise Tools | 1.0.0<br>Released | C++ (ComputerCard) | @kjnilsson |
 | 50_flux | Effects, Synthesizer and Utility<br>[Web editor](https://vincentmaurer.de/flux/flux_manager.html) | 1.0<br>Release | C++ (RPi Pico SDK), C | Vincent Maurer (vincentmaurer.de) |
+| 51_grains | Granular Sampler and Effect<br>[Web editor](https://vincentmaurer.de/grains/grains_manager.html) | 1.0<br>Release | C++ | Vincent Maurer (vincentmaurer.de) |
 | 53_glitter | Granular Looping Sampler | 0.1.0<br>Beta Test | Pico SDK 2.1.1 | Steve Jones |
 | 55_fifths | A quantizer/sequencer that can create harmony and nimbly traverse the circle of fifths in attempts to make jazz | 1.0<br>Ready | Pico SDK | Dune Desormeaux |
 | 56_Krell | Krell | 1.0<br>Mostly complete | Blackbird Lua | Benjamin Reily |
