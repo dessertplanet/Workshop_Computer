@@ -996,6 +996,7 @@ private:
 	uint8_t    copy_flash_mask_ = 0;              /* tracks whose record/copy LED is flashing */
 	uint32_t   copy_flash_samples_remaining_ = 0;
 	uint16_t   copy_flash_period_ = COPY_FLASH_PERIOD;
+	uint8_t    gated_choke_mute_mask_[MLR_NUM_TRACKS] = {};  /* temporary mutes while gated keys are held */
 	bool       cut_loop_pending_[MLR_NUM_TRACKS] = {};  /* non-gated CUT loop commits on first release */
 	int        cut_loop_pending_start_[MLR_NUM_TRACKS] = {};
 	int        cut_loop_pending_end_[MLR_NUM_TRACKS] = {};
@@ -1913,6 +1914,7 @@ private:
 			play_col_armed[t] = false;
 			play_col_hold_time[t] = 0;
 			gate_entered[t] = false;
+			release_gated_choke_mutes(t);
 		}
 
 		delete_reset_flash_samples_remaining_ = DELETE_RESET_FLASH_SAMPLES;
@@ -2030,25 +2032,58 @@ private:
 		return seen[idx];
 	}
 
-	/* --- Per-action broadcast helpers. Each defers to the engine-level
-	 *     mlr_group_* wrapper so all members are affected, and dispatches
-	 *     exactly one event using the touched track. Patterns/recalls
-	 *     therefore store a single event per gesture and replay through
-	 *     the group at playback time, picking up the current membership
-	 *     of the touched track. --- */
+	void __not_in_flash("mute_other_group_members_for_gate") mute_other_group_members_for_gate(int t)
+	{
+		if (t < 0 || t >= MLR_NUM_TRACKS) return;
+		uint8_t mask = mlr_track_groups[t];
+		uint8_t muted = 0;
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if (u == t) continue;
+			if (!(mask & (1u << u))) continue;
+			if (!mlr_tracks[u].playing) continue;
+			mlr_tracks[u].muted = true;
+			muted |= (uint8_t)(1u << u);
+		}
+		gated_choke_mute_mask_[t] |= muted;
+	}
+
+	void __not_in_flash("release_gated_choke_mutes") release_gated_choke_mutes(int t)
+	{
+		if (t < 0 || t >= MLR_NUM_TRACKS) return;
+		uint8_t mask = gated_choke_mute_mask_[t];
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if (mask & (1u << u))
+				mlr_tracks[u].muted = false;
+		}
+		gated_choke_mute_mask_[t] = 0;
+	}
+
+	/* --- Group-aware action helpers. Play-column actions broadcast through
+	 *     the group; CUT-page actions operate on the touched track and choke
+	 *     other playing members in the same group. --- */
 
 	void __not_in_flash("group_cut") group_cut(int t, int col)
 	{
-		mlr_group_clear_loop(t);
-		mlr_group_cut(t, col);
+		if (mlr_gate_mode[t]) {
+			mlr_clear_loop(t);
+			mlr_cut(t, col);
+			mute_other_group_members_for_gate(t);
+		} else {
+			mlr_choke_group_cut(t, col);
+		}
 		dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)t, 0, 0);
 		dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)col, 0);
 	}
 
 	void __not_in_flash("group_set_loop") group_set_loop(int t, int a, int b)
 	{
-		if (!mlr_tracks[t].has_content) return;  /* engine guards each member anyway */
-		mlr_group_set_loop(t, a, b);
+		if (!mlr_tracks[t].has_content) return;
+		if (mlr_gate_mode[t]) {
+			mlr_set_loop(t, a, b);
+			mute_other_group_members_for_gate(t);
+		} else {
+			mlr_choke_group_set_loop(t, a, b);
+		}
 		dispatch_event(MLR_EVT_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
 	}
 
@@ -2064,15 +2099,20 @@ private:
 			dispatch_event(MLR_EVT_STOP, (uint8_t)t, 0, 0);
 	}
 
-	/* Snap all group members to a single play/pause state derived from the
-	 * tapped track's *current* state. Members start at their own
-	 * loop_col_start (or 0). Dispatches a single START/STOP event on the
-	 * touched track so patterns capture one event per gesture and replay
-	 * broadcasts through the group at playback time. */
+	/* Snap all group members to a single play/pause state. If any member is
+	 * currently playing, the play column stops the group; otherwise it starts
+	 * all playable members from their own loop_col_start (or 0). */
 	void __not_in_flash("group_play_toggle") group_play_toggle(int t)
 	{
 		uint8_t mask = mlr_track_groups[t];
-		bool target_start = !mlr_tracks[t].playing;
+		bool any_playing = false;
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if ((mask & (1u << u)) && mlr_tracks[u].playing) {
+				any_playing = true;
+				break;
+			}
+		}
+		bool target_start = !any_playing;
 		if (target_start) {
 			for (int u = 0; u < MLR_NUM_TRACKS; u++) {
 				if (!(mask & (1u << u))) continue;
@@ -2094,23 +2134,16 @@ private:
 		}
 	}
 
-	/* Sync gate_mode across the group. on=true sets gate_mode and stops
-	 * each playing member (mirroring the threshold-entry behaviour);
-	 * on=false clears gate_mode without stopping. Not recorded as an
-	 * event today. */
-	void __not_in_flash("group_set_gate_mode") group_set_gate_mode(int t, bool on)
+	/* Gate mode is per-track even when tracks are grouped; only play toggles
+	 * broadcast through the group. */
+	void __not_in_flash("set_gate_mode") set_gate_mode(int t, bool on)
 	{
-		uint8_t mask = mlr_track_groups[t];
-		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
-			if (!(mask & (1u << u))) continue;
-			if (on) {
-				mlr_gate_mode[u] = true;
-			} else {
-				mlr_gate_mode[u] = false;
-			}
-		}
+		if (t < 0 || t >= MLR_NUM_TRACKS) return;
+		mlr_gate_mode[t] = on;
 		if (on)
-			mlr_group_stop_track(t);
+			mlr_stop_track(t);
+		else
+			release_gated_choke_mutes(t);
 	}
 
 	void __not_in_flash("reset_copy_gesture") reset_copy_gesture()
@@ -2249,10 +2282,8 @@ private:
 				play_col_hold_time[t] += MAIN_CTRL_DIV;
 				if (play_col_hold_time[t] >= GATE_HOLD_THRESHOLD && !gate_entered[t]) {
 					gate_entered[t] = true;
-					/* Single-track long-press: enable gate_mode for this
-					 * track (or sync the whole group if it's already in
-					 * one) and stop. */
-					group_set_gate_mode(t, true);
+					/* Long-press: enable gate_mode for this track and stop it. */
+					set_gate_mode(t, true);
 				}
 			}
 		}
@@ -2310,9 +2341,9 @@ private:
 				/* Short press only — a completed long-press already entered
 				 * gate_mode at threshold and the key-up here is a no-op. */
 				if (mlr_gate_mode[track]) {
-					/* Disable gate mode across the whole group and stop. */
-					group_set_gate_mode(track, false);
-					group_stop_track(track);
+					/* Disable gate mode for this track and stop it. */
+					set_gate_mode(track, false);
+					mlr_stop_track(track);
 				} else {
 					/* Normal play/stop toggle, state-synced across group. */
 					group_play_toggle(track);
@@ -2424,18 +2455,13 @@ private:
 					/* Broadcast: clear loops and stop across the whole group.
 					 * Single event each so pattern recording captures one
 					 * gesture; replay broadcasts through the group. */
-					bool any_loop = false;
-					uint8_t mask = mlr_track_groups[track];
-					for (int u = 0; u < MLR_NUM_TRACKS; u++) {
-						if ((mask & (1u << u)) && mlr_tracks[u].loop_active) {
-							any_loop = true; break;
-						}
-					}
+					bool any_loop = mlr_tracks[track].loop_active;
 					if (any_loop) {
-						mlr_group_clear_loop(track);
+						mlr_clear_loop(track);
 						dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)track, 0, 0);
 					}
-					group_stop_track(track);
+					mlr_stop_track(track);
+					release_gated_choke_mutes(track);
 				}
 			}
 		}
@@ -2462,7 +2488,7 @@ private:
 			if (column < 1 || column > ce) return;
 
 			if (alt_held) {
-				group_stop_track(track);
+				mlr_stop_track(track);
 				return;
 			}
 

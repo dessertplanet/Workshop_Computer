@@ -290,6 +290,32 @@ void mlr_group_clear_loop(int t)
 		if (mask & (1u << u)) fn(u);
 }
 
+static void stop_other_group_members(int t)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	void (*volatile fn)(int) = mlr_stop_track;
+	uint8_t mask = mlr_track_groups[t];
+	for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+		if (u == t) continue;
+		if (mask & (1u << u)) fn(u);
+	}
+}
+
+void mlr_choke_group_cut(int t, int col)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	mlr_clear_loop(t);
+	mlr_cut(t, col);
+	stop_other_group_members(t);
+}
+
+void mlr_choke_group_set_loop(int t, int a, int b)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	mlr_set_loop(t, a, b);
+	stop_other_group_members(t);
+}
+
 /* ------------------------------------------------------------------ */
 /* Init — load track metadata from flash, pre-fill rings              */
 /* ------------------------------------------------------------------ */
@@ -1211,7 +1237,7 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 {
 	switch (e->type) {
 	case MLR_EVT_CUT:
-		mlr_group_cut(e->track, e->param_a);
+		mlr_choke_group_cut(e->track, e->param_a);
 		break;
 	case MLR_EVT_STOP:
 		mlr_group_stop_track(e->track);
@@ -1226,10 +1252,10 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 		mlr_set_reverse(e->track, e->param_a != 0);
 		break;
 	case MLR_EVT_LOOP:
-		mlr_group_set_loop(e->track, e->param_a, e->param_b);
+		mlr_choke_group_set_loop(e->track, e->param_a, e->param_b);
 		break;
 	case MLR_EVT_LOOP_CLR:
-		mlr_group_clear_loop(e->track);
+		mlr_clear_loop(e->track);
 		break;
 	case MLR_EVT_VOLUME:
 		mlr_set_volume(e->track, e->param_a);

@@ -351,14 +351,15 @@ int      mlr_get_flush_track(void);
 void     mlr_groups_default(void);              /* reset every track to solo */
 void     mlr_leave_group(int track);            /* remove track from its group */
 
-/* Broadcast wrappers: apply an action to every member of the group
- * containing `track`. Used by gesture handlers and pattern replay so
- * patterns recorded under a group automatically follow the group's
- * current membership at playback time. */
+/* Group helpers used by gesture handlers and pattern replay. Play-column
+ * actions broadcast; CUT-page actions choke the group by acting on the
+ * touched track and stopping other members. */
 void     mlr_group_cut(int track, int column);
 void     mlr_group_stop_track(int track);
 void     mlr_group_set_loop(int track, int col_start, int col_end);
 void     mlr_group_clear_loop(int track);
+void     mlr_choke_group_cut(int track, int column);
+void     mlr_choke_group_set_loop(int track, int col_start, int col_end);
 
 /* ---- Pattern engine (core 0) ---- */
 void     mlr_pattern_event(const mlr_event_t *e);  /* record into active patterns + recalls */
