@@ -299,6 +299,18 @@ public:
 
 	virtual void __not_in_flash("ProcessSample") ProcessSample() override
 	{
+#ifdef MLR_PERF_PROFILING
+		mlr_perf_count_process_sample();
+		bool perf_ui_tick = false;
+		struct PerfProcessSampleScope {
+			uint32_t start_us;
+			bool *ui_tick;
+			~PerfProcessSampleScope()
+			{
+				mlr_perf_note_process_sample_us(time_us_32() - start_us, *ui_tick);
+			}
+		} perf_process_sample_scope{time_us_32(), &perf_ui_tick};
+#endif
 		if (rec_start_lockout_samples_ > 0)
 			rec_start_lockout_samples_--;
 
@@ -346,7 +358,27 @@ public:
 			run_ui_control = true;
 		}
 		if (mlr_flushing && !mlr_copying) run_ui_control = false;
+#ifdef MLR_PERF_PROFILING
+		perf_ui_tick = run_ui_control;
+		uint32_t perf_ui_section_start = 0;
+		uint8_t perf_ui_section_probe = 0xFF;
+		if (run_ui_control) {
+			perf_ui_section_probe = perf_ui_section_probe_;
+			perf_ui_section_probe_ = (uint8_t)((perf_ui_section_probe_ + 1u) & (MLR_PERF_UI_SECTIONS - 1u));
+		}
+#define PERF_UI_SECTION_START(section) do { \
+	if (run_ui_control && perf_ui_section_probe == (section)) perf_ui_section_start = time_us_32(); \
+} while (0)
+#define PERF_UI_SECTION_END(section) do { \
+	if (run_ui_control && perf_ui_section_probe == (section)) \
+		mlr_perf_note_ui_section_us((section), time_us_32() - perf_ui_section_start); \
+} while (0)
+#else
+#define PERF_UI_SECTION_START(section) do { (void)(section); } while (0)
+#define PERF_UI_SECTION_END(section) do { (void)(section); } while (0)
+#endif
 
+		PERF_UI_SECTION_START(0);
 		if (run_ui_control) {
 			grid.poll();
 			if (!mlr_flushing) {
@@ -354,8 +386,10 @@ public:
 				process_bottom_master_control();
 			}
 		}
+		PERF_UI_SECTION_END(0);
 
 		/* ---- recording state machine: armed track + switch position ---- */
+		PERF_UI_SECTION_START(1);
 		int sw = SwitchVal();
 		bool rec_modifier = (sw == Switch::Up || sw == Switch::Down);
 
@@ -451,7 +485,9 @@ public:
 		}
 		if (delete_reset_flash_samples_remaining_ > 0)
 			delete_reset_flash_samples_remaining_--;
+		PERF_UI_SECTION_END(1);
 
+		PERF_UI_SECTION_START(2);
 #ifdef MLR_STEREO
 		/* ---- Stereo: detect mono-pan / balance recording state + poll Y knob for pan ---- */
 		{
@@ -590,8 +626,10 @@ public:
 				}
 			}
 		}
+		PERF_UI_SECTION_END(2);
 
 		/* ---- page navigation + pattern/recall buttons (row 0, always active) ---- */
+		PERF_UI_SECTION_START(3);
 		if (run_ui_control && grid.keyDown() && grid.lastY() == 0) {
 			int col = grid.lastX();
 			bool alt_held = delete_action_held();
@@ -667,8 +705,10 @@ public:
 				play_page = PAGE_CUT;
 			}
 		}
+		PERF_UI_SECTION_END(3);
 
 		/* ---- page interaction (always active) ---- */
+		PERF_UI_SECTION_START(4);
 		if (run_ui_control && !mlr_flushing) {
 			if (play_page == PAGE_REC) {
 				process_gate_hold();  /* REC play/stop/gate/group-dissolve */
@@ -682,8 +722,10 @@ public:
 			else
 				process_page_cut();
 		}
+		PERF_UI_SECTION_END(4);
 
 		/* ---- mix and output ---- */
+		PERF_UI_SECTION_START(5);
 		int knob_main_raw = KnobVal(Knob::Main);
 		if (master_knob_last_raw_ < 0) master_knob_last_raw_ = knob_main_raw;
 		if (!master_knob_takeover_armed_) {
@@ -786,8 +828,10 @@ public:
 		}
 		outL = (outL * (int32_t)master_level) >> 8;
 		outR = (outR * (int32_t)master_level) >> 8;
-		if (outL > 2047)  outL = 2047;  if (outL < -2048) outL = -2048;
-		if (outR > 2047)  outR = 2047;  if (outR < -2048) outR = -2048;
+		if (outL > 2047)  outL = 2047;
+		if (outL < -2048) outL = -2048;
+		if (outR > 2047)  outR = 2047;
+		if (outR < -2048) outR = -2048;
 		AudioOut1((int16_t)outL);
 		AudioOut2((int16_t)outR);
 #else
@@ -825,8 +869,10 @@ public:
 		AudioOut1((int16_t)outL);
 		AudioOut2((int16_t)outR);
 #endif
+		PERF_UI_SECTION_END(5);
 
 		/* ---- tick pattern playback (~5ms resolution) ---- */
+		PERF_UI_SECTION_START(6);
 		if (!mlr_flushing || mlr_copying) {
 			pat_counter++;
 			if (pat_counter >= PAT_TICK_INTERVAL) {
@@ -835,8 +881,10 @@ public:
 				mlr_pattern_tick(now_ms);
 			}
 		}
+		PERF_UI_SECTION_END(6);
 
 		/* ---- update LEDs (sub-sampled) ---- */
+		PERF_UI_SECTION_START(7);
 		if (!mlr_flushing || mlr_copying) {
 			led_counter++;
 			if (led_counter >= LED_UPDATE_INTERVAL) {
@@ -872,14 +920,16 @@ public:
 #endif
 				}
 
-				if (mlr_flushing && mlr_copying)
-					update_grid_flushing();
-				else if (play_page == PAGE_REC)
-					update_grid_page_rec();
-				else
-					update_grid_page_cut();
+				grid_redraw_phase_ = 0;
+				grid_redraw_page_ = play_page;
+				grid_redraw_flushing_ = (mlr_flushing && mlr_copying);
 			}
+			if (run_ui_control && grid_redraw_phase_ >= 0)
+				update_grid_slice();
 		}
+		PERF_UI_SECTION_END(7);
+#undef PERF_UI_SECTION_START
+#undef PERF_UI_SECTION_END
 
 		/* ---- detect flush completion: stop gated tracks from auto-playing ---- */
 		if (was_flushing_ && !mlr_flushing && prev_rec_track >= 0) {
@@ -1002,7 +1052,13 @@ private:
 	bool       gate_entered[MLR_NUM_TRACKS] = {}; /* true once hold crossed threshold */
 	bool       small_grid_ = false;  /* true when connected grid is 8x8 or smaller */
 	bool       grid_size_latched_ = false;  /* true once grid size has been detected */
+	int8_t     grid_redraw_phase_ = -1;  /* slices one grid redraw across UI ticks */
+	int        grid_redraw_page_ = PAGE_REC;
+	bool       grid_redraw_flushing_ = false;
 	uint16_t   gate_pulse = 0;       /* free-running counter for gate LED pulse */
+#ifdef MLR_PERF_PROFILING
+	uint8_t    perf_ui_section_probe_ = 0;
+#endif
 
 	/* Track-group gesture and visual-feedback state. */
 	uint8_t    group_gesture_mask_ = 0;           /* tracks participating in current multi-hold gesture */
@@ -1275,6 +1331,7 @@ private:
 
 	void gridless_apply_mix_matrix(bool switch_middle)
 	{
+		(void)switch_middle;
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 			gl_playback_track_gain_frac_[t] = 0;
 			mlr_tracks[t].muted = false;
@@ -1777,7 +1834,7 @@ private:
 	/* Helper: build and dispatch an event (records into patterns too)  */
 	/* ================================================================ */
 
-	void __not_in_flash("dispatch_event") dispatch_event(uint8_t type, uint8_t track, int8_t a, int8_t b)
+	__attribute__((noinline, noclone)) void __not_in_flash("dispatch_event") dispatch_event(uint8_t type, uint8_t track, int8_t a, int8_t b)
 	{
 		/* any manual interaction deselects the active recall,
 		 * except recall events themselves (which set it). */
@@ -2592,7 +2649,7 @@ private:
 			case MLR_PAT_STOPPED:   b = 6;  break;
 			default:                b = 2;  break;
 			}
-			grid.led(p + pcs, 0, b);
+			grid.frameLedUnchecked(p + pcs, 0, b);
 		}
 
 		if (!small_grid_) {
@@ -2602,7 +2659,7 @@ private:
 				if (mlr_recalls[r].recording)         b = (pat_blink & (mlr_recalls[r].count ? 2 : 4)) ? 15 : 0;
 				else if (mlr_recall_active == r)      b = 15;  /* selected */
 				else if (mlr_recalls[r].has_data)     b = 5;   /* has data */
-				grid.led(r + 9, 0, b);
+				grid.frameLedUnchecked(r + 9, 0, b);
 			}
 		}
 
@@ -2615,7 +2672,7 @@ private:
 		} else {
 			alt_bright = delete_held() ? 12 : 2;
 		}
-		grid.led(ac, 0, alt_bright);
+		grid.frameLedUnchecked(ac, 0, alt_bright);
 	}
 
 	/* Grid bottom row (row 7 when 6 tracks): master gradient bar.
@@ -2635,7 +2692,7 @@ private:
 		for (uint32_t i = 0; i < master_segs; i++) {
 			int col = (gw - 1) - (int)i;
 			uint8_t g = (uint8_t)(2u + (i * 10u) / (uint32_t)(gw - 1));  /* smooth 2..12 ramp */
-			grid.led(col, row, g);
+			grid.frameLedUnchecked(col, row, g);
 		}
 	}
 
@@ -2643,10 +2700,21 @@ private:
 	/* Grid display: REC page                                          */
 	/* ================================================================ */
 
-	void __not_in_flash("update_grid_page_rec") update_grid_page_rec()
+	void __not_in_flash("update_grid_page_rec_slice") update_grid_page_rec_slice(uint8_t phase)
 	{
 		if (!grid.ready()) return;
-		grid.clear();
+		if (phase == 0) {
+			grid.frameClear();
+			grid.frameLedUnchecked(0, 0, 15);  /* REC = active */
+			grid.frameLedUnchecked(1, 0,  4);  /* CUT = dim */
+			draw_row0_nav();
+			return;
+		}
+		if (phase > MLR_NUM_TRACKS) {
+			draw_bottom_vu_row();
+			grid.submitFrame();
+			return;
+		}
 
 		bool recording = (mlr_rec_track >= 0);
 		bool rec_pos = (SwitchVal() == Switch::Up || SwitchVal() == Switch::Down);
@@ -2656,12 +2724,8 @@ private:
 		bool alt_held = delete_action_held();
 		uint8_t cycled = alt_held ? cycled_group_mask() : 0;
 
-		/* row 0: navigation — REC highlighted */
-		grid.led(0, 0, 15);  /* REC = active */
-		grid.led(1, 0,  4);  /* CUT = dim */
-		draw_row0_nav();
-
-		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+		int t = (int)phase - 1;
+		{
 			int row = t + 1;
 
 			bool has = mlr_tracks[t].has_content;
@@ -2686,7 +2750,7 @@ private:
 			}
 			if (small_grid_) {
 				/* 8x8: col 0 alone keeps today's record-arm semantics. */
-				grid.led(0, row, state_bright);
+				grid.frameLedUnchecked(0, row, state_bright);
 			} else {
 				uint8_t ch = mlr_tracks[t].recorded_channel;
 				bool user_chosen = mlr_tracks[t].channel_user_chosen;
@@ -2750,8 +2814,8 @@ private:
 					bool on = (copy_flash_samples_remaining_ / copy_flash_period_) & 1;
 					col0_bright = on ? 15 : 0;
 				}
-				grid.led(0, row, col0_bright);
-				grid.led(1, row, col1_bright);
+				grid.frameLedUnchecked(0, row, col0_bright);
+				grid.frameLedUnchecked(1, row, col1_bright);
 			}
 
 			/* play col: play/stop/gate indicator */
@@ -2772,7 +2836,7 @@ private:
 				bool on = (group_flash_samples_remaining_ / group_flash_period_) & 1;
 				play_bright = on ? 15 : 0;
 			}
-			grid.led(pc, row, play_bright);
+			grid.frameLedUnchecked(pc, row, play_bright);
 
 			if (small_grid_) {
 				/* 8x8 REC: col 1=reverse, cols 2-6=speed */
@@ -2781,20 +2845,20 @@ private:
 					uint32_t progress = mlr_get_rec_progress() * 6 / record_progress_limit();
 					if (progress > 6) progress = 6;
 					for (uint32_t c = 0; c < progress; c++)
-						grid.led(c + 1, row, 12);
+						grid.frameLedUnchecked(c + 1, row, 12);
 					if (progress < 6)
-						grid.led(progress + 1, row, (rec_blink & 2) ? 8 : 0);
+						grid.frameLedUnchecked(progress + 1, row, (rec_blink & 2) ? 8 : 0);
 				} else {
 					/* reverse: col 1 */
-					grid.led(1, row, mlr_tracks[t].reverse ? 12 : 4);
+					grid.frameLedUnchecked(1, row, mlr_tracks[t].reverse ? 12 : 4);
 
 					/* speed: cols 2-6 (5 slots) */
 					int scol = speed_shift_to_col_small(mlr_tracks[t].speed_shift);
 					if (scol >= 2 && scol <= 6)
-						grid.led(scol, row, 14);
+						grid.frameLedUnchecked(scol, row, 14);
 					/* dim 1x indicator (col 4) when not selected */
 					if (scol != 4)
-						grid.led(4, row, 3);
+						grid.frameLedUnchecked(4, row, 3);
 				}
 			} else {
 				/* 16x8 REC: cols 0-1=channel+arm indicator (drawn above),
@@ -2804,9 +2868,9 @@ private:
 					uint32_t progress = mlr_get_rec_progress() * 5 / record_progress_limit();
 					if (progress > 5) progress = 5;
 					for (uint32_t c = 0; c < progress; c++)
-						grid.led(c + 2, row, 12);
+						grid.frameLedUnchecked(c + 2, row, 12);
 					if (progress < 5)
-						grid.led(progress + 2, row, (rec_blink & 2) ? 8 : 0);
+						grid.frameLedUnchecked(progress + 2, row, (rec_blink & 2) ? 8 : 0);
 				} else if (has || armed) {
 					/* volume mixer: 5 slots on cols 2..6, slot 1 (col 3) = unity */
 					static uint8_t vol_gradient[MLR_NUM_VOL_SLOTS] = { 12, 9, 6, 3, 1 };
@@ -2814,48 +2878,52 @@ private:
 					if (cur_slot >= MLR_NUM_VOL_SLOTS) cur_slot = MLR_NUM_VOL_SLOTS - 1;
 					for (int c = 0; c < MLR_NUM_VOL_SLOTS; c++) {
 						if ((uint8_t)c == cur_slot)
-							grid.led(c + 2, row, 14);  /* active level */
+							grid.frameLedUnchecked(c + 2, row, 14);  /* active level */
 						else if ((uint8_t)c > cur_slot)
-							grid.led(c + 2, row, vol_gradient[c]);
+							grid.frameLedUnchecked(c + 2, row, vol_gradient[c]);
 						/* cols above current level stay off */
 					}
 				}
 
-				grid.led(7,  row, mlr_tracks[t].reverse ? 12 : 4);
+				grid.frameLedUnchecked(7, row, mlr_tracks[t].reverse ? 12 : 4);
 
 				/* cols 8–14: speed selection (col 11 = 1x) — show for all tracks */
 				int speed_col = mlr_tracks[t].speed_shift + 11;
 				if (speed_col >= 8 && speed_col <= 14)
-					grid.led(speed_col, row, 14);
+					grid.frameLedUnchecked(speed_col, row, 14);
 				if (speed_col != 11)
-					grid.led(11, row, 3);  /* dim 1x indicator when not selected */
+					grid.frameLedUnchecked(11, row, 3);  /* dim 1x indicator when not selected */
 			}
 		}
-		draw_bottom_vu_row();
-		grid.markDirty();
 	}
 
 	/* ================================================================ */
 	/* Grid display: CUT page                                          */
 	/* ================================================================ */
 
-	void __not_in_flash("update_grid_page_cut") update_grid_page_cut()
+	void __not_in_flash("update_grid_page_cut_slice") update_grid_page_cut_slice(uint8_t phase)
 	{
 		if (!grid.ready()) return;
-		grid.clear();
+		if (phase == 0) {
+			grid.frameClear();
+			grid.frameLedUnchecked(0, 0,  4);  /* REC = dim */
+			grid.frameLedUnchecked(1, 0, 15);  /* CUT = active */
+			draw_row0_nav();
+			return;
+		}
+		if (phase > MLR_NUM_TRACKS) {
+			draw_bottom_vu_row();
+			grid.submitFrame();
+			return;
+		}
 
 		bool recording = (mlr_rec_track >= 0);
 
 		int cs = cut_col_start();
 		int nc = cut_cols();
 
-		/* row 0: navigation — CUT highlighted */
-		grid.led(0, 0,  4);  /* REC = dim */
-		grid.led(1, 0, 15);  /* CUT = active */
-		draw_row0_nav();
-
-		/* rows 1–6: playhead chase */
-		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+		int t = (int)phase - 1;
+		{
 			int row = t + 1;
 			bool has = mlr_tracks[t].has_content;
 			bool actively_rec = (recording && t == mlr_rec_track);
@@ -2865,10 +2933,10 @@ private:
 				uint32_t progress = mlr_get_rec_progress() * (uint32_t)nc / record_progress_limit();
 				if (progress > (uint32_t)nc) progress = (uint32_t)nc;
 				for (uint32_t c = 0; c < progress; c++)
-					grid.led((int)c + cs, row, 12);
+					grid.frameLedUnchecked((int)c + cs, row, 12);
 				if (progress < (uint32_t)nc)
-					grid.led((int)progress + cs, row, (rec_blink & 2) ? 8 : 0);
-				continue;
+					grid.frameLedUnchecked((int)progress + cs, row, (rec_blink & 2) ? 8 : 0);
+				return;
 			}
 
 			/* show loop zone dim even when stopped (only if sub-loop, not full track) */
@@ -2879,25 +2947,23 @@ private:
 				int ds = cut_internal_to_grid(loop_s);
 				int de = cut_internal_to_grid(loop_e);
 				for (int c = ds; c <= de; c++)
-					grid.led(c, row, 4);
+					grid.frameLedUnchecked(c, row, 4);
 			}
 
 			/* Gate-paused grouped tracks keep showing their frozen playhead. */
-			if (!has || (!mlr_tracks[t].playing && !track_gate_paused(t))) continue;
+			if (!has || (!mlr_tracks[t].playing && !track_gate_paused(t))) return;
 
 			int icol = mlr_get_column(t);  /* 0–15 internal */
 			int gcol = cut_internal_to_grid(icol);
-			grid.led(gcol, row, 15);
+			grid.frameLedUnchecked(gcol, row, 15);
 		}
-		draw_bottom_vu_row();
-		grid.markDirty();
 	}
 
 	/* ---- grid display: flushing to flash ---- */
 	void __not_in_flash("update_grid_flushing") update_grid_flushing()
 	{
 		if (!grid.ready()) return;
-		grid.clear();
+		grid.frameClear();
 
 		int nc = cut_cols();
 		int cs = cut_col_start();
@@ -2910,10 +2976,26 @@ private:
 			if (dist < 0) dist = -dist;
 			int bright = 15 - dist * 2;
 			if (bright < 0) bright = 0;
-			grid.led(c + cs, row, bright);
+			grid.frameLedUnchecked(c + cs, row, bright);
 		}
 		draw_bottom_vu_row();
-		grid.markDirty();
+		grid.submitFrame();
+	}
+
+	void __not_in_flash("update_grid_slice") update_grid_slice()
+	{
+		uint8_t phase = (uint8_t)grid_redraw_phase_;
+		if (grid_redraw_flushing_)
+			update_grid_flushing();
+		else if (grid_redraw_page_ == PAGE_REC)
+			update_grid_page_rec_slice(phase);
+		else
+			update_grid_page_cut_slice(phase);
+
+		if (grid_redraw_flushing_ || phase >= MLR_NUM_TRACKS + 1)
+			grid_redraw_phase_ = -1;
+		else
+			grid_redraw_phase_++;
 	}
 };
 

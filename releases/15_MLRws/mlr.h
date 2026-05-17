@@ -69,6 +69,8 @@ extern "C" {
 #endif
 #define MLR_DECLICK_SHIFT      5
 #define MLR_DECLICK_SAMPLES    (1u << MLR_DECLICK_SHIFT)  /* 32-sample crossfade */
+#define MLR_SEEK_PRIME_SAMPLES (MLR_KEYFRAME_INTERVAL * 2)  /* post-seek refill to cover direction changes */
+#define MLR_PERF_UI_SECTIONS   8
 
 /* Recording page ring (ADPCM pages, core 0 fills, core 1 writes) */
 #define MLR_PAGE_SIZE          256
@@ -244,6 +246,9 @@ typedef struct {
 
 	/* seek target (set by core 0, consumed by core 1) */
 	volatile uint32_t seek_target_sample;
+	volatile bool     seek_reverse_pending;
+	volatile bool     seek_reverse_target;
+	volatile bool     seek_start_pending;
 
 	/* loop-a-section: sub-loop boundaries (set by core 0) */
 	bool           loop_active;
@@ -310,6 +315,58 @@ extern uint8_t         mlr_track_groups[MLR_NUM_TRACKS];
 
 /* Per-track gated-playback flag — toggled by the UI, persisted with the scene. */
 extern bool            mlr_gate_mode[MLR_NUM_TRACKS];
+
+#ifdef MLR_PERF_PROFILING
+typedef struct {
+	volatile uint32_t process_sample_count;
+	volatile uint32_t pcm_ring_min[MLR_NUM_TRACKS];
+	volatile uint32_t pcm_underruns[MLR_NUM_TRACKS];
+	volatile uint32_t page_ring_max;
+	volatile uint32_t seek_count[MLR_NUM_TRACKS];
+	volatile uint32_t grid_frame_drops;
+	volatile uint32_t rec_page_flush_count;
+	volatile uint32_t scene_save_count;
+	volatile uint32_t refill_max_us;
+	volatile uint32_t seek_max_us;
+	volatile uint32_t flash_erase_max_us;
+	volatile uint32_t flash_program_max_us;
+} mlr_perf_t;
+
+extern volatile mlr_perf_t mlr_perf;
+extern volatile uint32_t mlr_perf_reset_request;
+extern volatile uint32_t mlr_perf_process_sample_count;
+extern volatile uint32_t mlr_perf_process_sample_last_us;
+extern volatile uint32_t mlr_perf_process_sample_max_us;
+extern volatile uint32_t mlr_perf_process_sample_overruns;
+extern volatile uint32_t mlr_perf_process_sample_ui_max_us;
+extern volatile uint32_t mlr_perf_process_sample_ui_overruns;
+extern volatile uint32_t mlr_perf_process_sample_audio_max_us;
+extern volatile uint32_t mlr_perf_process_sample_audio_overruns;
+extern volatile uint32_t mlr_perf_ui_section_last_us[MLR_PERF_UI_SECTIONS];
+extern volatile uint32_t mlr_perf_ui_section_max_us[MLR_PERF_UI_SECTIONS];
+extern volatile uint32_t mlr_perf_ui_section_overruns[MLR_PERF_UI_SECTIONS];
+extern volatile uint32_t mlr_perf_pcm_ring_avail[MLR_NUM_TRACKS];
+extern volatile uint32_t mlr_perf_pcm_ring_min[MLR_NUM_TRACKS];
+extern volatile uint32_t mlr_perf_pcm_underruns[MLR_NUM_TRACKS];
+extern volatile uint32_t mlr_perf_seek_underruns[MLR_NUM_TRACKS];
+extern volatile uint32_t mlr_perf_reverse_toggle_avail[MLR_NUM_TRACKS];
+extern volatile uint32_t mlr_perf_reverse_handoff_avail[MLR_NUM_TRACKS];
+extern volatile uint32_t mlr_perf_reverse_handoff_count[MLR_NUM_TRACKS];
+extern volatile uint32_t mlr_perf_page_ring_max;
+extern volatile uint32_t mlr_perf_seek_count[MLR_NUM_TRACKS];
+extern volatile uint32_t mlr_perf_grid_frame_drops;
+extern volatile uint32_t mlr_perf_rec_page_flush_count;
+extern volatile uint32_t mlr_perf_scene_save_count;
+extern volatile uint32_t mlr_perf_refill_max_us;
+extern volatile uint32_t mlr_perf_seek_max_us;
+extern volatile uint32_t mlr_perf_flash_erase_max_us;
+extern volatile uint32_t mlr_perf_flash_program_max_us;
+void mlr_perf_reset(void);
+void mlr_perf_count_grid_frame_drop(void);
+void mlr_perf_count_process_sample(void);
+void mlr_perf_note_process_sample_us(uint32_t elapsed_us, bool ui_tick);
+void mlr_perf_note_ui_section_us(uint32_t section, uint32_t elapsed_us);
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Core 0 API                                                         */

@@ -36,6 +36,196 @@ mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
 volatile bool   mlr_scene_saving = false;
 volatile int    mlr_recall_active = -1;
 
+static inline uint32_t page_ring_used_pages(void);
+
+#ifdef MLR_PERF_PROFILING
+volatile mlr_perf_t mlr_perf;
+volatile uint32_t mlr_perf_reset_request;
+volatile uint32_t mlr_perf_process_sample_count;
+volatile uint32_t mlr_perf_process_sample_last_us;
+volatile uint32_t mlr_perf_process_sample_max_us;
+volatile uint32_t mlr_perf_process_sample_overruns;
+volatile uint32_t mlr_perf_process_sample_ui_max_us;
+volatile uint32_t mlr_perf_process_sample_ui_overruns;
+volatile uint32_t mlr_perf_process_sample_audio_max_us;
+volatile uint32_t mlr_perf_process_sample_audio_overruns;
+volatile uint32_t mlr_perf_ui_section_last_us[MLR_PERF_UI_SECTIONS];
+volatile uint32_t mlr_perf_ui_section_max_us[MLR_PERF_UI_SECTIONS];
+volatile uint32_t mlr_perf_ui_section_overruns[MLR_PERF_UI_SECTIONS];
+volatile uint32_t mlr_perf_pcm_ring_avail[MLR_NUM_TRACKS];
+volatile uint32_t mlr_perf_pcm_ring_min[MLR_NUM_TRACKS];
+volatile uint32_t mlr_perf_pcm_underruns[MLR_NUM_TRACKS];
+volatile uint32_t mlr_perf_seek_underruns[MLR_NUM_TRACKS];
+volatile uint32_t mlr_perf_reverse_toggle_avail[MLR_NUM_TRACKS];
+volatile uint32_t mlr_perf_reverse_handoff_avail[MLR_NUM_TRACKS];
+volatile uint32_t mlr_perf_reverse_handoff_count[MLR_NUM_TRACKS];
+volatile uint32_t mlr_perf_page_ring_max;
+volatile uint32_t mlr_perf_seek_count[MLR_NUM_TRACKS];
+volatile uint32_t mlr_perf_grid_frame_drops;
+volatile uint32_t mlr_perf_rec_page_flush_count;
+volatile uint32_t mlr_perf_scene_save_count;
+volatile uint32_t mlr_perf_refill_max_us;
+volatile uint32_t mlr_perf_seek_max_us;
+volatile uint32_t mlr_perf_flash_erase_max_us;
+volatile uint32_t mlr_perf_flash_program_max_us;
+
+static inline void perf_update_max(volatile uint32_t *dst, uint32_t value)
+{
+	if (value > *dst) *dst = value;
+}
+
+static inline void perf_note_pcm_avail(int track, uint32_t avail)
+{
+	if (track < 0 || track >= MLR_NUM_TRACKS) return;
+	if ((mlr_perf_process_sample_count & 7u) != (uint32_t)track) return;
+	mlr_perf_pcm_ring_avail[track] = avail;
+	if (avail < mlr_perf.pcm_ring_min[track]) {
+		mlr_perf.pcm_ring_min[track] = avail;
+		mlr_perf_pcm_ring_min[track] = avail;
+	}
+}
+
+static inline void perf_service_reset_request(void)
+{
+	if (mlr_perf_reset_request) mlr_perf_reset();
+}
+
+static inline void perf_note_page_ring_used(void)
+{
+	uint32_t used = page_ring_used_pages();
+	perf_update_max(&mlr_perf.page_ring_max, used);
+	perf_update_max(&mlr_perf_page_ring_max, used);
+}
+
+static void perf_flash_erase(uint32_t off, size_t bytes)
+{
+	uint32_t start = time_us_32();
+	flash_range_erase(off, bytes);
+	uint32_t elapsed = time_us_32() - start;
+	perf_update_max(&mlr_perf.flash_erase_max_us, elapsed);
+	perf_update_max(&mlr_perf_flash_erase_max_us, elapsed);
+}
+
+static void perf_flash_program(uint32_t off, const uint8_t *data, size_t bytes)
+{
+	uint32_t start = time_us_32();
+	flash_range_program(off, data, bytes);
+	uint32_t elapsed = time_us_32() - start;
+	perf_update_max(&mlr_perf.flash_program_max_us, elapsed);
+	perf_update_max(&mlr_perf_flash_program_max_us, elapsed);
+}
+
+void mlr_perf_reset(void)
+{
+	memset((void *)&mlr_perf, 0, sizeof(mlr_perf));
+	mlr_perf_reset_request = 0;
+	mlr_perf_process_sample_count = 0;
+	mlr_perf_process_sample_last_us = 0;
+	mlr_perf_process_sample_max_us = 0;
+	mlr_perf_process_sample_overruns = 0;
+	mlr_perf_process_sample_ui_max_us = 0;
+	mlr_perf_process_sample_ui_overruns = 0;
+	mlr_perf_process_sample_audio_max_us = 0;
+	mlr_perf_process_sample_audio_overruns = 0;
+	memset((void *)mlr_perf_ui_section_last_us, 0, sizeof(mlr_perf_ui_section_last_us));
+	memset((void *)mlr_perf_ui_section_max_us, 0, sizeof(mlr_perf_ui_section_max_us));
+	memset((void *)mlr_perf_ui_section_overruns, 0, sizeof(mlr_perf_ui_section_overruns));
+	memset((void *)mlr_perf_pcm_ring_avail, 0, sizeof(mlr_perf_pcm_ring_avail));
+	memset((void *)mlr_perf_pcm_underruns, 0, sizeof(mlr_perf_pcm_underruns));
+	memset((void *)mlr_perf_seek_underruns, 0, sizeof(mlr_perf_seek_underruns));
+	memset((void *)mlr_perf_reverse_toggle_avail, 0, sizeof(mlr_perf_reverse_toggle_avail));
+	memset((void *)mlr_perf_reverse_handoff_avail, 0, sizeof(mlr_perf_reverse_handoff_avail));
+	memset((void *)mlr_perf_reverse_handoff_count, 0, sizeof(mlr_perf_reverse_handoff_count));
+	mlr_perf_page_ring_max = 0;
+	memset((void *)mlr_perf_seek_count, 0, sizeof(mlr_perf_seek_count));
+	mlr_perf_grid_frame_drops = 0;
+	mlr_perf_rec_page_flush_count = 0;
+	mlr_perf_scene_save_count = 0;
+	mlr_perf_refill_max_us = 0;
+	mlr_perf_seek_max_us = 0;
+	mlr_perf_flash_erase_max_us = 0;
+	mlr_perf_flash_program_max_us = 0;
+	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+		mlr_perf.pcm_ring_min[t] = MLR_RING_SAMPLES;
+		mlr_perf_pcm_ring_min[t] = MLR_RING_SAMPLES;
+	}
+}
+
+void mlr_perf_note_ui_section_us(uint32_t section, uint32_t elapsed_us)
+{
+	if (section >= MLR_PERF_UI_SECTIONS) return;
+	mlr_perf_ui_section_last_us[section] = elapsed_us;
+	if (elapsed_us > mlr_perf_ui_section_max_us[section])
+		mlr_perf_ui_section_max_us[section] = elapsed_us;
+	if (elapsed_us > 20)
+		mlr_perf_ui_section_overruns[section]++;
+}
+
+void mlr_perf_count_grid_frame_drop(void)
+{
+	mlr_perf.grid_frame_drops++;
+	mlr_perf_grid_frame_drops++;
+}
+
+void mlr_perf_count_process_sample(void)
+{
+	mlr_perf.process_sample_count++;
+	mlr_perf_process_sample_count++;
+}
+
+void mlr_perf_note_process_sample_us(uint32_t elapsed_us, bool ui_tick)
+{
+	mlr_perf_process_sample_last_us = elapsed_us;
+	if (elapsed_us > mlr_perf_process_sample_max_us)
+		mlr_perf_process_sample_max_us = elapsed_us;
+	if (elapsed_us > 20) {
+		mlr_perf_process_sample_overruns++;
+		if (ui_tick)
+			mlr_perf_process_sample_ui_overruns++;
+		else
+			mlr_perf_process_sample_audio_overruns++;
+	}
+	if (ui_tick) {
+		if (elapsed_us > mlr_perf_process_sample_ui_max_us)
+			mlr_perf_process_sample_ui_max_us = elapsed_us;
+	} else {
+		if (elapsed_us > mlr_perf_process_sample_audio_max_us)
+			mlr_perf_process_sample_audio_max_us = elapsed_us;
+	}
+}
+
+#define PERF_NOTE_PCM_AVAIL(track, avail) perf_note_pcm_avail((track), (avail))
+#define PERF_NOTE_PCM_UNDERRUN(track) do { \
+	mlr_perf.pcm_underruns[(track)]++; \
+	mlr_perf_pcm_underruns[(track)]++; \
+	if (mlr_tracks[(track)].fill_seek_pending || mlr_tracks[(track)].seek_reverse_pending) \
+		mlr_perf_seek_underruns[(track)]++; \
+} while (0)
+#define PERF_NOTE_REVERSE_TOGGLE(track) do { \
+	if ((track) >= 0 && (track) < MLR_NUM_TRACKS) \
+		mlr_perf_reverse_toggle_avail[(track)] = pcm_ring_avail(&mlr_tracks[(track)].pcm); \
+} while (0)
+#define PERF_NOTE_REVERSE_HANDOFF(track, avail) do { \
+	if ((track) >= 0 && (track) < MLR_NUM_TRACKS) { \
+		mlr_perf_reverse_handoff_avail[(track)] = (avail); \
+		mlr_perf_reverse_handoff_count[(track)]++; \
+	} \
+} while (0)
+#define PERF_NOTE_PAGE_RING_USED() perf_note_page_ring_used()
+#define PERF_FLASH_ERASE(off, bytes) perf_flash_erase((off), (bytes))
+#define PERF_FLASH_PROGRAM(off, data, bytes) perf_flash_program((off), (data), (bytes))
+#define PERF_SERVICE_RESET_REQUEST() perf_service_reset_request()
+#else
+#define PERF_NOTE_PCM_AVAIL(track, avail) do { (void)(track); (void)(avail); } while (0)
+#define PERF_NOTE_PCM_UNDERRUN(track) do { (void)(track); } while (0)
+#define PERF_NOTE_REVERSE_TOGGLE(track) do { (void)(track); } while (0)
+#define PERF_NOTE_REVERSE_HANDOFF(track, avail) do { (void)(track); (void)(avail); } while (0)
+#define PERF_NOTE_PAGE_RING_USED() do { } while (0)
+#define PERF_FLASH_ERASE(off, bytes) flash_range_erase((off), (bytes))
+#define PERF_FLASH_PROGRAM(off, data, bytes) flash_range_program((off), (data), (bytes))
+#define PERF_SERVICE_RESET_REQUEST() do { } while (0)
+#endif
+
 /* Per-track group membership bitmask. Invariant: every member of a group
  * has the same mask; the mask always contains the member's own bit.
  * Default = solo, i.e. mlr_track_groups[t] == (1 << t). */
@@ -79,6 +269,9 @@ static volatile bool scene_save_pending = false;
 static int           scene_save_sector  = 0;   /* 0..MLR_SCENE_SECTORS-1 */
 static bool          scene_sector_erased = false;
 static int           scene_page_idx     = 0;   /* 0..pages_per_sector-1 */
+static uint32_t      scene_save_bytes = 0;
+static uint32_t      scene_save_total_pages = 0;
+static uint32_t      scene_save_total_sectors = 0;
 #define SCENE_PAGES_PER_SECTOR (MLR_SECTOR_SIZE / MLR_PAGE_SIZE)  /* 16 */
 
 /* ------------------------------------------------------------------ */
@@ -333,6 +526,9 @@ void mlr_init(void)
 
 	mlr_groups_default();
 	memset(mlr_gate_mode, 0, sizeof(mlr_gate_mode));
+#ifdef MLR_PERF_PROFILING
+	mlr_perf_reset();
+#endif
 
 	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 		const mlr_track_header_t *hdr = (const mlr_track_header_t *)
@@ -349,6 +545,7 @@ void mlr_init(void)
 		tr->speed_accum = 0;
 		reset_track_audio_state(tr);
 		tr->reverse     = false;
+		tr->seek_reverse_pending = false;
 		tr->volume_slot = 1;
 		tr->volume_frac = 256;
 		tr->volume_target = 256;
@@ -387,6 +584,8 @@ void mlr_init(void)
 				}
 			}
 			tr->fill_seek_pending = false;
+			tr->seek_reverse_pending = false;
+			tr->seek_start_pending = false;
 
 		}
 	}
@@ -416,6 +615,8 @@ void mlr_rescan_track(int track)
 	tr->speed_accum = 0;
 	reset_track_audio_state(tr);
 	tr->reverse     = false;
+	tr->seek_reverse_pending = false;
+	tr->seek_start_pending = false;
 	tr->loop_active = false;
 	tr->volume_slot = 1;
 	tr->volume_frac = 256;
@@ -547,6 +748,7 @@ void __not_in_flash_func(mlr_record_sample)(int16_t sample)
 			mlr_page_ring.fill = 0;
 			__dmb();
 			mlr_page_ring.w++;
+			PERF_NOTE_PAGE_RING_USED();
 		}
 
 		rec_nybble_phase = false;
@@ -591,6 +793,7 @@ void __not_in_flash_func(mlr_record_sample_stereo)(int16_t left, int16_t right)
 		mlr_page_ring.fill = 0;
 		__dmb();
 		mlr_page_ring.w++;
+		PERF_NOTE_PAGE_RING_USED();
 	}
 
 	rec_samples++;
@@ -629,6 +832,7 @@ void __not_in_flash_func(mlr_stop_record)(void)
 		mlr_page_ring.fill = 0;
 		__dmb();
 		mlr_page_ring.w++;
+		PERF_NOTE_PAGE_RING_USED();
 	}
 
 	/* calculate actual ADPCM byte count */
@@ -674,7 +878,9 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 			tr->speed_accum += tr->speed_frac;
 			while (tr->speed_accum >= 256) {
 				tr->speed_accum -= 256;
-				if (pcm_ring_avail(&tr->pcm) > 0) {
+				uint32_t avail = pcm_ring_avail(&tr->pcm);
+				PERF_NOTE_PCM_AVAIL(t, avail);
+				if (avail > 0) {
 					tr->interp_prev[0] = tr->last_pcm[0];
 					tr->last_pcm[0] = tr->pcm.buf[(tr->pcm.r % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS];
 					tr->pcm.r++;
@@ -692,6 +898,8 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 							wrapped = true;
 						}
 					}
+				} else {
+					PERF_NOTE_PCM_UNDERRUN(t);
 				}
 			}
 			if (wrapped) begin_track_declick(tr, false);
@@ -702,6 +910,7 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 		int32_t sample_out = 0;
 		if (!tr->stop_pending) {
 			uint32_t avail = pcm_ring_avail(&tr->pcm);
+			PERF_NOTE_PCM_AVAIL(t, avail);
 			int16_t x0 = tr->last_pcm[0];
 			int16_t x1 = x0;
 			if (avail > 0) {
@@ -772,7 +981,9 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 			tr->speed_accum += tr->speed_frac;
 			while (tr->speed_accum >= 256) {
 				tr->speed_accum -= 256;
-				if (pcm_ring_avail(&tr->pcm) > 0) {
+				uint32_t avail = pcm_ring_avail(&tr->pcm);
+				PERF_NOTE_PCM_AVAIL(t, avail);
+				if (avail > 0) {
 					tr->interp_prev[0] = tr->last_pcm[0];
 					tr->last_pcm[0] = tr->pcm.buf[(tr->pcm.r % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS];
 					tr->pcm.r++;
@@ -790,6 +1001,8 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 							wrapped = true;
 						}
 					}
+				} else {
+					PERF_NOTE_PCM_UNDERRUN(t);
 				}
 			}
 			if (wrapped) begin_track_declick(tr, false);
@@ -798,6 +1011,7 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 		int32_t sample_out = 0;
 		if (!tr->stop_pending) {
 			uint32_t avail = pcm_ring_avail(&tr->pcm);
+			PERF_NOTE_PCM_AVAIL(t, avail);
 			int16_t x0 = tr->last_pcm[0];
 			int16_t x1 = x0;
 			if (avail > 0) {
@@ -865,7 +1079,9 @@ int16_t __not_in_flash_func(mlr_play_mix_stereo)(uint8_t volume, int16_t *out_ri
 			tr->speed_accum += tr->speed_frac;
 			while (tr->speed_accum >= 256) {
 				tr->speed_accum -= 256;
-				if (pcm_ring_avail(&tr->pcm) > 0) {
+				uint32_t avail = pcm_ring_avail(&tr->pcm);
+				PERF_NOTE_PCM_AVAIL(t, avail);
+				if (avail > 0) {
 					uint32_t idx = (tr->pcm.r % MLR_RING_SAMPLES) * 2;
 					tr->interp_prev[0] = tr->last_pcm[0];
 					tr->interp_prev[1] = tr->last_pcm[1];
@@ -886,6 +1102,8 @@ int16_t __not_in_flash_func(mlr_play_mix_stereo)(uint8_t volume, int16_t *out_ri
 							wrapped = true;
 						}
 					}
+				} else {
+					PERF_NOTE_PCM_UNDERRUN(t);
 				}
 			}
 			if (wrapped) begin_track_declick(tr, false);
@@ -895,6 +1113,7 @@ int16_t __not_in_flash_func(mlr_play_mix_stereo)(uint8_t volume, int16_t *out_ri
 		int32_t sR = 0;
 		if (!tr->stop_pending) {
 			uint32_t avail = pcm_ring_avail(&tr->pcm);
+			PERF_NOTE_PCM_AVAIL(t, avail);
 			int16_t x0L = tr->last_pcm[0];
 			int16_t x0R = tr->last_pcm[1];
 			int16_t x1L = x0L, x1R = x0R;
@@ -942,8 +1161,10 @@ int16_t __not_in_flash_func(mlr_play_mix_stereo)(uint8_t volume, int16_t *out_ri
 
 	mixL = (mixL * (int32_t)volume) >> 8;
 	mixR = (mixR * (int32_t)volume) >> 8;
-	if (mixL > 32767) mixL = 32767; if (mixL < -32768) mixL = -32768;
-	if (mixR > 32767) mixR = 32767; if (mixR < -32768) mixR = -32768;
+	if (mixL > 32767) mixL = 32767;
+	if (mixL < -32768) mixL = -32768;
+	if (mixR > 32767) mixR = 32767;
+	if (mixR < -32768) mixR = -32768;
 	*out_right = (int16_t)(mixR >> 4);
 	return (int16_t)(mixL >> 4);
 }
@@ -974,14 +1195,14 @@ void __not_in_flash_func(mlr_cut)(int track, int column)
 	if (target >= tr->length_samples) target = tr->length_samples - 1;
 
 	/* signal core 1 to refill from this position */
+	bool start_pending = !tr->playing || tr->stop_pending;
 	begin_track_declick(tr, false);
 	tr->seek_target_sample = target;
+	tr->seek_start_pending = start_pending;
 	__dmb();
 	tr->fill_seek_pending = true;
-	tr->playing = true;
-
-	/* flush the PCM ring so core 0 stops reading stale data */
-	tr->pcm.r = tr->pcm.w;
+	if (!start_pending)
+		tr->pcm.r = tr->pcm.w;
 	tr->speed_accum = 0;
 	tr->playhead = target;
 }
@@ -995,13 +1216,15 @@ void __not_in_flash_func(mlr_cut_sample)(int track, uint32_t sample_pos)
 	if (sample_pos >= tr->length_samples)
 		sample_pos = tr->length_samples - 1;
 
+	bool start_pending = !tr->playing || tr->stop_pending;
 	begin_track_declick(tr, false);
 	tr->seek_target_sample = sample_pos;
+	tr->seek_start_pending = start_pending;
 	__dmb();
 	tr->fill_seek_pending = true;
-	tr->playing = true;
 
-	tr->pcm.r = tr->pcm.w;
+	if (!start_pending)
+		tr->pcm.r = tr->pcm.w;
 	tr->speed_accum = 0;
 	tr->playhead = sample_pos;
 }
@@ -1110,13 +1333,14 @@ void __not_in_flash_func(mlr_set_reverse)(int track, bool reverse)
 	if (track < 0 || track >= MLR_NUM_TRACKS) return;
 	mlr_track_t *tr = &mlr_tracks[track];
 	if (tr->reverse == reverse) return;  /* no change */
-	tr->reverse = reverse;
+	PERF_NOTE_REVERSE_TOGGLE(track);
 
 	/* re-seek core 1 fill to current playhead in new direction */
+	tr->seek_reverse_target = reverse;
+	tr->seek_reverse_pending = true;
 	tr->seek_target_sample = tr->playhead;
 	__dmb();
 	tr->fill_seek_pending = true;
-	tr->pcm.r = tr->pcm.w;  /* flush ring */
 }
 
 void __not_in_flash_func(mlr_set_volume)(int track, int slot)
@@ -1157,6 +1381,8 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	tr->fill_sample_pos = 0;
 	tr->fill_seek_pending = false;
 	tr->seek_target_sample = 0;
+	tr->seek_reverse_pending = false;
+	tr->seek_start_pending = false;
 	tr->speed_shift = 0;
 	tr->record_speed_shift = 0;
 	tr->speed_frac  = 256;
@@ -1703,11 +1929,44 @@ static uint32_t crc32_update(uint32_t crc, const uint8_t *data, uint32_t len)
 	return ~crc;
 }
 
+enum {
+	MLR_SCENE_HEADER_BYTES = 8,
+	MLR_SCENE_TRACK_BYTES = MLR_NUM_TRACKS * sizeof(mlr_track_scene_t),
+	MLR_SCENE_PATTERN_META_BYTES = MLR_NUM_PATTERNS * (sizeof(uint16_t) + sizeof(uint32_t)),
+	MLR_SCENE_PATTERN_EVENT_BYTES = MLR_NUM_PATTERNS * MLR_PATTERN_MAX_EVENTS * sizeof(mlr_event_t),
+	MLR_SCENE_RECALL_META_BYTES = MLR_NUM_RECALLS * (sizeof(uint16_t) + sizeof(uint8_t)),
+	MLR_SCENE_RECALL_EVENT_BYTES = MLR_NUM_RECALLS * MLR_PATTERN_MAX_EVENTS * sizeof(mlr_event_t),
+	MLR_SCENE_GROUP_BYTES = 1 + MLR_NUM_TRACKS,
+	MLR_SCENE_GATE_BYTES = 1 + MLR_NUM_TRACKS,
+	MLR_SCENE_CRC_BYTES = 4,
+	MLR_SCENE_MAX_SERIALIZED_BYTES =
+		MLR_SCENE_HEADER_BYTES +
+		MLR_SCENE_TRACK_BYTES +
+		MLR_SCENE_PATTERN_META_BYTES +
+		MLR_SCENE_PATTERN_EVENT_BYTES +
+		MLR_SCENE_RECALL_META_BYTES +
+		MLR_SCENE_RECALL_EVENT_BYTES +
+		MLR_SCENE_GROUP_BYTES +
+		MLR_SCENE_GATE_BYTES +
+		MLR_SCENE_CRC_BYTES,
+	MLR_SCENE_STAGING_BYTES =
+		((MLR_SCENE_MAX_SERIALIZED_BYTES + MLR_PAGE_SIZE - 1) / MLR_PAGE_SIZE) * MLR_PAGE_SIZE
+};
+
+_Static_assert((MLR_SECTOR_SIZE % MLR_PAGE_SIZE) == 0,
+	"MLR_SECTOR_SIZE must be a multiple of MLR_PAGE_SIZE");
+_Static_assert(MLR_SCENE_MAX_SERIALIZED_BYTES <= MLR_SCENE_SECTORS * MLR_SECTOR_SIZE,
+	"MLR scene serialization exceeds reserved flash area");
+_Static_assert(MLR_SCENE_STAGING_BYTES >= MLR_SCENE_MAX_SERIALIZED_BYTES,
+	"MLR scene staging must fit max serialized scene");
+_Static_assert(MLR_SCENE_STAGING_BYTES >= MLR_SECTOR_SIZE,
+	"MLR scene staging must also fit one header sector");
+
 /* Shared staging buffer — used as hdr_staging during header writes
  * and scene_blob during scene save.  Never concurrent. */
 static union {
 	uint8_t hdr[MLR_SECTOR_SIZE];
-	uint8_t scene[MLR_SCENE_SECTORS * MLR_SECTOR_SIZE];
+	uint8_t scene[MLR_SCENE_STAGING_BYTES];
 } __attribute__((aligned(4))) staging_buf;
 
 #define hdr_staging   (staging_buf.hdr)
@@ -1715,7 +1974,7 @@ static union {
 
 static uint32_t scene_serialize(void)
 {
-	memset(scene_blob, 0xFF, MLR_SCENE_SECTORS * MLR_SECTOR_SIZE);
+	memset(scene_blob, 0xFF, MLR_SCENE_STAGING_BYTES);
 	uint32_t pos = 0;
 
 	/* magic */
@@ -1801,6 +2060,9 @@ static uint32_t scene_serialize(void)
 	/* CRC32 over everything so far */
 	uint32_t crc = crc32_update(0, scene_blob, pos);
 	memcpy(&scene_blob[pos], &crc, 4); pos += 4;
+
+	if (pos > MLR_SCENE_STAGING_BYTES)
+		return 0;
 
 	return pos;
 }
@@ -1950,7 +2212,10 @@ void mlr_scene_save_start(void)
 	if (scene_save_pending || mlr_scene_saving) return;
 
 	/* serialize into RAM blob (core 0 context — fast) */
-	scene_serialize();
+	scene_save_bytes = scene_serialize();
+	if (scene_save_bytes == 0) return;
+	scene_save_total_pages = (scene_save_bytes + MLR_PAGE_SIZE - 1) / MLR_PAGE_SIZE;
+	scene_save_total_sectors = (scene_save_bytes + MLR_SECTOR_SIZE - 1) / MLR_SECTOR_SIZE;
 
 	/* kick off the async write on core 1 */
 	scene_save_sector = 0;
@@ -1959,6 +2224,10 @@ void mlr_scene_save_start(void)
 	mlr_scene_saving = true;
 	__dmb();
 	scene_save_pending = true;
+#ifdef MLR_PERF_PROFILING
+	mlr_perf.scene_save_count++;
+	mlr_perf_scene_save_count++;
+#endif
 }
 
 void __not_in_flash_func(mlr_scene_reset_params_to_defaults)(void)
@@ -2040,7 +2309,7 @@ static void seek_fill_to(mlr_track_t *tr, int t, uint32_t target)
 }
 
 /** Decode ADPCM from flash XIP and fill a track's PCM ring (forward). */
-static void fill_pcm_ring_forward(int t)
+static void fill_pcm_ring_forward(int t, uint32_t max_fill)
 {
 	mlr_track_t *tr = &mlr_tracks[t];
 
@@ -2050,6 +2319,7 @@ static void fill_pcm_ring_forward(int t)
 	/* fill up to half the ring per call to stay responsive */
 	uint32_t to_fill = free_samples;
 	if (to_fill > MLR_RING_SAMPLES / 2) to_fill = MLR_RING_SAMPLES / 2;
+	if (max_fill > 0 && to_fill > max_fill) to_fill = max_fill;
 
 	/* determine wrap boundaries (loop-a-section or full track) */
 	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
@@ -2100,7 +2370,7 @@ static void fill_pcm_ring_forward(int t)
  */
 static int16_t rev_decode_tmp[MLR_KEYFRAME_INTERVAL * MLR_NUM_CHANNELS];  /* shared temp, core 1 only */
 
-static void fill_pcm_ring_reverse(int t)
+static void fill_pcm_ring_reverse(int t, uint32_t max_fill)
 {
 	mlr_track_t *tr = &mlr_tracks[t];
 
@@ -2108,6 +2378,7 @@ static void fill_pcm_ring_reverse(int t)
 	uint32_t free_samples = pcm_ring_free(&tr->pcm);
 	uint32_t to_fill = free_samples;
 	if (to_fill > MLR_RING_SAMPLES / 2) to_fill = MLR_RING_SAMPLES / 2;
+	if (max_fill > 0 && to_fill > max_fill) to_fill = max_fill;
 
 	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
@@ -2170,16 +2441,34 @@ static void fill_pcm_ring_reverse(int t)
 	}
 }
 
-/** Dispatch to forward or reverse ring fill. */
-static void fill_pcm_ring(int t)
+/** Dispatch to forward or reverse ring fill. max_fill == 0 uses normal refill budget. */
+static void fill_pcm_ring_limited_dir(int t, uint32_t max_fill, bool reverse)
 {
 	mlr_track_t *tr = &mlr_tracks[t];
-	if (!tr->has_content || !tr->playing) return;
+	if (!tr->has_content) return;
 
-	if (tr->reverse)
-		fill_pcm_ring_reverse(t);
+#ifdef MLR_PERF_PROFILING
+	uint32_t start = time_us_32();
+#endif
+	if (reverse)
+		fill_pcm_ring_reverse(t, max_fill);
 	else
-		fill_pcm_ring_forward(t);
+		fill_pcm_ring_forward(t, max_fill);
+#ifdef MLR_PERF_PROFILING
+	uint32_t elapsed = time_us_32() - start;
+	perf_update_max(&mlr_perf.refill_max_us, elapsed);
+	perf_update_max(&mlr_perf_refill_max_us, elapsed);
+#endif
+}
+
+static void fill_pcm_ring_limited(int t, uint32_t max_fill)
+{
+	fill_pcm_ring_limited_dir(t, max_fill, mlr_tracks[t].reverse);
+}
+
+static void fill_pcm_ring(int t)
+{
+	fill_pcm_ring_limited(t, 0);
 }
 
 /** Handle a pending seek: restore decoder state from keyframe, refill. */
@@ -2187,12 +2476,54 @@ static void handle_seek(int t)
 {
 	mlr_track_t *tr = &mlr_tracks[t];
 	uint32_t target = tr->seek_target_sample;
+	bool reverse_change = tr->seek_reverse_pending;
+	bool target_reverse = reverse_change ? tr->seek_reverse_target : tr->reverse;
+	bool start_pending = tr->seek_start_pending;
 
-	seek_fill_to(tr, t, target);
+#ifdef MLR_PERF_PROFILING
+	uint32_t start = time_us_32();
+	mlr_perf.seek_count[t]++;
+	mlr_perf_seek_count[t]++;
+#endif
+	if (target_reverse) {
+		tr->fill_sample_pos = target;
+	} else {
+		seek_fill_to(tr, t, target);
+	}
+	uint32_t reserve = MLR_SEEK_PRIME_SAMPLES;
+	uint32_t free_samples = pcm_ring_free(&tr->pcm);
+	if (free_samples < reserve) {
+		uint32_t drop = reserve - free_samples;
+		uint32_t avail = pcm_ring_avail(&tr->pcm);
+		if (drop > avail) drop = avail;
+		tr->pcm.r += drop;
+		__dmb();
+	}
+	uint32_t new_start = tr->pcm.w;
 	tr->fill_seek_pending = false;
 
-	/* now fill the ring from this position */
-	fill_pcm_ring(t);
+	/* Reserve space, append primed samples, then skip stale buffered audio at handoff. */
+	fill_pcm_ring_limited_dir(t, MLR_SEEK_PRIME_SAMPLES, target_reverse);
+	__dmb();
+	uint32_t handoff_avail = tr->pcm.w - new_start;
+	tr->pcm.r = new_start;
+	if (reverse_change) {
+		tr->reverse = target_reverse;
+		tr->seek_reverse_pending = false;
+		PERF_NOTE_REVERSE_HANDOFF(t, handoff_avail);
+	}
+	if (start_pending) {
+		tr->stop_pending = false;
+		tr->playing = true;
+		tr->seek_start_pending = false;
+	} else {
+		tr->seek_start_pending = false;
+	}
+#ifdef MLR_PERF_PROFILING
+	uint32_t elapsed = time_us_32() - start;
+	perf_update_max(&mlr_perf.seek_max_us, elapsed);
+	perf_update_max(&mlr_perf_seek_max_us, elapsed);
+#endif
 }
 
 /** Drain one page from the recording page ring to flash. */
@@ -2204,16 +2535,20 @@ static void flush_rec_page(void)
 
 	/* erase-ahead: if we've reached the next sector boundary, erase it */
 	if (rec_flash_offset >= rec_next_erase) {
-		flash_range_erase(rec_next_erase, MLR_SECTOR_SIZE);
+		PERF_FLASH_ERASE(rec_next_erase, MLR_SECTOR_SIZE);
 		rec_next_erase += MLR_SECTOR_SIZE;
 	}
 
 	/* write the page */
-	flash_range_program(rec_flash_offset, mlr_page_ring.pages[slot], MLR_PAGE_SIZE);
+	PERF_FLASH_PROGRAM(rec_flash_offset, mlr_page_ring.pages[slot], MLR_PAGE_SIZE);
 	rec_flash_offset += MLR_PAGE_SIZE;
 
 	__dmb();
 	mlr_page_ring.r++;
+#ifdef MLR_PERF_PROFILING
+	mlr_perf.rec_page_flush_count++;
+	mlr_perf_rec_page_flush_count++;
+#endif
 }
 
 /** Write the track header after recording stops. */
@@ -2238,8 +2573,8 @@ static void write_track_header(int t)
 	       tr->num_keyframes * sizeof(mlr_keyframe_stereo_t));
 
 	uint32_t hdr_off = track_hdr_flash_off(t);
-	flash_range_erase(hdr_off, MLR_SECTOR_SIZE);
-	flash_range_program(hdr_off, hdr_staging, MLR_SECTOR_SIZE);
+	PERF_FLASH_ERASE(hdr_off, MLR_SECTOR_SIZE);
+	PERF_FLASH_PROGRAM(hdr_off, hdr_staging, MLR_SECTOR_SIZE);
 
 	/* mark track as playable */
 	tr->has_content     = true;
@@ -2284,6 +2619,8 @@ static void copy_prepare_destination_ram(int dst)
 	tr->fill_sample_pos = 0;
 	tr->fill_seek_pending = false;
 	tr->seek_target_sample = 0;
+	tr->seek_reverse_pending = false;
+	tr->seek_start_pending = false;
 	tr->speed_shift = 0;
 	tr->speed_frac  = 256;
 	tr->speed_accum = 0;
@@ -2334,8 +2671,8 @@ static void copy_finish_track(void)
 	       src->num_keyframes * sizeof(mlr_keyframe_stereo_t));
 
 	uint32_t hdr_off = track_hdr_flash_off(copy_dst_track);
-	flash_range_erase(hdr_off, MLR_SECTOR_SIZE);
-	flash_range_program(hdr_off, hdr_staging, MLR_SECTOR_SIZE);
+	PERF_FLASH_ERASE(hdr_off, MLR_SECTOR_SIZE);
+	PERF_FLASH_PROGRAM(hdr_off, hdr_staging, MLR_SECTOR_SIZE);
 
 	dst->has_content        = true;
 	dst->length_samples     = src->length_samples;
@@ -2371,7 +2708,7 @@ static void copy_track_task(void)
 	if (copy_bytes_done < copy_bytes_total) {
 		uint32_t dst_off = track_audio_flash_off(copy_dst_track) + copy_bytes_done;
 		if (dst_off >= copy_next_erase) {
-			flash_range_erase(copy_next_erase, MLR_SECTOR_SIZE);
+			PERF_FLASH_ERASE(copy_next_erase, MLR_SECTOR_SIZE);
 			copy_next_erase += MLR_SECTOR_SIZE;
 			return;
 		}
@@ -2380,7 +2717,7 @@ static void copy_track_task(void)
 		if (page_len > MLR_PAGE_SIZE) page_len = MLR_PAGE_SIZE;
 		memset(copy_page, 0xFF, MLR_PAGE_SIZE);
 		memcpy(copy_page, &src_audio[copy_bytes_done], page_len);
-		flash_range_program(dst_off, copy_page, MLR_PAGE_SIZE);
+		PERF_FLASH_PROGRAM(dst_off, copy_page, MLR_PAGE_SIZE);
 		copy_bytes_done += page_len;
 		return;
 	}
@@ -2400,6 +2737,8 @@ static int fill_rr = 0;  /* round-robin index for ring refill */
 
 void mlr_io_task(void)
 {
+	PERF_SERVICE_RESET_REQUEST();
+
 	/* 1. Handle pending seeks (always scan all — seeks are rare + cheap) */
 	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 		if (mlr_tracks[t].fill_seek_pending) {
@@ -2438,7 +2777,7 @@ void mlr_io_task(void)
 
 	/* 4. Handle pending clear (quick — one sector erase) */
 	if (clear_pending) {
-		flash_range_erase(track_hdr_flash_off(clear_track), MLR_SECTOR_SIZE);
+		PERF_FLASH_ERASE(track_hdr_flash_off(clear_track), MLR_SECTOR_SIZE);
 		clear_pending = false;
 	}
 
@@ -2471,22 +2810,27 @@ void mlr_io_task(void)
 
 		if (!scene_sector_erased) {
 			/* phase 1: erase the sector (~45ms) */
-			flash_range_erase(sector_off, MLR_SECTOR_SIZE);
+			PERF_FLASH_ERASE(sector_off, MLR_SECTOR_SIZE);
 			scene_sector_erased = true;
 			scene_page_idx = 0;
 		} else {
 			/* phase 2: program one 256-byte page (~0.7ms) */
 			uint32_t blob_off = (uint32_t)scene_save_sector * MLR_SECTOR_SIZE
 			                  + (uint32_t)scene_page_idx * MLR_PAGE_SIZE;
-			flash_range_program(sector_off + (uint32_t)scene_page_idx * MLR_PAGE_SIZE,
+			PERF_FLASH_PROGRAM(sector_off + (uint32_t)scene_page_idx * MLR_PAGE_SIZE,
 				&scene_blob[blob_off], MLR_PAGE_SIZE);
 			scene_page_idx++;
 
-			if (scene_page_idx >= SCENE_PAGES_PER_SECTOR) {
+			uint32_t programmed_pages =
+				(uint32_t)scene_save_sector * SCENE_PAGES_PER_SECTOR + (uint32_t)scene_page_idx;
+			if (programmed_pages >= scene_save_total_pages) {
+				scene_save_pending = false;
+				mlr_scene_saving = false;
+			} else if (scene_page_idx >= SCENE_PAGES_PER_SECTOR) {
 				/* sector complete — advance to next */
 				scene_save_sector++;
 				scene_sector_erased = false;
-				if (scene_save_sector >= MLR_SCENE_SECTORS) {
+				if ((uint32_t)scene_save_sector >= scene_save_total_sectors) {
 					scene_save_pending = false;
 					mlr_scene_saving = false;
 				}

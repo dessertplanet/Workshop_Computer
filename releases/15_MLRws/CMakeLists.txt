@@ -62,6 +62,7 @@ target_link_options(${CARD_NAME} PRIVATE -Wl,--print-memory-usage)
 
 # Stereo mode (set via -DCARD_STEREO=ON)
 option(CARD_STEREO "Build stereo variant" OFF)
+option(MLR_PERF_PROFILING "Enable debugger-readable performance counters" OFF)
 
 # Run all code from RAM so flash writes don't stall core 0.
 pico_set_binary_type(${CARD_NAME} copy_to_ram)
@@ -72,6 +73,7 @@ target_compile_definitions(${CARD_NAME} PRIVATE
 	MLR_SCENE_SECTORS=${MLR_SCENE_SECTORS_COUNT}
 	MLR_SECTOR_SIZE=${MLR_FLASH_SECTOR_BYTES}
 	$<$<BOOL:${CARD_STEREO}>:MLR_STEREO>
+	$<$<BOOL:${MLR_PERF_PROFILING}>:MLR_PERF_PROFILING>
 )
 
 target_include_directories(${CARD_NAME} PUBLIC ${CMAKE_CURRENT_LIST_DIR})

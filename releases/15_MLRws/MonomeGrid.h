@@ -18,9 +18,13 @@
 #include "pico/multicore.h"
 #include "bsp/board.h"
 #include "tusb.h"
+#include <string.h>
 
 extern "C" {
 #include "monome_mext.h"
+#ifdef MLR_PERF_PROFILING
+void mlr_perf_count_grid_frame_drop(void);
+#endif
 }
 
 class MonomeGrid
@@ -112,7 +116,7 @@ public:
 	/* ---- LEDs ---- */
 
 	/** Set a single LED brightness (0–15). */
-	void led(uint8_t x, uint8_t y, uint8_t level)
+	__attribute__((noinline, noclone)) void led(uint8_t x, uint8_t y, uint8_t level)
 	{
 		if (x >= MEXT_MAX_GRID_X || y >= MEXT_MAX_GRID_Y) return;
 		if (level > 15) level = 15;
@@ -196,7 +200,34 @@ public:
 					led(x, y, level);
 	}
 
-	/* ---- direct buffer access (advanced) ---- */
+	/* ---- batched frame writes ---- */
+
+	/** Clear the local frame buffer without submitting yet. */
+	void frameClear()
+	{
+		memset(frame_, 0, sizeof(frame_));
+	}
+
+	/** Set a local frame LED for redraw code that will submit once at the end. */
+	void frameLed(int x, int y, uint8_t level)
+	{
+		if (x < 0 || y < 0 || x >= MEXT_MAX_GRID_X || y >= MEXT_MAX_GRID_Y) return;
+		if (level > 15) level = 15;
+		frame_[y * MEXT_MAX_GRID_X + x] = level;
+	}
+
+	/** Set a known-good local frame LED inside a frameClear()/submitFrame() batch. */
+	void frameLedUnchecked(int x, int y, uint8_t level)
+	{
+		frame_[y * MEXT_MAX_GRID_X + x] = level;
+	}
+
+	/** Submit the accumulated local frame when core 1 can accept it. */
+	void submitFrame()
+	{
+		frame_dirty_ = true;
+		submitFrameIfPossible();
+	}
 
 	/** Raw pointer to the LED buffer (MEXT_MAX_GRID_X * MEXT_MAX_GRID_Y). */
 	uint8_t *ledBuffer()
@@ -206,11 +237,7 @@ public:
 	}
 
 	/** Mark all quadrants dirty (call after directly writing ledBuffer). */
-	void markDirty()
-	{
-		frame_dirty_ = true;
-		submitFrameIfPossible();
-	}
+	void markDirty() { submitFrame(); }
 
 private:
 	void submitFrameIfPossible()
@@ -219,6 +246,10 @@ private:
 			return;
 		if (mext_grid_frame_submit(frame_))
 			frame_dirty_ = false;
+#ifdef MLR_PERF_PROFILING
+		else
+			mlr_perf_count_grid_frame_drop();
+#endif
 	}
 
 	static void usb_core()
