@@ -1848,6 +1848,29 @@ void mlr_scene_save_start(void)
 	scene_save_pending = true;
 }
 
+void __not_in_flash_func(mlr_scene_reset_params_to_defaults)(void)
+{
+	mlr_recall_active = -1;
+
+	mlr_groups_default();
+	memset(mlr_gate_mode, 0, sizeof(mlr_gate_mode));
+
+	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+		mlr_set_speed(t, 0);
+		mlr_set_reverse(t, false);
+		mlr_clear_loop(t);
+		mlr_set_volume(t, 1);
+	}
+
+	for (int p = 0; p < MLR_NUM_PATTERNS; p++) {
+		mlr_pattern_t *pat = &mlr_patterns[p];
+		if (pat->state == MLR_PAT_PLAYING) {
+			pat->play_idx = 0;
+			pat->state = MLR_PAT_STOPPED;
+		}
+	}
+}
+
 /* ------------------------------------------------------------------ */
 /* Core 1 — ring fill, page flush, erase-ahead, header write          */
 /* ------------------------------------------------------------------ */

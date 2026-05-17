@@ -61,6 +61,9 @@ extern "C" {
 #define GRIDLESS_REC_HOLD_SAMPLES 96000u  /* 2 seconds at 48 kHz */
 #define RECORD_REARM_DELAY_SAMPLES 24000u /* 0.5 seconds at 48 kHz */
 #define FORCE_8X8_GRID_LAYOUT 0  /* for testing: force compact grid layout regardless of detected width */
+#define DELETE_RESET_HOLD_SAMPLES 240000u  /* 5 seconds at 48 kHz */
+#define DELETE_RESET_FLASH_PERIOD_SAMPLES 4800u  /* 100 ms half-period */
+#define DELETE_RESET_FLASH_SAMPLES (DELETE_RESET_FLASH_PERIOD_SAMPLES * 6u)  /* three quick flashes */
 
 /* ------------------------------------------------------------------ */
 /* Pages                                                              */
@@ -344,6 +347,7 @@ public:
 
 		if (run_ui_control) {
 			grid.poll();
+			process_delete_reset_hold();
 			process_bottom_master_control();
 		}
 
@@ -436,6 +440,8 @@ public:
 			if (group_flash_samples_remaining_ == 0)
 				group_flash_mask_ = 0;
 		}
+		if (delete_reset_flash_samples_remaining_ > 0)
+			delete_reset_flash_samples_remaining_--;
 
 #ifdef MLR_STEREO
 		/* ---- Stereo: detect mono-pan / balance recording state + poll Y knob for pan ---- */
@@ -578,7 +584,7 @@ public:
 		/* ---- page navigation + pattern/recall buttons (row 0, always active) ---- */
 		if (run_ui_control && grid.keyDown() && grid.lastY() == 0) {
 			int col = grid.lastX();
-			bool alt_held = delete_held();
+			bool alt_held = delete_action_held();
 			int pcs = pat_col_start();
 			if (col == 0) {
 				play_page = PAGE_CUT;
@@ -964,6 +970,9 @@ private:
 	uint8_t    group_flash_mask_ = 0;             /* tracks whose play LED is currently flashing */
 	uint32_t   group_flash_samples_remaining_ = 0;  /* countdown for confirmation blink */
 	uint16_t   group_flash_period_ = GROUP_FLASH_CREATE_PERIOD;  /* current blink half-period */
+	uint32_t   delete_reset_hold_samples_ = 0;    /* continuous DELETE hold duration */
+	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
+	bool       delete_reset_fired_ = false;       /* require DELETE release before another reset */
 	adpcm_state_t mon_enc_ = {0, 0}; /* monitor codec encoder state */
 	adpcm_state_t mon_dec_ = {0, 0}; /* monitor codec decoder state */
 #ifdef MLR_STEREO
@@ -1065,6 +1074,9 @@ private:
 
 	/** True while the row-0 DELETE/ALT key is held. */
 	bool delete_held() const { return grid.held((uint8_t)alt_col(), 0); }
+
+	/** True while DELETE can modify another key; false after long-hold reset fires. */
+	bool delete_action_held() const { return delete_held() && !delete_reset_fired_; }
 
 	/** Map an 8x8 CUT grid column (1-6) to internal column (0-13). */
 	int cut_grid_to_internal(int grid_col) const {
@@ -1745,6 +1757,45 @@ private:
 		dispatch_event(MLR_EVT_MASTER, (uint8_t)(raw >> 8), (int8_t)(raw & 0xFF), 0);
 	}
 
+	void process_delete_reset_hold()
+	{
+		if (!delete_held()) {
+			delete_reset_hold_samples_ = 0;
+			delete_reset_fired_ = false;
+			return;
+		}
+		if (delete_reset_fired_)
+			return;
+		if (mlr_rec_track >= 0 || mlr_flushing || mlr_scene_saving) {
+			delete_reset_hold_samples_ = 0;
+			return;
+		}
+
+		if (delete_reset_hold_samples_ < DELETE_RESET_HOLD_SAMPLES)
+			delete_reset_hold_samples_ += MAIN_CTRL_DIV;
+		if (delete_reset_hold_samples_ < DELETE_RESET_HOLD_SAMPLES)
+			return;
+
+		mlr_scene_reset_params_to_defaults();
+		mlr_scene_save_start();
+
+		rec_armed_track = -1;
+		resume_after_arm_track_ = -1;
+		rec_limit_latched = false;
+		group_gesture_mask_ = 0;
+		group_gesture_committed_ = false;
+		group_flash_mask_ = 0;
+		group_flash_samples_remaining_ = 0;
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			play_col_armed[t] = false;
+			play_col_hold_time[t] = 0;
+			gate_entered[t] = false;
+		}
+
+		delete_reset_flash_samples_remaining_ = DELETE_RESET_FLASH_SAMPLES;
+		delete_reset_fired_ = true;
+	}
+
 	void resume_armed_track_if_needed(int track)
 	{
 		if (track < 0 || track >= MLR_NUM_TRACKS) return;
@@ -1946,7 +1997,7 @@ private:
 	void __not_in_flash("process_gate_hold") process_gate_hold()
 	{
 		int pc = play_col();
-		bool alt_held = delete_held();
+		bool alt_held = delete_action_held();
 
 		/* Snapshot of which play-col keys are currently held. Empty tracks
 		 * may be tapped normally, but they are not eligible for grouping. */
@@ -2097,7 +2148,7 @@ private:
 
 		int track  = grid.lastY() - 1;
 		int column = grid.lastX();
-		bool alt_held = delete_held();
+		bool alt_held = delete_action_held();
 
 		/* Cols 0 / 1 (16-wide only): combined channel-select + record-arm.
 		 * On 8x8 grids col 1 is reverse, so we only honor the channel-pick
@@ -2198,7 +2249,7 @@ private:
 	{
 		int pc = play_col();
 		int ce = cut_col_end();
-		bool alt_held = delete_held();
+		bool alt_held = delete_action_held();
 
 		/* --- key-up on track rows --- */
 		if (grid.keyUp() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
@@ -2365,7 +2416,14 @@ private:
 
 		/* ALT */
 		int ac = alt_col();
-		grid.led(ac, 0, grid.held(ac, 0) ? 12 : 2);
+		uint8_t alt_bright;
+		if (delete_reset_flash_samples_remaining_ > 0) {
+			uint32_t elapsed = DELETE_RESET_FLASH_SAMPLES - delete_reset_flash_samples_remaining_;
+			alt_bright = ((elapsed / DELETE_RESET_FLASH_PERIOD_SAMPLES) & 1u) ? 0 : 15;
+		} else {
+			alt_bright = delete_held() ? 12 : 2;
+		}
+		grid.led(ac, 0, alt_bright);
 	}
 
 	/* Grid bottom row (row 7 when 6 tracks): master gradient bar.
@@ -2403,7 +2461,7 @@ private:
 		bool gated_rec_ready = rec_pos && rec_armed_track < 0;
 
 		int pc = play_col();
-		bool alt_held = delete_held();
+		bool alt_held = delete_action_held();
 		uint8_t cycled = alt_held ? cycled_group_mask() : 0;
 
 		/* row 0: navigation — REC highlighted */
@@ -2592,7 +2650,7 @@ private:
 
 		int pc = play_col();
 		int nc = cut_cols();
-		bool alt_held = delete_held();
+		bool alt_held = delete_action_held();
 		uint8_t cycled = alt_held ? cycled_group_mask() : 0;
 
 		/* row 0: navigation — CUT highlighted */

@@ -379,6 +379,7 @@ void     mlr_recall_clear(int slot);
 /* ---- Scene persistence ---- */
 void     mlr_scene_load(void);      /* called from mlr_init() */
 void     mlr_scene_save_start(void);/* triggers async save on core 1 */
+void     mlr_scene_reset_params_to_defaults(void); /* reset current scene params without deleting audio/patterns/recalls */
 
 /* ------------------------------------------------------------------ */
 /* Core 1 API                                                         */

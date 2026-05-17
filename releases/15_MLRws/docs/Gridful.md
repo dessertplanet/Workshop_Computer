@@ -79,6 +79,8 @@ Overwriting a scene requires that you clear the old one by holding the delete ke
 
 The delete key is used to clear data from various places in MLRws. Hold it down and then press a pattern or scene to clear it. Hold it down and press the record-arm button for any track with audio on it and that audio will be cleared.
 
+Hold the delete key by itself for 5 seconds to reset the current saved scene parameters to defaults. The delete key flashes three times quickly to confirm. This resets current speed, reverse, loop, mixer level, gate mode, track groups, and active recall state, then saves those defaults to flash. Currently playing patterns are stopped so they do not immediately re-apply old automation. It does **not** reset master volume, or delete audio, patterns, or saved recall slots.
+
 ### Playback toggle and gated playback
 
 The right side of the grid always controls the playback state of each track. Short press any key in the right-most column on the grid and the corresponding track playback is toggled on/off. Long press one of these and the playback key will flash, indicating "gated playback" mode. In this mode, playback will only occur while a key in the CUT page is held down. Very useful for percussive sounds and very fun to record with the pattern looper. 
