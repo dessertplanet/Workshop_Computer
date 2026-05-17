@@ -970,6 +970,9 @@ private:
 	uint8_t    group_flash_mask_ = 0;             /* tracks whose play LED is currently flashing */
 	uint32_t   group_flash_samples_remaining_ = 0;  /* countdown for confirmation blink */
 	uint16_t   group_flash_period_ = GROUP_FLASH_CREATE_PERIOD;  /* current blink half-period */
+	bool       cut_loop_pending_[MLR_NUM_TRACKS] = {};  /* non-gated CUT loop commits on first release */
+	int        cut_loop_pending_start_[MLR_NUM_TRACKS] = {};
+	int        cut_loop_pending_end_[MLR_NUM_TRACKS] = {};
 	uint32_t   delete_reset_hold_samples_ = 0;    /* continuous DELETE hold duration */
 	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
 	bool       delete_reset_fired_ = false;       /* require DELETE release before another reset */
@@ -2368,8 +2371,23 @@ private:
 					}
 				}
 
-				if (held_count >= 2 && mlr_tracks[t].has_content) {
-					group_set_loop(t, held_min, held_max);
+				bool cut_key_released = grid.keyUp() && grid.lastY() == row &&
+				                        grid.lastX() >= 1 && grid.lastX() <= ce;
+
+				if (!mlr_gate_mode[t] && cut_key_released && cut_loop_pending_[t]) {
+					group_set_loop(t, cut_loop_pending_start_[t], cut_loop_pending_end_[t]);
+					cut_loop_pending_[t] = false;
+				} else if (held_count >= 2 && mlr_tracks[t].has_content) {
+					if (mlr_gate_mode[t]) {
+						group_set_loop(t, held_min, held_max);
+						cut_loop_pending_[t] = false;
+					} else {
+						cut_loop_pending_[t] = true;
+						cut_loop_pending_start_[t] = held_min;
+						cut_loop_pending_end_[t] = held_max;
+					}
+				} else if (held_count == 0) {
+					cut_loop_pending_[t] = false;
 				}
 			}
 		}
