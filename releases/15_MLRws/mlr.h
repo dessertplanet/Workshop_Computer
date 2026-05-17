@@ -362,7 +362,7 @@ void     mlr_choke_group_cut(int track, int column);
 void     mlr_choke_group_set_loop(int track, int col_start, int col_end);
 
 /* ---- Pattern engine (core 0) ---- */
-void     mlr_pattern_event(const mlr_event_t *e);  /* record into active patterns + recalls */
+void     mlr_pattern_event(const mlr_event_t *e);  /* record into active patterns */
 void     mlr_pattern_arm(int pat);                  /* arm: wait for first event to start recording */
 void     mlr_pattern_rec_start(int pat);
 void     mlr_pattern_rec_stop(int pat);
@@ -372,6 +372,9 @@ void     mlr_pattern_clear(int pat);
 void     mlr_pattern_tick(uint32_t now_ms);         /* call every LED update (~50ms) */
 
 /* ---- Recall engine (core 0) ---- */
+void     mlr_recall_event(const mlr_event_t *e);   /* record into armed recalls */
+void     mlr_recall_arm(int slot);
+void     mlr_recall_rec_stop(int slot);
 void     mlr_recall_snapshot(int slot);  /* instant capture of all track state */
 void     mlr_recall_exec(int slot);
 void     mlr_recall_exec_and_record(int slot);  /* exec + feed events into pattern recorder */

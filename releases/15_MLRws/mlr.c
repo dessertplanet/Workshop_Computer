@@ -1434,6 +1434,23 @@ void __not_in_flash_func(mlr_pattern_tick)(uint32_t now_ms)
 /* Undo buffer — stores pre-recall state */
 static mlr_recall_t recall_undo;
 
+void __not_in_flash_func(mlr_recall_event)(const mlr_event_t *e)
+{
+	if (!e) return;
+	if (e->type == MLR_EVT_RECALL || e->type == MLR_EVT_RECALL_UNDO) return;
+
+	for (int r = 0; r < MLR_NUM_RECALLS; r++) {
+		mlr_recall_t *rec = &mlr_recalls[r];
+		if (!rec->recording) continue;
+		if (rec->count >= MLR_PATTERN_MAX_EVENTS) continue;
+
+		uint16_t idx = rec->count;
+		rec->events[idx] = *e;
+		rec->events[idx].timestamp_ms = 0;
+		rec->count = idx + 1;
+	}
+}
+
 /** Fill a recall struct with a snapshot of current state. */
 static void snapshot_into(mlr_recall_t *r)
 {
@@ -1552,6 +1569,34 @@ void mlr_recall_snapshot(int slot)
 	if (slot < 0 || slot >= MLR_NUM_RECALLS) return;
 	snapshot_into(&mlr_recalls[slot]);
 	mlr_recall_active = slot;
+}
+
+void __not_in_flash_func(mlr_recall_arm)(int slot)
+{
+	if (slot < 0 || slot >= MLR_NUM_RECALLS) return;
+
+	for (int r = 0; r < MLR_NUM_RECALLS; r++) {
+		if (r != slot)
+			mlr_recalls[r].recording = false;
+	}
+
+	mlr_recall_t *rec = &mlr_recalls[slot];
+	rec->count = 0;
+	rec->recording = true;
+	rec->has_data = false;
+	mlr_recall_active = -1;
+}
+
+void __not_in_flash_func(mlr_recall_rec_stop)(int slot)
+{
+	if (slot < 0 || slot >= MLR_NUM_RECALLS) return;
+	mlr_recall_t *rec = &mlr_recalls[slot];
+	if (!rec->recording) return;
+
+	rec->recording = false;
+	rec->has_data = (rec->count > 0);
+	if (!rec->has_data)
+		rec->count = 0;
 }
 
 void mlr_recall_exec(int slot)

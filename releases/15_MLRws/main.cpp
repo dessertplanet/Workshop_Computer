@@ -485,7 +485,7 @@ public:
 			/* Latch the arm-state into the recording-state. Use a track-id
 			 * sentinel rather than a -1→track edge so we don't depend on
 			 * prev_rec_track timing (e.g., a stop/start within one sample).
-			 * Read Y knob raw here as well so the latched pan reflects the
+			 * Read Y knob raw here as well so the initial pan reflects the
 			 * pot's current position even if the polling cache above hasn't
 			 * tracked it (e.g., if the track was armed for less than one
 			 * sample, or the arm-update condition was momentarily false). */
@@ -500,15 +500,16 @@ public:
 					mlr_tracks[mlr_rec_track].recorded_channel = arm_mono_pan_src_;
 				else
 					mlr_tracks[mlr_rec_track].recorded_channel = 0;
-				/* Classify the committed pan into 3 buckets for the post-
+				/* Classify the current pan into 3 buckets for the post-
 				 * recording grid display: hard L / hard R / both. Threshold
 				 * is the outer ~7% of the Y knob travel on each side; in
 				 * between (including center) reads as "both". The class is
 				 * persisted in the track header so it survives a reboot. */
-				if (rec_pan_q12_ <= -1900)      mlr_tracks[mlr_rec_track].pan_class = 1;
-				else if (rec_pan_q12_ >= 1900)  mlr_tracks[mlr_rec_track].pan_class = 2;
-				else                            mlr_tracks[mlr_rec_track].pan_class = 0;
+				mlr_tracks[mlr_rec_track].pan_class = pan_class_from_q12(rec_pan_q12_);
 				rec_pan_latched_for_track_ = mlr_rec_track;
+			} else if (mlr_rec_track >= 0 && (rec_is_mono_pan_ || rec_is_balance_)) {
+				rec_pan_q12_ = (int16_t)(KnobVal(Knob::Y) - 2048);
+				mlr_tracks[mlr_rec_track].pan_class = pan_class_from_q12(rec_pan_q12_);
 			}
 			if (mlr_rec_track < 0) {
 				rec_is_mono_pan_           = false;
@@ -541,7 +542,7 @@ public:
 #ifdef MLR_STEREO
 			int32_t scaled_r;
 			if (rec_is_mono_pan_) {
-				/* Single-input recording with locked pan: synthesise L/R
+				/* Single-input recording with live pan: synthesise L/R
 				 * from the mono source already in `scaled`. The mono signal
 				 * is rec_mono_pan_src_'s input, and dry_in was selected
 				 * from that input above via mlr_tracks[].recorded_channel. */
@@ -639,16 +640,30 @@ public:
 				if (alt_held) {
 					mlr_recall_clear(r);
 					mlr_scene_save_start();
-				} else if (mlr_recall_active == r) {
-					/* pressing active scene: undo to pre-recall state */
-					mlr_recall_undo_and_record();
-				} else if (!mlr_recalls[r].has_data) {
-					/* empty: instant snapshot */
-					mlr_recall_snapshot(r);
-					mlr_scene_save_start();
 				} else {
-					/* has data: recall it */
-					mlr_recall_exec_and_record(r);
+					bool finalized_other = false;
+					for (int u = 0; u < MLR_NUM_RECALLS; u++) {
+						if (u == r || !mlr_recalls[u].recording) continue;
+						mlr_recall_rec_stop(u);
+						if (mlr_recalls[u].has_data)
+							finalized_other = true;
+					}
+					if (finalized_other)
+						mlr_scene_save_start();
+
+					if (mlr_recalls[r].recording) {
+						mlr_recall_rec_stop(r);
+						if (mlr_recalls[r].has_data)
+							mlr_scene_save_start();
+					} else if (mlr_recall_active == r) {
+						/* pressing active scene: undo to pre-recall state */
+						mlr_recall_undo_and_record();
+					} else if (!mlr_recalls[r].has_data) {
+						mlr_recall_arm(r);
+					} else {
+						/* has data: recall it */
+						mlr_recall_exec_and_record(r);
+					}
 				}
 			}
 		}
@@ -699,8 +714,8 @@ public:
 			 * recorded. If we're in mono-pan mode (armed or recording with
 			 * exactly one input plugged in), synthesise the L/R monitor by
 			 * panning a single mono source — live pan from arm_pan_q12_ if
-			 * not yet recording, locked rec_pan_q12_ once recording is in
-			 * progress, so the user hears exactly what is being committed. */
+			 * not yet recording, rec_pan_q12_ once recording is in progress,
+			 * so the user hears exactly what is being committed. */
 			uint16_t mon_vol = 256;
 			int mon_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
 			if (mon_track >= 0) mon_vol = mlr_tracks[mon_track].volume_frac;
@@ -913,6 +928,13 @@ private:
 			*gR = 256;
 		}
 	}
+
+	static inline uint8_t pan_class_from_q12(int16_t pan_q12)
+	{
+		if (pan_q12 <= -1900) return 1;
+		if (pan_q12 >= 1900)  return 2;
+		return 0;
+	}
 #endif
 
 	/** Read the switch position directly via ADC (safe before Run()/ISR).
@@ -1011,11 +1033,12 @@ private:
 
 	/* Stereo build, single-input recording: Y knob = pan. arm_pan_q12_
 	 * is updated live by the Y knob while armed (-2048 = full L,
-	 * +2047 = full R, 0 = center). rec_pan_q12_ is latched at record
-	 * start so pan is committed for the duration of the recording.
+	 * +2047 = full R, 0 = center). rec_pan_q12_ is initialized at record
+	 * start and then follows the Y knob while recording, so pan changes are
+	 * baked into the recorded stereo samples.
 	 * rec_is_mono_pan_ records whether the currently in-progress recording
 	 * is one-input + pan, in which case the right input is synthesised
-	 * from the left via the locked pan instead of read from AudioIn2. */
+	 * from the left via the current pan instead of read from AudioIn2. */
 	int16_t  arm_pan_q12_       = 0;
 	int16_t  rec_pan_q12_       = 0;
 	bool     rec_is_mono_pan_   = false;
@@ -1760,7 +1783,8 @@ private:
 		e.track = track;
 		e.param_a = a;
 		e.param_b = b;
-		mlr_pattern_event(&e);  /* feed into recording patterns/recalls */
+		mlr_pattern_event(&e);
+		mlr_recall_event(&e);
 	}
 
 	void process_bottom_master_control()
@@ -2578,7 +2602,8 @@ private:
 			/* recall buttons: cols 9–12 (16-wide only) */
 			for (int r = 0; r < MLR_NUM_RECALLS; r++) {
 				int b = 2;
-				if (mlr_recall_active == r)           b = 15;  /* selected */
+				if (mlr_recalls[r].recording)         b = (pat_blink & (mlr_recalls[r].count ? 2 : 4)) ? 15 : 0;
+				else if (mlr_recall_active == r)      b = 15;  /* selected */
 				else if (mlr_recalls[r].has_data)     b = 5;   /* has data */
 				grid.led(r + 9, 0, b);
 			}
@@ -2699,7 +2724,7 @@ private:
 					col1_bright = (uint8_t)(((uint32_t)state_bright * gR) >> 8);
 				} else {
 					/* Post-recording / non-armed state: classify by the
-					 * pan committed at record time. Hard left → col 0
+					 * final recorded pan. Hard left → col 0
 					 * only, hard right → col 1 only, anything in between
 					 * (and empty / stereo / balance recordings) → both. */
 					uint8_t pc = mlr_tracks[t].pan_class;
