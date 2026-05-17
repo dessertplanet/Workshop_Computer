@@ -31,6 +31,7 @@
 - Keep USB/TinyUSB polling and other potentially long work off the audio core. Core 1 owns calls such as `tud_task()`, `tuh_task()`, `mext_task()`, `device_mode_task()`, and flash I/O so audio stays uninterrupted.
 - Preserve the `COMPUTERCARD_NOIMPL` pattern when including `ComputerCard.h` from multiple translation units: define it before including the header in all but one source file.
 - Guard mono/stereo behavior with `#ifdef MLR_STEREO` and keep both variants compiling. Shared structs in `mlr.h` include static size checks because flash headers must fit in one 4 KB sector.
+- Any grid layout change must deliberately account for 8x8 grids as well as 16-wide grids. 8x8 does not need functional parity with larger grids, but it must continue to work and have a sensible, intentional layout.
 - Treat cross-core shared state deliberately: existing code uses `volatile` fields, single-producer/single-consumer rings, and memory barriers such as `__dmb()` around mode handoffs. Do not replace these with blocking locks in audio paths.
 - The mext grid transport pads USB writes to 64 bytes with `0xFF` for compatibility with both modern CDC/RP2040 and older FTDI grids; preserve this behavior when changing `monome_mext.c`.
 - Keep `PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64` in CMake compile definitions; this card relies on the longer oscillator startup delay.
