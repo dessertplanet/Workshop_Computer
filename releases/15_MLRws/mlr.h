@@ -295,6 +295,7 @@ typedef struct {
 extern mlr_track_t     mlr_tracks[MLR_NUM_TRACKS];
 extern volatile int    mlr_rec_track;
 extern volatile bool   mlr_flushing;  /* true while header being written */
+extern volatile bool   mlr_copying;   /* true while async track copy owns flash */
 extern mlr_page_ring_t mlr_page_ring;
 extern volatile uint16_t mlr_master_level_raw; /* 0..4095 master level (grid/pattern/scene controlled) */
 extern volatile bool     mlr_master_override;   /* true = suppress pattern master events until loop wrap */
@@ -333,6 +334,7 @@ void     mlr_cut(int track, int column);
 void     mlr_cut_sample(int track, uint32_t sample_pos);
 void     mlr_stop_track(int track);
 void     mlr_clear_track(int track);
+uint8_t  mlr_copy_track_mask(int src_track, uint8_t dst_mask);
 void     mlr_set_loop(int track, int col_start, int col_end);
 void     mlr_clear_loop(int track);
 void     mlr_set_speed(int track, int speed_shift);

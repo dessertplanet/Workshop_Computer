@@ -26,6 +26,7 @@
 mlr_track_t     mlr_tracks[MLR_NUM_TRACKS];
 volatile int    mlr_rec_track  = -1;
 volatile bool   mlr_flushing   = false;
+volatile bool   mlr_copying    = false;
 mlr_page_ring_t mlr_page_ring;
 volatile uint16_t mlr_master_level_raw = 4095;
 volatile bool     mlr_master_override = false;
@@ -62,6 +63,16 @@ static int           hdr_write_track   = -1;
 /* Clear state */
 static volatile bool clear_pending = false;
 static int           clear_track   = -1;
+
+/* Track copy state (core 0 enqueues, core 1 copies flash page-by-page). */
+static volatile bool copy_pending = false;
+static int           copy_src_track = -1;
+static int           copy_dst_track = -1;
+static uint8_t       copy_dst_mask = 0;
+static uint32_t      copy_bytes_total = 0;
+static uint32_t      copy_bytes_done = 0;
+static uint32_t      copy_next_erase = 0;
+static uint8_t       copy_page[MLR_PAGE_SIZE] __attribute__((aligned(4)));
 
 /* Scene save state (core 1) — two-phase: erase then program pages */
 static volatile bool scene_save_pending = false;
@@ -1141,6 +1152,36 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	clear_pending = true;
 }
 
+uint8_t __not_in_flash_func(mlr_copy_track_mask)(int src_track, uint8_t dst_mask)
+{
+	if (src_track < 0 || src_track >= MLR_NUM_TRACKS) return 0;
+	if (mlr_rec_track >= 0 || rec_track_idx >= 0 || mlr_flushing || mlr_scene_saving) return 0;
+	if (hdr_write_pending || clear_pending || scene_save_pending || copy_pending || copy_dst_track >= 0) return 0;
+
+	mlr_track_t *src = &mlr_tracks[src_track];
+	if (!src->has_content || src->length_samples == 0 || src->length_bytes == 0) return 0;
+
+	uint8_t accepted = 0;
+	for (int dst = 0; dst < MLR_NUM_TRACKS; dst++) {
+		if (!(dst_mask & (1u << dst))) continue;
+		if (dst == src_track) continue;
+		if (mlr_tracks[dst].has_content) continue;
+		accepted |= (uint8_t)(1u << dst);
+	}
+	if (accepted == 0) return 0;
+
+	copy_src_track = src_track;
+	copy_dst_mask = accepted;
+	copy_dst_track = -1;
+	copy_bytes_total = src->length_bytes;
+	copy_bytes_done = 0;
+	copy_next_erase = 0;
+	copy_pending = true;
+	mlr_copying = true;
+	mlr_flushing = true;
+	return accepted;
+}
+
 int __not_in_flash_func(mlr_get_column)(int track)
 {
 	if (track < 0 || track >= MLR_NUM_TRACKS) return 0;
@@ -1156,6 +1197,7 @@ uint32_t __not_in_flash_func(mlr_get_rec_progress)(void)
 
 int __not_in_flash_func(mlr_get_flush_track)(void)
 {
+	if (copy_dst_track >= 0) return copy_dst_track;
 	if (hdr_write_pending) return hdr_write_track;
 	if (clear_pending) return clear_track;
 	return -1;
@@ -2151,6 +2193,138 @@ static void write_track_header(int t)
 	/* preserve reverse — only affects playback, recording always forward */
 }
 
+static void copy_prepare_destination_ram(int dst)
+{
+	mlr_track_t *tr = &mlr_tracks[dst];
+	mlr_leave_group(dst);
+	tr->playing        = false;
+	tr->has_content    = false;
+	tr->length_samples = 0;
+	tr->length_bytes   = 0;
+	tr->num_keyframes  = 0;
+	tr->playhead       = 0;
+	tr->loop_active    = false;
+	tr->loop_start_sample = 0;
+	tr->loop_end_sample   = 0;
+	tr->loop_col_start    = -1;
+	tr->loop_col_end      = -1;
+	tr->fill_byte_pos   = 0;
+	tr->fill_high_nyb   = false;
+	tr->fill_sample_pos = 0;
+	tr->fill_seek_pending = false;
+	tr->seek_target_sample = 0;
+	tr->speed_shift = 0;
+	tr->speed_frac  = 256;
+	tr->speed_accum = 0;
+	tr->reverse     = false;
+	tr->muted       = false;
+	tr->volume_slot = 1;
+	tr->volume_frac = 256;
+	tr->volume_target = 256;
+	tr->channel_user_chosen = false;
+	tr->pcm.w = 0;
+	tr->pcm.r = 0;
+	reset_track_audio_state(tr);
+	mlr_gate_mode[dst] = false;
+}
+
+static bool copy_begin_next_track(void)
+{
+	if (copy_dst_mask == 0) return false;
+	for (int dst = 0; dst < MLR_NUM_TRACKS; dst++) {
+		uint8_t bit = (uint8_t)(1u << dst);
+		if (!(copy_dst_mask & bit)) continue;
+		copy_dst_mask &= (uint8_t)~bit;
+		copy_dst_track = dst;
+		copy_bytes_done = 0;
+		copy_next_erase = track_audio_flash_off(dst);
+		copy_prepare_destination_ram(dst);
+		return true;
+	}
+	return false;
+}
+
+static void copy_finish_track(void)
+{
+	mlr_track_t *src = &mlr_tracks[copy_src_track];
+	mlr_track_t *dst = &mlr_tracks[copy_dst_track];
+
+	memset(hdr_staging, 0xFF, MLR_SECTOR_SIZE);
+	mlr_track_header_t *hdr = (mlr_track_header_t *)hdr_staging;
+	hdr->magic               = MLR_MAGIC;
+	hdr->sample_count        = src->length_samples;
+	hdr->adpcm_bytes         = src->length_bytes;
+	hdr->num_keyframes       = src->num_keyframes;
+	hdr->record_speed_shift  = src->record_speed_shift;
+	hdr->recorded_channel    = (uint8_t)(src->recorded_channel & 0x01);
+	hdr->pan_class           = (uint8_t)((src->pan_class <= 2) ? src->pan_class : 0);
+	hdr->_hdr_pad[0]         = 0xFF;
+	memcpy(hdr->keyframes, src->keyframes,
+	       src->num_keyframes * sizeof(mlr_keyframe_stereo_t));
+
+	uint32_t hdr_off = track_hdr_flash_off(copy_dst_track);
+	flash_range_erase(hdr_off, MLR_SECTOR_SIZE);
+	flash_range_program(hdr_off, hdr_staging, MLR_SECTOR_SIZE);
+
+	dst->has_content        = true;
+	dst->length_samples     = src->length_samples;
+	dst->length_bytes       = src->length_bytes;
+	dst->num_keyframes      = src->num_keyframes;
+	dst->record_speed_shift = src->record_speed_shift;
+	dst->recorded_channel   = src->recorded_channel & 0x01;
+	dst->pan_class          = (src->pan_class <= 2) ? src->pan_class : 0;
+	memcpy(dst->keyframes, src->keyframes,
+	       src->num_keyframes * sizeof(mlr_keyframe_stereo_t));
+	for (int ch = 0; ch < MLR_NUM_CHANNELS; ch++) {
+		dst->fill_decode[ch].predictor  = 0;
+		dst->fill_decode[ch].step_index = 0;
+		if (dst->num_keyframes > 0) {
+			dst->fill_decode[ch].predictor  = dst->keyframes[0].ch[ch].predictor;
+			dst->fill_decode[ch].step_index = dst->keyframes[0].ch[ch].step_index;
+		}
+	}
+}
+
+static void copy_track_task(void)
+{
+	if (!copy_pending) return;
+	if (copy_dst_track < 0 && !copy_begin_next_track()) {
+		copy_pending = false;
+		copy_src_track = -1;
+		mlr_copying = false;
+		mlr_flushing = false;
+		return;
+	}
+
+	const uint8_t *src_audio = track_audio_xip(copy_src_track);
+	if (copy_bytes_done < copy_bytes_total) {
+		uint32_t dst_off = track_audio_flash_off(copy_dst_track) + copy_bytes_done;
+		if (dst_off >= copy_next_erase) {
+			flash_range_erase(copy_next_erase, MLR_SECTOR_SIZE);
+			copy_next_erase += MLR_SECTOR_SIZE;
+			return;
+		}
+
+		uint32_t page_len = copy_bytes_total - copy_bytes_done;
+		if (page_len > MLR_PAGE_SIZE) page_len = MLR_PAGE_SIZE;
+		memset(copy_page, 0xFF, MLR_PAGE_SIZE);
+		memcpy(copy_page, &src_audio[copy_bytes_done], page_len);
+		flash_range_program(dst_off, copy_page, MLR_PAGE_SIZE);
+		copy_bytes_done += page_len;
+		return;
+	}
+
+	copy_finish_track();
+	copy_dst_track = -1;
+	copy_bytes_done = 0;
+	if (copy_dst_mask == 0) {
+		copy_pending = false;
+		copy_src_track = -1;
+		mlr_copying = false;
+		mlr_flushing = false;
+	}
+}
+
 static int fill_rr = 0;  /* round-robin index for ring refill */
 
 void mlr_io_task(void)
@@ -2204,8 +2378,14 @@ void mlr_io_task(void)
 		mlr_flushing = false;
 	}
 
+	if (copy_pending && !hdr_write_pending && !clear_pending &&
+	    rec_track_idx < 0 && mlr_page_ring.r == mlr_page_ring.w) {
+		copy_track_task();
+	}
+
 	/* 6. No header write pending: flushing ends once page ring is drained */
-	if (!hdr_write_pending && mlr_flushing && rec_track_idx < 0 &&
+	if (!hdr_write_pending && !copy_pending && copy_dst_track < 0 &&
+	    mlr_flushing && rec_track_idx < 0 &&
 	    mlr_page_ring.r == mlr_page_ring.w) {
 		mlr_flushing = false;
 	}
@@ -2214,6 +2394,7 @@ void mlr_io_task(void)
 	 *    256-byte page per io_task call.  Ring refills happen between
 	 *    each page write, keeping audio fed even at high speeds. */
 	if (scene_save_pending && !hdr_write_pending && !clear_pending &&
+	    !copy_pending && copy_dst_track < 0 &&
 	    rec_track_idx < 0 && mlr_page_ring.r == mlr_page_ring.w) {
 		uint32_t sector_off = MLR_SCENE_OFFSET + (uint32_t)scene_save_sector * MLR_SECTOR_SIZE;
 
