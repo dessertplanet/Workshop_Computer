@@ -6,12 +6,12 @@
  * Row 7 is output VU in grid mode.
  *
  * Pages (selected via row 0):
- *   CUT (col 0): playhead cutting, loop-a-section
- *   REC (col 1): per-track speed, reverse, volume, record arm
+ *   REC (col 0): per-track speed, reverse, volume, record arm
+ *   CUT (col 1): playhead cutting, loop-a-section
  *
  * Row 0 layout (both pages):
- *   Col 0     = CUT page
- *   Col 1     = REC page
+ *   Col 0     = REC page
+ *   Col 1     = CUT page
  *   Cols 4–7  = Pattern 1–4 (timed motion recorders)
  *   Cols 9–12 = Recall 1–4 (instant snapshot slots)
  *   Col 14    = ALT modifier
@@ -70,8 +70,8 @@ extern "C" {
 /* ------------------------------------------------------------------ */
 /* Pages                                                              */
 /* ------------------------------------------------------------------ */
-#define PAGE_CUT  0
-#define PAGE_REC  1
+#define PAGE_REC  0
+#define PAGE_CUT  1
 
 enum class Mode {
 	HostMLR,          /* USB host, grid connected directly */
@@ -176,7 +176,7 @@ public:
 		/* ---- Common init ---- */
 		led_counter     = 0;
 		pat_counter     = 0;
-		play_page       = PAGE_CUT;
+		play_page       = PAGE_REC;
 		rec_speed_accum = 0;
 		rec_limit_latched = false;
 		prev_rec_track  = -1;
@@ -597,9 +597,6 @@ public:
 			bool alt_held = delete_action_held();
 			int pcs = pat_col_start();
 			if (col == 0) {
-				play_page = PAGE_CUT;
-			}
-			else if (col == 1) {
 				play_page = PAGE_REC;
 				/* stop all gated tracks when leaving CUT page */
 				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
@@ -666,12 +663,17 @@ public:
 					}
 				}
 			}
+			else if (col == 1) {
+				play_page = PAGE_CUT;
+			}
 		}
 
 		/* ---- page interaction (always active) ---- */
 		if (run_ui_control && !mlr_flushing) {
-			process_gate_hold();  /* play_col play/stop/gate/group-dissolve on both pages */
-			process_copy_gesture();  /* col-0 copy/paste gesture on both pages */
+			if (play_page == PAGE_REC) {
+				process_gate_hold();  /* REC play/stop/gate/group-dissolve */
+				process_copy_gesture();  /* REC col-0 copy/paste gesture */
+			}
 			if (mlr_flushing) {
 				/* A copy gesture just committed; suppress any same-event
 				 * column-0 record/gate handling while flash copy owns I/O. */
@@ -1009,7 +1011,7 @@ private:
 	uint32_t   group_flash_samples_remaining_ = 0;  /* countdown for confirmation blink */
 	uint16_t   group_flash_period_ = GROUP_FLASH_CREATE_PERIOD;  /* current blink half-period */
 	int        copy_source_track_ = -1;           /* source for first-column copy gesture */
-	int        copy_source_page_ = PAGE_CUT;      /* page where source press began */
+	int        copy_source_page_ = PAGE_REC;      /* page where source press began */
 	uint8_t    copy_participant_mask_ = 0;        /* col-0 keys suppressed by copy gesture */
 	uint8_t    copy_target_mask_ = 0;             /* empty tracks selected as copy destinations */
 	bool       copy_gesture_committed_ = false;
@@ -1018,7 +1020,7 @@ private:
 	uint8_t    copy_flash_mask_ = 0;              /* tracks whose record/copy LED is flashing */
 	uint32_t   copy_flash_samples_remaining_ = 0;
 	uint16_t   copy_flash_period_ = COPY_FLASH_PERIOD;
-	uint8_t    gated_choke_mute_mask_[MLR_NUM_TRACKS] = {};  /* temporary mutes while gated keys are held */
+	uint8_t    gated_choke_pause_mask_[MLR_NUM_TRACKS] = {};  /* tracks paused while gated keys are held */
 	bool       cut_loop_pending_[MLR_NUM_TRACKS] = {};  /* non-gated CUT loop commits on first release */
 	int        cut_loop_pending_start_[MLR_NUM_TRACKS] = {};
 	int        cut_loop_pending_end_[MLR_NUM_TRACKS] = {};
@@ -1071,7 +1073,7 @@ private:
 	int        gl_num_populated_ = 0;    /* number of tracks with content */
 	int        gl_populated_[MLR_NUM_TRACKS] = {};  /* indices of populated tracks */
 	int        gl_prev_knob_track_ = -1; /* previous track from knob, for hysteresis */
-	int        gl_prev_start_col_ = 0;   /* last accepted start column (0..13) */
+	int        gl_prev_start_col_ = 0;   /* last accepted start column (0..15) */
 	bool       gl_prev_switch_down_ = false; /* edge detect for switch-down reset */
 	int        gl_locked_track_ = -1;     /* locked track while switch is Up */
 	Switch     gl_prev_switch_mode_ = Switch::Middle;
@@ -1110,16 +1112,18 @@ private:
 
 	/* ---- 8x8 grid layout helpers ---- */
 
+	/** Current physical grid width. */
+	int grid_width() const { return small_grid_ ? 8 : 16; }
 	/** Play/stop/gate column (rightmost on grid). */
 	int play_col() const { return small_grid_ ? 7 : 15; }
 	/** ALT/delete column on row 0. */
 	int alt_col() const { return small_grid_ ? 7 : 14; }
-	/** Number of CUT scrub columns (between arm and play cols). */
-	int cut_cols() const { return small_grid_ ? 6 : 14; }
+	/** Number of CUT scrub columns. CUT track rows use the full grid width. */
+	int cut_cols() const { return grid_width(); }
 	/** First cut column index on the grid. */
-	int cut_col_start() const { return 1; }
+	int cut_col_start() const { return 0; }
 	/** Last cut column index on the grid. */
-	int cut_col_end() const { return small_grid_ ? 6 : 14; }
+	int cut_col_end() const { return grid_width() - 1; }
 	/** First pattern button column on row 0. */
 	int pat_col_start() const { return small_grid_ ? 3 : 4; }
 	/** First recall button column on row 0. */
@@ -1131,17 +1135,20 @@ private:
 	/** True while DELETE can modify another key; false after long-hold reset fires. */
 	bool delete_action_held() const { return delete_held() && !delete_reset_fired_; }
 
-	/** Map an 8x8 CUT grid column (1-6) to internal column (0-13). */
+	/** Map a full-width CUT grid column to internal column (0-15). */
 	int cut_grid_to_internal(int grid_col) const {
-		if (!small_grid_) return grid_col - 1;  /* 16x8: grid 1-14 → internal 0-13 */
-		int pos = grid_col - 1;  /* 0..5 */
-		return (pos * (MLR_GRID_COLS - 1) + 2) / (cut_cols() - 1);  /* 0..13 spread */
+		int max_grid_col = cut_cols() - 1;
+		if (grid_col < 0) grid_col = 0;
+		if (grid_col > max_grid_col) grid_col = max_grid_col;
+		return (grid_col * (MLR_GRID_COLS - 1) + (max_grid_col / 2)) / max_grid_col;
 	}
 
-	/** Map an internal column (0-13) to a CUT display column (1-N). */
+	/** Map an internal column (0-15) to a full-width CUT display column. */
 	int cut_internal_to_grid(int internal_col) const {
-		if (!small_grid_) return internal_col + 1;  /* 16x8: internal 0-13 → grid 1-14 */
-		return (internal_col * cut_cols() / MLR_GRID_COLS) + 1;  /* grid 1-6 */
+		if (internal_col < 0) internal_col = 0;
+		if (internal_col >= MLR_GRID_COLS) internal_col = MLR_GRID_COLS - 1;
+		int max_grid_col = cut_cols() - 1;
+		return (internal_col * max_grid_col + ((MLR_GRID_COLS - 1) / 2)) / (MLR_GRID_COLS - 1);
 	}
 
 	/** Map 8x8 REC speed column (2-6) to speed_shift. */
@@ -1315,7 +1322,7 @@ private:
 	 *     center ~0 (muted hold), left = reverse, right = forward
 	 *     edges map to ±2 octaves
 	 *   Knob X = per-channel level (grid mixer style)
-	 *   Knob Y = reset start position (column 0–13)
+	 *   Knob Y = reset start position (column 0–15)
 	 * Global mode (switch middle):
 	 *   Knob X = playback layer gain (unity at center)
 	 *   Knob Y = radiate amount (left=selected only, right=all channels)
@@ -1938,7 +1945,7 @@ private:
 			play_col_armed[t] = false;
 			play_col_hold_time[t] = 0;
 			gate_entered[t] = false;
-			release_gated_choke_mutes(t);
+			release_gated_choke_pauses(t);
 		}
 
 		delete_reset_flash_samples_remaining_ = DELETE_RESET_FLASH_SAMPLES;
@@ -2056,30 +2063,41 @@ private:
 		return seen[idx];
 	}
 
-	void __not_in_flash("mute_other_group_members_for_gate") mute_other_group_members_for_gate(int t)
+	bool __not_in_flash("track_gate_paused") track_gate_paused(int track) const
+	{
+		if (track < 0 || track >= MLR_NUM_TRACKS) return false;
+		uint8_t bit = (uint8_t)(1u << track);
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if (gated_choke_pause_mask_[u] & bit)
+				return true;
+		}
+		return false;
+	}
+
+	void __not_in_flash("pause_other_group_members_for_gate") pause_other_group_members_for_gate(int t)
 	{
 		if (t < 0 || t >= MLR_NUM_TRACKS) return;
 		uint8_t mask = mlr_track_groups[t];
-		uint8_t muted = 0;
+		uint8_t paused = 0;
 		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
 			if (u == t) continue;
 			if (!(mask & (1u << u))) continue;
 			if (!mlr_tracks[u].playing) continue;
-			mlr_tracks[u].muted = true;
-			muted |= (uint8_t)(1u << u);
+			mlr_tracks[u].playing = false;
+			paused |= (uint8_t)(1u << u);
 		}
-		gated_choke_mute_mask_[t] |= muted;
+		gated_choke_pause_mask_[t] |= paused;
 	}
 
-	void __not_in_flash("release_gated_choke_mutes") release_gated_choke_mutes(int t)
+	void __not_in_flash("release_gated_choke_pauses") release_gated_choke_pauses(int t)
 	{
 		if (t < 0 || t >= MLR_NUM_TRACKS) return;
-		uint8_t mask = gated_choke_mute_mask_[t];
+		uint8_t mask = gated_choke_pause_mask_[t];
+		gated_choke_pause_mask_[t] = 0;
 		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
-			if (mask & (1u << u))
-				mlr_tracks[u].muted = false;
+			if ((mask & (1u << u)) && !track_gate_paused(u))
+				mlr_tracks[u].playing = true;
 		}
-		gated_choke_mute_mask_[t] = 0;
 	}
 
 	/* --- Group-aware action helpers. Play-column actions broadcast through
@@ -2091,7 +2109,7 @@ private:
 		if (mlr_gate_mode[t]) {
 			mlr_clear_loop(t);
 			mlr_cut(t, col);
-			mute_other_group_members_for_gate(t);
+			pause_other_group_members_for_gate(t);
 		} else {
 			mlr_choke_group_cut(t, col);
 		}
@@ -2104,7 +2122,7 @@ private:
 		if (!mlr_tracks[t].has_content) return;
 		if (mlr_gate_mode[t]) {
 			mlr_set_loop(t, a, b);
-			mute_other_group_members_for_gate(t);
+			pause_other_group_members_for_gate(t);
 		} else {
 			mlr_choke_group_set_loop(t, a, b);
 		}
@@ -2167,13 +2185,13 @@ private:
 		if (on)
 			mlr_stop_track(t);
 		else
-			release_gated_choke_mutes(t);
+			release_gated_choke_pauses(t);
 	}
 
 	void __not_in_flash("reset_copy_gesture") reset_copy_gesture()
 	{
 		copy_source_track_ = -1;
-		copy_source_page_ = PAGE_CUT;
+		copy_source_page_ = PAGE_REC;
 		copy_participant_mask_ = 0;
 		copy_target_mask_ = 0;
 		copy_gesture_committed_ = false;
@@ -2452,40 +2470,31 @@ private:
 
 	void __not_in_flash("process_page_cut") process_page_cut()
 	{
-		int pc = play_col();
+		int cs = cut_col_start();
 		int ce = cut_col_end();
 		bool alt_held = delete_action_held();
 
-		/* --- key-up on track rows --- */
+		/* Gate-mode CUT playback remains momentary: cuts start on key-down,
+		 * then stop when the last cut key on that track row is released. */
 		if (grid.keyUp() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track = grid.lastY() - 1;
-
-			/* gated recording: stop on col 0 or play-col release */
-			if ((grid.lastX() == 0 || grid.lastX() == pc) && mlr_rec_track == track && rec_gated) {
-				mlr_stop_record();
-				rec_speed_accum = 0;
-				rec_gated = false;
-			}
-
-			/* gated playback: stop when last key released */
-			if (mlr_gate_mode[track] && mlr_tracks[track].playing) {
+			int column = grid.lastX();
+			if (column >= cs && column <= ce && mlr_gate_mode[track] && mlr_tracks[track].playing) {
 				int row = track + 1;
-				int gw = small_grid_ ? 8 : 16;
 				bool any_held = false;
-				for (int c = 0; c < gw; c++) {
-					if (grid.held((uint8_t)c, (uint8_t)row)) { any_held = true; break; }
+				for (int c = cs; c <= ce; c++) {
+					if (grid.held((uint8_t)c, (uint8_t)row)) {
+						any_held = true;
+						break;
+					}
 				}
 				if (!any_held) {
-					/* Broadcast: clear loops and stop across the whole group.
-					 * Single event each so pattern recording captures one
-					 * gesture; replay broadcasts through the group. */
-					bool any_loop = mlr_tracks[track].loop_active;
-					if (any_loop) {
+					if (mlr_tracks[track].loop_active) {
 						mlr_clear_loop(track);
 						dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)track, 0, 0);
 					}
 					mlr_stop_track(track);
-					release_gated_choke_mutes(track);
+					release_gated_choke_pauses(track);
 				}
 			}
 		}
@@ -2495,28 +2504,16 @@ private:
 			int track  = grid.lastY() - 1;
 			int column = grid.lastX();
 
-			/* col 0: record functions, play_col: play/gate (handled by process_gate_hold) */
-			if (column == 0) {
-				if (copy_col0_suppress_event_) return;
-				handle_cut_col0_press(track);
-				return;
-			}
-			if (column == pc) {
-				/* ALT + play_col is now reserved for group dissolve, which
-				 * is handled by process_gate_hold on key-up. Audio-clear via
-				 * this gesture is removed. */
-				return;
-			}
-
 			/* ignore columns outside the cut zone */
-			if (column < 1 || column > ce) return;
+			if (column < cs || column > ce) return;
 
 			if (alt_held) {
-				mlr_stop_track(track);
+				if (mlr_tracks[track].playing)
+					mlr_stop_track(track);
 				return;
 			}
 
-			/* Remap grid col to internal col (0–13) */
+			/* Remap grid col to internal col (0–15) */
 			int cut_col = cut_grid_to_internal(column);
 
 			if (rec_armed_track == track) {
@@ -2532,13 +2529,13 @@ private:
 		}
 
 		/* ---- loop-a-section: detect 2+ held keys per track row ---- */
-		if (grid.keyDown() || grid.keyUp()) {
+		if (!alt_held && (grid.keyDown() || grid.keyUp())) {
 			for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 				int row = t + 1;
 				int held_count = 0;
 				int held_min = 16, held_max = -1;
 
-				for (int c = 1; c <= ce; c++) {
+				for (int c = cs; c <= ce; c++) {
 					if (grid.held((uint8_t)c, (uint8_t)row)) {
 						held_count++;
 						int ic = cut_grid_to_internal(c);
@@ -2548,7 +2545,7 @@ private:
 				}
 
 				bool cut_key_released = grid.keyUp() && grid.lastY() == row &&
-				                        grid.lastX() >= 1 && grid.lastX() <= ce;
+				                        grid.lastX() >= cs && grid.lastX() <= ce;
 
 				if (!mlr_gate_mode[t] && cut_key_released && cut_loop_pending_[t]) {
 					group_set_loop(t, cut_loop_pending_start_[t], cut_loop_pending_end_[t]);
@@ -2660,8 +2657,8 @@ private:
 		uint8_t cycled = alt_held ? cycled_group_mask() : 0;
 
 		/* row 0: navigation — REC highlighted */
-		grid.led(0, 0,  4);  /* CUT = dim */
-		grid.led(1, 0, 15);  /* REC = active */
+		grid.led(0, 0, 15);  /* REC = active */
+		grid.led(1, 0,  4);  /* CUT = dim */
 		draw_row0_nav();
 
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
@@ -2848,71 +2845,29 @@ private:
 		grid.clear();
 
 		bool recording = (mlr_rec_track >= 0);
-		bool rec_pos_cut = (SwitchVal() == Switch::Up || SwitchVal() == Switch::Down);
-		bool gated_rec_ready_cut = rec_pos_cut && rec_armed_track < 0;
 
-		int pc = play_col();
+		int cs = cut_col_start();
 		int nc = cut_cols();
-		bool alt_held = delete_action_held();
-		uint8_t cycled = alt_held ? cycled_group_mask() : 0;
 
 		/* row 0: navigation — CUT highlighted */
-		grid.led(0, 0, 15);  /* CUT = active */
-		grid.led(1, 0,  4);  /* REC = dim */
+		grid.led(0, 0,  4);  /* REC = dim */
+		grid.led(1, 0, 15);  /* CUT = active */
 		draw_row0_nav();
 
 		/* rows 1–6: playhead chase */
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 			int row = t + 1;
 			bool has = mlr_tracks[t].has_content;
-			bool armed = (rec_armed_track == t);
 			bool actively_rec = (recording && t == mlr_rec_track);
-
-			/* col 0: record arm/status indicator */
-			uint8_t col0_bright;
-			if (actively_rec) {
-				col0_bright = (rec_blink & 2) ? 15 : 4;
-			} else if (armed) {
-				col0_bright = (rec_blink & 8) ? 12 : 3;
-			} else if (gated_rec_ready_cut) {
-				col0_bright = (rec_blink & 4) ? 10 : 3;
-			} else {
-				col0_bright = has ? 6 : 3;
-			}
-			if ((copy_flash_mask_ & (1u << t)) && copy_flash_samples_remaining_ > 0) {
-				bool on = (copy_flash_samples_remaining_ / copy_flash_period_) & 1;
-				col0_bright = on ? 15 : 0;
-			}
-			grid.led(0, row, col0_bright);
-
-			/* play col: play/stop/gate indicator */
-			uint8_t play_bright;
-			if (mlr_gate_mode[t]) {
-				play_bright = (gate_pulse & 8) ? 12 : 4;
-				if (mlr_tracks[t].playing) play_bright = 15;
-			} else {
-				play_bright = mlr_tracks[t].playing ? 15 : (has ? 6 : 3);
-			}
-			if (cycled && (cycled & (1u << t))) {
-				/* DELETE is held: cycle through existing groups, fast-blinking
-				 * each group's members in turn so the user can see which play
-				 * keys would dissolve which group. */
-				play_bright = (gate_pulse & 4) ? 15 : 2;
-			}
-			if ((group_flash_mask_ & (1u << t)) && group_flash_samples_remaining_ > 0) {
-				bool on = (group_flash_samples_remaining_ / group_flash_period_) & 1;
-				play_bright = on ? 15 : 0;
-			}
-			grid.led(pc, row, play_bright);
 
 			/* recording track: progress bar on cut columns */
 			if (actively_rec) {
 				uint32_t progress = mlr_get_rec_progress() * (uint32_t)nc / record_progress_limit();
 				if (progress > (uint32_t)nc) progress = (uint32_t)nc;
 				for (uint32_t c = 0; c < progress; c++)
-					grid.led(c + 1, row, 12);
+					grid.led((int)c + cs, row, 12);
 				if (progress < (uint32_t)nc)
-					grid.led(progress + 1, row, (rec_blink & 2) ? 8 : 0);
+					grid.led((int)progress + cs, row, (rec_blink & 2) ? 8 : 0);
 				continue;
 			}
 
@@ -2927,10 +2882,10 @@ private:
 					grid.led(c, row, 4);
 			}
 
-			/* only the bright playhead depends on active playback */
-			if (!has || !mlr_tracks[t].playing) continue;
+			/* Gate-paused grouped tracks keep showing their frozen playhead. */
+			if (!has || (!mlr_tracks[t].playing && !track_gate_paused(t))) continue;
 
-			int icol = mlr_get_column(t);  /* 0–13 internal */
+			int icol = mlr_get_column(t);  /* 0–15 internal */
 			int gcol = cut_internal_to_grid(icol);
 			grid.led(gcol, row, 15);
 		}
@@ -2945,6 +2900,7 @@ private:
 		grid.clear();
 
 		int nc = cut_cols();
+		int cs = cut_col_start();
 		/* saving animation: sweep across cut columns */
 		static uint8_t sweep = 0;
 		sweep = (sweep + 1) % nc;
@@ -2954,7 +2910,7 @@ private:
 			if (dist < 0) dist = -dist;
 			int bright = 15 - dist * 2;
 			if (bright < 0) bright = 0;
-			grid.led(c + 1, row, bright);
+			grid.led(c + cs, row, bright);
 		}
 		draw_bottom_vu_row();
 		grid.markDirty();

@@ -26,7 +26,7 @@ extern "C" {
 /* ------------------------------------------------------------------ */
 
 #define MLR_NUM_TRACKS         6
-#define MLR_GRID_COLS          14
+#define MLR_GRID_COLS          16
 
 /* Number of audio channels per track */
 #ifdef MLR_STEREO
