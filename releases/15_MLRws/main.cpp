@@ -577,7 +577,7 @@ public:
 		/* ---- page navigation + pattern/recall buttons (row 0, always active) ---- */
 		if (run_ui_control && grid.keyDown() && grid.lastY() == 0) {
 			int col = grid.lastX();
-			bool alt_held = grid.held(alt_col(), 0);
+			bool alt_held = delete_held();
 			int pcs = pat_col_start();
 			if (col == 0) {
 				play_page = PAGE_CUT;
@@ -639,7 +639,7 @@ public:
 
 		/* ---- page interaction (always active) ---- */
 		if (run_ui_control) {
-			process_gate_hold();  /* col 0/play_col play/stop/gate on both pages */
+			process_gate_hold();  /* play_col play/stop/gate/group-dissolve on both pages */
 			if (play_page == PAGE_REC)
 				process_page_rec();
 			else
@@ -1057,6 +1057,9 @@ private:
 	int pat_col_start() const { return small_grid_ ? 3 : 4; }
 	/** First recall button column on row 0. */
 	int recall_col_start() const { return 9; /* only on 16-wide */ }
+
+	/** True while the row-0 DELETE/ALT key is held. */
+	bool delete_held() const { return grid.held((uint8_t)alt_col(), 0); }
 
 	/** Map an 8x8 CUT grid column (1-6) to internal column (0-13). */
 	int cut_grid_to_internal(int grid_col) const {
@@ -1938,7 +1941,7 @@ private:
 	void __not_in_flash("process_gate_hold") process_gate_hold()
 	{
 		int pc = play_col();
-		bool alt_held = grid.held(alt_col(), 0);
+		bool alt_held = delete_held();
 
 		/* Snapshot of which play-col keys are currently held. Empty tracks
 		 * may be tapped normally, but they are not eligible for grouping. */
@@ -2089,7 +2092,7 @@ private:
 
 		int track  = grid.lastY() - 1;
 		int column = grid.lastX();
-		bool alt_held = grid.held(alt_col(), 0);
+		bool alt_held = delete_held();
 
 		/* Cols 0 / 1 (16-wide only): combined channel-select + record-arm.
 		 * On 8x8 grids col 1 is reverse, so we only honor the channel-pick
@@ -2190,7 +2193,7 @@ private:
 	{
 		int pc = play_col();
 		int ce = cut_col_end();
-		bool alt_held = grid.held(alt_col(), 0) || grid.held(0, 0);
+		bool alt_held = delete_held();
 
 		/* --- key-up on track rows --- */
 		if (grid.keyUp() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
@@ -2395,7 +2398,7 @@ private:
 		bool gated_rec_ready = rec_pos && rec_armed_track < 0;
 
 		int pc = play_col();
-		bool alt_held = grid.held((uint8_t)alt_col(), 0);
+		bool alt_held = delete_held();
 		uint8_t cycled = alt_held ? cycled_group_mask() : 0;
 
 		/* row 0: navigation — REC highlighted */
@@ -2584,7 +2587,7 @@ private:
 
 		int pc = play_col();
 		int nc = cut_cols();
-		bool alt_held = grid.held((uint8_t)alt_col(), 0);
+		bool alt_held = delete_held();
 		uint8_t cycled = alt_held ? cycled_group_mask() : 0;
 
 		/* row 0: navigation — CUT highlighted */
