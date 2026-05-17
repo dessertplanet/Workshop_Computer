@@ -60,6 +60,7 @@ extern "C" {
 #define KNOB_HARD_TAKEOVER_THRESHOLD 80  /* ADC counts (0..4095) — must exceed ADC noise floor */
 #define GRIDLESS_REC_HOLD_SAMPLES 96000u  /* 2 seconds at 48 kHz */
 #define RECORD_REARM_DELAY_SAMPLES 24000u /* 0.5 seconds at 48 kHz */
+#define FORCE_8X8_GRID_LAYOUT 0  /* for testing: force compact grid layout regardless of detected width */
 
 /* ------------------------------------------------------------------ */
 /* Pages                                                              */
@@ -828,7 +829,11 @@ public:
 				/* detect grid size once ready (latched) */
 				if (!grid_size_latched_ && grid.ready()) {
 					grid_size_latched_ = true;
+#if FORCE_8X8_GRID_LAYOUT
+					small_grid_ = true;
+#else
 					small_grid_ = (grid.cols() <= 8);
+#endif
 				}
 
 				if (play_page == PAGE_REC)
