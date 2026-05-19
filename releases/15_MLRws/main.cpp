@@ -1976,7 +1976,10 @@ private:
 
 	void __not_in_flash("handle_rec_arm_col_press") handle_rec_arm_col_press(int track, int column)
 	{
-		if (delete_action_held() && column == 0) {
+#ifdef MLR_STEREO
+		(void)column;
+#endif
+		if (delete_action_held()) {
 			mlr_clear_track(track);
 			if (rec_armed_track == track) {
 				rec_armed_track = -1;
@@ -2855,14 +2858,19 @@ private:
 					}
 				}
 #else
-				uint8_t selected = state_bright;
-				uint8_t other    = 0;
-				if (!user_chosen && state_bright > 4) {
-					other    = 2;
-					selected = (uint8_t)(state_bright - 1);
+				if (!has && !armed && !actively_rec) {
+					col0_bright = state_bright;
+					col1_bright = state_bright;
+				} else {
+					uint8_t selected = state_bright;
+					uint8_t other    = 0;
+					if (!user_chosen && state_bright > 4) {
+						other    = 2;
+						selected = (uint8_t)(state_bright - 1);
+					}
+					if (ch == 1) { col0_bright = other;    col1_bright = selected; }
+					else         { col0_bright = selected; col1_bright = other;    }
 				}
-				if (ch == 1) { col0_bright = other;    col1_bright = selected; }
-				else         { col0_bright = selected; col1_bright = other;    }
 #endif
 				if ((copy_flash_mask_ & (1u << t)) && copy_flash_samples_remaining_ > 0) {
 					bool on = (copy_flash_samples_remaining_ / copy_flash_period_) & 1;
