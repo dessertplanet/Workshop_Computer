@@ -156,14 +156,15 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
             (const mlr_track_header_t *)(XIP_BASE + flash_off);
 
         if (hdr->magic == MLR_MAGIC) {
-            snprintf(line, sizeof(line), "T%d %lu %lu %lu %d\n",
+            snprintf(line, sizeof(line), "T%d %lu %lu %lu %d %u\n",
                  t,
                  (unsigned long)hdr->sample_count,
                  (unsigned long)hdr->adpcm_bytes,
                  (unsigned long)hdr->num_keyframes,
-                 (int)hdr->record_speed_shift);
+                 (int)hdr->record_speed_shift,
+                 (unsigned)(hdr->recorded_channel & 0x01));
         } else {
-            snprintf(line, sizeof(line), "T%d 0 0 0 0\n", t);
+            snprintf(line, sizeof(line), "T%d 0 0 0 0 0\n", t);
         }
 
         if (!cdc_write_str(line))

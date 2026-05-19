@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.13)
 ## -----------------------------------------------------------------------------
 
 # Name of the firmware/UF2 produced.
-set(CARD_NAME "MLRws_mono" CACHE STRING "ComputerCard firmware name (also the UF2 filename stem)")
+set(CARD_NAME "MLRws" CACHE STRING "ComputerCard firmware name (also the UF2 filename stem)")
 
 # USB serial stdio — OFF for this card (USB port is used for host mode).
 set(CARD_STDIO_USB OFF CACHE BOOL "Enable USB stdio")
@@ -22,6 +22,15 @@ endif()
 
 project(${CARD_NAME} C CXX ASM)
 set(CMAKE_CXX_STANDARD 17)
+
+# MLRws runs from RAM while flash writes are active; -O3 grows RAM-resident code
+# enough to leave very little headroom, while -O2 has tested without overruns.
+foreach(LANG C CXX)
+	if(CMAKE_${LANG}_FLAGS_RELEASE MATCHES "(^| )-O3( |$)")
+		string(REPLACE "-O3" "-O2" CMAKE_${LANG}_FLAGS_RELEASE "${CMAKE_${LANG}_FLAGS_RELEASE}")
+		set(CMAKE_${LANG}_FLAGS_RELEASE "${CMAKE_${LANG}_FLAGS_RELEASE}" CACHE STRING "Flags used by the ${LANG} compiler during Release builds." FORCE)
+	endif()
+endforeach()
 
 set(MLR_FLASH_TOTAL_BYTES 2097152 CACHE STRING "Total flash size of the program card" FORCE)
 set(MLR_FIRMWARE_RESERVE_BYTES 163840 CACHE STRING "Flash bytes reserved for firmware" FORCE)
@@ -60,9 +69,9 @@ add_executable(${CARD_NAME}
 target_compile_options(${CARD_NAME} PRIVATE -Wdouble-promotion -Wfloat-conversion -Wall -Wextra)
 target_link_options(${CARD_NAME} PRIVATE -Wl,--print-memory-usage)
 
-# Stereo mode (set via -DCARD_STEREO=ON)
-option(CARD_STEREO "Build stereo variant" OFF)
 option(MLR_PERF_PROFILING "Enable debugger-readable performance counters" OFF)
+option(CARD_STEREO "Deprecated; ignored because MLRws now builds one dual-mono firmware" OFF)
+mark_as_advanced(CARD_STEREO)
 
 # Run all code from RAM so flash writes don't stall core 0.
 pico_set_binary_type(${CARD_NAME} copy_to_ram)
@@ -72,7 +81,6 @@ target_compile_definitions(${CARD_NAME} PRIVATE
 	MLR_TRACK_FLASH_SIZE=${MLR_TRACK_FLASH_SIZE_BYTES}
 	MLR_SCENE_SECTORS=${MLR_SCENE_SECTORS_COUNT}
 	MLR_SECTOR_SIZE=${MLR_FLASH_SECTOR_BYTES}
-	$<$<BOOL:${CARD_STEREO}>:MLR_STEREO>
 	$<$<BOOL:${MLR_PERF_PROFILING}>:MLR_PERF_PROFILING>
 )
 

@@ -20,8 +20,7 @@ card without having to play it into the audio input.
    boot straight into sample-manager mode.)
 2. Plug the Computer into your laptop/desktop with USB-C.
 3. Open the web app, click **Connect**, and pick the Computer's serial port
-   from the browser prompt. The status line will report `Connected (mono)` or
-   `Connected (stereo)` depending on which UF2 is installed, and then read
+   from the browser prompt. The status line will report `Connected`, and then read
    each existing track from the card so you can see and audition them.
 
 > [!NOTE]
@@ -88,23 +87,18 @@ sample rate). The options are **0.25×**, **0.5×**, **0.67×** and **1×**
 (default).
 
 See the table in the [main README](../README.md#sample-manager-web-app) for
-the exact maximum length per speed for mono and stereo cards. When recording
+the exact maximum length per speed. When recording
 on the Computer panel itself (grid mode REC page) you can pick faster-than-1×
 speeds too — those tracks will still be displayed and downloadable here, but
 the dropdown for uploads is capped at 1× because going faster doesn't give
 you anything useful for a pre-prepared sample.
 
-## Mono and stereo cards
+## Audio format
 
-The card identifies itself automatically as **mono**  or **stereo** on connect, and the app adapts:
+MLRws stores one mono ADPCM stream per track. In the sample manager, each track has a Channel 1/2 selector; that selector chooses the stored output routing and, for multi-channel source files, which source channel is encoded. Channel 1 uses source channel 1, Channel 2 uses source channel 2 when present, and single-channel files can be assigned to either output channel.
 
-- **Mono card:** stereo source files are automatically downmixed to mono
-  before encoding.
-- **Stereo card:** stereo sources are encoded with a Mid-Side ADPCM scheme
-  that splits the storage budget between the two channels.
+When uploading a stereo file, if the next track is empty, the app offers to split it across the two tracks: left to the selected track on Channel 1, right to the following track on Channel 2.
 
-Maximum sample length per track is roughly halved on stereo cards because
-each frame stores two channels.
 
 ## Browser and Web Serial caveats
 

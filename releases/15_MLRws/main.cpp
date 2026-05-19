@@ -51,7 +51,7 @@ extern "C" {
 /* Group-creation/dissolve flash feedback (samples at 48 kHz). */
 #define GROUP_FLASH_CREATE_SAMPLES   24000  /* ~500 ms total */
 #define GROUP_FLASH_CREATE_PERIOD     6000  /* ~125 ms half-period (~4 Hz blink) */
-#define GROUP_FLASH_DISSOLVE_SAMPLES 24000  /* ~500 ms total (twice as fast as before) */
+#define GROUP_FLASH_DISSOLVE_SAMPLES 36000  /* ~750 ms total: three quick confirmation flashes */
 #define GROUP_FLASH_DISSOLVE_PERIOD   6000  /* ~125 ms half-period (~4 Hz blink) */
 #define COPY_FLASH_SAMPLES            24000  /* ~500 ms total */
 #define COPY_FLASH_PERIOD              6000  /* ~125 ms half-period */
@@ -337,9 +337,6 @@ public:
 			if (s_sample_mgr_active_) {
 				/* Sample manager owns flash — output silence */
 				AudioOut1(0);
-#ifdef MLR_STEREO
-				AudioOut2(0);
-#endif
 				return;
 			}
 			if (s_rescan_needed_) {
@@ -359,9 +356,6 @@ public:
 		case Mode::DeviceSampleMgr:
 			/* Silence — sample manager owns flash exclusively */
 			AudioOut1(0);
-#ifdef MLR_STEREO
-			AudioOut2(0);
-#endif
 			return;
 		case Mode::HostMLR:
 		case Mode::DeviceMLR:
@@ -505,73 +499,6 @@ public:
 		PERF_UI_SECTION_END(1);
 
 		PERF_UI_SECTION_START(2);
-#ifdef MLR_STEREO
-		/* ---- Stereo: detect mono-pan / balance recording state + poll Y knob for pan ---- */
-		{
-			bool a1 = Connected(Input::Audio1);
-			bool a2 = Connected(Input::Audio2);
-			bool exactly_one = (a1 != a2);  /* xor: exactly one plug present */
-			bool both        = (a1 && a2);
-			uint8_t mono_src = a1 ? 0 : (a2 ? 1 : 0);
-
-			/* While armed (and not yet recording), Y knob = live pan.
-			 * Mirror the pan-mode flags into arm_is_* so the latch at
-			 * record start uses the cached, stable values rather than
-			 * re-probing Connected() at that instant — a momentary norm-
-			 * probe flicker would otherwise drop rec_is_mono_pan_ and
-			 * push the recording into the balance branch (which silences
-			 * the disconnected side, sounding like a hard pan). */
-			if (mlr_rec_track < 0 && rec_armed_track >= 0 && (exactly_one || both)) {
-				int knob_y_raw = KnobVal(Knob::Y);  /* 0..4095 */
-				arm_pan_q12_ = (int16_t)(knob_y_raw - 2048);
-				arm_is_mono_pan_  = exactly_one;
-				arm_is_balance_   = both;
-				arm_mono_pan_src_ = mono_src;
-				if (exactly_one) {
-					mlr_tracks[rec_armed_track].recorded_channel    = mono_src;
-					mlr_tracks[rec_armed_track].channel_user_chosen = true;
-				} else {
-					mlr_tracks[rec_armed_track].recorded_channel    = 0;
-				}
-			}
-
-			/* Latch the arm-state into the recording-state. Use a track-id
-			 * sentinel rather than a -1→track edge so we don't depend on
-			 * prev_rec_track timing (e.g., a stop/start within one sample).
-			 * Read Y knob raw here as well so the initial pan reflects the
-			 * pot's current position even if the polling cache above hasn't
-			 * tracked it (e.g., if the track was armed for less than one
-			 * sample, or the arm-update condition was momentarily false). */
-			if (mlr_rec_track >= 0 && rec_pan_latched_for_track_ != mlr_rec_track) {
-				rec_is_mono_pan_  = arm_is_mono_pan_;
-				rec_is_balance_   = arm_is_balance_;
-				rec_mono_pan_src_ = arm_mono_pan_src_;
-				int knob_y_raw    = KnobVal(Knob::Y);  /* 0..4095 */
-				rec_pan_q12_      = (int16_t)(knob_y_raw - 2048);
-				arm_pan_q12_      = rec_pan_q12_;
-				if (rec_is_mono_pan_)
-					mlr_tracks[mlr_rec_track].recorded_channel = arm_mono_pan_src_;
-				else
-					mlr_tracks[mlr_rec_track].recorded_channel = 0;
-				/* Classify the current pan into 3 buckets for the post-
-				 * recording grid display: hard L / hard R / both. Threshold
-				 * is the outer ~7% of the Y knob travel on each side; in
-				 * between (including center) reads as "both". The class is
-				 * persisted in the track header so it survives a reboot. */
-				mlr_tracks[mlr_rec_track].pan_class = pan_class_from_q12(rec_pan_q12_);
-				rec_pan_latched_for_track_ = mlr_rec_track;
-			} else if (mlr_rec_track >= 0 && (rec_is_mono_pan_ || rec_is_balance_)) {
-				rec_pan_q12_ = (int16_t)(KnobVal(Knob::Y) - 2048);
-				mlr_tracks[mlr_rec_track].pan_class = pan_class_from_q12(rec_pan_q12_);
-			}
-			if (mlr_rec_track < 0) {
-				rec_is_mono_pan_           = false;
-				rec_is_balance_            = false;
-				rec_pan_latched_for_track_ = -1;
-			}
-		}
-#endif
-
 		/* ---- speed-linked recording ---- */
 		int16_t dry_in;
 		{
@@ -582,9 +509,6 @@ public:
 			if (route_track >= 0) rec_ch = mlr_tracks[route_track].recorded_channel;
 			dry_in = (rec_ch == 1) ? (int16_t)audio_in2 : (int16_t)audio_in1;
 		}
-#ifdef MLR_STEREO
-		int16_t dry_in_r = AudioIn2();
-#endif
 		uint8_t dry_level = (uint8_t)(KnobVal(Knob::X) >> 4);  /* 0–255 */
 		if (mlr_rec_track >= 0) {
 			/* scale input by dry knob and track volume before encoding */
@@ -592,46 +516,11 @@ public:
 			scaled = (scaled * (int32_t)mlr_tracks[mlr_rec_track].volume_frac) >> 8;
 			if (scaled > 2047) scaled = 2047;
 			if (scaled < -2048) scaled = -2048;
-#ifdef MLR_STEREO
-			int32_t scaled_r;
-			if (rec_is_mono_pan_) {
-				/* Single-input recording with live pan: synthesise L/R
-				 * from the mono source already in `scaled`. The mono signal
-				 * is rec_mono_pan_src_'s input, and dry_in was selected
-				 * from that input above via mlr_tracks[].recorded_channel. */
-				uint16_t gL, gR;
-				pan_gains_q8(rec_pan_q12_, &gL, &gR);
-				int32_t mono = scaled;
-				scaled   = (mono * (int32_t)gL) >> 8;
-				scaled_r = (mono * (int32_t)gR) >> 8;
-			} else if (rec_is_balance_) {
-				/* Two-input recording with balance: each side stays on its
-				 * own input but is attenuated by pan_gains_q8. Pan-left
-				 * keeps L at unity and ducks R; pan-right vice versa. */
-				uint16_t gL, gR;
-				pan_gains_q8(rec_pan_q12_, &gL, &gR);
-				scaled_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
-				scaled_r = (scaled_r * (int32_t)mlr_tracks[mlr_rec_track].volume_frac) >> 8;
-				scaled   = (scaled   * (int32_t)gL) >> 8;
-				scaled_r = (scaled_r * (int32_t)gR) >> 8;
-			} else {
-				scaled_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
-				scaled_r = (scaled_r * (int32_t)mlr_tracks[mlr_rec_track].volume_frac) >> 8;
-			}
-			if (scaled   > 2047)  scaled   = 2047;
-			if (scaled   < -2048) scaled   = -2048;
-			if (scaled_r > 2047)  scaled_r = 2047;
-			if (scaled_r < -2048) scaled_r = -2048;
-#endif
 			uint16_t spd = mlr_tracks[mlr_rec_track].speed_frac;
 			rec_speed_accum += spd;
 			while (rec_speed_accum >= 256) {
 				rec_speed_accum -= 256;
-#ifdef MLR_STEREO
-				mlr_record_sample_stereo((int16_t)scaled, (int16_t)scaled_r);
-#else
 				mlr_record_sample((int16_t)scaled);
-#endif
 				if (mlr_get_rec_progress() >= record_progress_limit()) {
 					mlr_stop_record();
 					rec_speed_accum = 0;
@@ -767,110 +656,6 @@ public:
 		master_knob_last_raw_ = knob_main_raw;
 
 		uint8_t master_level = (uint8_t)(mlr_master_level_raw >> 4);
-#ifdef MLR_STEREO
-		int16_t mix_r;
-		int16_t mix = mlr_play_mix_stereo(255, &mix_r);
-		int32_t outL = (int32_t)mix;
-		int32_t outR = (int32_t)mix_r;
-		if (dry_level > 0 && (rec_armed_track >= 0 || sw == Switch::Up)) {
-			/* monitor input through ADPCM codec round-trip to filter USB noise.
-			 * Apply armed/recording track volume so monitor matches what's
-			 * recorded. If we're in mono-pan mode (armed or recording with
-			 * exactly one input plugged in), synthesise the L/R monitor by
-			 * panning a single mono source — live pan from arm_pan_q12_ if
-			 * not yet recording, rec_pan_q12_ once recording is in progress,
-			 * so the user hears exactly what is being committed. */
-			uint16_t mon_vol = 256;
-			int mon_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
-			if (mon_track >= 0) mon_vol = mlr_tracks[mon_track].volume_frac;
-			bool codec_monitor = (mlr_rec_track < 0 && sw == Switch::Up);
-
-			bool armed_one_plug = (mlr_rec_track < 0 && rec_armed_track >= 0
-				&& (Connected(Input::Audio1) != Connected(Input::Audio2)));
-			bool armed_both    = (mlr_rec_track < 0 && rec_armed_track >= 0
-				&& Connected(Input::Audio1) && Connected(Input::Audio2));
-			bool mono_pan_mon = rec_is_mono_pan_ || armed_one_plug;
-			bool balance_mon  = rec_is_balance_  || armed_both;
-
-			if (mono_pan_mon) {
-				int16_t pan_now = (mlr_rec_track >= 0) ? rec_pan_q12_ : arm_pan_q12_;
-				uint16_t gL, gR;
-				pan_gains_q8(pan_now, &gL, &gR);
-				/* dry_in is already routed to the mono source above
-				 * (recorded_channel was set to the plugged input). */
-				int32_t mono_scaled = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
-				mono_scaled = (mono_scaled * (int32_t)mon_vol) >> 8;
-
-				int32_t in_l_q = (mono_scaled * (int32_t)gL) >> 8;
-				int32_t in_r_q = (mono_scaled * (int32_t)gR) >> 8;
-				if (codec_monitor) {
-					int16_t in16l = (int16_t)(in_l_q << 4);
-					int16_t in16r = (int16_t)(in_r_q << 4);
-					uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
-					int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
-					uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
-					int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
-					outL += (int32_t)(cleanL >> 4);
-					outR += (int32_t)(cleanR >> 4);
-				} else {
-					outL += in_l_q;
-					outR += in_r_q;
-				}
-			} else if (balance_mon) {
-				/* Two inputs + balance: each side stays on its own input
-				 * but is attenuated by pan_gains_q8. */
-				int16_t pan_now = (mlr_rec_track >= 0) ? rec_pan_q12_ : arm_pan_q12_;
-				uint16_t gL, gR;
-				pan_gains_q8(pan_now, &gL, &gR);
-				int32_t in_l = ((int32_t)dry_in   * (int32_t)dry_level) >> 8;
-				int32_t in_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
-				in_l = (in_l * (int32_t)mon_vol) >> 8;
-				in_r = (in_r * (int32_t)mon_vol) >> 8;
-				in_l = (in_l * (int32_t)gL) >> 8;
-				in_r = (in_r * (int32_t)gR) >> 8;
-				if (codec_monitor) {
-					int16_t in16l = (int16_t)(in_l << 4);
-					int16_t in16r = (int16_t)(in_r << 4);
-					uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
-					int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
-					uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
-					int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
-					outL += (int32_t)(cleanL >> 4);
-					outR += (int32_t)(cleanR >> 4);
-				} else {
-					outL += in_l;
-					outR += in_r;
-				}
-			} else {
-				int32_t in_l = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
-				in_l = (in_l * (int32_t)mon_vol) >> 8;
-				int32_t in_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
-				in_r = (in_r * (int32_t)mon_vol) >> 8;
-				if (codec_monitor) {
-					int16_t in16l = (int16_t)(in_l << 4);
-					uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
-					int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
-					outL += (int32_t)(cleanL >> 4);
-
-					int16_t in16r = (int16_t)(in_r << 4);
-					uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
-					int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
-					outR += (int32_t)(cleanR >> 4);
-				} else {
-					outL += in_l;
-					outR += in_r;
-				}
-			}
-		}
-		outL = (outL * (int32_t)master_level) >> 8;
-		outR = (outR * (int32_t)master_level) >> 8;
-		if (outL > 2047)  outL = 2047;
-		if (outL < -2048) outL = -2048;
-		if (outR > 2047)  outR = 2047;
-		if (outR < -2048) outR = -2048;
-		AudioOut1((int16_t)outL);
-		AudioOut2((int16_t)outR);
-#else
 		int16_t mix_r;
 		int16_t mix = mlr_play_mix_dual(255, &mix_r);
 		int32_t outL = (int32_t)mix;
@@ -904,7 +689,6 @@ public:
 		if (outR < -2048) outR = -2048;
 		AudioOut1((int16_t)outL);
 		AudioOut2((int16_t)outR);
-#endif
 		PERF_UI_SECTION_END(5);
 
 		/* ---- tick pattern playback (~5ms resolution) ---- */
@@ -961,8 +745,6 @@ public:
 
 				if (grid_redraw_phase_ < 0) {
 					grid_render_rec_pos_ = (sw == Switch::Up || sw == Switch::Down);
-					grid_render_audio1_connected_ = Connected(Input::Audio1);
-					grid_render_audio2_connected_ = Connected(Input::Audio2);
 					grid_render_delete_held_ = delete_held();
 					grid_render_delete_action_held_ = delete_action_held();
 					grid_redraw_page_ = play_page;
@@ -991,15 +773,9 @@ public:
 			in_scaled_abs = (in_scaled_abs * (int32_t)dry_level) >> 8;  /* 0..2048 */
 			if (in_scaled_abs > vu_in_accum_) vu_in_accum_ = in_scaled_abs;
 
-#ifdef MLR_STEREO
 			int32_t out_abs = outL < 0 ? -outL : outL;
 			int32_t out_abs_r = outR < 0 ? -outR : outR;
 			if (out_abs_r > out_abs) out_abs = out_abs_r;
-#else
-			int32_t out_abs = outL < 0 ? -outL : outL;
-			int32_t out_abs_r = outR < 0 ? -outR : outR;
-			if (out_abs_r > out_abs) out_abs = out_abs_r;
-#endif
 			if (out_abs > vu_out_accum_) vu_out_accum_ = out_abs;
 		}
 
@@ -1007,33 +783,6 @@ public:
 	}
 
 private:
-#ifdef MLR_STEREO
-	/* Linear-balance pan: one side at unity, the other scales down to zero
-	 * as pan moves toward the opposite extreme. pan_q12 ∈ [-2048, 2047].
-	 * gL/gR are Q8 (256 = unity). At center both are 256, so the monitor
-	 * keeps full level when no pan is applied. */
-	static inline void pan_gains_q8(int16_t pan_q12, uint16_t *gL, uint16_t *gR)
-	{
-		int32_t p = pan_q12;
-		if (p < -2048) p = -2048;
-		if (p >  2047) p =  2047;
-		if (p <= 0) {
-			*gL = 256;
-			*gR = (uint16_t)(256 + ((p * 256) / 2048));  /* p<=0 reduces gR toward 0 */
-		} else {
-			*gL = (uint16_t)(256 - ((p * 256) / 2048));
-			*gR = 256;
-		}
-	}
-
-	static inline uint8_t pan_class_from_q12(int16_t pan_q12)
-	{
-		if (pan_q12 <= -1900) return 1;
-		if (pan_q12 >= 1900)  return 2;
-		return 0;
-	}
-#endif
-
 	/** Read the switch position directly via ADC (safe before Run()/ISR).
 	 *  The switch is on the analog mux at position 3 (MX_A=1, MX_B=1),
 	 *  read through MUX_IO_1 (ADC input 2, GPIO 28). */
@@ -1101,8 +850,6 @@ private:
 	volatile int    grid_redraw_page_ = PAGE_REC;
 	volatile bool   grid_redraw_flushing_ = false;
 	volatile bool   grid_render_rec_pos_ = false;
-	volatile bool   grid_render_audio1_connected_ = false;
-	volatile bool   grid_render_audio2_connected_ = false;
 	volatile bool   grid_render_delete_held_ = false;
 	volatile bool   grid_render_delete_action_held_ = false;
 	volatile uint16_t panel_vu_led_[6] = {};
@@ -1135,36 +882,9 @@ private:
 	uint32_t   delete_reset_hold_samples_ = 0;    /* continuous DELETE hold duration */
 	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
 	bool       delete_reset_fired_ = false;       /* require DELETE release before another reset */
+	bool       group_started_from_rec_[MLR_NUM_TRACKS] = {};  /* group play-toggle provenance */
 	adpcm_state_t mon_enc_ = {0, 0}; /* monitor codec encoder state */
 	adpcm_state_t mon_dec_ = {0, 0}; /* monitor codec decoder state */
-#ifdef MLR_STEREO
-	adpcm_state_t mon_enc_r_ = {0, 0}; /* right channel monitor encoder */
-	adpcm_state_t mon_dec_r_ = {0, 0}; /* right channel monitor decoder */
-
-	/* Stereo build, single-input recording: Y knob = pan. arm_pan_q12_
-	 * is updated live by the Y knob while armed (-2048 = full L,
-	 * +2047 = full R, 0 = center). rec_pan_q12_ is initialized at record
-	 * start and then follows the Y knob while recording, so pan changes are
-	 * baked into the recorded stereo samples.
-	 * rec_is_mono_pan_ records whether the currently in-progress recording
-	 * is one-input + pan, in which case the right input is synthesised
-	 * from the left via the current pan instead of read from AudioIn2. */
-	int16_t  arm_pan_q12_       = 0;
-	int16_t  rec_pan_q12_       = 0;
-	bool     rec_is_mono_pan_   = false;
-	bool     rec_is_balance_    = false; /* true when recording with both inputs + pan-balance */
-	uint8_t  rec_mono_pan_src_  = 0; /* 0 = AudioIn1, 1 = AudioIn2 (when mono-pan) */
-	int      rec_pan_latched_for_track_ = -1; /* tracks which mlr_rec_track has had pan latched */
-
-	/* Live "arm state" mirrors of the recording flags, updated each sample
-	 * while a track is armed (and not yet recording). Latching at record
-	 * start reads from these instead of probing Connected() in the same
-	 * sample, so a momentary norm-probe flicker can't trigger the wrong
-	 * pan-mode for the recording. */
-	bool     arm_is_mono_pan_   = false;
-	bool     arm_is_balance_    = false;
-	uint8_t  arm_mono_pan_src_  = 0;
-#endif
 	inline static int32_t notch_x1_ = 0;
 	inline static int32_t notch_x2_ = 0;
 	inline static int32_t notch_y1_ = 0;
@@ -1518,16 +1238,10 @@ private:
 		}
 
 		int16_t rec_monitor_l = 0;
-#ifdef MLR_STEREO
-		int16_t rec_monitor_r = 0;
-#endif
 
 		/* Active recording: speed-linked write, auto-stop at max length. */
 		if (gl_recording_active_ && gl_record_track_ >= 0 && gl_record_track_ < MLR_NUM_TRACKS) {
 			int16_t dry_in_l = notch_filter_input(AudioIn1());
-#ifdef MLR_STEREO
-			int16_t dry_in_r = AudioIn2();
-#endif
 			uint8_t in_gain = (uint8_t)(KnobVal(Knob::X) >> 4);  /* 0..255 */
 
 			int32_t scaled_l = ((int32_t)dry_in_l * (int32_t)in_gain) >> 8;
@@ -1535,23 +1249,12 @@ private:
 			if (scaled_l < -2048) scaled_l = -2048;
 			rec_monitor_l = (int16_t)scaled_l;
 
-#ifdef MLR_STEREO
-			int32_t scaled_r = ((int32_t)dry_in_r * (int32_t)in_gain) >> 8;
-			if (scaled_r > 2047) scaled_r = 2047;
-			if (scaled_r < -2048) scaled_r = -2048;
-			rec_monitor_r = (int16_t)scaled_r;
-#endif
-
 			rec_speed_accum += 256u;  /* fixed 1x record speed in gridless mode */
 
 			bool stop_record = false;
 			while (rec_speed_accum >= 256) {
 				rec_speed_accum -= 256;
-#ifdef MLR_STEREO
-				mlr_record_sample_stereo(rec_monitor_l, rec_monitor_r);
-#else
 				mlr_record_sample(rec_monitor_l);
-#endif
 				if (mlr_get_rec_progress() >= record_progress_limit()) {
 					stop_record = true;
 					break;
@@ -1802,22 +1505,6 @@ private:
 
 		/* ---- Mix and output ---- */
 		uint8_t master_level = 255;  /* full volume — no master knob in gridless */
-#ifdef MLR_STEREO
-		int16_t mix_r;
-		int16_t mix = mlr_play_mix_stereo(master_level, &mix_r);
-		if (gl_recording_active_) {
-			int32_t out_l = (int32_t)mix + (int32_t)rec_monitor_l;
-			int32_t out_r = (int32_t)mix_r + (int32_t)rec_monitor_r;
-			if (out_l > 2047) out_l = 2047;
-			if (out_l < -2048) out_l = -2048;
-			if (out_r > 2047) out_r = 2047;
-			if (out_r < -2048) out_r = -2048;
-			mix = (int16_t)out_l;
-			mix_r = (int16_t)out_r;
-		}
-		AudioOut1(mix);
-		AudioOut2(mix_r);
-#else
 		int16_t mix = mlr_play_mix(master_level);
 		if (gl_recording_active_) {
 			int32_t out_m = (int32_t)mix + (int32_t)rec_monitor_l;
@@ -1826,7 +1513,6 @@ private:
 			mix = (int16_t)out_m;
 		}
 		AudioOut1(mix);
-#endif
 
 		/* ---- LED update (sub-sampled) ---- */
 		gl_led_counter_++;
@@ -1976,9 +1662,6 @@ private:
 
 	void __not_in_flash("handle_rec_arm_col_press") handle_rec_arm_col_press(int track, int column)
 	{
-#ifdef MLR_STEREO
-		(void)column;
-#endif
 		if (delete_action_held()) {
 			mlr_clear_track(track);
 			if (rec_armed_track == track) {
@@ -1988,21 +1671,17 @@ private:
 			return;
 		}
 
-#ifndef MLR_STEREO
-		/* Mono build, 16-wide grid: col 0 = ch1, col 1 = ch2. */
+		/* 16-wide grid: col 0 = ch1, col 1 = ch2. */
 		if (!small_grid_) {
 			if (rec_armed_track == track &&
 			    mlr_tracks[track].recorded_channel != (uint8_t)column) {
-				mlr_tracks[track].recorded_channel    = (uint8_t)column;
-				mlr_tracks[track].channel_user_chosen = true;
+				set_track_recorded_channel(track, (uint8_t)column, true);
 				return;
 			}
 			if (rec_armed_track != track) {
-				mlr_tracks[track].recorded_channel    = (uint8_t)column;
-				mlr_tracks[track].channel_user_chosen = true;
+				set_track_recorded_channel(track, (uint8_t)column, true);
 			}
 		}
-#endif
 
 		int sw_now = SwitchVal();
 		bool rec_pos = (sw_now == Switch::Up || sw_now == Switch::Down);
@@ -2058,6 +1737,7 @@ private:
 			play_col_armed[t] = false;
 			play_col_hold_time[t] = 0;
 			gate_entered[t] = false;
+			group_started_from_rec_[t] = false;
 			release_gated_choke_pauses(t);
 		}
 
@@ -2078,6 +1758,17 @@ private:
 		if (col < 0) col = 0;
 		if (col >= MLR_GRID_COLS) col = MLR_GRID_COLS - 1;
 		mlr_cut(track, col);
+	}
+
+	void __not_in_flash("set_track_recorded_channel") set_track_recorded_channel(int track, uint8_t channel, bool persist_existing)
+	{
+		if (track < 0 || track >= MLR_NUM_TRACKS) return;
+		channel &= 0x01;
+		bool changed = (mlr_tracks[track].recorded_channel != channel);
+		mlr_tracks[track].recorded_channel    = channel;
+		mlr_tracks[track].channel_user_chosen = true;
+		if (changed && persist_existing && mlr_tracks[track].has_content)
+			mlr_rewrite_track_header(track);
 	}
 
 	void set_armed_track(int track)
@@ -2143,6 +1834,11 @@ private:
 			if (new_mask & (1u << u))
 				mlr_track_groups[u] = new_mask;
 		}
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if (new_mask & (1u << u))
+				group_started_from_rec_[u] = false;
+		}
+		mlr_scene_save_start();
 	}
 
 	/* Dissolve the group containing track t. Returns the prior mask so
@@ -2152,10 +1848,36 @@ private:
 		if (t < 0 || t >= MLR_NUM_TRACKS) return 0;
 		uint8_t old = mlr_track_groups[t];
 		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
-			if (old & (1u << u))
+			if (old & (1u << u)) {
 				mlr_track_groups[u] = (uint8_t)(1u << u);
+				group_started_from_rec_[u] = false;
+			}
 		}
 		return old;
+	}
+
+	bool __not_in_flash("dissolve_group_if_delete_touch") dissolve_group_if_delete_touch(int t)
+	{
+		if (!delete_action_held() || t < 0 || t >= MLR_NUM_TRACKS) return false;
+		uint8_t old_mask = mlr_track_groups[t];
+		int popcount = 0;
+		for (int u = 0; u < MLR_NUM_TRACKS; u++)
+			if (old_mask & (1u << u)) popcount++;
+		if (popcount < 2) return false;
+
+		dissolve_group(t);
+		mlr_scene_save_start();
+		group_flash_mask_ = old_mask;
+		group_flash_samples_remaining_ = GROUP_FLASH_DISSOLVE_SAMPLES;
+		group_flash_period_ = GROUP_FLASH_DISSOLVE_PERIOD;
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if (!(old_mask & (1u << u))) continue;
+			play_col_armed[u] = false;
+			play_col_hold_time[u] = 0;
+			gate_entered[u] = false;
+			release_gated_choke_pauses(u);
+		}
+		return true;
 	}
 
 	/* When DELETE is held, find the currently-highlighted group (cycled over
@@ -2214,31 +1936,85 @@ private:
 	}
 
 	/* --- Group-aware action helpers. Play-column actions broadcast through
-	 *     the group; CUT-page actions operate on the touched track and choke
-	 *     other playing members in the same group. --- */
+	 *     the group. REC-origin playback keeps phase-linked groups together by
+	 *     broadcasting CUT-page cuts/loops and REC-page parameters. --- */
+
+	bool __not_in_flash("group_cut_should_broadcast") group_cut_should_broadcast(int t) const
+	{
+		if (t < 0 || t >= MLR_NUM_TRACKS) return false;
+		uint8_t mask = mlr_track_groups[t];
+		if (mask == (uint8_t)(1u << t)) return false;
+		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
+			if ((mask & (1u << u)) && !group_started_from_rec_[u])
+				return false;
+		}
+		return true;
+	}
 
 	void __not_in_flash("group_cut") group_cut(int t, int col)
 	{
-		if (mlr_gate_mode[t]) {
+		if (group_cut_should_broadcast(t)) {
+			mlr_group_clear_loop(t);
+			mlr_group_cut(t, col);
+			dispatch_event(MLR_EVT_GROUP_CUT, (uint8_t)t, (int8_t)col, 0);
+		} else if (mlr_gate_mode[t]) {
 			mlr_clear_loop(t);
 			mlr_cut(t, col);
 			pause_other_group_members_for_gate(t);
+			dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)col, 0);
 		} else {
 			mlr_choke_group_cut(t, col);
+			dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)col, 0);
 		}
-		dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)col, 0);
 	}
 
 	void __not_in_flash("group_set_loop") group_set_loop(int t, int a, int b)
 	{
 		if (!mlr_tracks[t].has_content) return;
-		if (mlr_gate_mode[t]) {
+		if (group_cut_should_broadcast(t)) {
+			mlr_group_set_loop(t, a, b);
+			dispatch_event(MLR_EVT_GROUP_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
+		} else if (mlr_gate_mode[t]) {
 			mlr_set_loop(t, a, b);
 			pause_other_group_members_for_gate(t);
+			dispatch_event(MLR_EVT_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
 		} else {
 			mlr_choke_group_set_loop(t, a, b);
+			dispatch_event(MLR_EVT_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
 		}
-		dispatch_event(MLR_EVT_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
+	}
+
+	void __not_in_flash("group_set_speed") group_set_speed(int t, int speed)
+	{
+		if (group_cut_should_broadcast(t)) {
+			mlr_group_set_speed(t, speed);
+			dispatch_event(MLR_EVT_GROUP_SPEED, (uint8_t)t, (int8_t)speed, 0);
+		} else {
+			mlr_set_speed(t, speed);
+			dispatch_event(MLR_EVT_SPEED, (uint8_t)t, (int8_t)speed, 0);
+		}
+	}
+
+	void __not_in_flash("group_set_reverse") group_set_reverse(int t, bool reverse)
+	{
+		if (group_cut_should_broadcast(t)) {
+			mlr_group_set_reverse(t, reverse);
+			dispatch_event(MLR_EVT_GROUP_REVERSE, (uint8_t)t, reverse ? 1 : 0, 0);
+		} else {
+			mlr_set_reverse(t, reverse);
+			dispatch_event(MLR_EVT_REVERSE, (uint8_t)t, reverse ? 1 : 0, 0);
+		}
+	}
+
+	void __not_in_flash("group_set_volume") group_set_volume(int t, int slot)
+	{
+		if (group_cut_should_broadcast(t)) {
+			mlr_group_set_volume(t, slot);
+			dispatch_event(MLR_EVT_GROUP_VOLUME, (uint8_t)t, (int8_t)slot, 0);
+		} else {
+			mlr_set_volume(t, slot);
+			dispatch_event(MLR_EVT_VOLUME, (uint8_t)t, (int8_t)slot, 0);
+		}
 	}
 
 	void __not_in_flash("group_stop_track") group_stop_track(int t)
@@ -2248,6 +2024,8 @@ private:
 		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
 			if ((mask & (1u << u)) && mlr_tracks[u].playing) { any_was_playing = true; break; }
 		}
+		for (int u = 0; u < MLR_NUM_TRACKS; u++)
+			if (mask & (1u << u)) group_started_from_rec_[u] = false;
 		mlr_group_stop_track(t);
 		if (any_was_playing)
 			dispatch_event(MLR_EVT_STOP, (uint8_t)t, 0, 0);
@@ -2256,7 +2034,7 @@ private:
 	/* Snap all group members to a single play/pause state. If any member is
 	 * currently playing, the play column stops the group; otherwise it starts
 	 * all playable members from their own loop_col_start (or 0). */
-	void __not_in_flash("group_play_toggle") group_play_toggle(int t)
+	void __not_in_flash("group_play_toggle") group_play_toggle(int t, int source_page)
 	{
 		uint8_t mask = mlr_track_groups[t];
 		bool any_playing = false;
@@ -2268,8 +2046,10 @@ private:
 		}
 		bool target_start = !any_playing;
 		if (target_start) {
+			bool rec_origin = (source_page == PAGE_REC);
 			for (int u = 0; u < MLR_NUM_TRACKS; u++) {
 				if (!(mask & (1u << u))) continue;
+				group_started_from_rec_[u] = rec_origin;
 				if (!mlr_tracks[u].has_content || mlr_tracks[u].playing) continue;
 				if (rec_armed_track == u) {
 					rec_armed_track = -1;
@@ -2283,8 +2063,7 @@ private:
 			}
 			dispatch_event(MLR_EVT_START, (uint8_t)t, 0, 0);
 		} else {
-			mlr_group_stop_track(t);
-			dispatch_event(MLR_EVT_STOP, (uint8_t)t, 0, 0);
+			group_stop_track(t);
 		}
 	}
 
@@ -2293,6 +2072,7 @@ private:
 	void __not_in_flash("set_gate_mode") set_gate_mode(int t, bool on)
 	{
 		if (t < 0 || t >= MLR_NUM_TRACKS) return;
+		group_started_from_rec_[t] = false;
 		mlr_gate_mode[t] = on;
 		if (on)
 			mlr_stop_track(t);
@@ -2477,17 +2257,10 @@ private:
 			}
 
 			if (alt_held) {
-				/* ALT + play_col tap: dissolve group (or no-op if solo). */
-				uint8_t old_mask = mlr_track_groups[track];
-				int popcount = 0;
-				for (int u = 0; u < MLR_NUM_TRACKS; u++)
-					if (old_mask & (1u << u)) popcount++;
-				if (popcount >= 2) {
-					dissolve_group(track);
-					group_flash_mask_ = old_mask;
-					group_flash_samples_remaining_ = GROUP_FLASH_DISSOLVE_SAMPLES;
-					group_flash_period_ = GROUP_FLASH_DISSOLVE_PERIOD;
-				}
+				/* DELETE + any key on a group member dissolves that group.
+				 * Keep the historical play-column release path as a backup
+				 * for events armed before the key-down handler sees them. */
+				dissolve_group_if_delete_touch(track);
 				return;
 			}
 
@@ -2500,7 +2273,7 @@ private:
 					mlr_stop_track(track);
 				} else {
 					/* Normal play/stop toggle, state-synced across group. */
-					group_play_toggle(track);
+					group_play_toggle(track, play_page);
 				}
 			}
 		}
@@ -2532,6 +2305,7 @@ private:
 
 		int track  = grid.lastY() - 1;
 		int column = grid.lastX();
+		if (dissolve_group_if_delete_touch(track)) return;
 
 		/* Cols 0 / 1 (16-wide only): combined channel-select + record-arm.
 		 * On 8x8 grids col 1 is reverse, so we only honor the channel-pick
@@ -2548,12 +2322,10 @@ private:
 			/* 8x8 REC: col 1=reverse, cols 2-6=speed, col 7=play (gate_hold) */
 			if (column == 1) {
 				bool new_rev = !mlr_tracks[track].reverse;
-				mlr_set_reverse(track, new_rev);
-				dispatch_event(MLR_EVT_REVERSE, (uint8_t)track, new_rev ? 1 : 0, 0);
+				group_set_reverse(track, new_rev);
 			} else if (column >= 2 && column <= 6) {
 				int speed = speed_col_to_shift_small(column);
-				mlr_set_speed(track, speed);
-				dispatch_event(MLR_EVT_SPEED, (uint8_t)track, (int8_t)speed, 0);
+				group_set_speed(track, speed);
 			}
 			/* col 7 is handled by process_gate_hold() */
 		} else {
@@ -2561,16 +2333,13 @@ private:
 			 * col 7=reverse, cols 8-14=speed, col 15=play. */
 			if (column >= 2 && column <= 6) {
 				int slot = column - 2;
-				mlr_set_volume(track, slot);
-				dispatch_event(MLR_EVT_VOLUME, (uint8_t)track, (int8_t)slot, 0);
+				group_set_volume(track, slot);
 			} else if (column == 7) {
 				bool new_rev = !mlr_tracks[track].reverse;
-				mlr_set_reverse(track, new_rev);
-				dispatch_event(MLR_EVT_REVERSE, (uint8_t)track, new_rev ? 1 : 0, 0);
+				group_set_reverse(track, new_rev);
 			} else if (column >= 8 && column <= 14) {
 				int speed = column - 11;  /* -3 .. +3 */
-				mlr_set_speed(track, speed);
-				dispatch_event(MLR_EVT_SPEED, (uint8_t)track, (int8_t)speed, 0);
+				group_set_speed(track, speed);
 			}
 			/* col 15 is handled by process_gate_hold() */
 		}
@@ -2615,13 +2384,18 @@ private:
 		if (grid.keyDown() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track  = grid.lastY() - 1;
 			int column = grid.lastX();
+			if (dissolve_group_if_delete_touch(track)) return;
 
 			/* ignore columns outside the cut zone */
 			if (column < cs || column > ce) return;
 
 			if (alt_held) {
-				if (mlr_tracks[track].playing)
+				if (mlr_tracks[track].playing) {
+					uint8_t mask = mlr_track_groups[track];
+					for (int u = 0; u < MLR_NUM_TRACKS; u++)
+						if (mask & (1u << u)) group_started_from_rec_[u] = false;
 					mlr_stop_track(track);
+				}
 				return;
 			}
 
@@ -2812,52 +2586,6 @@ private:
 				uint8_t ch = mlr_tracks[t].recorded_channel;
 				bool user_chosen = mlr_tracks[t].channel_user_chosen;
 				uint8_t col0_bright, col1_bright;
-#ifdef MLR_STEREO
-				(void)user_chosen;
-				(void)ch;
-				/* If this track is the armed (or actively recording) track
-				 * in mono-pan mode, modulate the col0/col1 split by the
-				 * current pan so the user can see pan position in the
-				 * armed flash. Otherwise fall back to the channel-flag
-				 * split (both lit for stereo, one favoured for mono-pan
-				 * recordings already on the track). */
-				bool show_live_pan = false;
-				int16_t pan_now = 0;
-				if (actively_rec && t == mlr_rec_track && (rec_is_mono_pan_ || rec_is_balance_)) {
-					show_live_pan = true;
-					pan_now = rec_pan_q12_;
-				} else if (armed) {
-					bool a1c = grid_render_audio1_connected_;
-					bool a2c = grid_render_audio2_connected_;
-					if ((a1c != a2c) || (a1c && a2c)) {
-						show_live_pan = true;
-						pan_now = arm_pan_q12_;
-					}
-				}
-
-				if (show_live_pan) {
-					uint16_t gL, gR;
-					pan_gains_q8(pan_now, &gL, &gR);
-					col0_bright = (uint8_t)(((uint32_t)state_bright * gL) >> 8);
-					col1_bright = (uint8_t)(((uint32_t)state_bright * gR) >> 8);
-				} else {
-					/* Post-recording / non-armed state: classify by the
-					 * final recorded pan. Hard left → col 0
-					 * only, hard right → col 1 only, anything in between
-					 * (and empty / stereo / balance recordings) → both. */
-					uint8_t pc = mlr_tracks[t].pan_class;
-					if (pc == 1) {
-						col0_bright = state_bright;
-						col1_bright = 0;
-					} else if (pc == 2) {
-						col0_bright = 0;
-						col1_bright = state_bright;
-					} else {
-						col0_bright = state_bright;
-						col1_bright = state_bright;
-					}
-				}
-#else
 				if (!has && !armed && !actively_rec) {
 					col0_bright = state_bright;
 					col1_bright = state_bright;
@@ -2871,7 +2599,6 @@ private:
 					if (ch == 1) { col0_bright = other;    col1_bright = selected; }
 					else         { col0_bright = selected; col1_bright = other;    }
 				}
-#endif
 				if ((copy_flash_mask_ & (1u << t)) && copy_flash_samples_remaining_ > 0) {
 					bool on = (copy_flash_samples_remaining_ / copy_flash_period_) & 1;
 					col0_bright = on ? 15 : 0;

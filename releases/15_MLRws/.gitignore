@@ -1,8 +1,6 @@
 # Build outputs
 /build/
-/build-stereo/
-/build-profile/
-/build-stereo-profile/
+/build-*/
 *_profile.uf2
 
 # CMake artifacts (in case someone configures in-tree)

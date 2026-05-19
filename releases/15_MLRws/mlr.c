@@ -241,7 +241,7 @@ static uint32_t rec_next_erase;         /* next sector to erase */
 static uint32_t rec_samples;
 static uint32_t rec_bytes;
 static uint32_t rec_num_keyframes;
-static mlr_keyframe_stereo_t rec_keyframes[MLR_MAX_KEYFRAMES];
+static mlr_keyframe_channels_t rec_keyframes[MLR_MAX_KEYFRAMES];
 static adpcm_state_t  rec_enc_state[MLR_NUM_CHANNELS];
 static bool           rec_nybble_phase;
 static uint8_t        rec_pending_byte;
@@ -249,6 +249,8 @@ static uint8_t        rec_pending_byte;
 /* Header write state */
 static volatile bool hdr_write_pending = false;
 static int           hdr_write_track   = -1;
+static bool          hdr_write_start_playback = false;
+static uint8_t       hdr_rewrite_pending_mask = 0;
 
 /* Clear state */
 static volatile bool clear_pending = false;
@@ -267,6 +269,7 @@ static uint8_t       copy_page[MLR_PAGE_SIZE] __attribute__((aligned(4)));
 /* Scene save state (core 1) — serialize, then erase/program pages */
 static volatile bool scene_save_requested = false;
 static volatile bool scene_save_pending = false;
+static volatile bool scene_save_followup_requested = false;
 static int           scene_save_sector  = 0;   /* 0..MLR_SCENE_SECTORS-1 */
 static bool          scene_sector_erased = false;
 static int           scene_page_idx     = 0;   /* 0..pages_per_sector-1 */
@@ -445,6 +448,9 @@ void mlr_cut(int track, int column);
 void mlr_stop_track(int track);
 void mlr_set_loop(int track, int col_start, int col_end);
 void mlr_clear_loop(int track);
+void mlr_set_speed(int track, int speed_shift);
+void mlr_set_reverse(int track, bool reverse);
+void mlr_set_volume(int track, int slot);
 
 /* Use volatile function pointers to force real calls and stop the compiler
  * from inlining/unrolling 6 copies of mlr_cut/etc. into each wrapper. */
@@ -482,6 +488,33 @@ void mlr_group_clear_loop(int t)
 	uint8_t mask = mlr_track_groups[t];
 	for (int u = 0; u < MLR_NUM_TRACKS; u++)
 		if (mask & (1u << u)) fn(u);
+}
+
+void mlr_group_set_speed(int t, int speed_shift)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	void (*volatile fn)(int, int) = mlr_set_speed;
+	uint8_t mask = mlr_track_groups[t];
+	for (int u = 0; u < MLR_NUM_TRACKS; u++)
+		if (mask & (1u << u)) fn(u, speed_shift);
+}
+
+void mlr_group_set_reverse(int t, bool reverse)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	void (*volatile fn)(int, bool) = mlr_set_reverse;
+	uint8_t mask = mlr_track_groups[t];
+	for (int u = 0; u < MLR_NUM_TRACKS; u++)
+		if (mask & (1u << u)) fn(u, reverse);
+}
+
+void mlr_group_set_volume(int t, int slot)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	void (*volatile fn)(int, int) = mlr_set_volume;
+	uint8_t mask = mlr_track_groups[t];
+	for (int u = 0; u < MLR_NUM_TRACKS; u++)
+		if (mask & (1u << u)) fn(u, slot);
 }
 
 static void stop_other_group_members(int t)
@@ -524,6 +557,7 @@ void mlr_init(void)
 	mlr_rec_track  = -1;
 	mlr_flushing   = false;
 	mlr_scene_saving = false;
+	scene_save_followup_requested = false;
 	rec_track_idx  = -1;
 
 	mlr_groups_default();
@@ -571,7 +605,7 @@ void mlr_init(void)
 			tr->playhead       = 0;
 
 			memcpy(tr->keyframes, hdr->keyframes,
-			       hdr->num_keyframes * sizeof(mlr_keyframe_stereo_t));
+			       hdr->num_keyframes * sizeof(mlr_keyframe_channels_t));
 
 			/* init fill state at beginning */
 			tr->fill_byte_pos   = 0;
@@ -643,7 +677,7 @@ void mlr_rescan_track(int track)
 		tr->playhead       = 0;
 
 		memcpy(tr->keyframes, hdr->keyframes,
-		       hdr->num_keyframes * sizeof(mlr_keyframe_stereo_t));
+		       hdr->num_keyframes * sizeof(mlr_keyframe_channels_t));
 
 		tr->fill_byte_pos   = 0;
 		tr->fill_high_nyb   = false;
@@ -767,51 +801,6 @@ void __not_in_flash_func(mlr_record_sample)(int16_t sample)
 	}
 }
 
-#ifdef MLR_STEREO
-void __not_in_flash_func(mlr_record_sample_stereo)(int16_t left, int16_t right)
-{
-	if (rec_track_idx < 0) return;
-
-	/* scale 12-bit to 16-bit for better ADPCM quality */
-	int16_t l16 = left << 4;
-	int16_t r16 = right << 4;
-
-	/* Mid-Side transform for better stereo preservation in ADPCM.
-	 * M = (L+R)/2, S = (L-R)/2.  Encoded as M nybble (low) + S nybble (high). */
-	int16_t mid  = (int16_t)(((int32_t)l16 + (int32_t)r16) >> 1);
-	int16_t side = (int16_t)(((int32_t)l16 - (int32_t)r16) >> 1);
-
-	uint8_t m_nyb = adpcm_encode(mid,  &rec_enc_state[0]);
-	uint8_t s_nyb = adpcm_encode(side, &rec_enc_state[1]);
-	uint8_t byte = m_nyb | (s_nyb << 4);
-
-	/* write byte into page ring */
-	uint8_t slot = mlr_page_ring.w % MLR_PAGE_RING_COUNT;
-	uint32_t fill = mlr_page_ring.fill;
-	mlr_page_ring.pages[slot][fill] = byte;
-	mlr_page_ring.fill = fill + 1;
-
-	if (mlr_page_ring.fill >= MLR_PAGE_SIZE) {
-		mlr_page_ring.fill = 0;
-		__dmb();
-		mlr_page_ring.w++;
-		PERF_NOTE_PAGE_RING_USED();
-	}
-
-	rec_samples++;
-
-	/* save keyframe at regular intervals */
-	if ((rec_samples % MLR_KEYFRAME_INTERVAL) == 0 &&
-	    rec_num_keyframes < MLR_MAX_KEYFRAMES) {
-		for (int ch = 0; ch < 2; ch++) {
-			rec_keyframes[rec_num_keyframes].ch[ch].predictor  = rec_enc_state[ch].predictor;
-			rec_keyframes[rec_num_keyframes].ch[ch].step_index = rec_enc_state[ch].step_index;
-		}
-		rec_num_keyframes++;
-	}
-}
-#endif
-
 void __not_in_flash_func(mlr_stop_record)(void)
 {
 	if (rec_track_idx < 0) return;
@@ -838,20 +827,17 @@ void __not_in_flash_func(mlr_stop_record)(void)
 	}
 
 	/* calculate actual ADPCM byte count */
-#ifdef MLR_STEREO
-	uint32_t actual_bytes = rec_samples;  /* 1 byte per stereo frame */
-#else
 	uint32_t actual_bytes = (rec_samples + 1) / 2;  /* 2 mono samples per byte */
-#endif
 
 	/* update track metadata — track becomes playable once header is written */
 	tr->length_samples = rec_samples;
 	tr->length_bytes   = actual_bytes;
 	tr->num_keyframes  = rec_num_keyframes;
 	memcpy(tr->keyframes, rec_keyframes,
-	       rec_num_keyframes * sizeof(mlr_keyframe_stereo_t));
+	       rec_num_keyframes * sizeof(mlr_keyframe_channels_t));
 
 	hdr_write_track   = rec_track_idx;
+	hdr_write_start_playback = true;
 	hdr_write_pending = true;
 
 	rec_track_idx = -1;
@@ -1002,8 +988,7 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 	return (int16_t)(mix >> 4);
 }
 
-#ifndef MLR_STEREO
-/* Grid-mode dual-output mix for mono builds.
+/* Grid-mode dual-output mix.
  *
  * Walks the same tracks as mlr_play_mix() but routes each track's contribution
  * to L or R based on tr->recorded_channel (0 = L/AudioOut1, 1 = R/AudioOut2).
@@ -1149,163 +1134,6 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 	*out_right = (int16_t)(mixR >> 4);
 	return (int16_t)(mixL >> 4);
 }
-#endif
-
-#ifdef MLR_STEREO
-int16_t __not_in_flash_func(mlr_play_mix_stereo)(uint8_t volume, int16_t *out_right)
-{
-	int32_t mixL = 0, mixR = 0;
-
-	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-		mlr_track_t *tr = &mlr_tracks[t];
-		if (!tr->has_content || !tr->playing) continue;
-
-		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
-		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
-		bool wrapped = false;
-		int32_t sL = 0;
-		int32_t sR = 0;
-
-		if (!tr->stop_pending) {
-			bool fast_integer = false;
-			uint32_t avail = 0;
-			uint32_t pcm_r = tr->pcm.r;
-			uint32_t ring_pos = 0;
-			bool ring_state_loaded = false;
-
-			if ((tr->speed_frac == 512 || tr->speed_frac == 1024) &&
-			    tr->speed_accum == 0) {
-				uint32_t steps = (uint32_t)(tr->speed_frac >> 8);
-				bool no_wrap = tr->reverse
-					? (tr->playhead >= wrap_start + steps)
-					: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
-				avail = no_wrap ? tr->pcm.w - pcm_r : 0;
-				if (avail >= steps) {
-					PERF_NOTE_PCM_AVAIL(t, avail);
-					ring_pos = pcm_r % MLR_RING_SAMPLES;
-					uint32_t final_pos = ring_pos + steps - 1u;
-					if (final_pos >= MLR_RING_SAMPLES)
-						final_pos -= MLR_RING_SAMPLES;
-					uint32_t idx = final_pos * 2;
-					tr->interp_prev[0] = tr->last_pcm[0];
-					tr->interp_prev[1] = tr->last_pcm[1];
-					tr->last_pcm[0] = tr->pcm.buf[idx];
-					tr->last_pcm[1] = tr->pcm.buf[idx + 1];
-					tr->pcm.r = pcm_r + steps;
-					if (tr->reverse) tr->playhead -= steps;
-					else             tr->playhead += steps;
-					sL = tr->last_pcm[0];
-					sR = tr->last_pcm[1];
-					fast_integer = true;
-				}
-			}
-
-			if (!fast_integer) {
-				tr->speed_accum += tr->speed_frac;
-				while (tr->speed_accum >= 256) {
-					tr->speed_accum -= 256;
-					if (!ring_state_loaded) {
-						avail = tr->pcm.w - pcm_r;
-						PERF_NOTE_PCM_AVAIL(t, avail);
-						ring_pos = pcm_r % MLR_RING_SAMPLES;
-						ring_state_loaded = true;
-					}
-					if (avail > 0) {
-						uint32_t idx = ring_pos * 2;
-						tr->interp_prev[0] = tr->last_pcm[0];
-						tr->interp_prev[1] = tr->last_pcm[1];
-						tr->last_pcm[0] = tr->pcm.buf[idx];
-						tr->last_pcm[1] = tr->pcm.buf[idx + 1];
-						if (++ring_pos >= MLR_RING_SAMPLES) ring_pos = 0;
-						pcm_r++;
-						avail--;
-						if (tr->reverse) {
-							if (tr->playhead <= wrap_start) {
-								tr->playhead = wrap_end > 0 ? wrap_end - 1 : 0;
-								wrapped = true;
-							} else {
-								tr->playhead--;
-							}
-						} else {
-							tr->playhead++;
-							if (tr->playhead >= wrap_end) {
-								tr->playhead = wrap_start;
-								wrapped = true;
-							}
-						}
-					} else {
-						PERF_NOTE_PCM_UNDERRUN(t);
-					}
-				}
-				if (ring_state_loaded)
-					tr->pcm.r = pcm_r;
-				if (wrapped) begin_track_declick(tr, false);
-
-				int16_t x0L = tr->last_pcm[0];
-				int16_t x0R = tr->last_pcm[1];
-				uint8_t frac = (uint8_t)tr->speed_accum;
-				if (frac == 0) {
-					sL = x0L;
-					sR = x0R;
-				} else {
-					if (!ring_state_loaded) {
-						avail = tr->pcm.w - pcm_r;
-						PERF_NOTE_PCM_AVAIL(t, avail);
-						ring_pos = pcm_r % MLR_RING_SAMPLES;
-					}
-					int16_t x1L = x0L, x1R = x0R;
-					if (avail > 0) {
-						uint32_t idx1 = ring_pos * 2;
-						x1L = tr->pcm.buf[idx1];
-						x1R = tr->pcm.buf[idx1 + 1];
-					}
-					sL = linear_interp_q8(x0L, x1L, frac);
-					sR = linear_interp_q8(x0R, x1R, frac);
-				}
-			}
-		}
-
-		/* volume slew */
-		if (tr->volume_frac < tr->volume_target) {
-			tr->volume_frac += 4;
-			if (tr->volume_frac > tr->volume_target) tr->volume_frac = tr->volume_target;
-		} else if (tr->volume_frac > tr->volume_target) {
-			if (tr->volume_frac < 4) tr->volume_frac = tr->volume_target;
-			else tr->volume_frac -= 4;
-			if (tr->volume_frac < tr->volume_target) tr->volume_frac = tr->volume_target;
-		}
-		sL = (sL * (int32_t)tr->volume_frac) >> 8;
-		sR = (sR * (int32_t)tr->volume_frac) >> 8;
-
-		if (tr->declick_count > 0) {
-			sL = apply_declick_sample(tr, 0, sL);
-			sR = apply_declick_sample(tr, 1, sR);
-			tr->declick_count--;
-			if (tr->declick_count == 0 && tr->stop_pending) {
-				finish_pending_stop(tr);
-				sL = 0;
-				sR = 0;
-			}
-		}
-		int16_t out_sample[MLR_NUM_CHANNELS] = {(int16_t)sL, (int16_t)sR};
-		push_track_output(tr, out_sample);
-
-		if (!tr->muted) {
-			mixL += sL;
-			mixR += sR;
-		}
-	}
-
-	mixL = (mixL * (int32_t)volume) >> 8;
-	mixR = (mixR * (int32_t)volume) >> 8;
-	if (mixL > 32767) mixL = 32767;
-	if (mixL < -32768) mixL = -32768;
-	if (mixR > 32767) mixR = 32767;
-	if (mixR < -32768) mixR = -32768;
-	*out_right = (int16_t)(mixR >> 4);
-	return (int16_t)(mixL >> 4);
-}
-#endif
 
 /* ------------------------------------------------------------------ */
 /* Seeking                                                            */
@@ -1541,6 +1369,17 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	clear_pending = true;
 }
 
+bool __not_in_flash_func(mlr_rewrite_track_header)(int track)
+{
+	if (track < 0 || track >= MLR_NUM_TRACKS) return false;
+	if (!mlr_tracks[track].has_content || mlr_tracks[track].length_samples == 0) return false;
+	if (mlr_rec_track >= 0 || rec_track_idx >= 0) return false;
+	hdr_rewrite_pending_mask |= (uint8_t)(1u << track);
+	mlr_flushing = true;
+	__dmb();
+	return true;
+}
+
 uint8_t __not_in_flash_func(mlr_copy_track_mask)(int src_track, uint8_t dst_mask)
 {
 	if (src_track < 0 || src_track >= MLR_NUM_TRACKS) return 0;
@@ -1602,6 +1441,9 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 	case MLR_EVT_CUT:
 		mlr_choke_group_cut(e->track, e->param_a);
 		break;
+	case MLR_EVT_GROUP_CUT:
+		mlr_group_cut(e->track, e->param_a);
+		break;
 	case MLR_EVT_STOP:
 		mlr_group_stop_track(e->track);
 		break;
@@ -1611,17 +1453,29 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 	case MLR_EVT_SPEED:
 		mlr_set_speed(e->track, e->param_a);
 		break;
+	case MLR_EVT_GROUP_SPEED:
+		mlr_group_set_speed(e->track, e->param_a);
+		break;
 	case MLR_EVT_REVERSE:
 		mlr_set_reverse(e->track, e->param_a != 0);
 		break;
+	case MLR_EVT_GROUP_REVERSE:
+		mlr_group_set_reverse(e->track, e->param_a != 0);
+		break;
 	case MLR_EVT_LOOP:
 		mlr_choke_group_set_loop(e->track, e->param_a, e->param_b);
+		break;
+	case MLR_EVT_GROUP_LOOP:
+		mlr_group_set_loop(e->track, e->param_a, e->param_b);
 		break;
 	case MLR_EVT_LOOP_CLR:
 		mlr_clear_loop(e->track);
 		break;
 	case MLR_EVT_VOLUME:
 		mlr_set_volume(e->track, e->param_a);
+		break;
+	case MLR_EVT_GROUP_VOLUME:
+		mlr_group_set_volume(e->track, e->param_a);
 		break;
 	case MLR_EVT_PAT_PLAY:
 		if (e->track < MLR_NUM_PATTERNS &&
@@ -2498,7 +2352,10 @@ void mlr_scene_load(void)
 
 void mlr_scene_save_start(void)
 {
-	if (scene_save_requested || scene_save_pending || mlr_scene_saving) return;
+	if (scene_save_requested || scene_save_pending || mlr_scene_saving) {
+		scene_save_followup_requested = true;
+		return;
+	}
 
 	mlr_scene_saving = true;
 	__dmb();
@@ -2507,6 +2364,19 @@ void mlr_scene_save_start(void)
 	mlr_perf.scene_save_count++;
 	mlr_perf_scene_save_count++;
 #endif
+}
+
+static void finish_scene_save(void)
+{
+	scene_save_pending = false;
+	if (scene_save_followup_requested) {
+		scene_save_followup_requested = false;
+		mlr_scene_saving = true;
+		__dmb();
+		scene_save_requested = true;
+	} else {
+		mlr_scene_saving = false;
+	}
 }
 
 void __not_in_flash_func(mlr_scene_reset_params_to_defaults)(void)
@@ -2556,24 +2426,14 @@ static void seek_fill_to(mlr_track_t *tr, int t, uint32_t target)
 		}
 		kf_sample = 0;
 	}
-#ifdef MLR_STEREO
-	tr->fill_byte_pos   = kf_sample;  /* 1 byte per stereo frame */
-	tr->fill_high_nyb   = false;      /* not used in stereo */
-#else
 	tr->fill_byte_pos   = kf_sample / 2;
 	tr->fill_high_nyb   = (kf_sample & 1) != 0;
-#endif
 	tr->fill_sample_pos = kf_sample;
 
 	/* decode forward to target (discard samples) */
 	const uint8_t *flash_data = track_audio_xip(t);
 	while (tr->fill_sample_pos < target) {
 		uint8_t byte   = flash_data[tr->fill_byte_pos];
-#ifdef MLR_STEREO
-		adpcm_decode(byte & 0x0F, &tr->fill_decode[0]);
-		adpcm_decode(byte >> 4,   &tr->fill_decode[1]);
-		tr->fill_byte_pos++;
-#else
 		uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
 		adpcm_decode(nybble, &tr->fill_decode[0]);
 		if (tr->fill_high_nyb) {
@@ -2582,7 +2442,6 @@ static void seek_fill_to(mlr_track_t *tr, int t, uint32_t target)
 		} else {
 			tr->fill_high_nyb = true;
 		}
-#endif
 		tr->fill_sample_pos++;
 	}
 }
@@ -2613,17 +2472,6 @@ static void fill_pcm_ring_forward(int t, uint32_t max_fill)
 		}
 
 		uint8_t byte   = flash_data[tr->fill_byte_pos];
-#ifdef MLR_STEREO
-		int16_t mid  = adpcm_decode(byte & 0x0F, &tr->fill_decode[0]);
-		int16_t side = adpcm_decode(byte >> 4,   &tr->fill_decode[1]);
-		/* M/S → L/R reconstruction */
-		int16_t sL = (int16_t)(mid + side);
-		int16_t sR = (int16_t)(mid - side);
-		uint32_t idx = (tr->pcm.w % MLR_RING_SAMPLES) * 2;
-		tr->pcm.buf[idx]     = sL;
-		tr->pcm.buf[idx + 1] = sR;
-		tr->fill_byte_pos++;
-#else
 		uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
 		int16_t sample = adpcm_decode(nybble, &tr->fill_decode[0]);
 
@@ -2635,7 +2483,6 @@ static void fill_pcm_ring_forward(int t, uint32_t max_fill)
 		} else {
 			tr->fill_high_nyb = true;
 		}
-#endif
 		__dmb();
 		tr->pcm.w++;
 
@@ -2682,14 +2529,6 @@ static void fill_pcm_ring_reverse(int t, uint32_t max_fill)
 
 		for (uint32_t i = 0; i < chunk; i++) {
 			uint8_t byte   = flash_data[tr->fill_byte_pos];
-#ifdef MLR_STEREO
-			int16_t mid  = adpcm_decode(byte & 0x0F, &tr->fill_decode[0]);
-			int16_t side = adpcm_decode(byte >> 4,   &tr->fill_decode[1]);
-			/* M/S → L/R reconstruction before storing in temp buffer */
-			rev_decode_tmp[i * 2]     = (int16_t)(mid + side);
-			rev_decode_tmp[i * 2 + 1] = (int16_t)(mid - side);
-			tr->fill_byte_pos++;
-#else
 			uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
 			rev_decode_tmp[i] = adpcm_decode(nybble, &tr->fill_decode[0]);
 			if (tr->fill_high_nyb) {
@@ -2698,19 +2537,11 @@ static void fill_pcm_ring_reverse(int t, uint32_t max_fill)
 			} else {
 				tr->fill_high_nyb = true;
 			}
-#endif
 		}
 
 		/* write into ring in reverse order */
 		for (uint32_t i = 0; i < chunk; i++) {
-#ifdef MLR_STEREO
-			uint32_t src = (chunk - 1 - i) * 2;
-			uint32_t dst = (tr->pcm.w % MLR_RING_SAMPLES) * 2;
-			tr->pcm.buf[dst]     = rev_decode_tmp[src];
-			tr->pcm.buf[dst + 1] = rev_decode_tmp[src + 1];
-#else
 			tr->pcm.buf[(tr->pcm.w % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS] = rev_decode_tmp[chunk - 1 - i];
-#endif
 			__dmb();
 			tr->pcm.w++;
 		}
@@ -2830,9 +2661,9 @@ static void flush_rec_page(void)
 #endif
 }
 
-/** Write the track header after recording stops. */
+/** Write the track header after recording stops or metadata changes. */
 
-static void write_track_header(int t)
+static void write_track_header(int t, bool start_playback)
 {
 	mlr_track_t *tr = &mlr_tracks[t];
 
@@ -2849,33 +2680,35 @@ static void write_track_header(int t)
 	hdr->pan_class           = (uint8_t)((tr->pan_class <= 2) ? tr->pan_class : 0);
 	hdr->_hdr_pad[0]         = 0xFF;
 	memcpy(hdr->keyframes, tr->keyframes,
-	       tr->num_keyframes * sizeof(mlr_keyframe_stereo_t));
+	       tr->num_keyframes * sizeof(mlr_keyframe_channels_t));
 
 	uint32_t hdr_off = track_hdr_flash_off(t);
 	PERF_FLASH_ERASE(hdr_off, MLR_SECTOR_SIZE);
 	PERF_FLASH_PROGRAM(hdr_off, hdr_staging, MLR_SECTOR_SIZE);
 
-	/* mark track as playable */
-	tr->has_content     = true;
-	tr->playing         = true;
-	tr->playhead        = 0;
-	tr->fill_byte_pos   = 0;
-	tr->fill_high_nyb   = false;
-	tr->fill_sample_pos = 0;
-	for (int ch = 0; ch < MLR_NUM_CHANNELS; ch++) {
-		tr->fill_decode[ch].predictor  = 0;
-		tr->fill_decode[ch].step_index = 0;
-		if (tr->num_keyframes > 0) {
-			tr->fill_decode[ch].predictor  = tr->keyframes[0].ch[ch].predictor;
-			tr->fill_decode[ch].step_index = tr->keyframes[0].ch[ch].step_index;
+	if (start_playback) {
+		/* mark track as playable */
+		tr->has_content     = true;
+		tr->playing         = true;
+		tr->playhead        = 0;
+		tr->fill_byte_pos   = 0;
+		tr->fill_high_nyb   = false;
+		tr->fill_sample_pos = 0;
+		for (int ch = 0; ch < MLR_NUM_CHANNELS; ch++) {
+			tr->fill_decode[ch].predictor  = 0;
+			tr->fill_decode[ch].step_index = 0;
+			if (tr->num_keyframes > 0) {
+				tr->fill_decode[ch].predictor  = tr->keyframes[0].ch[ch].predictor;
+				tr->fill_decode[ch].step_index = tr->keyframes[0].ch[ch].step_index;
+			}
 		}
+		tr->pcm.w = 0;
+		tr->pcm.r = 0;
+		tr->speed_frac = speed_shift_to_frac(tr->speed_shift);
+		tr->speed_accum = 0;
+		reset_track_audio_state(tr);
+		/* preserve reverse — only affects playback, recording always forward */
 	}
-	tr->pcm.w = 0;
-	tr->pcm.r = 0;
-	tr->speed_frac = speed_shift_to_frac(tr->speed_shift);
-	tr->speed_accum = 0;
-	reset_track_audio_state(tr);
-	/* preserve reverse — only affects playback, recording always forward */
 }
 
 static void copy_prepare_destination_ram(int dst)
@@ -2947,7 +2780,7 @@ static void copy_finish_track(void)
 	hdr->pan_class           = (uint8_t)((src->pan_class <= 2) ? src->pan_class : 0);
 	hdr->_hdr_pad[0]         = 0xFF;
 	memcpy(hdr->keyframes, src->keyframes,
-	       src->num_keyframes * sizeof(mlr_keyframe_stereo_t));
+	       src->num_keyframes * sizeof(mlr_keyframe_channels_t));
 
 	uint32_t hdr_off = track_hdr_flash_off(copy_dst_track);
 	PERF_FLASH_ERASE(hdr_off, MLR_SECTOR_SIZE);
@@ -2961,7 +2794,7 @@ static void copy_finish_track(void)
 	dst->recorded_channel   = src->recorded_channel & 0x01;
 	dst->pan_class          = (src->pan_class <= 2) ? src->pan_class : 0;
 	memcpy(dst->keyframes, src->keyframes,
-	       src->num_keyframes * sizeof(mlr_keyframe_stereo_t));
+	       src->num_keyframes * sizeof(mlr_keyframe_channels_t));
 	for (int ch = 0; ch < MLR_NUM_CHANNELS; ch++) {
 		dst->fill_decode[ch].predictor  = 0;
 		dst->fill_decode[ch].step_index = 0;
@@ -3057,13 +2890,34 @@ void mlr_io_task(void)
 	/* 4. Handle pending clear (quick — one sector erase) */
 	if (clear_pending) {
 		PERF_FLASH_ERASE(track_hdr_flash_off(clear_track), MLR_SECTOR_SIZE);
+		hdr_rewrite_pending_mask &= (uint8_t)~(1u << clear_track);
 		clear_pending = false;
 	}
 
-	/* 5. Write header after recording stops and pages are drained */
+	if (!hdr_write_pending && hdr_rewrite_pending_mask &&
+	    mlr_page_ring.r == mlr_page_ring.w &&
+	    rec_track_idx < 0 && !clear_pending &&
+	    !copy_pending && copy_dst_track < 0 &&
+	    !scene_save_requested && !scene_save_pending && !mlr_scene_saving) {
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			uint8_t bit = (uint8_t)(1u << t);
+			if (!(hdr_rewrite_pending_mask & bit)) continue;
+			hdr_rewrite_pending_mask &= (uint8_t)~bit;
+			if (!mlr_tracks[t].has_content || mlr_tracks[t].length_samples == 0)
+				break;
+			hdr_write_track = t;
+			hdr_write_start_playback = false;
+			__dmb();
+			hdr_write_pending = true;
+			break;
+		}
+	}
+
+	/* 5. Write header after recording stops or metadata changes */
 	if (hdr_write_pending && mlr_page_ring.r == mlr_page_ring.w) {
-		write_track_header(hdr_write_track);
+		write_track_header(hdr_write_track, hdr_write_start_playback);
 		hdr_write_pending = false;
+		hdr_write_start_playback = false;
 		mlr_flushing = false;
 	}
 
@@ -3075,7 +2929,8 @@ void mlr_io_task(void)
 	/* 6. No header write pending: flushing ends once page ring is drained */
 	if (!hdr_write_pending && !copy_pending && copy_dst_track < 0 &&
 	    mlr_flushing && rec_track_idx < 0 &&
-	    mlr_page_ring.r == mlr_page_ring.w) {
+	    mlr_page_ring.r == mlr_page_ring.w &&
+	    hdr_rewrite_pending_mask == 0) {
 		mlr_flushing = false;
 	}
 
@@ -3085,7 +2940,7 @@ void mlr_io_task(void)
 		scene_save_requested = false;
 		scene_save_bytes = scene_serialize();
 		if (scene_save_bytes == 0) {
-			mlr_scene_saving = false;
+			finish_scene_save();
 		} else {
 			scene_save_total_pages = (scene_save_bytes + MLR_PAGE_SIZE - 1) / MLR_PAGE_SIZE;
 			scene_save_total_sectors = (scene_save_bytes + MLR_SECTOR_SIZE - 1) / MLR_SECTOR_SIZE;
@@ -3121,15 +2976,13 @@ void mlr_io_task(void)
 			uint32_t programmed_pages =
 				(uint32_t)scene_save_sector * SCENE_PAGES_PER_SECTOR + (uint32_t)scene_page_idx;
 			if (programmed_pages >= scene_save_total_pages) {
-				scene_save_pending = false;
-				mlr_scene_saving = false;
+				finish_scene_save();
 			} else if (scene_page_idx >= SCENE_PAGES_PER_SECTOR) {
 				/* sector complete — advance to next */
 				scene_save_sector++;
 				scene_sector_erased = false;
 				if ((uint32_t)scene_save_sector >= scene_save_total_sectors) {
-					scene_save_pending = false;
-					mlr_scene_saving = false;
+					finish_scene_save();
 				}
 			}
 		}

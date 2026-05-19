@@ -18,14 +18,14 @@ MLRws is my own six-track, grid-optional spin on MLR that works within the const
 
 You are going to need source materials on your MLRws travels. It is totally possible to record your own sounds via the audio input(s) on the module but you may also want to upload samples from your (non-workshop) computer. For this there is a basic [web app you can find right here](https://dessertplanet.github.io/MLRws-web/).
 
-The web app automatically encodes your audio to the right format for MLRws, and there is a variable resampling/recording speed (equivalent to recording in grid mode at slower-than-1x) allowing you to trade fidelity for more maximum sample time per track. The table below shows the maximum sample time for the mono and stereo versions at each of the supported. 
+The web app automatically encodes your audio to the right format for MLRws, and there is a variable resampling/recording speed (equivalent to recording in grid mode at slower-than-1x) allowing you to trade fidelity for more maximum sample time per track. The table below shows the maximum sample time for the dual-mono firmware at each supported speed.
 
-| Record speed   | Mono max   | Stereo Max |
-|---------|--------|--------|
-| 1x      | 13.1 s |  6.6 s |
-| 0.667x  | 19.7 s |  9.9 s |
-| 0.5x    | 26.3 s | 13.1 s |
-| 0.25x   | 52.6 s | 26.3 s |
+| Record speed   | Max per track |
+|---------|--------|
+| 1x      | 13.1 s |
+| 0.667x  | 19.7 s |
+| 0.5x    | 26.3 s |
+| 0.25x   | 52.6 s |
 
 It is possible to record at faster than 1x but **you will encounter potentially interesting weirdness**- only recommended if you like strange digital noise. The resampling trips over itself and encodes who-knows-what.
 

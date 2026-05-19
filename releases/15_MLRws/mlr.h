@@ -28,12 +28,9 @@ extern "C" {
 #define MLR_NUM_TRACKS         6
 #define MLR_GRID_COLS          16
 
-/* Number of audio channels per track */
-#ifdef MLR_STEREO
-#define MLR_NUM_CHANNELS       2
-#else
+/* Number of audio channels stored per track. Tracks are mono and can be
+ * routed independently to either output in grid mode. */
 #define MLR_NUM_CHANNELS       1
-#endif
 
 /* Flash layout — 2 MB total.
  * Firmware reserve and track size are set from CMake so the build can
@@ -48,25 +45,15 @@ extern "C" {
 #define MLR_AUDIO_SIZE         (MLR_TRACK_FLASH_SIZE - MLR_HEADER_SIZE)
 #define MLR_TRACK_OFFSET(t)    (MLR_FIRMWARE_RESERVE + (t) * MLR_TRACK_FLASH_SIZE)
 
-/* ADPCM: 2 nybbles per byte.  In stereo, each byte = 1 L nybble + 1 R nybble
- * so one byte = one stereo frame.  In mono, one byte = 2 mono samples. */
-#ifdef MLR_STEREO
-#define MLR_MAX_SAMPLES        (MLR_AUDIO_SIZE)       /* one frame per byte */
-#else
-#define MLR_MAX_SAMPLES        (MLR_AUDIO_SIZE * 2)   /* two samples per byte */
-#endif
+/* ADPCM: 2 nybbles per byte, so each byte stores 2 mono samples. */
+#define MLR_MAX_SAMPLES        (MLR_AUDIO_SIZE * 2)
 
 /* Keyframes every N sample-frames for instant seeking */
 #define MLR_KEYFRAME_INTERVAL  1024
 #define MLR_MAX_KEYFRAMES      ((MLR_MAX_SAMPLES / MLR_KEYFRAME_INTERVAL) + 1)
 
 /* Per-track playback ring buffer (decoded PCM, consumed by core 0) */
-/* Per-track playback ring buffer (decoded PCM, consumed by core 0) */
-#ifdef MLR_STEREO
-#define MLR_RING_SAMPLES       3584  /* frames (~75ms at 48kHz stereo) */
-#else
 #define MLR_RING_SAMPLES       7168  /* frames (~149ms at 48kHz mono) */
-#endif
 #define MLR_DECLICK_SHIFT      5
 #define MLR_DECLICK_SAMPLES    (1u << MLR_DECLICK_SHIFT)  /* 32-sample crossfade */
 #define MLR_SEEK_PRIME_SAMPLES (MLR_KEYFRAME_INTERVAL * 2)  /* post-seek refill to cover direction changes */
@@ -81,13 +68,8 @@ extern "C" {
 #define MLR_SECTOR_SIZE        4096
 #endif
 
-/* Track header magic — different for mono vs stereo to prevent cross-reads.
- * v4/v5: added record_speed_shift field (shifts keyframe offset by 4). */
-#ifdef MLR_STEREO
-#define MLR_MAGIC              0x4D4C5235  /* 'MLR5' — stereo M/S ADPCM v2 */
-#else
+/* Track header magic. v4 added record_speed_shift field. */
 #define MLR_MAGIC              0x4D4C5234  /* 'MLR4' — mono ADPCM v2 */
-#endif
 
 /* ------------------------------------------------------------------ */
 /* Pattern / recall / scene constants                                 */
@@ -111,6 +93,11 @@ extern "C" {
 #define MLR_EVT_RECALL       11   /* param: recall slot in track field */
 #define MLR_EVT_RECALL_UNDO  12   /* undo last recall */
 #define MLR_EVT_MASTER       13   /* master volume: raw=((track<<8)|param_a), 0..4095 */
+#define MLR_EVT_GROUP_CUT    14   /* CUT event broadcast to every member of track's group */
+#define MLR_EVT_GROUP_LOOP   15   /* loop-a-section broadcast to every member of track's group */
+#define MLR_EVT_GROUP_SPEED  16   /* speed change broadcast to every member of track's group */
+#define MLR_EVT_GROUP_REVERSE 17  /* reverse change broadcast to every member of track's group */
+#define MLR_EVT_GROUP_VOLUME 18   /* volume change broadcast to every member of track's group */
 
 /* Volume slots: 5 levels (cols 2–6 on REC page). Slot 1 = unity. */
 #define MLR_NUM_VOL_SLOTS      5
@@ -141,10 +128,10 @@ typedef struct {
 	uint8_t _pad;
 } mlr_keyframe_t;
 
-/* Per-channel keyframe for stereo */
+/* Per-channel keyframe wrapper; one channel remains for dual-mono tracks. */
 typedef struct {
 	mlr_keyframe_t ch[MLR_NUM_CHANNELS];
-} mlr_keyframe_stereo_t;
+} mlr_keyframe_channels_t;
 
 /* Stored in flash (first sector of each track) */
 typedef struct {
@@ -153,12 +140,10 @@ typedef struct {
 	uint32_t              adpcm_bytes;
 	uint32_t              num_keyframes;
 	int8_t                record_speed_shift;  /* speed at time of recording */
-	uint8_t               recorded_channel;    /* 0 = Audio1 (Out1), 1 = Audio2 (Out2). Mono build only;
-	                                            * in stereo build this is always 0 and pan is baked into the samples. */
-	uint8_t               pan_class;           /* Stereo build: 0 = both/center, 1 = hard left, 2 = hard right.
-	                                            * Classified from rec_pan_q12_ at record start. Mono build: 0. */
+	uint8_t               recorded_channel;    /* 0 = Audio1/Out1, 1 = Audio2/Out2 in dual-mono grid mode. */
+	uint8_t               pan_class;           /* Reserved; kept for flash header compatibility. */
 	uint8_t               _hdr_pad[1];
-	mlr_keyframe_stereo_t keyframes[MLR_MAX_KEYFRAMES];
+	mlr_keyframe_channels_t keyframes[MLR_MAX_KEYFRAMES];
 } mlr_track_header_t;
 
 #if defined(__cplusplus)
@@ -279,18 +264,15 @@ typedef struct {
 	uint16_t       volume_target;       /* fixed 8.8: target from slot    */
 
 	/* per-track input/output channel routing (set by core 0).
-	 *   Mono build: 0 = Audio1/Out1, 1 = Audio2/Out2. Persisted in the track header.
-	 *   Stereo build: 0 = stereo recording (both ch), 1 = mono-pan recording (pan baked into samples).
-	 * In mono build, playback routes the track's mix to AudioOut1 or AudioOut2 accordingly.
-	 * In stereo build, pan is committed at record time and not stored separately. */
+	 * 0 = Audio1/Out1, 1 = Audio2/Out2. Persisted in the track header. */
 	uint8_t        recorded_channel;
-	uint8_t        pan_class;            /* Stereo build only: 0 = both, 1 = hard left, 2 = hard right */
+	uint8_t        pan_class;            /* Reserved; kept for flash header compatibility. */
 	bool           channel_user_chosen;  /* RAM-only: true once the user has explicitly picked
 	                                      * a channel on the grid; suppresses auto-detect override */
 
 	/* keyframes (copied to RAM at boot) */
 	uint32_t          num_keyframes;
-	mlr_keyframe_stereo_t keyframes[MLR_MAX_KEYFRAMES];
+	mlr_keyframe_channels_t keyframes[MLR_MAX_KEYFRAMES];
 } mlr_track_t;
 
 /* ------------------------------------------------------------------ */
@@ -376,21 +358,16 @@ void     mlr_init(void);
 void     mlr_rescan_track(int track);  /* re-read header from flash (call only when track is stopped) */
 void     mlr_start_record(int track);
 void     mlr_record_sample(int16_t sample);  /* mono: single sample */
-#ifdef MLR_STEREO
-void     mlr_record_sample_stereo(int16_t left, int16_t right);
-int16_t  mlr_play_mix_stereo(uint8_t volume, int16_t *out_right);
-#endif
 void     mlr_stop_record(void);
 int16_t  mlr_play_mix(uint8_t volume);
-#ifndef MLR_STEREO
-/* Mono build only: route per-track playback to L (recorded_channel=0) or R
- * (recorded_channel=1). Used by grid mode for stereo-output routing. */
+/* Route per-track playback to L (recorded_channel=0) or R (recorded_channel=1).
+ * Used by grid mode for dual-mono output routing. */
 int16_t  mlr_play_mix_dual(uint8_t volume, int16_t *out_right);
-#endif
 void     mlr_cut(int track, int column);
 void     mlr_cut_sample(int track, uint32_t sample_pos);
 void     mlr_stop_track(int track);
 void     mlr_clear_track(int track);
+bool     mlr_rewrite_track_header(int track);  /* persist header-only metadata changes */
 uint8_t  mlr_copy_track_mask(int src_track, uint8_t dst_mask);
 void     mlr_set_loop(int track, int col_start, int col_end);
 void     mlr_clear_loop(int track);
@@ -409,12 +386,15 @@ void     mlr_groups_default(void);              /* reset every track to solo */
 void     mlr_leave_group(int track);            /* remove track from its group */
 
 /* Group helpers used by gesture handlers and pattern replay. Play-column
- * actions broadcast; CUT-page actions choke the group by acting on the
- * touched track and stopping other members. */
+ * actions broadcast. CUT-page handlers choose between choke and broadcast
+ * behavior depending on how the grouped tracks were started. */
 void     mlr_group_cut(int track, int column);
 void     mlr_group_stop_track(int track);
 void     mlr_group_set_loop(int track, int col_start, int col_end);
 void     mlr_group_clear_loop(int track);
+void     mlr_group_set_speed(int track, int speed_shift);
+void     mlr_group_set_reverse(int track, bool reverse);
+void     mlr_group_set_volume(int track, int slot);
 void     mlr_choke_group_cut(int track, int column);
 void     mlr_choke_group_set_loop(int track, int col_start, int col_end);
 
