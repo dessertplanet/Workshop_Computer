@@ -264,7 +264,8 @@ static uint32_t      copy_bytes_done = 0;
 static uint32_t      copy_next_erase = 0;
 static uint8_t       copy_page[MLR_PAGE_SIZE] __attribute__((aligned(4)));
 
-/* Scene save state (core 1) — two-phase: erase then program pages */
+/* Scene save state (core 1) — serialize, then erase/program pages */
+static volatile bool scene_save_requested = false;
 static volatile bool scene_save_pending = false;
 static int           scene_save_sector  = 0;   /* 0..MLR_SCENE_SECTORS-1 */
 static bool          scene_sector_erased = false;
@@ -872,53 +873,96 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
 		bool wrapped = false;
+		int32_t sample_out = 0;
 
 		if (!tr->stop_pending) {
-			/* variable-speed sample consumption via accumulator */
-			tr->speed_accum += tr->speed_frac;
-			while (tr->speed_accum >= 256) {
-				tr->speed_accum -= 256;
-				uint32_t avail = pcm_ring_avail(&tr->pcm);
-				PERF_NOTE_PCM_AVAIL(t, avail);
-				if (avail > 0) {
+			bool fast_integer = false;
+			uint32_t avail = 0;
+			uint32_t pcm_r = tr->pcm.r;
+			uint32_t ring_pos = 0;
+			bool ring_state_loaded = false;
+
+			if ((tr->speed_frac == 512 || tr->speed_frac == 1024) &&
+			    tr->speed_accum == 0) {
+				uint32_t steps = (uint32_t)(tr->speed_frac >> 8);
+				bool no_wrap = tr->reverse
+					? (tr->playhead >= wrap_start + steps)
+					: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
+				avail = no_wrap ? tr->pcm.w - pcm_r : 0;
+				if (avail >= steps) {
+					PERF_NOTE_PCM_AVAIL(t, avail);
+					ring_pos = pcm_r % MLR_RING_SAMPLES;
+					uint32_t final_pos = ring_pos + steps - 1u;
+					if (final_pos >= MLR_RING_SAMPLES)
+						final_pos -= MLR_RING_SAMPLES;
 					tr->interp_prev[0] = tr->last_pcm[0];
-					tr->last_pcm[0] = tr->pcm.buf[(tr->pcm.r % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS];
-					tr->pcm.r++;
-					if (tr->reverse) {
-						if (tr->playhead <= wrap_start) {
-							tr->playhead = wrap_end > 0 ? wrap_end - 1 : 0;
-							wrapped = true;
-						} else {
-							tr->playhead--;
-						}
-					} else {
-						tr->playhead++;
-						if (tr->playhead >= wrap_end) {
-							tr->playhead = wrap_start;
-							wrapped = true;
-						}
-					}
-				} else {
-					PERF_NOTE_PCM_UNDERRUN(t);
+					tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
+					tr->pcm.r = pcm_r + steps;
+					if (tr->reverse) tr->playhead -= steps;
+					else             tr->playhead += steps;
+					sample_out = tr->last_pcm[0];
+					fast_integer = true;
 				}
 			}
-			if (wrapped) begin_track_declick(tr, false);
-		}
 
-		/* Linear interpolation between current and next sample.
-		 * Fractional phase is speed_accum in Q8 (0..255). */
-		int32_t sample_out = 0;
-		if (!tr->stop_pending) {
-			uint32_t avail = pcm_ring_avail(&tr->pcm);
-			PERF_NOTE_PCM_AVAIL(t, avail);
-			int16_t x0 = tr->last_pcm[0];
-			int16_t x1 = x0;
-			if (avail > 0) {
-				uint32_t idx1 = (tr->pcm.r % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS;
-				x1 = tr->pcm.buf[idx1];
+			/* variable-speed sample consumption via accumulator */
+			if (!fast_integer) {
+				tr->speed_accum += tr->speed_frac;
+				while (tr->speed_accum >= 256) {
+					tr->speed_accum -= 256;
+					if (!ring_state_loaded) {
+						avail = tr->pcm.w - pcm_r;
+						PERF_NOTE_PCM_AVAIL(t, avail);
+						ring_pos = pcm_r % MLR_RING_SAMPLES;
+						ring_state_loaded = true;
+					}
+					if (avail > 0) {
+						tr->interp_prev[0] = tr->last_pcm[0];
+						tr->last_pcm[0] = tr->pcm.buf[ring_pos * MLR_NUM_CHANNELS];
+						if (++ring_pos >= MLR_RING_SAMPLES) ring_pos = 0;
+						pcm_r++;
+						avail--;
+						if (tr->reverse) {
+							if (tr->playhead <= wrap_start) {
+								tr->playhead = wrap_end > 0 ? wrap_end - 1 : 0;
+								wrapped = true;
+							} else {
+								tr->playhead--;
+							}
+						} else {
+							tr->playhead++;
+							if (tr->playhead >= wrap_end) {
+								tr->playhead = wrap_start;
+								wrapped = true;
+							}
+						}
+					} else {
+						PERF_NOTE_PCM_UNDERRUN(t);
+					}
+				}
+				if (ring_state_loaded)
+					tr->pcm.r = pcm_r;
+				if (wrapped) begin_track_declick(tr, false);
+
+				/* Linear interpolation between current and next sample.
+				 * Fractional phase is speed_accum in Q8 (0..255). */
+				int16_t x0 = tr->last_pcm[0];
+				uint8_t frac = (uint8_t)tr->speed_accum;
+				if (frac == 0) {
+					sample_out = x0;
+				} else {
+					if (!ring_state_loaded) {
+						avail = tr->pcm.w - pcm_r;
+						PERF_NOTE_PCM_AVAIL(t, avail);
+						ring_pos = pcm_r % MLR_RING_SAMPLES;
+					}
+					int16_t x1 = x0;
+					if (avail > 0) {
+						x1 = tr->pcm.buf[ring_pos * MLR_NUM_CHANNELS];
+					}
+					sample_out = linear_interp_q8(x0, x1, frac);
+				}
 			}
-
-			sample_out = linear_interp_q8(x0, x1, (uint8_t)tr->speed_accum);
 		}
 
 		/* apply per-track volume (slew toward target to avoid clicks) */
@@ -976,49 +1020,93 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
 		bool wrapped = false;
+		int32_t sample_out = 0;
 
 		if (!tr->stop_pending) {
-			tr->speed_accum += tr->speed_frac;
-			while (tr->speed_accum >= 256) {
-				tr->speed_accum -= 256;
-				uint32_t avail = pcm_ring_avail(&tr->pcm);
-				PERF_NOTE_PCM_AVAIL(t, avail);
-				if (avail > 0) {
+			bool fast_integer = false;
+			uint32_t avail = 0;
+			uint32_t pcm_r = tr->pcm.r;
+			uint32_t ring_pos = 0;
+			bool ring_state_loaded = false;
+
+			if ((tr->speed_frac == 512 || tr->speed_frac == 1024) &&
+			    tr->speed_accum == 0) {
+				uint32_t steps = (uint32_t)(tr->speed_frac >> 8);
+				bool no_wrap = tr->reverse
+					? (tr->playhead >= wrap_start + steps)
+					: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
+				avail = no_wrap ? tr->pcm.w - pcm_r : 0;
+				if (avail >= steps) {
+					PERF_NOTE_PCM_AVAIL(t, avail);
+					ring_pos = pcm_r % MLR_RING_SAMPLES;
+					uint32_t final_pos = ring_pos + steps - 1u;
+					if (final_pos >= MLR_RING_SAMPLES)
+						final_pos -= MLR_RING_SAMPLES;
 					tr->interp_prev[0] = tr->last_pcm[0];
-					tr->last_pcm[0] = tr->pcm.buf[(tr->pcm.r % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS];
-					tr->pcm.r++;
-					if (tr->reverse) {
-						if (tr->playhead <= wrap_start) {
-							tr->playhead = wrap_end > 0 ? wrap_end - 1 : 0;
-							wrapped = true;
-						} else {
-							tr->playhead--;
-						}
-					} else {
-						tr->playhead++;
-						if (tr->playhead >= wrap_end) {
-							tr->playhead = wrap_start;
-							wrapped = true;
-						}
-					}
-				} else {
-					PERF_NOTE_PCM_UNDERRUN(t);
+					tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
+					tr->pcm.r = pcm_r + steps;
+					if (tr->reverse) tr->playhead -= steps;
+					else             tr->playhead += steps;
+					sample_out = tr->last_pcm[0];
+					fast_integer = true;
 				}
 			}
-			if (wrapped) begin_track_declick(tr, false);
-		}
 
-		int32_t sample_out = 0;
-		if (!tr->stop_pending) {
-			uint32_t avail = pcm_ring_avail(&tr->pcm);
-			PERF_NOTE_PCM_AVAIL(t, avail);
-			int16_t x0 = tr->last_pcm[0];
-			int16_t x1 = x0;
-			if (avail > 0) {
-				uint32_t idx1 = (tr->pcm.r % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS;
-				x1 = tr->pcm.buf[idx1];
+			if (!fast_integer) {
+				tr->speed_accum += tr->speed_frac;
+				while (tr->speed_accum >= 256) {
+					tr->speed_accum -= 256;
+					if (!ring_state_loaded) {
+						avail = tr->pcm.w - pcm_r;
+						PERF_NOTE_PCM_AVAIL(t, avail);
+						ring_pos = pcm_r % MLR_RING_SAMPLES;
+						ring_state_loaded = true;
+					}
+					if (avail > 0) {
+						tr->interp_prev[0] = tr->last_pcm[0];
+						tr->last_pcm[0] = tr->pcm.buf[ring_pos * MLR_NUM_CHANNELS];
+						if (++ring_pos >= MLR_RING_SAMPLES) ring_pos = 0;
+						pcm_r++;
+						avail--;
+						if (tr->reverse) {
+							if (tr->playhead <= wrap_start) {
+								tr->playhead = wrap_end > 0 ? wrap_end - 1 : 0;
+								wrapped = true;
+							} else {
+								tr->playhead--;
+							}
+						} else {
+							tr->playhead++;
+							if (tr->playhead >= wrap_end) {
+								tr->playhead = wrap_start;
+								wrapped = true;
+							}
+						}
+					} else {
+						PERF_NOTE_PCM_UNDERRUN(t);
+					}
+				}
+				if (ring_state_loaded)
+					tr->pcm.r = pcm_r;
+				if (wrapped) begin_track_declick(tr, false);
+
+				int16_t x0 = tr->last_pcm[0];
+				uint8_t frac = (uint8_t)tr->speed_accum;
+				if (frac == 0) {
+					sample_out = x0;
+				} else {
+					if (!ring_state_loaded) {
+						avail = tr->pcm.w - pcm_r;
+						PERF_NOTE_PCM_AVAIL(t, avail);
+						ring_pos = pcm_r % MLR_RING_SAMPLES;
+					}
+					int16_t x1 = x0;
+					if (avail > 0) {
+						x1 = tr->pcm.buf[ring_pos * MLR_NUM_CHANNELS];
+					}
+					sample_out = linear_interp_q8(x0, x1, frac);
+				}
 			}
-			sample_out = linear_interp_q8(x0, x1, (uint8_t)tr->speed_accum);
 		}
 
 		if (tr->volume_frac < tr->volume_target) {
@@ -1074,58 +1162,106 @@ int16_t __not_in_flash_func(mlr_play_mix_stereo)(uint8_t volume, int16_t *out_ri
 		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
 		bool wrapped = false;
+		int32_t sL = 0;
+		int32_t sR = 0;
 
 		if (!tr->stop_pending) {
-			tr->speed_accum += tr->speed_frac;
-			while (tr->speed_accum >= 256) {
-				tr->speed_accum -= 256;
-				uint32_t avail = pcm_ring_avail(&tr->pcm);
-				PERF_NOTE_PCM_AVAIL(t, avail);
-				if (avail > 0) {
-					uint32_t idx = (tr->pcm.r % MLR_RING_SAMPLES) * 2;
+			bool fast_integer = false;
+			uint32_t avail = 0;
+			uint32_t pcm_r = tr->pcm.r;
+			uint32_t ring_pos = 0;
+			bool ring_state_loaded = false;
+
+			if ((tr->speed_frac == 512 || tr->speed_frac == 1024) &&
+			    tr->speed_accum == 0) {
+				uint32_t steps = (uint32_t)(tr->speed_frac >> 8);
+				bool no_wrap = tr->reverse
+					? (tr->playhead >= wrap_start + steps)
+					: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
+				avail = no_wrap ? tr->pcm.w - pcm_r : 0;
+				if (avail >= steps) {
+					PERF_NOTE_PCM_AVAIL(t, avail);
+					ring_pos = pcm_r % MLR_RING_SAMPLES;
+					uint32_t final_pos = ring_pos + steps - 1u;
+					if (final_pos >= MLR_RING_SAMPLES)
+						final_pos -= MLR_RING_SAMPLES;
+					uint32_t idx = final_pos * 2;
 					tr->interp_prev[0] = tr->last_pcm[0];
 					tr->interp_prev[1] = tr->last_pcm[1];
 					tr->last_pcm[0] = tr->pcm.buf[idx];
 					tr->last_pcm[1] = tr->pcm.buf[idx + 1];
-					tr->pcm.r++;
-					if (tr->reverse) {
-						if (tr->playhead <= wrap_start) {
-							tr->playhead = wrap_end > 0 ? wrap_end - 1 : 0;
-							wrapped = true;
-						} else {
-							tr->playhead--;
-						}
-					} else {
-						tr->playhead++;
-						if (tr->playhead >= wrap_end) {
-							tr->playhead = wrap_start;
-							wrapped = true;
-						}
-					}
-				} else {
-					PERF_NOTE_PCM_UNDERRUN(t);
+					tr->pcm.r = pcm_r + steps;
+					if (tr->reverse) tr->playhead -= steps;
+					else             tr->playhead += steps;
+					sL = tr->last_pcm[0];
+					sR = tr->last_pcm[1];
+					fast_integer = true;
 				}
 			}
-			if (wrapped) begin_track_declick(tr, false);
-		}
 
-		int32_t sL = 0;
-		int32_t sR = 0;
-		if (!tr->stop_pending) {
-			uint32_t avail = pcm_ring_avail(&tr->pcm);
-			PERF_NOTE_PCM_AVAIL(t, avail);
-			int16_t x0L = tr->last_pcm[0];
-			int16_t x0R = tr->last_pcm[1];
-			int16_t x1L = x0L, x1R = x0R;
-			if (avail > 0) {
-				uint32_t idx1 = (tr->pcm.r % MLR_RING_SAMPLES) * 2;
-				x1L = tr->pcm.buf[idx1];
-				x1R = tr->pcm.buf[idx1 + 1];
+			if (!fast_integer) {
+				tr->speed_accum += tr->speed_frac;
+				while (tr->speed_accum >= 256) {
+					tr->speed_accum -= 256;
+					if (!ring_state_loaded) {
+						avail = tr->pcm.w - pcm_r;
+						PERF_NOTE_PCM_AVAIL(t, avail);
+						ring_pos = pcm_r % MLR_RING_SAMPLES;
+						ring_state_loaded = true;
+					}
+					if (avail > 0) {
+						uint32_t idx = ring_pos * 2;
+						tr->interp_prev[0] = tr->last_pcm[0];
+						tr->interp_prev[1] = tr->last_pcm[1];
+						tr->last_pcm[0] = tr->pcm.buf[idx];
+						tr->last_pcm[1] = tr->pcm.buf[idx + 1];
+						if (++ring_pos >= MLR_RING_SAMPLES) ring_pos = 0;
+						pcm_r++;
+						avail--;
+						if (tr->reverse) {
+							if (tr->playhead <= wrap_start) {
+								tr->playhead = wrap_end > 0 ? wrap_end - 1 : 0;
+								wrapped = true;
+							} else {
+								tr->playhead--;
+							}
+						} else {
+							tr->playhead++;
+							if (tr->playhead >= wrap_end) {
+								tr->playhead = wrap_start;
+								wrapped = true;
+							}
+						}
+					} else {
+						PERF_NOTE_PCM_UNDERRUN(t);
+					}
+				}
+				if (ring_state_loaded)
+					tr->pcm.r = pcm_r;
+				if (wrapped) begin_track_declick(tr, false);
+
+				int16_t x0L = tr->last_pcm[0];
+				int16_t x0R = tr->last_pcm[1];
+				uint8_t frac = (uint8_t)tr->speed_accum;
+				if (frac == 0) {
+					sL = x0L;
+					sR = x0R;
+				} else {
+					if (!ring_state_loaded) {
+						avail = tr->pcm.w - pcm_r;
+						PERF_NOTE_PCM_AVAIL(t, avail);
+						ring_pos = pcm_r % MLR_RING_SAMPLES;
+					}
+					int16_t x1L = x0L, x1R = x0R;
+					if (avail > 0) {
+						uint32_t idx1 = ring_pos * 2;
+						x1L = tr->pcm.buf[idx1];
+						x1R = tr->pcm.buf[idx1 + 1];
+					}
+					sL = linear_interp_q8(x0L, x1L, frac);
+					sR = linear_interp_q8(x0R, x1R, frac);
+				}
 			}
-
-			uint8_t frac = (uint8_t)tr->speed_accum;
-			sL = linear_interp_q8(x0L, x1L, frac);
-			sR = linear_interp_q8(x0R, x1R, frac);
 		}
 
 		/* volume slew */
@@ -1520,10 +1656,17 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 
 void __not_in_flash_func(mlr_pattern_event)(const mlr_event_t *e)
 {
+	uint32_t now = 0;
+	bool have_now = false;
+
 	/* transition armed patterns to recording on first event */
 	for (int p = 0; p < MLR_NUM_PATTERNS; p++) {
 		if (mlr_patterns[p].state == MLR_PAT_ARMED) {
-			mlr_patterns[p].rec_start_ms = to_ms_since_boot(get_absolute_time());
+			if (!have_now) {
+				now = to_ms_since_boot(get_absolute_time());
+				have_now = true;
+			}
+			mlr_patterns[p].rec_start_ms = now;
 			mlr_patterns[p].state = MLR_PAT_RECORDING;
 		}
 	}
@@ -1534,7 +1677,10 @@ void __not_in_flash_func(mlr_pattern_event)(const mlr_event_t *e)
 		if (mlr_patterns[p].count >= MLR_PATTERN_MAX_EVENTS) continue;
 
 		mlr_pattern_t *pat = &mlr_patterns[p];
-		uint32_t now = to_ms_since_boot(get_absolute_time());
+		if (!have_now) {
+			now = to_ms_since_boot(get_absolute_time());
+			have_now = true;
+		}
 		uint16_t idx = pat->count;
 		pat->events[idx] = *e;
 		pat->events[idx].timestamp_ms = now - pat->rec_start_ms;
@@ -1600,10 +1746,6 @@ void __not_in_flash_func(mlr_pattern_play_start)(int pat)
 	p->play_idx = 0;
 	p->play_start_ms = to_ms_since_boot(get_absolute_time());
 	p->state = MLR_PAT_PLAYING;
-
-	/* fire the first event immediately */
-	event_exec(&p->events[0]);
-	p->play_idx = 1;
 }
 
 void __not_in_flash_func(mlr_pattern_play_stop)(int pat)
@@ -1627,7 +1769,13 @@ void __not_in_flash_func(mlr_pattern_clear)(int pat)
 
 void __not_in_flash_func(mlr_pattern_tick)(uint32_t now_ms)
 {
-	for (int p = 0; p < MLR_NUM_PATTERNS; p++) {
+	enum { PATTERN_EVENTS_PER_TICK = 1 };
+	static uint8_t start_pat;
+	uint8_t events_left = PATTERN_EVENTS_PER_TICK;
+
+	for (int i = 0; i < MLR_NUM_PATTERNS && events_left > 0; i++) {
+		int p = start_pat + i;
+		if (p >= MLR_NUM_PATTERNS) p -= MLR_NUM_PATTERNS;
 		mlr_pattern_t *pat = &mlr_patterns[p];
 		if (pat->state != MLR_PAT_PLAYING) continue;
 		if (pat->count == 0) continue;
@@ -1643,14 +1791,19 @@ void __not_in_flash_func(mlr_pattern_tick)(uint32_t now_ms)
 			mlr_master_override = false;  /* allow pattern master events again */
 		}
 
-		/* fire all events whose timestamp has been reached */
-		while (pat->play_idx < pat->count &&
-		       pat->events[pat->play_idx].timestamp_ms <= elapsed) {
+		/* Fire at most one event per pattern scan to bound same-sample bursts. */
+		if (pat->play_idx < pat->count &&
+		    pat->events[pat->play_idx].timestamp_ms <= elapsed) {
 			event_exec(&pat->events[pat->play_idx]);
 			pat->play_idx++;
 			pat->event_flash = 1;  /* flash for 1 LED update (~50ms) */
+			events_left--;
 		}
 	}
+
+	start_pat++;
+	if (start_pat >= MLR_NUM_PATTERNS)
+		start_pat = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2209,21 +2362,11 @@ void mlr_scene_load(void)
 
 void mlr_scene_save_start(void)
 {
-	if (scene_save_pending || mlr_scene_saving) return;
+	if (scene_save_requested || scene_save_pending || mlr_scene_saving) return;
 
-	/* serialize into RAM blob (core 0 context — fast) */
-	scene_save_bytes = scene_serialize();
-	if (scene_save_bytes == 0) return;
-	scene_save_total_pages = (scene_save_bytes + MLR_PAGE_SIZE - 1) / MLR_PAGE_SIZE;
-	scene_save_total_sectors = (scene_save_bytes + MLR_SECTOR_SIZE - 1) / MLR_SECTOR_SIZE;
-
-	/* kick off the async write on core 1 */
-	scene_save_sector = 0;
-	scene_sector_erased = false;
-	scene_page_idx = 0;
 	mlr_scene_saving = true;
 	__dmb();
-	scene_save_pending = true;
+	scene_save_requested = true;
 #ifdef MLR_PERF_PROFILING
 	mlr_perf.scene_save_count++;
 	mlr_perf_scene_save_count++;
@@ -2798,6 +2941,24 @@ void mlr_io_task(void)
 	    mlr_flushing && rec_track_idx < 0 &&
 	    mlr_page_ring.r == mlr_page_ring.w) {
 		mlr_flushing = false;
+	}
+
+	if (scene_save_requested && !hdr_write_pending && !clear_pending &&
+	    !copy_pending && copy_dst_track < 0 &&
+	    rec_track_idx < 0 && mlr_page_ring.r == mlr_page_ring.w) {
+		scene_save_requested = false;
+		scene_save_bytes = scene_serialize();
+		if (scene_save_bytes == 0) {
+			mlr_scene_saving = false;
+		} else {
+			scene_save_total_pages = (scene_save_bytes + MLR_PAGE_SIZE - 1) / MLR_PAGE_SIZE;
+			scene_save_total_sectors = (scene_save_bytes + MLR_SECTOR_SIZE - 1) / MLR_SECTOR_SIZE;
+			scene_save_sector = 0;
+			scene_sector_erased = false;
+			scene_page_idx = 0;
+			__dmb();
+			scene_save_pending = true;
+		}
 	}
 
 	/* 7. Scene save — interleaved: erase one sector, then program one

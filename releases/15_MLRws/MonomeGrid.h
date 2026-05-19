@@ -87,8 +87,6 @@ public:
 				}
 			}
 		}
-
-		submitFrameIfPossible();
 	}
 
 	/** True if any key was pressed down this sample. */

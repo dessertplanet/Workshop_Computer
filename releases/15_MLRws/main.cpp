@@ -217,7 +217,20 @@ public:
 			break;
 		}
 
+		s_card_ = this;
 		multicore_launch_core1(core1_entry);
+	}
+
+	static void service_grid_redraw_core1()
+	{
+		if (s_card_)
+			s_card_->update_grid_slice();
+	}
+
+	static void service_panel_vu_leds_core1()
+	{
+		if (s_card_)
+			s_card_->apply_panel_vu_leds();
 	}
 
 	/* Core 1: USB + I/O — mode-specific loop */
@@ -230,6 +243,8 @@ public:
 			while (true) {
 				mext_task();
 				mlr_io_task();
+				service_panel_vu_leds_core1();
+				service_grid_redraw_core1();
 			}
 			break;
 		case Mode::DeviceMLR:
@@ -238,6 +253,8 @@ public:
 				tud_task();
 				mext_task();
 				mlr_io_task();
+				service_panel_vu_leds_core1();
+				service_grid_redraw_core1();
 			}
 			break;
 		case Mode::DeviceGridless:
@@ -763,6 +780,7 @@ public:
 			uint16_t mon_vol = 256;
 			int mon_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
 			if (mon_track >= 0) mon_vol = mlr_tracks[mon_track].volume_frac;
+			bool codec_monitor = (mlr_rec_track >= 0 || sw == Switch::Up);
 
 			bool armed_one_plug = (mlr_rec_track < 0 && rec_armed_track >= 0
 				&& (Connected(Input::Audio1) != Connected(Input::Audio2)));
@@ -782,14 +800,19 @@ public:
 
 				int32_t in_l_q = (mono_scaled * (int32_t)gL) >> 8;
 				int32_t in_r_q = (mono_scaled * (int32_t)gR) >> 8;
-				int16_t in16l = (int16_t)(in_l_q << 4);
-				int16_t in16r = (int16_t)(in_r_q << 4);
-				uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
-				int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
-				uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
-				int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
-				outL += (int32_t)(cleanL >> 4);
-				outR += (int32_t)(cleanR >> 4);
+				if (codec_monitor) {
+					int16_t in16l = (int16_t)(in_l_q << 4);
+					int16_t in16r = (int16_t)(in_r_q << 4);
+					uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
+					int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
+					uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
+					int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
+					outL += (int32_t)(cleanL >> 4);
+					outR += (int32_t)(cleanR >> 4);
+				} else {
+					outL += in_l_q;
+					outR += in_r_q;
+				}
 			} else if (balance_mon) {
 				/* Two inputs + balance: each side stays on its own input
 				 * but is attenuated by pan_gains_q8. */
@@ -802,28 +825,38 @@ public:
 				in_r = (in_r * (int32_t)mon_vol) >> 8;
 				in_l = (in_l * (int32_t)gL) >> 8;
 				in_r = (in_r * (int32_t)gR) >> 8;
-				int16_t in16l = (int16_t)(in_l << 4);
-				int16_t in16r = (int16_t)(in_r << 4);
-				uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
-				int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
-				uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
-				int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
-				outL += (int32_t)(cleanL >> 4);
-				outR += (int32_t)(cleanR >> 4);
+				if (codec_monitor) {
+					int16_t in16l = (int16_t)(in_l << 4);
+					int16_t in16r = (int16_t)(in_r << 4);
+					uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
+					int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
+					uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
+					int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
+					outL += (int32_t)(cleanL >> 4);
+					outR += (int32_t)(cleanR >> 4);
+				} else {
+					outL += in_l;
+					outR += in_r;
+				}
 			} else {
 				int32_t in_l = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
 				in_l = (in_l * (int32_t)mon_vol) >> 8;
 				int32_t in_r = ((int32_t)dry_in_r * (int32_t)dry_level) >> 8;
 				in_r = (in_r * (int32_t)mon_vol) >> 8;
-				int16_t in16l = (int16_t)(in_l << 4);
-				uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
-				int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
-				outL += (int32_t)(cleanL >> 4);
+				if (codec_monitor) {
+					int16_t in16l = (int16_t)(in_l << 4);
+					uint8_t nybL = adpcm_encode(in16l, &mon_enc_);
+					int16_t cleanL = adpcm_decode(nybL, &mon_dec_);
+					outL += (int32_t)(cleanL >> 4);
 
-				int16_t in16r = (int16_t)(in_r << 4);
-				uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
-				int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
-				outR += (int32_t)(cleanR >> 4);
+					int16_t in16r = (int16_t)(in_r << 4);
+					uint8_t nybR = adpcm_encode(in16r, &mon_enc_r_);
+					int16_t cleanR = adpcm_decode(nybR, &mon_dec_r_);
+					outR += (int32_t)(cleanR >> 4);
+				} else {
+					outL += in_l;
+					outR += in_r;
+				}
 			}
 		}
 		outL = (outL * (int32_t)master_level) >> 8;
@@ -840,11 +873,8 @@ public:
 		int32_t outL = (int32_t)mix;
 		int32_t outR = (int32_t)mix_r;
 		if (dry_level > 0 && (rec_armed_track >= 0 || sw == Switch::Up)) {
-			/* monitor input through ADPCM codec round-trip to filter USB noise.
-			 * Apply armed/recording track volume so monitor matches what's recorded.
-			 * Route the monitor to whichever output the armed/recording track is
-			 * routed to, so the user hears the input on the bus that will receive
-			 * the recorded loop. */
+			/* Use the codec monitor while recording; armed-only monitoring stays
+			 * dry so arming a track does not add per-sample ADPCM work. */
 			uint16_t mon_vol = 256;
 			uint8_t mon_ch  = 0;
 			int mon_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
@@ -854,11 +884,14 @@ public:
 			}
 			int32_t in_scaled = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
 			in_scaled = (in_scaled * (int32_t)mon_vol) >> 8;
-			int16_t in16 = (int16_t)(in_scaled << 4);
-			uint8_t nyb = adpcm_encode(in16, &mon_enc_);
-			int16_t clean = adpcm_decode(nyb, &mon_dec_);
-			if (mon_ch == 1) outR += (int32_t)(clean >> 4);
-			else             outL += (int32_t)(clean >> 4);
+			if (mlr_rec_track >= 0 || sw == Switch::Up) {
+				int16_t in16 = (int16_t)(in_scaled << 4);
+				uint8_t nyb = adpcm_encode(in16, &mon_enc_);
+				int16_t clean = adpcm_decode(nyb, &mon_dec_);
+				in_scaled = (int32_t)(clean >> 4);
+			}
+			if (mon_ch == 1) outR += in_scaled;
+			else             outL += in_scaled;
 		}
 		outL = (outL * (int32_t)master_level) >> 8;
 		outR = (outR * (int32_t)master_level) >> 8;
@@ -903,12 +936,14 @@ public:
 				vu_in_accum_ = 0;
 				vu_out_accum_ = 0;
 
-				LedBrightness(4, vu_in_peak_ > 100 ? (uint16_t)(vu_in_peak_ * 2) : 0);
-				LedBrightness(2, vu_in_peak_ > 600 ? (uint16_t)((vu_in_peak_ - 600) * 3) : 0);
-				LedBrightness(0, vu_in_peak_ > 1400 ? (uint16_t)((vu_in_peak_ - 1400) * 6) : 0);
-				LedBrightness(5, vu_out_peak_ > 100 ? (uint16_t)(vu_out_peak_ * 2) : 0);
-				LedBrightness(3, vu_out_peak_ > 600 ? (uint16_t)((vu_out_peak_ - 600) * 3) : 0);
-				LedBrightness(1, vu_out_peak_ > 1400 ? (uint16_t)((vu_out_peak_ - 1400) * 6) : 0);
+				panel_vu_led_[4] = vu_in_peak_ > 100 ? (uint16_t)(vu_in_peak_ * 2) : 0;
+				panel_vu_led_[2] = vu_in_peak_ > 600 ? (uint16_t)((vu_in_peak_ - 600) * 3) : 0;
+				panel_vu_led_[0] = vu_in_peak_ > 1400 ? (uint16_t)((vu_in_peak_ - 1400) * 6) : 0;
+				panel_vu_led_[5] = vu_out_peak_ > 100 ? (uint16_t)(vu_out_peak_ * 2) : 0;
+				panel_vu_led_[3] = vu_out_peak_ > 600 ? (uint16_t)((vu_out_peak_ - 600) * 3) : 0;
+				panel_vu_led_[1] = vu_out_peak_ > 1400 ? (uint16_t)((vu_out_peak_ - 1400) * 6) : 0;
+				__dmb();
+				panel_vu_led_pending_ = true;
 
 				/* detect grid size once ready (latched) */
 				if (!grid_size_latched_ && grid.ready()) {
@@ -920,12 +955,18 @@ public:
 #endif
 				}
 
-				grid_redraw_phase_ = 0;
-				grid_redraw_page_ = play_page;
-				grid_redraw_flushing_ = (mlr_flushing && mlr_copying);
+				if (grid_redraw_phase_ < 0) {
+					grid_render_rec_pos_ = (sw == Switch::Up || sw == Switch::Down);
+					grid_render_audio1_connected_ = Connected(Input::Audio1);
+					grid_render_audio2_connected_ = Connected(Input::Audio2);
+					grid_render_delete_held_ = delete_held();
+					grid_render_delete_action_held_ = delete_action_held();
+					grid_redraw_page_ = play_page;
+					grid_redraw_flushing_ = (mlr_flushing && mlr_copying);
+					__dmb();
+					grid_redraw_phase_ = 0;
+				}
 			}
-			if (run_ui_control && grid_redraw_phase_ >= 0)
-				update_grid_slice();
 		}
 		PERF_UI_SECTION_END(7);
 #undef PERF_UI_SECTION_START
@@ -1052,9 +1093,16 @@ private:
 	bool       gate_entered[MLR_NUM_TRACKS] = {}; /* true once hold crossed threshold */
 	bool       small_grid_ = false;  /* true when connected grid is 8x8 or smaller */
 	bool       grid_size_latched_ = false;  /* true once grid size has been detected */
-	int8_t     grid_redraw_phase_ = -1;  /* slices one grid redraw across UI ticks */
-	int        grid_redraw_page_ = PAGE_REC;
-	bool       grid_redraw_flushing_ = false;
+	volatile int8_t grid_redraw_phase_ = -1;  /* core 1 slices one grid redraw outside ProcessSample */
+	volatile int    grid_redraw_page_ = PAGE_REC;
+	volatile bool   grid_redraw_flushing_ = false;
+	volatile bool   grid_render_rec_pos_ = false;
+	volatile bool   grid_render_audio1_connected_ = false;
+	volatile bool   grid_render_audio2_connected_ = false;
+	volatile bool   grid_render_delete_held_ = false;
+	volatile bool   grid_render_delete_action_held_ = false;
+	volatile uint16_t panel_vu_led_[6] = {};
+	volatile bool   panel_vu_led_pending_ = false;
 	uint16_t   gate_pulse = 0;       /* free-running counter for gate LED pulse */
 #ifdef MLR_PERF_PROFILING
 	uint8_t    perf_ui_section_probe_ = 0;
@@ -1123,6 +1171,7 @@ private:
 	 * Written by core 1, read by core 0. */
 	inline static volatile bool s_sample_mgr_active_ = false;
 	inline static volatile bool s_rescan_needed_ = false;
+	inline static MLRCard *s_card_ = nullptr;
 
 	/* ---- Gridless mode state ---- */
 	int        gl_active_track_ = -1;    /* currently selected/playing track index */
@@ -2670,7 +2719,7 @@ private:
 			uint32_t elapsed = DELETE_RESET_FLASH_SAMPLES - delete_reset_flash_samples_remaining_;
 			alt_bright = ((elapsed / DELETE_RESET_FLASH_PERIOD_SAMPLES) & 1u) ? 0 : 15;
 		} else {
-			alt_bright = delete_held() ? 12 : 2;
+			alt_bright = grid_render_delete_held_ ? 12 : 2;
 		}
 		grid.frameLedUnchecked(ac, 0, alt_bright);
 	}
@@ -2717,11 +2766,11 @@ private:
 		}
 
 		bool recording = (mlr_rec_track >= 0);
-		bool rec_pos = (SwitchVal() == Switch::Up || SwitchVal() == Switch::Down);
+		bool rec_pos = grid_render_rec_pos_;
 		bool gated_rec_ready = rec_pos && rec_armed_track < 0;
 
 		int pc = play_col();
-		bool alt_held = delete_action_held();
+		bool alt_held = grid_render_delete_action_held_;
 		uint8_t cycled = alt_held ? cycled_group_mask() : 0;
 
 		int t = (int)phase - 1;
@@ -2770,8 +2819,8 @@ private:
 					show_live_pan = true;
 					pan_now = rec_pan_q12_;
 				} else if (armed) {
-					bool a1c = Connected(Input::Audio1);
-					bool a2c = Connected(Input::Audio2);
+					bool a1c = grid_render_audio1_connected_;
+					bool a2c = grid_render_audio2_connected_;
 					if ((a1c != a2c) || (a1c && a2c)) {
 						show_live_pan = true;
 						pan_now = arm_pan_q12_;
@@ -2984,7 +3033,9 @@ private:
 
 	void __not_in_flash("update_grid_slice") update_grid_slice()
 	{
-		uint8_t phase = (uint8_t)grid_redraw_phase_;
+		int8_t phase_signed = grid_redraw_phase_;
+		if (phase_signed < 0) return;
+		uint8_t phase = (uint8_t)phase_signed;
 		if (grid_redraw_flushing_)
 			update_grid_flushing();
 		else if (grid_redraw_page_ == PAGE_REC)
@@ -2996,6 +3047,24 @@ private:
 			grid_redraw_phase_ = -1;
 		else
 			grid_redraw_phase_++;
+	}
+
+	void __not_in_flash("apply_panel_vu_leds") apply_panel_vu_leds()
+	{
+		if (!panel_vu_led_pending_) return;
+		uint16_t led0 = panel_vu_led_[0];
+		uint16_t led1 = panel_vu_led_[1];
+		uint16_t led2 = panel_vu_led_[2];
+		uint16_t led3 = panel_vu_led_[3];
+		uint16_t led4 = panel_vu_led_[4];
+		uint16_t led5 = panel_vu_led_[5];
+		panel_vu_led_pending_ = false;
+		LedBrightness(0, led0);
+		LedBrightness(1, led1);
+		LedBrightness(2, led2);
+		LedBrightness(3, led3);
+		LedBrightness(4, led4);
+		LedBrightness(5, led5);
 	}
 };
 

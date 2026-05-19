@@ -426,7 +426,7 @@ void     mlr_pattern_rec_stop(int pat);
 void     mlr_pattern_play_start(int pat);
 void     mlr_pattern_play_stop(int pat);
 void     mlr_pattern_clear(int pat);
-void     mlr_pattern_tick(uint32_t now_ms);         /* call every LED update (~50ms) */
+void     mlr_pattern_tick(uint32_t now_ms);         /* call at pattern playback tick rate */
 
 /* ---- Recall engine (core 0) ---- */
 void     mlr_recall_event(const mlr_event_t *e);   /* record into armed recalls */
