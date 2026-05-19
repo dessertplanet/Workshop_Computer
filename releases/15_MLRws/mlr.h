@@ -56,6 +56,7 @@ extern "C" {
 #define MLR_RING_SAMPLES       7168  /* frames (~149ms at 48kHz mono) */
 #define MLR_DECLICK_SHIFT      5
 #define MLR_DECLICK_SAMPLES    (1u << MLR_DECLICK_SHIFT)  /* 32-sample crossfade */
+#define MLR_FADE_SAMPLES       120                        /* 2.5ms V-fade samples (total 5ms) */
 #define MLR_SEEK_PRIME_SAMPLES (MLR_KEYFRAME_INTERVAL * 2)  /* post-seek refill to cover direction changes */
 #define MLR_PERF_UI_SECTIONS   8
 
@@ -235,6 +236,12 @@ typedef struct {
 	volatile bool     seek_reverse_target;
 	volatile bool     seek_start_pending;
 
+	/* seek handoff (set by core 1, consumed by core 0) */
+	volatile uint32_t seek_handoff_r;
+	volatile uint32_t seek_handoff_playhead;
+	volatile bool     seek_handoff_start_pending;
+	volatile bool     seek_handoff_pending;
+
 	/* loop-a-section: sub-loop boundaries (set by core 0) */
 	bool           loop_active;
 	uint32_t       loop_start_sample;   /* first sample of sub-loop */
@@ -255,6 +262,12 @@ typedef struct {
 	uint8_t        declick_hist_pos;    /* frozen history read start for active xfade */
 	uint8_t        declick_count;       /* remaining crossfade samples */
 	bool           stop_pending;        /* ramp to zero before hard stop */
+	
+	/* fade state */
+	uint16_t       fade_out_count;
+	uint16_t       fade_in_count;
+	bool           fade_out_active;
+	
 	bool           reverse;             /* true = play backwards         */
 	bool           muted;               /* true = skip mix, keep position */
 
