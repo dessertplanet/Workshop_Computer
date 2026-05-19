@@ -489,6 +489,7 @@ static void stop_other_group_members(int t)
 	if (t < 0 || t >= MLR_NUM_TRACKS) return;
 	void (*volatile fn)(int) = mlr_stop_track;
 	uint8_t mask = mlr_track_groups[t];
+	if (mask == (uint8_t)(1u << t)) return;
 	for (int u = 0; u < MLR_NUM_TRACKS; u++) {
 		if (u == t) continue;
 		if (mask & (1u << u)) fn(u);
@@ -1812,6 +1813,62 @@ void __not_in_flash_func(mlr_pattern_tick)(uint32_t now_ms)
 
 /* Undo buffer — stores pre-recall state */
 static mlr_recall_t recall_undo;
+static const mlr_event_t *recall_apply_events;
+static uint16_t recall_apply_count;
+static uint16_t recall_apply_idx;
+static int8_t recall_apply_active_after;
+static bool recall_apply_record;
+static bool recall_apply_clear_undo;
+static bool recall_snapshot_pending;
+static uint8_t recall_snapshot_phase;
+static uint8_t recall_snapshot_track;
+static uint8_t recall_snapshot_track_step;
+static uint8_t recall_snapshot_pattern;
+static int8_t recall_snapshot_slot;
+static bool recall_snapshot_record;
+
+static void __not_in_flash_func(recall_apply_start)(const mlr_event_t *events,
+	uint16_t count, int active_after, bool record_events, bool clear_undo)
+{
+	if (!events || count == 0) return;
+	if (recall_apply_events) return;
+
+	recall_apply_events = events;
+	recall_apply_count = count;
+	recall_apply_idx = 0;
+	recall_apply_active_after = (int8_t)active_after;
+	recall_apply_record = record_events;
+	recall_apply_clear_undo = clear_undo;
+}
+
+static void __not_in_flash_func(recall_snapshot_before_apply_start)(int slot, bool record_events)
+{
+	if (slot < 0 || slot >= MLR_NUM_RECALLS) return;
+	if (recall_apply_events || recall_snapshot_pending) return;
+
+	recall_undo.count = 0;
+	recall_undo.recording = false;
+	recall_undo.has_data = false;
+	recall_snapshot_phase = 0;
+	recall_snapshot_track = 0;
+	recall_snapshot_track_step = 0;
+	recall_snapshot_pattern = 0;
+	recall_snapshot_slot = (int8_t)slot;
+	recall_snapshot_record = record_events;
+	recall_snapshot_pending = true;
+}
+
+static bool __not_in_flash_func(recall_snapshot_add)(uint8_t type, uint8_t track, int8_t a, int8_t b)
+{
+	if (recall_undo.count >= MLR_PATTERN_MAX_EVENTS) return false;
+	mlr_event_t *e = &recall_undo.events[recall_undo.count++];
+	e->timestamp_ms = 0;
+	e->type = type;
+	e->track = track;
+	e->param_a = a;
+	e->param_b = b;
+	return true;
+}
 
 void __not_in_flash_func(mlr_recall_event)(const mlr_event_t *e)
 {
@@ -1983,24 +2040,16 @@ void mlr_recall_exec(int slot)
 	if (slot < 0 || slot >= MLR_NUM_RECALLS) return;
 	mlr_recall_t *r = &mlr_recalls[slot];
 	if (!r->has_data) return;
+	if (recall_apply_events || recall_snapshot_pending) return;
 
-	/* snapshot current state into undo buffer before applying */
-	snapshot_into(&recall_undo);
-
-	for (uint16_t i = 0; i < r->count; i++) {
-		event_exec(&r->events[i]);
-	}
-	mlr_recall_active = slot;
+	recall_snapshot_before_apply_start(slot, false);
 }
 
 void mlr_recall_undo(void)
 {
 	if (!recall_undo.has_data) return;
-	for (uint16_t i = 0; i < recall_undo.count; i++) {
-		event_exec(&recall_undo.events[i]);
-	}
-	recall_undo.has_data = false;
-	mlr_recall_active = -1;
+	if (recall_apply_events || recall_snapshot_pending) return;
+	recall_apply_start(recall_undo.events, recall_undo.count, -1, false, true);
 }
 
 void mlr_recall_exec_and_record(int slot)
@@ -2008,33 +2057,120 @@ void mlr_recall_exec_and_record(int slot)
 	if (slot < 0 || slot >= MLR_NUM_RECALLS) return;
 	mlr_recall_t *r = &mlr_recalls[slot];
 	if (!r->has_data) return;
+	if (recall_apply_events || recall_snapshot_pending) return;
 
-	snapshot_into(&recall_undo);
-
-	for (uint16_t i = 0; i < r->count; i++) {
-		event_exec(&r->events[i]);
-		/* Feed each individual state event into motion pattern recording.
-		 * Skip PAT_PLAY/PAT_STOP to avoid recursive pattern interactions. */
-		if (r->events[i].type != MLR_EVT_PAT_PLAY &&
-		    r->events[i].type != MLR_EVT_PAT_STOP) {
-			mlr_pattern_event(&r->events[i]);
-		}
-	}
-	mlr_recall_active = slot;
+	recall_snapshot_before_apply_start(slot, true);
 }
 
 void mlr_recall_undo_and_record(void)
 {
 	if (!recall_undo.has_data) return;
-	for (uint16_t i = 0; i < recall_undo.count; i++) {
-		event_exec(&recall_undo.events[i]);
-		if (recall_undo.events[i].type != MLR_EVT_PAT_PLAY &&
-		    recall_undo.events[i].type != MLR_EVT_PAT_STOP) {
-			mlr_pattern_event(&recall_undo.events[i]);
+	if (recall_apply_events || recall_snapshot_pending) return;
+	recall_apply_start(recall_undo.events, recall_undo.count, -1, true, true);
+}
+
+void __not_in_flash_func(mlr_recall_task)(void)
+{
+	if (recall_snapshot_pending) {
+		bool emitted = false;
+		while (!emitted && recall_snapshot_pending) {
+			if (recall_snapshot_phase == 0) {
+				uint16_t raw = mlr_master_level_raw;
+				if (raw > 4095) raw = 4095;
+				emitted = recall_snapshot_add(MLR_EVT_MASTER, (uint8_t)(raw >> 8),
+					(int8_t)(raw & 0xFF), 0);
+				recall_snapshot_phase = 1;
+			} else if (recall_snapshot_phase == 1) {
+				if (recall_snapshot_track >= MLR_NUM_TRACKS) {
+					recall_snapshot_phase = 2;
+					continue;
+				}
+				mlr_track_t *tr = &mlr_tracks[recall_snapshot_track];
+				switch (recall_snapshot_track_step) {
+				case 0:
+					emitted = recall_snapshot_add(MLR_EVT_SPEED, recall_snapshot_track,
+						tr->speed_shift, 0);
+					recall_snapshot_track_step = 1;
+					break;
+				case 1:
+					emitted = recall_snapshot_add(MLR_EVT_REVERSE, recall_snapshot_track,
+						tr->reverse ? 1 : 0, 0);
+					recall_snapshot_track_step = 2;
+					break;
+				case 2:
+					emitted = recall_snapshot_add(MLR_EVT_VOLUME, recall_snapshot_track,
+						(int8_t)tr->volume_slot, 0);
+					recall_snapshot_track_step = 3;
+					break;
+				case 3:
+					if (tr->loop_active) {
+						emitted = recall_snapshot_add(MLR_EVT_LOOP, recall_snapshot_track,
+							(int8_t)tr->loop_col_start, (int8_t)tr->loop_col_end);
+					} else {
+						emitted = recall_snapshot_add(MLR_EVT_LOOP_CLR, recall_snapshot_track, 0, 0);
+					}
+					recall_snapshot_track_step = 4;
+					break;
+				default:
+					if (tr->has_content) {
+						if (tr->playing && tr->length_samples > 0) {
+							int col = (int)((uint32_t)tr->playhead * MLR_GRID_COLS / tr->length_samples);
+							emitted = recall_snapshot_add(MLR_EVT_CUT, recall_snapshot_track,
+								(int8_t)col, 0);
+						} else {
+							emitted = recall_snapshot_add(MLR_EVT_STOP, recall_snapshot_track, 0, 0);
+						}
+					}
+					recall_snapshot_track++;
+					recall_snapshot_track_step = 0;
+					break;
+				}
+			} else {
+				if (recall_snapshot_pattern >= MLR_NUM_PATTERNS) {
+					mlr_recall_t *r = &mlr_recalls[recall_snapshot_slot];
+					recall_undo.has_data = recall_undo.count > 0;
+					recall_snapshot_pending = false;
+					recall_apply_start(r->events, r->count, recall_snapshot_slot,
+						recall_snapshot_record, false);
+					break;
+				}
+				mlr_pattern_t *pat = &mlr_patterns[recall_snapshot_pattern];
+				if (pat->state == MLR_PAT_PLAYING) {
+					emitted = recall_snapshot_add(MLR_EVT_PAT_PLAY, recall_snapshot_pattern, 0, 0);
+				} else if (pat->state == MLR_PAT_STOPPED ||
+				           pat->state == MLR_PAT_RECORDING ||
+				           pat->state == MLR_PAT_ARMED) {
+					emitted = recall_snapshot_add(MLR_EVT_PAT_STOP, recall_snapshot_pattern, 0, 0);
+				}
+				recall_snapshot_pattern++;
+			}
+			if (recall_undo.count >= MLR_PATTERN_MAX_EVENTS)
+				recall_snapshot_phase = 2, recall_snapshot_pattern = MLR_NUM_PATTERNS;
 		}
+		return;
 	}
-	recall_undo.has_data = false;
-	mlr_recall_active = -1;
+
+	if (!recall_apply_events) return;
+
+	const mlr_event_t *e = &recall_apply_events[recall_apply_idx];
+	event_exec(e);
+	if (recall_apply_record &&
+	    e->type != MLR_EVT_PAT_PLAY &&
+	    e->type != MLR_EVT_PAT_STOP) {
+		mlr_pattern_event(e);
+	}
+
+	recall_apply_idx++;
+	if (recall_apply_idx >= recall_apply_count) {
+		if (recall_apply_clear_undo)
+			recall_undo.has_data = false;
+		mlr_recall_active = recall_apply_active_after;
+		recall_apply_events = NULL;
+		recall_apply_count = 0;
+		recall_apply_idx = 0;
+		recall_apply_record = false;
+		recall_apply_clear_undo = false;
+	}
 }
 
 void mlr_recall_clear(int slot)

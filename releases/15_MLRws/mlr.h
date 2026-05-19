@@ -437,6 +437,7 @@ void     mlr_recall_exec(int slot);
 void     mlr_recall_exec_and_record(int slot);  /* exec + feed events into pattern recorder */
 void     mlr_recall_undo(void);          /* restore state from before last recall */
 void     mlr_recall_undo_and_record(void);      /* undo + feed events into pattern recorder */
+void     mlr_recall_task(void);          /* service one pending recall event */
 void     mlr_recall_clear(int slot);
 
 /* ---- Scene persistence ---- */

@@ -647,12 +647,14 @@ public:
 
 		/* ---- page navigation + pattern/recall buttons (row 0, always active) ---- */
 		PERF_UI_SECTION_START(3);
+		bool page_switched = false;
 		if (run_ui_control && grid.keyDown() && grid.lastY() == 0) {
 			int col = grid.lastX();
 			bool alt_held = delete_action_held();
 			int pcs = pat_col_start();
 			if (col == 0) {
 				play_page = PAGE_REC;
+				page_switched = true;
 				/* stop all gated tracks when leaving CUT page */
 				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 					if (mlr_gate_mode[t] && mlr_tracks[t].playing) {
@@ -720,13 +722,14 @@ public:
 			}
 			else if (col == 1) {
 				play_page = PAGE_CUT;
+				page_switched = true;
 			}
 		}
 		PERF_UI_SECTION_END(3);
 
 		/* ---- page interaction (always active) ---- */
 		PERF_UI_SECTION_START(4);
-		if (run_ui_control && !mlr_flushing) {
+		if (run_ui_control && !mlr_flushing && !page_switched) {
 			if (play_page == PAGE_REC) {
 				process_gate_hold();  /* REC play/stop/gate/group-dissolve */
 				process_copy_gesture();  /* REC col-0 copy/paste gesture */
@@ -780,7 +783,7 @@ public:
 			uint16_t mon_vol = 256;
 			int mon_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
 			if (mon_track >= 0) mon_vol = mlr_tracks[mon_track].volume_frac;
-			bool codec_monitor = (mlr_rec_track >= 0 || sw == Switch::Up);
+			bool codec_monitor = (mlr_rec_track < 0 && sw == Switch::Up);
 
 			bool armed_one_plug = (mlr_rec_track < 0 && rec_armed_track >= 0
 				&& (Connected(Input::Audio1) != Connected(Input::Audio2)));
@@ -873,8 +876,8 @@ public:
 		int32_t outL = (int32_t)mix;
 		int32_t outR = (int32_t)mix_r;
 		if (dry_level > 0 && (rec_armed_track >= 0 || sw == Switch::Up)) {
-			/* Use the codec monitor while recording; armed-only monitoring stays
-			 * dry so arming a track does not add per-sample ADPCM work. */
+			/* Keep recording/armed monitoring dry so it does not add per-sample
+			 * ADPCM work; explicit monitor mode still uses the codec path. */
 			uint16_t mon_vol = 256;
 			uint8_t mon_ch  = 0;
 			int mon_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
@@ -884,7 +887,7 @@ public:
 			}
 			int32_t in_scaled = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
 			in_scaled = (in_scaled * (int32_t)mon_vol) >> 8;
-			if (mlr_rec_track >= 0 || sw == Switch::Up) {
+			if (mlr_rec_track < 0 && sw == Switch::Up) {
 				int16_t in16 = (int16_t)(in_scaled << 4);
 				uint8_t nyb = adpcm_encode(in16, &mon_enc_);
 				int16_t clean = adpcm_decode(nyb, &mon_dec_);
@@ -907,6 +910,7 @@ public:
 		/* ---- tick pattern playback (~5ms resolution) ---- */
 		PERF_UI_SECTION_START(6);
 		if (!mlr_flushing || mlr_copying) {
+			mlr_recall_task();
 			pat_counter++;
 			if (pat_counter >= PAT_TICK_INTERVAL) {
 				pat_counter = 0;
@@ -2219,7 +2223,6 @@ private:
 		} else {
 			mlr_choke_group_cut(t, col);
 		}
-		dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)t, 0, 0);
 		dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)col, 0);
 	}
 
@@ -2635,8 +2638,10 @@ private:
 		}
 
 		/* ---- loop-a-section: detect 2+ held keys per track row ---- */
-		if (!alt_held && (grid.keyDown() || grid.keyUp())) {
-			for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+		bool track_row_event = grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS;
+		if (!alt_held && track_row_event && (grid.keyDown() || grid.keyUp())) {
+			int changed_track = grid.lastY() - 1;
+			for (int t = changed_track; t <= changed_track; t++) {
 				int row = t + 1;
 				int held_count = 0;
 				int held_min = 16, held_max = -1;
