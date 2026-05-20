@@ -40,6 +40,7 @@
 | 53_glitter | Granular Looping Sampler | 0.1.0<br>Beta Test | Pico SDK 2.1.1 | Steve Jones |
 | 55_fifths | A quantizer/sequencer that can create harmony and nimbly traverse the circle of fifths in attempts to make jazz | 1.0<br>Ready | Pico SDK | Dune Desormeaux |
 | 56_Krell | Krell | 1.0<br>Mostly complete | Blackbird Lua | Benjamin Reily |
+| 57_glitch | Clock-synced beat-repeater with ratcheting, reversal and audio degradation | 1.0.0<br>Release | C++ (Pico SDK) | Andy Jenkinson (uglifruit) |
 | 69_trace | Oscillograph stereo oscillator | 0.1<br>Functional but WIP | C++ (ComputerCard) | Ruiyang Wang |
 | 71_degenerator | Disintegrating Looper — capture audio loops and apply irreversible degradation with saturation, filter drift, tape hiss, oxide shedding, bit crush, and bit rot<br>[Web editor]() | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 72_motorik | Motorik drum machine — kick/snare/hihat with bass and melody CV, classic Krautrock grooves<br>[Web editor]() | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
