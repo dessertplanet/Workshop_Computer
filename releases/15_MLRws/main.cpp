@@ -1140,6 +1140,9 @@ private:
 			}
 			break;
 		}
+
+		if (gl_active_deadzone_mute_ && gl_active_track_ >= 0 && gl_active_track_ < MLR_NUM_TRACKS)
+			gl_playback_track_gain_frac_[gl_active_track_] = 0;
 	}
 
 	/**

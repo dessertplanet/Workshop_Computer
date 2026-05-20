@@ -240,6 +240,7 @@ typedef struct {
 	/* seek handoff (set by core 1, consumed by core 0) */
 	volatile uint32_t seek_handoff_r;
 	volatile uint32_t seek_handoff_playhead;
+	volatile uint16_t seek_handoff_speed_accum;
 	volatile bool     seek_handoff_start_pending;
 	volatile bool     seek_handoff_pending;
 	volatile bool     seek_handoff_reverse_pending;
@@ -252,6 +253,7 @@ typedef struct {
 	bool              wrap_preview_reverse;
 	uint32_t          wrap_preview_start;
 	uint32_t          wrap_preview_end;
+	uint16_t          wrap_preview_speed_frac;
 
 	/* loop-a-section: sub-loop boundaries (set by core 0) */
 	bool           loop_active;
