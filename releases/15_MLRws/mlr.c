@@ -364,6 +364,14 @@ static inline int16_t linear_interp_q8(int16_t x0, int16_t x1, uint8_t frac)
 	return clamp16_interp(y);
 }
 
+static inline uint32_t integer_speed_steps(uint16_t speed_frac)
+{
+	if (speed_frac == 256) return 1;
+	if (speed_frac == 512) return 2;
+	if (speed_frac == 1024) return 4;
+	return 0;
+}
+
 static inline void reset_track_audio_state(mlr_track_t *tr)
 {
 	tr->speed_accum = 0;
@@ -381,6 +389,8 @@ static inline void reset_track_audio_state(mlr_track_t *tr)
 	tr->seek_preview_count = 0;
 	tr->seek_xfade_pos = 0;
 	tr->seek_xfade_active = false;
+	tr->seek_handoff_reverse_pending = false;
+	tr->wrap_preview_ready = false;
 }
 
 static inline void begin_track_declick(mlr_track_t *tr, bool stop_after)
@@ -396,6 +406,10 @@ static inline void check_seek_handoff(mlr_track_t *tr)
 		tr->pcm.r = tr->seek_handoff_r;
 		tr->playhead = tr->seek_handoff_playhead;
 		tr->speed_accum = 0;
+		if (tr->seek_handoff_reverse_pending) {
+			tr->reverse = tr->seek_handoff_reverse_target;
+			tr->seek_handoff_reverse_pending = false;
+		}
 		tr->stop_pending = false;
 		tr->playing = true;
 		tr->seek_handoff_pending = false;
@@ -411,6 +425,10 @@ static inline void check_seek_handoff(mlr_track_t *tr)
 			tr->pcm.r = tr->seek_handoff_r;
 			tr->playhead = tr->seek_handoff_playhead;
 			tr->speed_accum = 0;
+			if (tr->seek_handoff_reverse_pending) {
+				tr->reverse = tr->seek_handoff_reverse_target;
+				tr->seek_handoff_reverse_pending = false;
+			}
 			tr->fade_in_count = MLR_FADE_SAMPLES;
 		}
 	}
@@ -422,6 +440,8 @@ static inline void trigger_track_fade_and_seek(mlr_track_t *tr, uint32_t target,
 	tr->seek_xfade_pos = 0;
 	tr->seek_preview_count = 0;
 	tr->seek_handoff_pending = false;
+	tr->seek_handoff_reverse_pending = false;
+	tr->wrap_preview_ready = false;
 	if (start_pending) {
 		tr->fade_out_active = false;
 		tr->fade_out_count = 0;
@@ -433,6 +453,43 @@ static inline void trigger_track_fade_and_seek(mlr_track_t *tr, uint32_t target,
 	tr->seek_start_pending = start_pending;
 	__dmb();
 	tr->fill_seek_pending = true;
+}
+
+static inline void maybe_start_wrap_preview_xfade(mlr_track_t *tr, uint32_t wrap_start, uint32_t wrap_end)
+{
+	if (!tr->wrap_preview_ready || tr->seek_xfade_active || tr->seek_handoff_pending ||
+	    tr->fill_seek_pending || tr->stop_pending || tr->fade_out_active)
+		return;
+	uint32_t steps = integer_speed_steps(tr->speed_frac);
+	if (steps == 0 || tr->speed_accum != 0) return;
+	uint32_t source_span = MLR_SEEK_PREVIEW_SAMPLES * steps;
+	if (wrap_end <= wrap_start || wrap_end - wrap_start <= source_span) return;
+	if (tr->wrap_preview_reverse != tr->reverse ||
+	    tr->wrap_preview_start != wrap_start ||
+	    tr->wrap_preview_end != wrap_end) {
+		tr->wrap_preview_ready = false;
+		return;
+	}
+
+	uint32_t distance = tr->reverse
+		? (tr->playhead >= wrap_start ? tr->playhead - wrap_start + 1u : 0u)
+		: (tr->playhead < wrap_end ? wrap_end - tr->playhead : 0u);
+	if (distance != source_span) return;
+	if (tr->seek_preview_count < MLR_SEEK_PREVIEW_SAMPLES) return;
+
+	uint32_t needed = source_span * 2u;
+	if (tr->pcm.w - tr->pcm.r < needed) return;
+
+	tr->seek_preview_count = MLR_SEEK_PREVIEW_SAMPLES;
+	tr->seek_xfade_pos = 0;
+	tr->seek_handoff_r = tr->pcm.r + needed;
+	if (tr->reverse) {
+		tr->seek_handoff_playhead = (wrap_end - 1u) - source_span;
+	} else {
+		tr->seek_handoff_playhead = wrap_start + source_span;
+	}
+	tr->seek_xfade_active = true;
+	tr->wrap_preview_ready = false;
 }
 
 static inline int32_t apply_seek_preview_xfade(mlr_track_t *tr, int32_t old_sample)
@@ -464,6 +521,10 @@ static inline int32_t apply_seek_preview_xfade(mlr_track_t *tr, int32_t old_samp
 		tr->pcm.r = tr->seek_handoff_r;
 		tr->playhead = tr->seek_handoff_playhead;
 		tr->speed_accum = 0;
+		if (tr->seek_handoff_reverse_pending) {
+			tr->reverse = tr->seek_handoff_reverse_target;
+			tr->seek_handoff_reverse_pending = false;
+		}
 		tr->last_pcm[0] = tr->seek_preview[count - 1u];
 		tr->interp_prev[0] = tr->last_pcm[0];
 	}
@@ -947,6 +1008,7 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 		/* wrap boundaries */
 		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+		maybe_start_wrap_preview_xfade(tr, wrap_start, wrap_end);
 		bool wrapped = false;
 		int32_t sample_out = 0;
 
@@ -1016,7 +1078,7 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 				}
 				if (ring_state_loaded)
 					tr->pcm.r = pcm_r;
-				if (wrapped) {
+				if (wrapped && !tr->seek_xfade_active) {
 					/* loop wraps don't do full handoff seek as they are contiguous in ring */
 					tr->fade_out_active = true;
 					tr->fade_out_count = MLR_FADE_SAMPLES;
@@ -1107,6 +1169,7 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 
 		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+		maybe_start_wrap_preview_xfade(tr, wrap_start, wrap_end);
 		bool wrapped = false;
 		int32_t sample_out = 0;
 
@@ -1175,7 +1238,7 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 				}
 				if (ring_state_loaded)
 					tr->pcm.r = pcm_r;
-				if (wrapped) {
+				if (wrapped && !tr->seek_xfade_active) {
 					tr->fade_out_active = true;
 					tr->fade_out_count = MLR_FADE_SAMPLES;
 				}
@@ -1393,6 +1456,17 @@ void __not_in_flash_func(mlr_set_reverse)(int track, bool reverse)
 	mlr_track_t *tr = &mlr_tracks[track];
 	if (tr->reverse == reverse) return;  /* no change */
 	PERF_NOTE_REVERSE_TOGGLE(track);
+
+	if (!tr->playing && !tr->stop_pending) {
+		tr->reverse = reverse;
+		tr->seek_reverse_pending = false;
+		tr->seek_handoff_reverse_pending = false;
+		tr->seek_handoff_pending = false;
+		tr->seek_xfade_active = false;
+		tr->fill_seek_pending = false;
+		tr->wrap_preview_ready = false;
+		return;
+	}
 
 	/* re-seek core 1 fill to current playhead in new direction */
 	tr->seek_reverse_target = reverse;
@@ -2747,6 +2821,135 @@ static uint16_t fill_seek_preview_reverse(int t)
 	return written;
 }
 
+static uint16_t fill_wrap_preview_forward(int t, uint32_t steps)
+{
+	mlr_track_t *tr = &mlr_tracks[t];
+	const uint8_t *flash_data = track_audio_xip(t);
+	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
+	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+
+	for (uint16_t i = 0; i < MLR_SEEK_PREVIEW_SAMPLES; i++) {
+		int16_t sample = 0;
+		for (uint32_t s = 0; s < steps; s++) {
+			if (tr->fill_sample_pos >= wrap_end) {
+				seek_fill_to(tr, t, wrap_start);
+			}
+
+			uint8_t byte   = flash_data[tr->fill_byte_pos];
+			uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
+			sample = adpcm_decode(nybble, &tr->fill_decode[0]);
+
+			if (tr->fill_high_nyb) {
+				tr->fill_byte_pos++;
+				tr->fill_high_nyb = false;
+			} else {
+				tr->fill_high_nyb = true;
+			}
+			tr->fill_sample_pos++;
+		}
+		tr->seek_preview[i] = sample;
+	}
+
+	return MLR_SEEK_PREVIEW_SAMPLES;
+}
+
+static uint16_t fill_wrap_preview_reverse(int t, uint32_t steps)
+{
+	mlr_track_t *tr = &mlr_tracks[t];
+	const uint8_t *flash_data = track_audio_xip(t);
+	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
+	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+	uint16_t written = 0;
+
+	while (written < MLR_SEEK_PREVIEW_SAMPLES) {
+		if (tr->fill_sample_pos <= wrap_start) {
+			tr->fill_sample_pos = wrap_end;
+		}
+
+		uint32_t avail = tr->fill_sample_pos - wrap_start;
+		uint32_t chunk_outputs = (uint32_t)MLR_SEEK_PREVIEW_SAMPLES - written;
+		uint32_t max_outputs = avail / steps;
+		if (chunk_outputs > max_outputs) chunk_outputs = max_outputs;
+		if (chunk_outputs == 0) break;
+		uint32_t chunk_samples = chunk_outputs * steps;
+		if (chunk_samples > MLR_KEYFRAME_INTERVAL) {
+			chunk_outputs = MLR_KEYFRAME_INTERVAL / steps;
+			chunk_samples = chunk_outputs * steps;
+		}
+		if (chunk_samples == 0) break;
+
+		uint32_t decode_start = tr->fill_sample_pos - chunk_samples;
+		seek_fill_to(tr, t, decode_start);
+
+		for (uint32_t i = 0; i < chunk_samples; i++) {
+			uint8_t byte   = flash_data[tr->fill_byte_pos];
+			uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
+			rev_decode_tmp[i] = adpcm_decode(nybble, &tr->fill_decode[0]);
+			if (tr->fill_high_nyb) {
+				tr->fill_byte_pos++;
+				tr->fill_high_nyb = false;
+			} else {
+				tr->fill_high_nyb = true;
+			}
+		}
+
+		for (uint32_t i = 0; i < chunk_outputs; i++) {
+			uint32_t idx = chunk_samples - steps - (i * steps);
+			tr->seek_preview[written++] = rev_decode_tmp[idx];
+		}
+
+		tr->fill_sample_pos = decode_start;
+	}
+
+	return written;
+}
+
+static void prepare_wrap_preview(int t)
+{
+	mlr_track_t *tr = &mlr_tracks[t];
+	if (!tr->has_content || !tr->playing || tr->stop_pending) return;
+	if (tr->fill_seek_pending || tr->seek_handoff_pending || tr->seek_xfade_active) return;
+	uint32_t steps = integer_speed_steps(tr->speed_frac);
+	if (steps == 0 || tr->speed_accum != 0) return;
+
+	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
+	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+	uint32_t source_span = MLR_SEEK_PREVIEW_SAMPLES * steps;
+	if (wrap_end <= wrap_start || wrap_end - wrap_start <= source_span) return;
+	if (tr->wrap_preview_ready &&
+	    tr->wrap_preview_reverse == tr->reverse &&
+	    tr->wrap_preview_start == wrap_start &&
+	    tr->wrap_preview_end == wrap_end)
+		return;
+
+	uint32_t saved_byte_pos = tr->fill_byte_pos;
+	bool saved_high_nyb = tr->fill_high_nyb;
+	uint32_t saved_sample_pos = tr->fill_sample_pos;
+	adpcm_state_t saved_decode[MLR_NUM_CHANNELS];
+	memcpy(saved_decode, tr->fill_decode, sizeof(saved_decode));
+
+	uint16_t preview_count;
+	if (tr->reverse) {
+		tr->fill_sample_pos = wrap_end;
+		preview_count = fill_wrap_preview_reverse(t, steps);
+	} else {
+		seek_fill_to(tr, t, wrap_start);
+		preview_count = fill_wrap_preview_forward(t, steps);
+	}
+
+	tr->fill_byte_pos = saved_byte_pos;
+	tr->fill_high_nyb = saved_high_nyb;
+	tr->fill_sample_pos = saved_sample_pos;
+	memcpy(tr->fill_decode, saved_decode, sizeof(saved_decode));
+
+	tr->seek_preview_count = preview_count;
+	tr->wrap_preview_reverse = tr->reverse;
+	tr->wrap_preview_start = wrap_start;
+	tr->wrap_preview_end = wrap_end;
+	__dmb();
+	tr->wrap_preview_ready = (preview_count > 0);
+}
+
 /** Handle a pending seek: restore decoder state from keyframe, refill. */
 static void handle_seek(int t)
 {
@@ -2799,9 +3002,12 @@ static void handle_seek(int t)
 	}
 
 	if (reverse_change) {
-		tr->reverse = target_reverse;
+		tr->seek_handoff_reverse_pending = true;
+		tr->seek_handoff_reverse_target = target_reverse;
 		tr->seek_reverse_pending = false;
 		PERF_NOTE_REVERSE_HANDOFF(t, handoff_avail);
+	} else {
+		tr->seek_handoff_reverse_pending = false;
 	}
 	
 	tr->seek_handoff_r = new_start;
@@ -3028,6 +3234,7 @@ static void copy_track_task(void)
 }
 
 static int fill_rr = 0;  /* round-robin index for ring refill */
+static int wrap_preview_rr = 0;
 
 void mlr_io_task(void)
 {
@@ -3062,14 +3269,25 @@ void mlr_io_task(void)
 	 *    especially with reverse playback's seek_fill_to overhead. */
 	for (int i = 0; i < MLR_NUM_TRACKS; i++) {
 		int t = (fill_rr + i) % MLR_NUM_TRACKS;
-		if (mlr_tracks[t].has_content && mlr_tracks[t].playing) {
+		if (mlr_tracks[t].has_content && mlr_tracks[t].playing &&
+		    !mlr_tracks[t].seek_handoff_pending && !mlr_tracks[t].seek_xfade_active) {
 			fill_pcm_ring(t);
 			fill_rr = (t + 1) % MLR_NUM_TRACKS;
 			break;
 		}
 	}
 
-	/* 4. Handle pending clear (quick — one sector erase) */
+	/* 4. Prepare one wrap crossfade preview opportunistically. */
+	for (int i = 0; i < MLR_NUM_TRACKS; i++) {
+		int t = (wrap_preview_rr + i) % MLR_NUM_TRACKS;
+		if (mlr_tracks[t].has_content && mlr_tracks[t].playing) {
+			prepare_wrap_preview(t);
+			wrap_preview_rr = (t + 1) % MLR_NUM_TRACKS;
+			break;
+		}
+	}
+
+	/* 5. Handle pending clear (quick — one sector erase) */
 	if (clear_pending) {
 		PERF_FLASH_ERASE(track_hdr_flash_off(clear_track), MLR_SECTOR_SIZE);
 		hdr_rewrite_pending_mask &= (uint8_t)~(1u << clear_track);

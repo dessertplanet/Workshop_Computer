@@ -242,10 +242,16 @@ typedef struct {
 	volatile uint32_t seek_handoff_playhead;
 	volatile bool     seek_handoff_start_pending;
 	volatile bool     seek_handoff_pending;
+	volatile bool     seek_handoff_reverse_pending;
+	volatile bool     seek_handoff_reverse_target;
 	int16_t           seek_preview[MLR_SEEK_PREVIEW_SAMPLES * MLR_NUM_CHANNELS];
 	volatile uint16_t seek_preview_count;
 	uint16_t          seek_xfade_pos;
 	bool              seek_xfade_active;
+	volatile bool     wrap_preview_ready;
+	bool              wrap_preview_reverse;
+	uint32_t          wrap_preview_start;
+	uint32_t          wrap_preview_end;
 
 	/* loop-a-section: sub-loop boundaries (set by core 0) */
 	bool           loop_active;

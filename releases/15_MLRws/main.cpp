@@ -2056,9 +2056,9 @@ private:
 					if (resume_after_arm_track_ == u) resume_after_arm_track_ = -1;
 					rec_limit_latched = false;
 				}
-				int start_col = 0;
+				int start_col = mlr_tracks[u].reverse ? (MLR_GRID_COLS - 1) : 0;
 				if (mlr_tracks[u].loop_active)
-					start_col = mlr_tracks[u].loop_col_start;
+					start_col = mlr_tracks[u].reverse ? mlr_tracks[u].loop_col_end : mlr_tracks[u].loop_col_start;
 				mlr_cut(u, start_col);  /* single-track call — no re-broadcast */
 			}
 			dispatch_event(MLR_EVT_START, (uint8_t)t, 0, 0);
