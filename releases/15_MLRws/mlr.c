@@ -375,6 +375,12 @@ static inline void reset_track_audio_state(mlr_track_t *tr)
 	tr->declick_hist_pos = 0;
 	tr->declick_count = 0;
 	tr->stop_pending = false;
+	tr->fade_out_count = 0;
+	tr->fade_in_count = 0;
+	tr->fade_out_active = false;
+	tr->seek_preview_count = 0;
+	tr->seek_xfade_pos = 0;
+	tr->seek_xfade_active = false;
 }
 
 static inline void begin_track_declick(mlr_track_t *tr, bool stop_after)
@@ -386,33 +392,83 @@ static inline void begin_track_declick(mlr_track_t *tr, bool stop_after)
 
 static inline void check_seek_handoff(mlr_track_t *tr)
 {
-	/* We only accept handoff if fade out is complete or we aren't fading out */
-	if (tr->seek_handoff_pending && !tr->fade_out_active) {
+	if (tr->seek_handoff_pending && tr->seek_handoff_start_pending) {
 		tr->pcm.r = tr->seek_handoff_r;
 		tr->playhead = tr->seek_handoff_playhead;
 		tr->speed_accum = 0;
-		if (tr->seek_handoff_start_pending) {
-			tr->stop_pending = false;
-			tr->playing = true;
-		}
+		tr->stop_pending = false;
+		tr->playing = true;
 		tr->seek_handoff_pending = false;
 		tr->fade_in_count = MLR_FADE_SAMPLES;
+	} else if (tr->seek_handoff_pending && !tr->seek_xfade_active) {
+		tr->fade_out_active = false;
+		tr->fade_out_count = 0;
+		tr->fade_in_count = 0;
+		tr->seek_xfade_pos = 0;
+		tr->seek_xfade_active = (tr->seek_preview_count > 0);
+		tr->seek_handoff_pending = false;
+		if (!tr->seek_xfade_active) {
+			tr->pcm.r = tr->seek_handoff_r;
+			tr->playhead = tr->seek_handoff_playhead;
+			tr->speed_accum = 0;
+			tr->fade_in_count = MLR_FADE_SAMPLES;
+		}
 	}
 }
 
 static inline void trigger_track_fade_and_seek(mlr_track_t *tr, uint32_t target, bool start_pending)
 {
+	tr->seek_xfade_active = false;
+	tr->seek_xfade_pos = 0;
+	tr->seek_preview_count = 0;
+	tr->seek_handoff_pending = false;
 	if (start_pending) {
 		tr->fade_out_active = false;
 		tr->fade_out_count = 0;
 	} else {
-		tr->fade_out_active = true;
-		tr->fade_out_count = MLR_FADE_SAMPLES;
+		tr->fade_out_active = false;
+		tr->fade_out_count = 0;
 	}
 	tr->seek_target_sample = target;
 	tr->seek_start_pending = start_pending;
 	__dmb();
 	tr->fill_seek_pending = true;
+}
+
+static inline int32_t apply_seek_preview_xfade(mlr_track_t *tr, int32_t old_sample)
+{
+	if (!tr->seek_xfade_active) return old_sample;
+
+	uint16_t pos = tr->seek_xfade_pos;
+	uint16_t count = tr->seek_preview_count;
+	if (count == 0 || pos >= count) {
+		tr->seek_xfade_active = false;
+		return old_sample;
+	}
+
+	int32_t new_sample = ((int32_t)tr->seek_preview[pos] * (int32_t)tr->volume_frac) >> 8;
+	uint32_t new_gain = (uint32_t)pos + 1u;
+	uint32_t old_gain = (uint32_t)count - new_gain;
+	int32_t mixed;
+	if (count == MLR_SEEK_PREVIEW_SAMPLES) {
+		mixed = (old_sample * (int32_t)old_gain + new_sample * (int32_t)new_gain) >> 8;
+	} else {
+		mixed = (old_sample * (int32_t)old_gain + new_sample * (int32_t)new_gain) / (int32_t)count;
+	}
+
+	pos++;
+	tr->seek_xfade_pos = pos;
+	if (pos >= count) {
+		tr->seek_xfade_active = false;
+		tr->seek_preview_count = 0;
+		tr->pcm.r = tr->seek_handoff_r;
+		tr->playhead = tr->seek_handoff_playhead;
+		tr->speed_accum = 0;
+		tr->last_pcm[0] = tr->seek_preview[count - 1u];
+		tr->interp_prev[0] = tr->last_pcm[0];
+	}
+
+	return mixed;
 }
 
 static inline int16_t apply_declick_sample(const mlr_track_t *tr, int ch, int32_t target)
@@ -1000,6 +1056,7 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 				tr->volume_frac = tr->volume_target;
 		}
 		sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
+		sample_out = apply_seek_preview_xfade(tr, sample_out);
 		
 		if (tr->fade_out_active) {
 			if (tr->fade_out_count > 0) {
@@ -1154,6 +1211,7 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 				tr->volume_frac = tr->volume_target;
 		}
 		sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
+		sample_out = apply_seek_preview_xfade(tr, sample_out);
 
 		if (tr->fade_out_active) {
 			if (tr->fade_out_count > 0) {
@@ -2617,6 +2675,78 @@ static void fill_pcm_ring(int t)
 	fill_pcm_ring_limited(t, 0);
 }
 
+static uint16_t fill_seek_preview_forward(int t)
+{
+	mlr_track_t *tr = &mlr_tracks[t];
+	const uint8_t *flash_data = track_audio_xip(t);
+	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
+	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+
+	for (uint16_t i = 0; i < MLR_SEEK_PREVIEW_SAMPLES; i++) {
+		if (tr->fill_sample_pos >= wrap_end) {
+			seek_fill_to(tr, t, wrap_start);
+		}
+
+		uint8_t byte   = flash_data[tr->fill_byte_pos];
+		uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
+		tr->seek_preview[i] = adpcm_decode(nybble, &tr->fill_decode[0]);
+
+		if (tr->fill_high_nyb) {
+			tr->fill_byte_pos++;
+			tr->fill_high_nyb = false;
+		} else {
+			tr->fill_high_nyb = true;
+		}
+		tr->fill_sample_pos++;
+	}
+
+	return MLR_SEEK_PREVIEW_SAMPLES;
+}
+
+static uint16_t fill_seek_preview_reverse(int t)
+{
+	mlr_track_t *tr = &mlr_tracks[t];
+	const uint8_t *flash_data = track_audio_xip(t);
+	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
+	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+	uint16_t written = 0;
+
+	while (written < MLR_SEEK_PREVIEW_SAMPLES) {
+		if (tr->fill_sample_pos <= wrap_start) {
+			tr->fill_sample_pos = wrap_end;
+		}
+
+		uint32_t avail = tr->fill_sample_pos - wrap_start;
+		uint32_t remaining = (uint32_t)MLR_SEEK_PREVIEW_SAMPLES - written;
+		uint32_t chunk = remaining < avail ? remaining : avail;
+		if (chunk > MLR_KEYFRAME_INTERVAL) chunk = MLR_KEYFRAME_INTERVAL;
+		if (chunk == 0) break;
+
+		uint32_t decode_start = tr->fill_sample_pos - chunk;
+		seek_fill_to(tr, t, decode_start);
+
+		for (uint32_t i = 0; i < chunk; i++) {
+			uint8_t byte   = flash_data[tr->fill_byte_pos];
+			uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
+			rev_decode_tmp[i] = adpcm_decode(nybble, &tr->fill_decode[0]);
+			if (tr->fill_high_nyb) {
+				tr->fill_byte_pos++;
+				tr->fill_high_nyb = false;
+			} else {
+				tr->fill_high_nyb = true;
+			}
+		}
+
+		for (uint32_t i = 0; i < chunk; i++) {
+			tr->seek_preview[written++] = rev_decode_tmp[chunk - 1u - i];
+		}
+
+		tr->fill_sample_pos = decode_start;
+	}
+
+	return written;
+}
+
 /** Handle a pending seek: restore decoder state from keyframe, refill. */
 static void handle_seek(int t)
 {
@@ -2631,27 +2761,43 @@ static void handle_seek(int t)
 	mlr_perf.seek_count[t]++;
 	mlr_perf_seek_count[t]++;
 #endif
-	if (target_reverse) {
-		tr->fill_sample_pos = target;
-	} else {
-		seek_fill_to(tr, t, target);
-	}
-	uint32_t reserve = MLR_SEEK_PRIME_SAMPLES;
-	uint32_t free_samples = pcm_ring_free(&tr->pcm);
-	if (free_samples < reserve) {
-		uint32_t drop = reserve - free_samples;
-		uint32_t avail = pcm_ring_avail(&tr->pcm);
-		if (drop > avail) drop = avail;
-		tr->pcm.r += drop;
-		__dmb();
-	}
-	uint32_t new_start = tr->pcm.w;
-	tr->fill_seek_pending = false;
+	if (target_reverse) tr->fill_sample_pos = target;
+	else                seek_fill_to(tr, t, target);
 
-	/* Reserve space, append primed samples, then skip stale buffered audio at handoff. */
-	fill_pcm_ring_limited_dir(t, MLR_SEEK_PRIME_SAMPLES, target_reverse);
-	__dmb();
-	uint32_t handoff_avail = tr->pcm.w - new_start;
+	uint32_t new_start;
+	uint32_t handoff_playhead;
+	uint32_t handoff_avail = 0;
+	if (start_pending) {
+		uint32_t reserve = MLR_SEEK_PRIME_SAMPLES;
+		uint32_t free_samples = pcm_ring_free(&tr->pcm);
+		if (free_samples < reserve) {
+			uint32_t drop = reserve - free_samples;
+			uint32_t avail = pcm_ring_avail(&tr->pcm);
+			if (drop > avail) drop = avail;
+			tr->pcm.r += drop;
+			__dmb();
+		}
+		new_start = tr->pcm.w;
+		handoff_playhead = target;
+		tr->seek_preview_count = 0;
+		tr->fill_seek_pending = false;
+		fill_pcm_ring_limited_dir(t, MLR_SEEK_PRIME_SAMPLES, target_reverse);
+		__dmb();
+		handoff_avail = tr->pcm.w - new_start;
+	} else {
+		uint16_t preview_count = target_reverse
+			? fill_seek_preview_reverse(t)
+			: fill_seek_preview_forward(t);
+		tr->seek_preview_count = preview_count;
+		tr->seek_xfade_pos = 0;
+		handoff_playhead = tr->fill_sample_pos;
+		new_start = tr->pcm.w;
+		tr->fill_seek_pending = false;
+		fill_pcm_ring_limited_dir(t, MLR_SEEK_PRIME_SAMPLES, target_reverse);
+		__dmb();
+		handoff_avail = tr->pcm.w - new_start;
+	}
+
 	if (reverse_change) {
 		tr->reverse = target_reverse;
 		tr->seek_reverse_pending = false;
@@ -2659,7 +2805,7 @@ static void handle_seek(int t)
 	}
 	
 	tr->seek_handoff_r = new_start;
-	tr->seek_handoff_playhead = target;
+	tr->seek_handoff_playhead = handoff_playhead;
 	tr->seek_handoff_start_pending = start_pending;
 	__dmb();
 	tr->seek_handoff_pending = true;

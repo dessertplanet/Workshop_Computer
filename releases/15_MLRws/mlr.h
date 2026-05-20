@@ -57,6 +57,7 @@ extern "C" {
 #define MLR_DECLICK_SHIFT      5
 #define MLR_DECLICK_SAMPLES    (1u << MLR_DECLICK_SHIFT)  /* 32-sample crossfade */
 #define MLR_FADE_SAMPLES       120                        /* 2.5ms V-fade samples (total 5ms) */
+#define MLR_SEEK_PREVIEW_SAMPLES 256                      /* CUT-page overlap crossfade bridge */
 #define MLR_SEEK_PRIME_SAMPLES (MLR_KEYFRAME_INTERVAL * 2)  /* post-seek refill to cover direction changes */
 #define MLR_PERF_UI_SECTIONS   8
 
@@ -241,6 +242,10 @@ typedef struct {
 	volatile uint32_t seek_handoff_playhead;
 	volatile bool     seek_handoff_start_pending;
 	volatile bool     seek_handoff_pending;
+	int16_t           seek_preview[MLR_SEEK_PREVIEW_SAMPLES * MLR_NUM_CHANNELS];
+	volatile uint16_t seek_preview_count;
+	uint16_t          seek_xfade_pos;
+	bool              seek_xfade_active;
 
 	/* loop-a-section: sub-loop boundaries (set by core 0) */
 	bool           loop_active;
