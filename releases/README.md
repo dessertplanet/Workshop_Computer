@@ -9,6 +9,7 @@
 | 06_usb_audio | 6-Channel USB Audio & MIDI firmware with CV/Gate support<br>[Web editor](https://vincentmaurer.de/usb-audio/midi_config.html) | 1.0<br>Release | C++ (RPi Pico SDK) | Vincent Maurer (vincentmaurer.de) |
 | 07_bumpers | 'Bouncing ball' style delay and trigger generators | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 08_bytebeat | Generates and mangles bytebeats | 0.1<br>Functional but WIP | C++/Arduino-Pico | Matt Kuebrich |
+| 09_DivCom | Comparator and VC clock divider, inspired by Serge NCOM | 0.1<br>Released | C++ (RPi Pico SDK) compat. cmake. | divmod |
 | 10_twists | A port of Mutable Instruments Braids with a web editor | 0.1<br>Functional but WIP | C (RPi Pico SDK) | Random Works |
 | 11_goldfish | Weird delay/looper for audio and CV | 1.0<br>Ready | Pico SDK | Dune Desormeaux |
 | 12_am_coupler | AM radio transmitter / coupler | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
