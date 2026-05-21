@@ -4,16 +4,23 @@
 // Controls:
 //   Pulse In 1          : Clock input (rising edge = new beat)
 //   CV In 1 > ~0V       : Freeze (stops recording, keeps looping)
+//   CV In 2             : Bipolar mod — added to Knob X and Knob Y values
 //   Pulse In 2          : External gate (used in Switch MID mode)
 //   Main Knob           : 5 zones → ratchet division {1,2,3,4,6}
 //                         Remainder within zone → reverse probability threshold
-//   Knob X              : Degradation amount (bitcrush + decimation depth)
+//   Knob X              : Degradation amount — first half: decimation only (1→16x);
+//                         second half: decimation stays max, adds bitcrush (0→7 bits)
 //   Knob Y              : Degradation probability (how often degradation applies)
 //   Switch UP (latch)   : Probabilistic mode — glitch if rng < prob_thresh
 //   Switch MID          : External gate mode — glitch while Pulse In 2 HIGH
 //   Switch DOWN (moment): Force mode — always glitch
 //   Audio In 1          : Input signal
-//   Audio Out 1 + 2     : Output (same signal on both channels)
+//   Audio Out 1         : Glitched (or pass-through) output
+//   Audio Out 2         : Always dry — live pass-through of Audio In 1
+//   Pulse Out 1         : Sub-slice clock — fires at every ratchet slice boundary
+//   CV Out 1            : Glitch gate — high (+5V) while glitching, low (0V) otherwise
+//   CV Out 2            : Descending ramp across each slice (high→low), resets at boundary
+//   Pulse Out 2         : Mirror of Pulse In 1 (clock through)
 //
 // LEDs:
 //   LED 0..4   : One lit to show current ratchet zone (left col + top-right)
@@ -89,6 +96,10 @@ class Glitch : public ComputerCard
     // --- frozen state ---
     bool     frozen           = false;
 
+    // --- output state ---
+    bool     slice_boundary   = false;  // true for one sample at each slice reset
+    int32_t  ramp_scale       = 0;      // 2047*65536 / (slice_len-1), 16.16 fixed-point
+
 public:
     Glitch() {
         memset(g_buf, 0, sizeof(g_buf));
@@ -97,11 +108,16 @@ public:
     void __not_in_flash_func(ProcessSample)() override
     {
         // ----------------------------------------------------------------
-        // 1. Read raw knob values
+        // 1. Read raw knob values; CV In 2 modulates X and Y (bipolar)
         // ----------------------------------------------------------------
         const int32_t knob_main = KnobVal(Knob::Main);  // 0..4095
-        const int32_t knob_x    = KnobVal(Knob::X);     // 0..4095
-        const int32_t knob_y    = KnobVal(Knob::Y);     // 0..4095
+        const int32_t cv2       = CVIn2();               // -2048..2047
+
+        auto clamp = [](int32_t v) -> int32_t {
+            return v < 0 ? 0 : (v > 4095 ? 4095 : v);
+        };
+        const int32_t knob_x = clamp(KnobVal(Knob::X) + cv2);  // 0..4095
+        const int32_t knob_y = clamp(KnobVal(Knob::Y) + cv2);  // 0..4095
 
         // ----------------------------------------------------------------
         // 2. Big Knob zone decode
@@ -119,16 +135,22 @@ public:
 
         // ----------------------------------------------------------------
         // 3. Degradation parameters from Knob X
-        //    crush_bits 0..7  — how many LSBs to mask (0 = bypass)
-        //    dec_factor 1..16 — sample-hold step size  (1 = bypass)
+        //    First half  (0–2047): decimation only, dec_factor 1→16, crush_bits=0
+        //    Second half (2048–4095): dec_factor fixed at 16, crush_bits 0→7
         // ----------------------------------------------------------------
-        const int32_t crush_bits = knob_x >> 9;          // 0..7
-        const int32_t dec_factor = 1 + (knob_x >> 8);   // 1..16
+        int32_t crush_bits, dec_factor;
+        if (knob_x < 2048) {
+            dec_factor  = 1 + ((knob_x * 15) >> 11);  // 1..16
+            crush_bits  = 0;
+        } else {
+            dec_factor  = 16;
+            crush_bits  = (knob_x - 2048) >> 8;       // 0..7
+        }
 
         // ----------------------------------------------------------------
-        // 4. Freeze: CV In 1 as comparator (>2047 ≈ above 0V)
+        // 4. Freeze: CV In 1 as comparator (> 0 ≈ above 0V)
         // ----------------------------------------------------------------
-        frozen = (CVIn1() > 2047);
+        frozen = (CVIn1() > 0);
 
         // ----------------------------------------------------------------
         // 5. Clock edge — measure beat, compute slice geometry
@@ -153,8 +175,10 @@ public:
                           % MAX_BUFFER_SIZE;
 
             // Decide glitch and reverse for the first sub-slice of this beat.
-            slice_pos   = 0;
-            do_glitch   = eval_glitch(prob_thresh, knob_y);
+            slice_pos       = 0;
+            slice_boundary  = true;
+            ramp_scale      = (slice_len > 1) ? (2047 * 65536) / (slice_len - 1) : 0;
+            do_glitch       = eval_glitch(prob_thresh, knob_y);
             reverse_flag = ((rng_next() >> 20) < (uint32_t)prob_thresh);
             degrade_active = eval_degrade(knob_y);
         }
@@ -173,8 +197,10 @@ public:
         if (master_loop_len > 0) {
             slice_pos++;
             if (slice_pos >= slice_len) {
-                slice_pos    = 0;
-                do_glitch    = eval_glitch(prob_thresh, knob_y);
+                slice_pos       = 0;
+                slice_boundary  = true;
+                ramp_scale      = (slice_len > 1) ? (2047 * 65536) / (slice_len - 1) : 0;
+                do_glitch       = eval_glitch(prob_thresh, knob_y);
                 reverse_flag = ((rng_next() >> 20) < (uint32_t)prob_thresh);
                 degrade_active = eval_degrade(knob_y);
             }
@@ -216,10 +242,18 @@ public:
         }
 
         // ----------------------------------------------------------------
-        // 9. Audio output — same signal on both channels
+        // 9. Outputs
         // ----------------------------------------------------------------
         AudioOut1(out);
-        AudioOut2(out);
+        AudioOut2(AudioIn1());                        // always dry
+        PulseOut1(slice_boundary);                    // sub-slice clock, one sample wide
+        PulseOut2(PulseIn1());                        // clock mirror
+        slice_boundary = false;
+        CVOut1(do_glitch ? 2047 : -2048);             // glitch gate
+        const int32_t ramp = (slice_len > 1)
+            ? 2047 - ((slice_pos * ramp_scale) >> 16)
+            : 2047;
+        CVOut2((int16_t)ramp);                        // descending slice ramp
 
         // ----------------------------------------------------------------
         // 10. LEDs
