@@ -372,6 +372,30 @@ static inline uint32_t integer_speed_steps(uint16_t speed_frac)
 	return 0;
 }
 
+static inline uint32_t wrap_preview_source_span(uint16_t speed_frac, uint16_t speed_accum)
+{
+	uint32_t source_span = (((uint32_t)MLR_SEEK_PREVIEW_SAMPLES *
+		(uint32_t)speed_frac) + (uint32_t)speed_accum) >> 8;
+	return source_span ? source_span : 1u;
+}
+
+static inline bool wrap_preview_should_start(uint32_t distance, uint16_t speed_frac, uint16_t speed_accum)
+{
+	if (speed_accum == 0) {
+		uint32_t steps = integer_speed_steps(speed_frac);
+		if (steps > 0) {
+			uint32_t min_distance = ((uint32_t)(MLR_SEEK_PREVIEW_SAMPLES - 1u) * steps) + 1u;
+			uint32_t max_distance = (uint32_t)MLR_SEEK_PREVIEW_SAMPLES * steps;
+			return distance >= min_distance && distance <= max_distance;
+		}
+	}
+
+	uint32_t numerator = distance << 8;
+	if (numerator < speed_accum) return false;
+	uint32_t frames_to_wrap = (numerator - speed_accum + speed_frac - 1u) / speed_frac;
+	return frames_to_wrap == MLR_SEEK_PREVIEW_SAMPLES;
+}
+
 static inline void reset_track_audio_state(mlr_track_t *tr)
 {
 	tr->speed_accum = 0;
@@ -460,9 +484,7 @@ static inline void maybe_start_wrap_preview_xfade(mlr_track_t *tr, uint32_t wrap
 	if (!tr->wrap_preview_ready || tr->seek_xfade_active || tr->seek_handoff_pending ||
 	    tr->fill_seek_pending || tr->stop_pending || tr->fade_out_active)
 		return;
-	uint32_t source_span = (uint32_t)(((uint64_t)MLR_SEEK_PREVIEW_SAMPLES *
-		(uint64_t)tr->speed_frac + tr->speed_accum) >> 8);
-	if (source_span == 0) source_span = 1;
+	uint32_t source_span = wrap_preview_source_span(tr->speed_frac, tr->speed_accum);
 	if (wrap_end <= wrap_start || wrap_end - wrap_start <= source_span) return;
 	if (tr->wrap_preview_reverse != tr->reverse ||
 	    tr->wrap_preview_start != wrap_start ||
@@ -475,14 +497,9 @@ static inline void maybe_start_wrap_preview_xfade(mlr_track_t *tr, uint32_t wrap
 	uint32_t distance = tr->reverse
 		? (tr->playhead >= wrap_start ? tr->playhead - wrap_start + 1u : 0u)
 		: (tr->playhead < wrap_end ? wrap_end - tr->playhead : 0u);
-	uint32_t frames_to_wrap = (uint32_t)((((uint64_t)distance << 8) -
-		tr->speed_accum + tr->speed_frac - 1u) / tr->speed_frac);
-	if (frames_to_wrap != MLR_SEEK_PREVIEW_SAMPLES) return;
+	if (!wrap_preview_should_start(distance, tr->speed_frac, tr->speed_accum)) return;
 	if (tr->seek_preview_count < MLR_SEEK_PREVIEW_SAMPLES) return;
 
-	source_span = (uint32_t)(((uint64_t)MLR_SEEK_PREVIEW_SAMPLES *
-		(uint64_t)tr->speed_frac + tr->speed_accum) >> 8);
-	if (source_span == 0) source_span = 1;
 	uint32_t needed = source_span * 2u;
 	if (tr->pcm.w - tr->pcm.r < needed) return;
 
