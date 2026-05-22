@@ -176,6 +176,7 @@ public:
 		/* ---- Common init ---- */
 		led_counter     = 0;
 		pat_counter     = 0;
+		pattern_clock_ms_ = 0;
 		play_page       = PAGE_REC;
 		rec_speed_accum = 0;
 		rec_limit_latched = false;
@@ -698,8 +699,9 @@ public:
 			pat_counter++;
 			if (pat_counter >= PAT_TICK_INTERVAL) {
 				pat_counter = 0;
-				uint32_t now_ms = to_ms_since_boot(get_absolute_time());
-				mlr_pattern_tick(now_ms);
+				pattern_clock_ms_++;
+				mlr_clock_set_ms(pattern_clock_ms_);
+				mlr_pattern_tick(pattern_clock_ms_);
 			}
 		}
 		PERF_UI_SECTION_END(6);
@@ -820,6 +822,7 @@ private:
 	MonomeGrid grid;
 	uint32_t   led_counter;
 	uint32_t   pat_counter;
+	uint32_t   pattern_clock_ms_ = 0;
 	uint8_t    ui_ctrl_div_ = 0;
 	int        play_page;
 	Mode       mode_;

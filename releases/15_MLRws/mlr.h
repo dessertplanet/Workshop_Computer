@@ -425,6 +425,7 @@ void     mlr_choke_group_cut(int track, int column);
 void     mlr_choke_group_set_loop(int track, int col_start, int col_end);
 
 /* ---- Pattern engine (core 0) ---- */
+void     mlr_clock_set_ms(uint32_t now_ms);        /* sample-derived core-0 clock */
 void     mlr_pattern_event(const mlr_event_t *e);  /* record into active patterns */
 void     mlr_pattern_arm(int pat);                  /* arm: wait for first event to start recording */
 void     mlr_pattern_rec_start(int pat);

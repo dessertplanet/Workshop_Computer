@@ -35,6 +35,7 @@ mlr_pattern_t   mlr_patterns[MLR_NUM_PATTERNS];
 mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
 volatile bool   mlr_scene_saving = false;
 volatile int    mlr_recall_active = -1;
+static uint32_t mlr_clock_ms = 0;
 
 static inline uint32_t page_ring_used_pages(void);
 
@@ -381,19 +382,12 @@ static inline uint32_t wrap_preview_source_span(uint16_t speed_frac, uint16_t sp
 
 static inline bool wrap_preview_should_start(uint32_t distance, uint16_t speed_frac, uint16_t speed_accum)
 {
-	if (speed_accum == 0) {
-		uint32_t steps = integer_speed_steps(speed_frac);
-		if (steps > 0) {
-			uint32_t min_distance = ((uint32_t)(MLR_SEEK_PREVIEW_SAMPLES - 1u) * steps) + 1u;
-			uint32_t max_distance = (uint32_t)MLR_SEEK_PREVIEW_SAMPLES * steps;
-			return distance >= min_distance && distance <= max_distance;
-		}
-	}
-
 	uint32_t numerator = distance << 8;
 	if (numerator < speed_accum) return false;
-	uint32_t frames_to_wrap = (numerator - speed_accum + speed_frac - 1u) / speed_frac;
-	return frames_to_wrap == MLR_SEEK_PREVIEW_SAMPLES;
+	uint32_t samples_until_wrap = numerator - speed_accum;
+	uint32_t lower_bound = (uint32_t)(MLR_SEEK_PREVIEW_SAMPLES - 1u) * (uint32_t)speed_frac;
+	uint32_t upper_bound = (uint32_t)MLR_SEEK_PREVIEW_SAMPLES * (uint32_t)speed_frac;
+	return samples_until_wrap > lower_bound && samples_until_wrap <= upper_bound;
 }
 
 static inline void reset_track_audio_state(mlr_track_t *tr)
@@ -1702,6 +1696,11 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 /* Pattern engine — timed event recorder / looping player             */
 /* ------------------------------------------------------------------ */
 
+void __not_in_flash_func(mlr_clock_set_ms)(uint32_t now_ms)
+{
+	mlr_clock_ms = now_ms;
+}
+
 void __not_in_flash_func(mlr_pattern_event)(const mlr_event_t *e)
 {
 	uint32_t now = 0;
@@ -1711,7 +1710,7 @@ void __not_in_flash_func(mlr_pattern_event)(const mlr_event_t *e)
 	for (int p = 0; p < MLR_NUM_PATTERNS; p++) {
 		if (mlr_patterns[p].state == MLR_PAT_ARMED) {
 			if (!have_now) {
-				now = to_ms_since_boot(get_absolute_time());
+				now = mlr_clock_ms;
 				have_now = true;
 			}
 			mlr_patterns[p].rec_start_ms = now;
@@ -1726,7 +1725,7 @@ void __not_in_flash_func(mlr_pattern_event)(const mlr_event_t *e)
 
 		mlr_pattern_t *pat = &mlr_patterns[p];
 		if (!have_now) {
-			now = to_ms_since_boot(get_absolute_time());
+			now = mlr_clock_ms;
 			have_now = true;
 		}
 		uint16_t idx = pat->count;
@@ -1758,7 +1757,7 @@ void __not_in_flash_func(mlr_pattern_rec_start)(int pat)
 	p->count = 0;
 	p->play_idx = 0;
 	p->loop_len_ms = 0;
-	p->rec_start_ms = to_ms_since_boot(get_absolute_time());
+	p->rec_start_ms = mlr_clock_ms;
 	p->state = MLR_PAT_RECORDING;
 }
 
@@ -1774,7 +1773,7 @@ void __not_in_flash_func(mlr_pattern_rec_stop)(int pat)
 		return;
 	}
 
-	uint32_t now = to_ms_since_boot(get_absolute_time());
+	uint32_t now = mlr_clock_ms;
 	p->loop_len_ms = now - p->rec_start_ms;
 	if (p->loop_len_ms < 10) p->loop_len_ms = 10;  /* minimum loop length */
 
@@ -1792,7 +1791,7 @@ void __not_in_flash_func(mlr_pattern_play_start)(int pat)
 	if (p->count == 0) return;
 
 	p->play_idx = 0;
-	p->play_start_ms = to_ms_since_boot(get_absolute_time());
+	p->play_start_ms = mlr_clock_ms;
 	p->state = MLR_PAT_PLAYING;
 }
 
@@ -2935,8 +2934,7 @@ static uint16_t render_wrap_preview_forward(int t, uint16_t start_accum)
 	const uint8_t *flash_data = track_audio_xip(t);
 	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
-	uint32_t source_needed = (uint32_t)((((uint64_t)MLR_SEEK_PREVIEW_SAMPLES *
-		(uint64_t)tr->speed_frac + start_accum) >> 8) + 2u);
+	uint32_t source_needed = wrap_preview_source_span(tr->speed_frac, start_accum) + 2u;
 	if (source_needed > MLR_KEYFRAME_INTERVAL) source_needed = MLR_KEYFRAME_INTERVAL;
 
 	for (uint32_t i = 0; i < source_needed; i++) {
@@ -2982,8 +2980,7 @@ static uint16_t render_wrap_preview_reverse(int t, uint16_t start_accum)
 	const uint8_t *flash_data = track_audio_xip(t);
 	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
-	uint32_t source_needed = (uint32_t)((((uint64_t)MLR_SEEK_PREVIEW_SAMPLES *
-		(uint64_t)tr->speed_frac + start_accum) >> 8) + 2u);
+	uint32_t source_needed = wrap_preview_source_span(tr->speed_frac, start_accum) + 2u;
 	if (source_needed > MLR_KEYFRAME_INTERVAL) source_needed = MLR_KEYFRAME_INTERVAL;
 	uint32_t written = 0;
 
@@ -3046,8 +3043,7 @@ static void prepare_wrap_preview(int t)
 	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
 	uint32_t source_span = steps ? MLR_SEEK_PREVIEW_SAMPLES * steps :
-		(uint32_t)(((uint64_t)MLR_SEEK_PREVIEW_SAMPLES * (uint64_t)tr->speed_frac + tr->speed_accum) >> 8);
-	if (source_span == 0) source_span = 1;
+		wrap_preview_source_span(tr->speed_frac, tr->speed_accum);
 	if (wrap_end <= wrap_start || wrap_end - wrap_start <= source_span) return;
 	if (tr->wrap_preview_ready &&
 	    tr->wrap_preview_reverse == tr->reverse &&

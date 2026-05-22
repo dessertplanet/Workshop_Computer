@@ -459,10 +459,11 @@ void mext_task(void)
 	/* discovery: use real time for reliable delay */
 	if (g_mext.grid_x == 0 || g_mext.grid_y == 0) {
 		uint64_t now_us = time_us_64();
-		uint64_t elapsed_ms = (now_us - g_mext.connect_time_us) / 1000;
-		if ((elapsed_ms > 200 && g_mext.discovery_tick == 0) ||
-		    (elapsed_ms > 1000 && (elapsed_ms / 1000) > g_mext.discovery_tick)) {
-			g_mext.discovery_tick = (uint32_t)(elapsed_ms / 1000);
+		uint64_t elapsed_us = now_us - g_mext.connect_time_us;
+		uint32_t next_tick = g_mext.discovery_tick + 1u;
+		if ((elapsed_us > 200000u && g_mext.discovery_tick == 0) ||
+		    (elapsed_us > 1000000u && elapsed_us > (uint64_t)next_tick * 1000000u)) {
+			g_mext.discovery_tick = next_tick;
 			mext_send_discovery();
 		}
 	}
