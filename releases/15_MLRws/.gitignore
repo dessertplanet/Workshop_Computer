@@ -21,7 +21,9 @@ rules.ninja
 Thumbs.db
 *.swp
 *.swo
-.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
 
 # My todo list
 TODO
