@@ -765,7 +765,7 @@ public:
 
         if((sampleCounter % kLedDivider) == 0)
         {
-            int32_t ledEnergy = smoothedEnergy;
+            int32_t ledEnergy = smoothedEnergy << 4;
 
             if(ledEnergy > 4095)
             {

@@ -120,6 +120,7 @@ Swing amount varies depending on switch mode and affects every second step of th
 Controls rhythmic density.
 
 Higher values increase trigger probability.
+The range of probability of a trigger is from 5% to almost 100% chance. I recommend starting with the knob at 12 o'clock
 
 CV Input 1 modulates density.
 
@@ -200,7 +201,7 @@ Wild Pebble uses the Workshop Computer’s 6 LEDs as a live visualisation of rhy
 | LED 3 | Mutation     | Brightness follows Mutation amount (`Knob Y + CV2`) |
 | LED 4 | Energy       | Displays smoothed internal energy/modulation level  |
 | LED 5 | Clock Source | Fully lit when external clock is active             |
-| LED 6 | Tension      | Displays evolving internal tension state            |
+| LED 6 | Tension      | Displays evolving internal tension state             |
 
 ---
 
@@ -252,3 +253,33 @@ The interaction between:
 * slow scale randomisation
 
 creates continuously shifting patterns that remain musically coherent and performance-friendly.
+Tension evolves slowly over time with one full cycle taking 1440 sequencer steps. 
+
+Wild Pebble contains an internal evolving energy system.
+
+Each step in the sequence carries its own energy state which slowly changes over time through mutation, repetition, and interaction with the global tension cycle.
+
+Energy influences:
+
+* modulation movement
+* rhythmic intensity
+* dynamic behaviour
+
+Some parts of the sequence gradually become:
+
+* more active
+* more unstable
+* more forceful
+
+while others become:
+
+* restrained
+* sparse
+* quieter
+
+This creates long-term phrasing and shifting musical behaviour even when rhythmic structures repeat.
+
+The smoothed Energy CV output exposes this evolving internal state to the outside patch, allowing Wild Pebble to animate filters, VCAs, LPGs, reverbs, FM depth, and other modulation destinations with continuously changing expressive movement.
+
+Together with the slow tension cycle, the energy system helps Wild Pebble behave less like a traditional sequencer and more like a small autonomous musical organism.
+
