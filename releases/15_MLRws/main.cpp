@@ -503,7 +503,7 @@ public:
 		/* ---- speed-linked recording ---- */
 		int16_t dry_in;
 		{
-			int audio_in1 = notch_filter_input(AudioIn1());
+			int audio_in1 = (int)AudioIn1();
 			int audio_in2 = (int)AudioIn2();
 			uint8_t rec_ch = 0;
 			int route_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
@@ -802,23 +802,6 @@ private:
 		return static_cast<Switch>((raw > 1000) + (raw > 3000));
 	}
 
-	static int16_t __not_in_flash("notch_filter_input") notch_filter_input(int32_t x)
-	{
-		/* 12 kHz notch, matching the reverb card's hardcoded mux-noise cleanup. */
-		constexpr int32_t ooa0 = 16302;
-		constexpr int32_t a2oa0 = 16221;
-
-		int32_t y = (ooa0 * (x + notch_x2_) - a2oa0 * notch_y2_) >> 14;
-		notch_x2_ = notch_x1_;
-		notch_x1_ = x;
-		notch_y2_ = notch_y1_;
-		notch_y1_ = y;
-
-		if (y > 2047) y = 2047;
-		if (y < -2048) y = -2048;
-		return (int16_t)y;
-	}
-
 	MonomeGrid grid;
 	uint32_t   led_counter;
 	uint32_t   pat_counter;
@@ -888,10 +871,6 @@ private:
 	bool       group_started_from_rec_[MLR_NUM_TRACKS] = {};  /* group play-toggle provenance */
 	adpcm_state_t mon_enc_ = {0, 0}; /* monitor codec encoder state */
 	adpcm_state_t mon_dec_ = {0, 0}; /* monitor codec decoder state */
-	inline static int32_t notch_x1_ = 0;
-	inline static int32_t notch_x2_ = 0;
-	inline static int32_t notch_y1_ = 0;
-	inline static int32_t notch_y2_ = 0;
 	inline static Mode s_mode_ = Mode::HostMLR;
 
 	/* Cross-core volatile state for DeviceGridless ↔ DeviceSampleMgr transitions.
@@ -1247,7 +1226,7 @@ private:
 
 		/* Active recording: speed-linked write, auto-stop at max length. */
 		if (gl_recording_active_ && gl_record_track_ >= 0 && gl_record_track_ < MLR_NUM_TRACKS) {
-			int16_t dry_in_l = notch_filter_input(AudioIn1());
+			int16_t dry_in_l = AudioIn1();
 			uint8_t in_gain = (uint8_t)(KnobVal(Knob::X) >> 4);  /* 0..255 */
 
 			int32_t scaled_l = ((int32_t)dry_in_l * (int32_t)in_gain) >> 8;
@@ -2822,7 +2801,7 @@ int main()
 {
 	vreg_set_voltage(VREG_VOLTAGE_1_20);
 	sleep_ms(10);
-	set_sys_clock_khz(200000, true);
+	set_sys_clock_khz(192000, true);
 
 	/* DFP: we're the host → normal grid/audio mode */
 	MLRCard card;

@@ -1,7 +1,7 @@
 /*
 ComputerCard  - by Chris Johnson
 
-version 0.2.7   -  2025/03/08
+version 0.3.0   -  12 May 2026
 
 ComputerCard is a header-only C++ library, providing a class that
 manages the hardware aspects of the Music Thing Modular Workshop
@@ -66,6 +66,32 @@ public:
 	static ComputerCard *ThisPtr() {return thisptr;}
 
 protected:
+
+	class NotchFilter
+	{
+	public:
+		NotchFilter()
+		{
+			mix1 = mix2 = mixf1 = mixf2 = 0;
+		}
+		int32_t operator()(int32_t val)
+		{
+			int32_t mixf = (ooa0 * (val + mix2) - a2oa0 * mixf2) >> 14;
+			mix2 = mix1;
+			mix1 = val;
+			mixf2 = mixf1;
+			mixf1 = mixf;
+			return mixf;
+		}
+	private:
+		// 12kHz notch filter, to remove interference from mux lines
+		int32_t mix1, mix2, mixf1, mixf2;
+		static constexpr int32_t ooa0 = 16302, a2oa0 = 16221; // Q = 100, very narrow notch
+
+	};
+
+	NotchFilter notchLeft, notchRight;
+
 	/// Callback, called once per sample at 48kHz
 	virtual void ProcessSample() = 0;
 
@@ -106,7 +132,7 @@ protected:
 	{
 		if (val<-2048) val = -2048;
 		if (val > 2047) val = 2047;
-		cvValue[i] = (2047-val)<<7;
+		cvValue[i] = (2047-val)*125;
 	}
 	
 	/// Set CV 1 output (values -2048 to 2047)
@@ -114,7 +140,7 @@ protected:
 	{
 		if (val<-2048) val = -2048;
 		if (val > 2047) val = 2047;
-		cvValue[0] = (2047-val)<<7;
+		cvValue[0] = (2047-val)*125;
 	}
 	
 	/// Set CV 2 output (values -2048 to 2047)
@@ -122,7 +148,7 @@ protected:
 	{
 		if (val<-2048) val = -2048;
 		if (val > 2047) val = 2047;
-		cvValue[1] = (2047-val)<<7;
+		cvValue[1] = (2047-val)*125;
 	}
 
 		
@@ -131,7 +157,7 @@ protected:
 	{
 		if (val<-262144) val = -262144;
 		if (val > 262143) val = 262143;
-		cvValue[i] = 262143-val;
+		cvValue[i] = ((262143-val)*125)>>7;
 	}
 	
 	/// Set CV 1 output (values -262144 to 262143)
@@ -139,7 +165,7 @@ protected:
 	{
 		if (val<-262144) val = -262144;
 		if (val > 262143) val = 262143;
-		cvValue[0] = 262143-val;
+		cvValue[0] = ((262143-val)*125)>>7;
 	}
 	
 	/// Set CV 2 output (values -262144 to 262143)
@@ -147,7 +173,7 @@ protected:
 	{
 		if (val<-262144) val = -262144;
 		if (val > 262143) val = 262143;
-		cvValue[1] = 262143-val;
+		cvValue[1] = ((262143-val)*125)>>7;
 	}
 
 	/// Set CV 1 output from calibrated MIDI note number (values 0 to 127)
@@ -340,8 +366,8 @@ private:
 
 	uint64_t uniqueID;
 	
-	uint8_t ReadByteFromEEPROM(unsigned int eeAddress);
-	int ReadIntFromEEPROM(unsigned int eeAddress);
+	uint8_t ReadByteFromEEPROM(unsigned int eeAddress, bool &failed);
+	int ReadIntFromEEPROM(unsigned int eeAddress, bool &failed);
 	void CalcCalCoeffs(int channel);
 	int ReadEEPROM();
 	uint32_t MIDIToDAC(int midiNote, int channel);
@@ -652,8 +678,11 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	// Set audio inputs, by averaging the two samples collected.
 	// Invert to counteract inverting op-amp input configuration
 	adcInR = -(((ADC_Buffer[cpuPhase][0] + ADC_Buffer[cpuPhase][4]) - 0x1000) >> 1);
-
 	adcInL = -(((ADC_Buffer[cpuPhase][1] + ADC_Buffer[cpuPhase][5]) - 0x1000) >> 1);
+
+	// 12kHz notch filters
+	adcInR = notchRight(adcInR);
+	adcInL = notchLeft(adcInL);
 
 	// Set pulse inputs
 	last_pulse[0] = pulse[0];
@@ -903,7 +932,7 @@ ComputerCard::ComputerCard()
 	// now create PWM config struct
 	{
 	pwm_config config = pwm_get_default_config();
-	pwm_config_set_wrap(&config, 2047); // 11-bit PWM
+	pwm_config_set_wrap(&config, 1999); // less than 11-bit PWM
 	// now set this PWM config to apply to the two outputs
 	// NB: CV_A and CV_B share the same PWM slice, which means that they share a PWM config
 	// They have separate 'gpio_level's (output compare unit) though, so they can have different PWM on-times
@@ -912,8 +941,8 @@ ComputerCard::ComputerCard()
 
 	}
 	// set initial level to half way (0V)
-	pwm_set_gpio_level(CV_OUT_1, 1024);
-	pwm_set_gpio_level(CV_OUT_2, 1024);
+	pwm_set_gpio_level(CV_OUT_1, 1000);
+	pwm_set_gpio_level(CV_OUT_2, 1000);
 
 
 	////////////////////////////////////////
@@ -972,23 +1001,34 @@ ComputerCard::ComputerCard()
 
 
 // Read a byte from EEPROM
-uint8_t ComputerCard::ReadByteFromEEPROM(unsigned int eeAddress)
+uint8_t ComputerCard::ReadByteFromEEPROM(unsigned int eeAddress, bool &failed)
 {
 	uint8_t deviceAddress = EEPROM_PAGE_ADDRESS | ((eeAddress >> 8) & 0x0F);
 	uint8_t data = 0xFF;
 
 	uint8_t addr_low_byte = eeAddress & 0xFF;
-	i2c_write_blocking(i2c0, deviceAddress, &addr_low_byte, 1, false);
 
-	i2c_read_blocking(i2c0, deviceAddress, &data, 1, false);
+	if (i2c_write_timeout_us(i2c0, deviceAddress, &addr_low_byte, 1, false, 10000) <= 0)
+	{
+		failed = true;
+		return 0;
+	}
+
+	if (i2c_read_timeout_us(i2c0, deviceAddress, &data, 1, false, 10000) <= 0)
+	{
+		failed = true;
+		return 0;
+	}
+
 	return data;
 }
 
 // Read a 16-bit integer from EEPROM
-int ComputerCard::ReadIntFromEEPROM(unsigned int eeAddress)
+int ComputerCard::ReadIntFromEEPROM(unsigned int eeAddress, bool &failed)
 {
-	uint8_t highByte = ReadByteFromEEPROM(eeAddress);
-	uint8_t lowByte = ReadByteFromEEPROM(eeAddress + 1);
+	uint8_t highByte = ReadByteFromEEPROM(eeAddress, failed);
+	uint8_t lowByte = ReadByteFromEEPROM(eeAddress + 1, failed);
+
 	return (highByte << 8) | lowByte;
 }
 
@@ -1017,52 +1057,53 @@ uint16_t ComputerCard::CRCencode(const uint8_t *data, int length)
 int ComputerCard::ReadEEPROM()
 {
 	// Set up default values in the calibration table,
-	// to be used if EEPROM read fails
-	calibrationTable[0][0].voltage = -20; // -2V
-	calibrationTable[0][0].dacSetting = 347700;
-	calibrationTable[0][1].voltage = 0; // 0V
-	calibrationTable[0][1].dacSetting = 261200;
-	calibrationTable[0][2].voltage = 20; // +2V
-	calibrationTable[0][2].dacSetting = 174400;
+	// to be used if we can't read valid calibration from EEPROM
+	for (unsigned channel = 0; channel < calMaxChannels; channel++)
+	{
+		numCalibrationPoints[channel] = 3;
+		calibrationTable[channel][0].voltage = -20; // -2V
+		calibrationTable[channel][0].dacSetting = 347700;
+		calibrationTable[channel][1].voltage = 0; // 0V
+		calibrationTable[channel][1].dacSetting = 261200;
+		calibrationTable[channel][2].voltage = 20; // +2V
+		calibrationTable[channel][2].dacSetting = 174400;
+		CalcCalCoeffs(channel); // calculate the coefficients
+	}
 
-	calibrationTable[1][0].voltage = -20; // -2V
-	calibrationTable[1][0].dacSetting = 347700;
-	calibrationTable[1][1].voltage = 0; // 0V
-	calibrationTable[1][1].dacSetting = 261200;
-	calibrationTable[1][2].voltage = 20; // +2V
-	calibrationTable[1][2].dacSetting = 174400;
-
-	if (ReadIntFromEEPROM(EEPROM_ADDR_ID) != EEPROM_VAL_ID)
+	// Read magic number
+	// Failure here could occur if I2C failed, or if incorrect/no magic number stored in EEPROM
+	bool i2cFailed = false;
+	if (ReadIntFromEEPROM(EEPROM_ADDR_ID, i2cFailed) != EEPROM_VAL_ID)
 	{
 		return 1;
 	}
+
+	// Read the EEPROM into RAM
 	uint8_t buf[EEPROM_NUM_BYTES];
 	for (int i = 0; i < EEPROM_NUM_BYTES; i++)
 	{
-		buf[i] = ReadByteFromEEPROM(i);
+		buf[i] = ReadByteFromEEPROM(i, i2cFailed);
 	}
 
-
+	// Check CRC and fail if incorrect
 	uint16_t calculatedCRC = CRCencode(buf, 86);
 	uint16_t foundCRC = ((uint16_t)buf[EEPROM_ADDR_CRC_H] << 8) | buf[EEPROM_ADDR_CRC_L];
-
 	if (calculatedCRC != foundCRC)
 	{
 		return 1;
 	}
 
-	int bufferIndex = 4;
-
+	// CRC passed, so now read the calibration information
 	for (uint8_t channel = 0; channel < calMaxChannels; channel++)
 	{
-		int channelOffset = bufferIndex + (41 * channel); // channel 0 = 4, channel 1 = 45
+		int channelOffset = 4 + (41 * channel); // channel 0 = 4, channel 1 = 45
 		numCalibrationPoints[channel] = buf[channelOffset++];
 		for (uint8_t point = 0; point < numCalibrationPoints[channel]; point++)
 		{
-			// Unpack Pack targetVoltage (int8_t) from buf
+			// Unpack targetVoltage (int8_t) from buf
 			int8_t targetVoltage = (int8_t)buf[channelOffset++];
 
-			// Unack dacSetting (uint32_t) from buf (4 bytes)
+			// Unpack dacSetting (uint32_t) from buf (4 bytes)
 			uint32_t dacSetting = 0;
 			dacSetting |= ((uint32_t)buf[channelOffset++]) << 24; // MSB
 			dacSetting |= ((uint32_t)buf[channelOffset++]) << 16;
@@ -1073,6 +1114,9 @@ int ComputerCard::ReadEEPROM()
 			calibrationTable[channel][point].voltage = targetVoltage;
 			calibrationTable[channel][point].dacSetting = dacSetting;
 		}
+
+		// Now calculate the calibration coeffs that are actually used
+		// by the calibrated CVOut functions
 		CalcCalCoeffs(channel);
 	}
 
@@ -1118,7 +1162,7 @@ uint32_t ComputerCard::MIDIToDAC(int midiNote, int channel)
 	int32_t dacValue = ((calCoeffs[channel].mi * (midiNote - 60)) >> 4) + calCoeffs[channel].bi;
 	if (dacValue > 524287) dacValue = 524287;
 	if (dacValue < 0) dacValue = 0;
-	return dacValue;
+	return (dacValue*125)>>7;
 }
 
 /// Converts voltage in millivolts to corresponding 19-bit sigma-delta PWM DAC value
@@ -1139,7 +1183,7 @@ uint32_t ComputerCard::MillivoltsToDAC(int millivolts, int channel, bool &limite
 		dacValue = 0;
 		limited = true;
 	}
-	return dacValue;
+	return (dacValue*125)>>7;
 }
 
 #endif
