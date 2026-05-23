@@ -53,7 +53,7 @@ extern "C" {
 #define MLR_MAX_KEYFRAMES      ((MLR_MAX_SAMPLES / MLR_KEYFRAME_INTERVAL) + 1)
 
 /* Per-track playback ring buffer (decoded PCM, consumed by core 0) */
-#define MLR_RING_SAMPLES       7168  /* frames (~149ms at 48kHz mono) */
+#define MLR_RING_SAMPLES       8192  /* frames (~171ms at 48kHz mono); power-of-two keeps ring indexing cheap */
 #define MLR_DECLICK_SHIFT      5
 #define MLR_DECLICK_SAMPLES    (1u << MLR_DECLICK_SHIFT)  /* 32-sample crossfade */
 #define MLR_FADE_SAMPLES       120                        /* 2.5ms V-fade samples (total 5ms) */

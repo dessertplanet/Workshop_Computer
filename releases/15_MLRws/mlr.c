@@ -1037,28 +1037,27 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 		uint32_t ring_pos = 0;
 		bool ring_state_loaded = false;
 
-		if ((tr->speed_frac == 512 || tr->speed_frac == 1024) &&
-			    tr->speed_accum == 0) {
-				uint32_t steps = (uint32_t)(tr->speed_frac >> 8);
-				bool no_wrap = tr->reverse
-					? (tr->playhead >= wrap_start + steps)
-					: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
-				avail = no_wrap ? tr->pcm.w - pcm_r : 0;
-				if (avail >= steps) {
-					PERF_NOTE_PCM_AVAIL(t, avail);
-					ring_pos = pcm_r % MLR_RING_SAMPLES;
-					uint32_t final_pos = ring_pos + steps - 1u;
-					if (final_pos >= MLR_RING_SAMPLES)
-						final_pos -= MLR_RING_SAMPLES;
-					tr->interp_prev[0] = tr->last_pcm[0];
-					tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
-					tr->pcm.r = pcm_r + steps;
-					if (tr->reverse) tr->playhead -= steps;
-					else             tr->playhead += steps;
-					sample_out = tr->last_pcm[0];
-					fast_integer = true;
-				}
+		if (tr->speed_accum == 0) {
+			uint32_t steps = integer_speed_steps(tr->speed_frac);
+			bool no_wrap = tr->reverse
+				? (tr->playhead >= wrap_start + steps)
+				: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
+			avail = (steps > 0 && no_wrap) ? tr->pcm.w - pcm_r : 0;
+			if (avail >= steps && steps > 0) {
+				PERF_NOTE_PCM_AVAIL(t, avail);
+				ring_pos = pcm_r % MLR_RING_SAMPLES;
+				uint32_t final_pos = ring_pos + steps - 1u;
+				if (final_pos >= MLR_RING_SAMPLES)
+					final_pos -= MLR_RING_SAMPLES;
+				tr->interp_prev[0] = tr->last_pcm[0];
+				tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
+				tr->pcm.r = pcm_r + steps;
+				if (tr->reverse) tr->playhead -= steps;
+				else             tr->playhead += steps;
+				sample_out = tr->last_pcm[0];
+				fast_integer = true;
 			}
+		}
 
 			/* variable-speed sample consumption via accumulator */
 			if (!fast_integer) {
@@ -1198,28 +1197,27 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 		uint32_t ring_pos = 0;
 		bool ring_state_loaded = false;
 
-		if ((tr->speed_frac == 512 || tr->speed_frac == 1024) &&
-			    tr->speed_accum == 0) {
-				uint32_t steps = (uint32_t)(tr->speed_frac >> 8);
-				bool no_wrap = tr->reverse
-					? (tr->playhead >= wrap_start + steps)
-					: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
-				avail = no_wrap ? tr->pcm.w - pcm_r : 0;
-				if (avail >= steps) {
-					PERF_NOTE_PCM_AVAIL(t, avail);
-					ring_pos = pcm_r % MLR_RING_SAMPLES;
-					uint32_t final_pos = ring_pos + steps - 1u;
-					if (final_pos >= MLR_RING_SAMPLES)
-						final_pos -= MLR_RING_SAMPLES;
-					tr->interp_prev[0] = tr->last_pcm[0];
-					tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
-					tr->pcm.r = pcm_r + steps;
-					if (tr->reverse) tr->playhead -= steps;
-					else             tr->playhead += steps;
-					sample_out = tr->last_pcm[0];
-					fast_integer = true;
-				}
+		if (tr->speed_accum == 0) {
+			uint32_t steps = integer_speed_steps(tr->speed_frac);
+			bool no_wrap = tr->reverse
+				? (tr->playhead >= wrap_start + steps)
+				: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
+			avail = (steps > 0 && no_wrap) ? tr->pcm.w - pcm_r : 0;
+			if (avail >= steps && steps > 0) {
+				PERF_NOTE_PCM_AVAIL(t, avail);
+				ring_pos = pcm_r % MLR_RING_SAMPLES;
+				uint32_t final_pos = ring_pos + steps - 1u;
+				if (final_pos >= MLR_RING_SAMPLES)
+					final_pos -= MLR_RING_SAMPLES;
+				tr->interp_prev[0] = tr->last_pcm[0];
+				tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
+				tr->pcm.r = pcm_r + steps;
+				if (tr->reverse) tr->playhead -= steps;
+				else             tr->playhead += steps;
+				sample_out = tr->last_pcm[0];
+				fast_integer = true;
 			}
+		}
 
 			if (!fast_integer) {
 				tr->speed_accum += tr->speed_frac;
