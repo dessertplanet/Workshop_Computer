@@ -11,3 +11,4 @@ Language: C++
 Creator: Adrian Vos with Vibecode support
 Version: 0.9
 Status: WIP but useable
+Currently working on MIDI integration
