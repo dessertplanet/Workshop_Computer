@@ -765,7 +765,7 @@ public:
 
         if((sampleCounter % kLedDivider) == 0)
         {
-            int32_t ledEnergy = smoothedEnergy << 4;
+            int32_t ledEnergy = smoothedEnergy << 3;
 
             if(ledEnergy > 4095)
             {
@@ -777,7 +777,7 @@ public:
                 ledEnergy = 0;
             }
 
-            int32_t tensionLED = tension << 4;
+            int32_t tensionLED = tension << 3;
 
             if(tensionLED > 4095)
             {
