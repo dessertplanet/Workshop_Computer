@@ -283,3 +283,4 @@ The smoothed Energy CV output exposes this evolving internal state to the outsid
 
 Together with the slow tension cycle, the energy system helps Wild Pebble behave less like a traditional sequencer and more like a small autonomous musical organism.
 
+LED 4 and 6 now display their respective states more clearly
