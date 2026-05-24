@@ -665,8 +665,11 @@ public:
 		int32_t outL = (int32_t)mix;
 		int32_t outR = (int32_t)mix_r;
 		if (dry_level > 0 && (rec_armed_track >= 0 || sw == Switch::Up)) {
-			/* Keep recording/armed monitoring dry so it does not add per-sample
-			 * ADPCM work; explicit monitor mode still uses the codec path. */
+			/* Dry monitor: sum the live input straight into the mix.
+			 * No ADPCM round-trip — the codec preview was inconsistent at
+			 * low signal levels (4-bit quantization steps + persistent
+			 * predictor state) and isn't a faithful representation of the
+			 * actual recording anyway. */
 			uint16_t mon_vol = 256;
 			uint8_t mon_ch  = 0;
 			int mon_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
@@ -676,12 +679,6 @@ public:
 			}
 			int32_t in_scaled = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
 			in_scaled = (in_scaled * (int32_t)mon_vol) >> 8;
-			if (mlr_rec_track < 0 && sw == Switch::Up) {
-				int16_t in16 = (int16_t)(in_scaled << 4);
-				uint8_t nyb = adpcm_encode(in16, &mon_enc_);
-				int16_t clean = adpcm_decode(nyb, &mon_dec_);
-				in_scaled = (int32_t)(clean >> 4);
-			}
 			if (mon_ch == 1) outR += in_scaled;
 			else             outL += in_scaled;
 		}
@@ -872,8 +869,6 @@ private:
 	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
 	bool       delete_reset_fired_ = false;       /* require DELETE release before another reset */
 	bool       group_started_from_rec_[MLR_NUM_TRACKS] = {};  /* group play-toggle provenance */
-	adpcm_state_t mon_enc_ = {0, 0}; /* monitor codec encoder state */
-	adpcm_state_t mon_dec_ = {0, 0}; /* monitor codec decoder state */
 	inline static Mode s_mode_ = Mode::HostMLR;
 
 	/* Cross-core volatile state for DeviceGridless ↔ DeviceSampleMgr transitions.
