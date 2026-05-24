@@ -1327,6 +1327,14 @@ private:
 			gl_switch_down_rise_pending_ = false;
 			if (gl_active_track_ >= 0 && gl_active_track_ < MLR_NUM_TRACKS) {
 				gl_record_track_ = gl_active_track_;
+				/* Auto-pick the input jack: if exactly one of Audio1/Audio2 is
+				 * connected, record from that input and set the track's
+				 * recorded_channel to match. With both plugged or neither,
+				 * default to Audio In 1 / channel 0. */
+				bool a1 = Connected(Input::Audio1);
+				bool a2 = Connected(Input::Audio2);
+				uint8_t ch = (!a1 && a2) ? 1 : 0;
+				mlr_tracks[gl_record_track_].recorded_channel = ch;
 				mlr_start_record(gl_record_track_);
 				rec_speed_accum = 0;
 				gl_recording_active_ = true;
@@ -1337,7 +1345,10 @@ private:
 
 		/* Active recording: speed-linked write, auto-stop at max length. */
 		if (gl_recording_active_ && gl_record_track_ >= 0 && gl_record_track_ < MLR_NUM_TRACKS) {
-			int16_t dry_in_l = AudioIn1();
+			/* Read from whichever input was selected at start-of-record. */
+			int16_t dry_in_l = (mlr_tracks[gl_record_track_].recorded_channel == 1)
+				? AudioIn2()
+				: AudioIn1();
 			uint8_t in_gain = (uint8_t)(KnobVal(Knob::X) >> 4);  /* 0..255 */
 
 			int32_t scaled_l = ((int32_t)dry_in_l * (int32_t)in_gain) >> 8;
@@ -1599,16 +1610,33 @@ private:
 			gl_prev_switch_mode_ = static_cast<Switch>(sw);
 		}
 
-		/* ---- Mix and output ---- */
-		uint8_t master_level = 255;  /* full volume — no master knob in gridless */
-		int16_t mix = mlr_play_mix(master_level);
-		if (gl_recording_active_) {
-			int32_t out_m = (int32_t)mix + (int32_t)rec_monitor_l;
-			if (out_m > 2047) out_m = 2047;
-			if (out_m < -2048) out_m = -2048;
-			mix = (int16_t)out_m;
+		/* ---- Mix and output ----
+		 * Use the same dual-bus soft-clipped mixer as gridful so the
+		 * audio character (per-channel soft-knee limiting) matches across
+		 * modes. Per-track `recorded_channel` selects which output bus
+		 * a track lands on, just like in gridful. Master volume is
+		 * intentionally not applied here — gridless has no UI to set it,
+		 * and honoring a stale `mlr_master_level_raw` from a previous
+		 * session would be confusing. */
+		int16_t mix_r;
+		int16_t mix_l = mlr_play_mix_dual(&mix_r);
+		int32_t outL = (int32_t)mix_l;
+		int32_t outR = (int32_t)mix_r;
+		if (gl_recording_active_ && gl_record_track_ >= 0 && gl_record_track_ < MLR_NUM_TRACKS) {
+			/* Route the input monitor to whichever output bus the
+			 * track being recorded will play back on, so what you
+			 * hear while recording matches the post-recording mix. */
+			if (mlr_tracks[gl_record_track_].recorded_channel == 1)
+				outR += (int32_t)rec_monitor_l;
+			else
+				outL += (int32_t)rec_monitor_l;
 		}
-		AudioOut1(mix);
+		if (outL >  2047) outL =  2047;
+		if (outL < -2048) outL = -2048;
+		if (outR >  2047) outR =  2047;
+		if (outR < -2048) outR = -2048;
+		AudioOut1((int16_t)outL);
+		AudioOut2((int16_t)outR);
 
 		/* ---- LED update (sub-sampled) ---- */
 		gl_led_counter_++;
