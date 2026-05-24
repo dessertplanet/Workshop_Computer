@@ -44,7 +44,7 @@
 | 69_trace | Oscillograph stereo oscillator | 0.1<br>Functional but WIP | C++ (ComputerCard) | Ruiyang Wang |
 | 71_degenerator | Disintegrating Looper — capture audio loops and apply irreversible degradation with saturation, filter drift, tape hiss, oxide shedding, bit crush, and bit rot<br>[Web editor]() | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 72_motorik | Motorik drum machine — kick/snare/hihat with bass and melody CV, classic Krautrock grooves<br>[Web editor]() | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
-| 74_Wild_Pebble | Playable generative rhythm and melody organism inspired by Pet Rock | 1.0<br>Beta | C++ | Adrian Vos with Vibecode support |
+| 74_Wild_Pebble | Playable generative rhythm and melody organism inspired by Pet Rock | 0.9<br>WIP but useable. Currently working on MIDI integration | C++ | Adrian Vos with Vibecode support |
 | 77_Placeholder | Reserved for secret project | 0.0<br>None | None | None |
 | 78_Talker | Proof of concept speech synthesizer, based on TalkiePCM, inspired by 1970s LPC speech synths. | 0.1<br>Proof of concept | C++ (ComputerCard) | Chris Johnson |
 | 82_Computer_Grids | Grids-inspired trigger sequencer with Web MIDI SysEx configuration.<br>[Web editor](https://computergrids.webmidi.cc/) | 0.1.0<br>Released | C++ | Phil Miller |
