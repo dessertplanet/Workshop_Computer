@@ -1952,20 +1952,15 @@ private:
 			dispatch_event(MLR_EVT_STOP, (uint8_t)t, 0, 0);
 	}
 
-	/* Toggle a single tapped track in choke mode: if any group member is
-	 * playing, stop the group; otherwise start only the tapped track from
-	 * its loop_col_start (or 0) and choke any stragglers. */
+	/* Toggle the tapped track in choke mode: if that track is playing,
+	 * stop the group; otherwise start the tapped track from its
+	 * loop_col_start (or 0) and choke any sibling that is currently
+	 * playing. Tapping a stopped sibling while another group member
+	 * plays performs a choke-handoff: the playing member stops and the
+	 * tapped one starts. */
 	void __not_in_flash("group_play_toggle") group_play_toggle(int t)
 	{
-		uint8_t mask = mlr_track_groups[t];
-		bool any_playing = false;
-		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
-			if ((mask & (1u << u)) && mlr_tracks[u].playing) {
-				any_playing = true;
-				break;
-			}
-		}
-		if (any_playing) {
+		if (mlr_tracks[t].playing) {
 			group_stop_track(t);
 			return;
 		}
@@ -2296,12 +2291,13 @@ private:
 		if (grid.keyDown() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track  = grid.lastY() - 1;
 			int column = grid.lastX();
-			if (dissolve_group_if_delete_touch(track)) return;
 
 			/* ignore columns outside the cut zone */
 			if (column < cs || column > ce) return;
 
 			if (alt_held) {
+				/* DELETE + cut key always stops just the touched track.
+				 * Group dissolve is only available from the play column. */
 				if (mlr_tracks[track].playing) {
 					mlr_stop_track(track);
 				}
