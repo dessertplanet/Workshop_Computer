@@ -1607,9 +1607,14 @@ void __not_in_flash_func(mlr_clear_loop)(int track)
 
 	tr->loop_active = false;
 
-	/* Seek core 1 so it stops feeding stale loop samples */
-	bool start_pending = !tr->playing || tr->stop_pending;
-	trigger_track_fade_and_seek(tr, tr->playhead, start_pending);
+	/* Seek core 1 only when something is currently driving playback, so
+	 * it stops feeding stale loop samples. For a fully stopped track no
+	 * engine is reading; restarting it here would be a surprise side
+	 * effect (DELETE+key clear-loop on a stopped track would resume it). */
+	if (tr->playing || tr->stop_pending) {
+		bool start_pending = !tr->playing || tr->stop_pending;
+		trigger_track_fade_and_seek(tr, tr->playhead, start_pending);
+	}
 }
 
 void __not_in_flash_func(mlr_set_speed)(int track, int speed_shift)

@@ -2475,10 +2475,17 @@ private:
 			if (column < cs || column > ce) return;
 
 			if (alt_held) {
-				/* DELETE + cut key always stops just the touched track.
+				/* DELETE + cut key:
+				 *   - if track is playing, stop it (this leaves any loop in
+				 *     place so the user can press again to clear it);
+				 *   - if track is already stopped but has an active loop,
+				 *     clear the loop.
 				 * Group dissolve is only available from the play column. */
 				if (mlr_tracks[track].playing) {
 					mlr_stop_track(track);
+				} else if (mlr_tracks[track].loop_active) {
+					mlr_clear_loop(track);
+					dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)track, 0, 0);
 				}
 				return;
 			}
