@@ -14,9 +14,18 @@ The behaviour and layout are identical in both modes.
 
 ## Hardware in / out (on the Computer)
 
-In grid mode, the interface on the Computer itself is very simple. Tracks are recorded as mono ADPCM and can be routed independently to Audio Out 1 or Audio Out 2. X knob is the input gain. Main knob is the main output volume.
+In grid mode the interface on the Computer itself is intentionally minimal. Tracks are recorded as mono ADPCM and can be routed independently to Audio Out 1 or Audio Out 2 via the per-track input/output channel selector on the REC page. **Knob X** is the input gain and the monitor level while armed/recording. **Knob Main** is the master output volume.
 
-CV in/out are not used in grid mode. Pulse in jacks are used for transport-style triggers (see [Pulse inputs](#pulse-inputs) below). Pulse outputs are unused.
+**Audio In 1 / Audio In 2** are the record sources: which input is captured into a track is set by that track's channel selection on the REC page (or auto-picked from whichever single input is plugged in if you haven't chosen).
+
+**Pulse In 1 / Pulse In 2** act as transport-style triggers (see [Pulse inputs](#pulse-inputs) below).
+
+**CV and pulse outputs are driven by cut events** (manual taps on the CUT page, and pattern/recall playback that replays those cuts):
+
+- **CV Out 1** — quantized note (sample-and-hold). The cut column is mapped into a C-major scale starting at C3, with the tonal range extending up the grid. **Knob X** adds a continuous ±24-semitone (~±2 V) offset on top of the held note.
+- **CV Out 2** — linear decay envelope that jumps to roughly +5 V on each cut event and decays back toward the resting −1 V floor. **Knob Y** sets the decay time (10 ms at fully left, ~3 s at fully right; square-law taper).
+- **Pulse Out 1** — 20 ms trigger fired on every cut event.
+- **Pulse Out 2** — gate. High while any CUT-page track-row key is held (live only — the gate is not replayed by pattern/recall).
 
 ![grid computer](images/MLR_grid_ws.jpg)
 
@@ -27,11 +36,11 @@ Both pulse-in jacks act as transport-style triggers in grid mode:
 - **Pulse In 1** — *loop reset*. A rising edge resets the playhead of every track that is currently playing **and** has an active CUT-page loop, jumping each one to the loop's start column. The loop remains active; only the playhead jumps. Tracks without an active loop, and stopped tracks, are unaffected. (Matches gridless mode, where Pulse In 1 is also the reset trigger.)
 - **Pulse In 2** — *gated record*. While a track is armed via the REC page, holding Pulse In 2 high records into that track for as long as the gate is high. Recording starts on the rising edge and stops on the falling edge. The usual record gates still apply (a track must be armed, recording must not already be in progress, and the per-recording sample limit must not have been reached). While pulse-gated recording is active, the front-panel switch will not interrupt it.
 
-Pulse Out 1 and Pulse Out 2 are unused in grid mode and remain low.
+Pulse Out 1 and Pulse Out 2 are driven by cut events as described in [Hardware in / out](#hardware-in--out-on-the-computer) above.
 
 ## Track layout
 
-Central to the grid layout on both pages is that the center of the grid is organized into horizontal tracks, with rows 2-7 representing tracks 1-6.
+Central to the grid layout on both pages is that the middle six rows of the grid are organized into horizontal tracks — one row per track for tracks 1–6 (top to bottom). The top row is reserved for navigation/patterns/recalls and the bottom row is the master-volume gradient bar.
 
 ![Track layout](images/tracks.jpg)
 
@@ -90,11 +99,12 @@ in normal playback mode. Gate-mode state is saved alongside the scene, so each t
 
 ### Track groups
 
-Multiple tracks can be linked into a **group** so that play/pause and reset commands apply to every member at once. CUT-page behavior depends on how the grouped tracks were started: groups started from the REC-page play keys stay phase-linked, while groups started from CUT keep the one-row choke behavior.
+Multiple tracks can be linked into a **group** so that play/pause behaves as a single choke voice across every member.
 
 - **Create a group**: hold two or more populated play keys (right-most column) at the same time. Tracks without recorded audio are ignored for grouping. As soon as a second populated play key joins, MLRws cancels the pending gated-playback long-press timer on every held key, so none of them will accidentally enter gated playback. When you start releasing the keys, the **first release** commits the group — every populated play key that was simultaneously held at that moment becomes a group, and their play LEDs flash rapidly to confirm. (The remaining held keys' releases are absorbed silently.) Hold just one play key by itself and the original long-press → gated-playback behaviour is unchanged.
 - **Dissolve a group**: hold the **DELETE** key (row 0 ALT). While DELETE is held, MLRws cycles through every existing group, fast-blinking each group's play keys in turn. Each group flashes twice before moving to the next one so you can see which tracks belong to which group. Touch any key on any member row to dissolve that group; the former members' play LEDs blink twice quickly to confirm. Solo tracks keep their normal DELETE-modified actions, including clearing audio with DELETE + the record-arm column.
-- **Group sync**: play/pause toggles and the Pulse In 1 reset broadcast to every member. Play/pause is **state-synced**: whichever member you tap, every member snaps to the opposite of *that* member's current play state — so a group can never drift out of phase after a single tap. If the group was started from the REC page play keys, CUT taps, loop-a-section gestures, speed, reverse, and mixer changes broadcast too, with every member acting on the same grid column numbers and mapping them proportionally to its own length where applicable. If the group was started from CUT, CUT taps and loops keep the existing choke behavior, and REC-page parameter edits affect only the touched row.
+- **Choke playback**: a group can host at most one playing member at a time. Tapping a stopped member starts it and chokes any sibling that was playing (the playing member stops instantly). Tapping the playing member stops the whole group. Pulse In 1 still resets every playing group member that has an active loop, just like for solo tracks.
+- **Per-track parameters**: CUT taps, loop-a-section gestures, and REC-page edits (speed, reverse, mixer slot, channel) only affect the **tapped row**. There is no in-sync broadcast across the group.
 - **Joining a new group**: a track joining a new group leaves any previous group it belonged to. The remaining members of the previous group stay grouped together.
 - **Recording over a member**: starting a recording on a member of a group automatically removes that track from the group. The remaining members stay grouped.
 - **Persistence**: groups survive a power cycle and are saved to the scene blob when created or dissolved.
@@ -110,17 +120,18 @@ The left-most column on the grid is used to arm tracks for recording. For detail
 
 ## CUT page — playhead cutting & loop-a-section
 
-The CUT page is the performance heart of MLR. Each row is a 14-step scrub bar
-across the track's audio.
+The CUT page is the performance heart of MLR. Each track row is a scrub bar that spans the full width of the grid (16 cells on a 16-wide grid, 8 cells on an 8x8). The grid column you tap maps proportionally to a position in that track's audio.
 
-- **Tap column 2–15**: jump the playhead to that position and (re-)start the
+- **Tap any column on the row**: jump the playhead to that position and (re-)start the
   track. The bright cell tracks the playhead in real time.
 - **Hold 2+ keys on a row**: define a loop region between the lowest and
   highest held keys. The loop region stays dimly lit while looping. Releasing
   all keys leaves the loop in place.
 - **Tap a single key inside or outside an active loop**: clears the loop and
   cuts to that position.
-- **Delete + any key on cols 2–15**: stop the track without changing position.
+- **Delete + any cut key on a row**: if the track is playing, stop it (the loop, if any, is left in place so a second Delete + key clears it). If the track is already stopped and has a loop, that press clears the loop instead.
+
+Each cut event also fires the CV1 note, the CV2 decay envelope, and a 20 ms pulse on Pulse Out 1 as described in [Hardware in / out](#hardware-in--out-on-the-computer). Holding any cut key on a track row keeps Pulse Out 2 high as a gate.
 
 Recording from the CUT page is the same as on the REC page: see
 [Recording](#recording).
