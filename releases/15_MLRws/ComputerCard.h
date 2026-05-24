@@ -456,6 +456,11 @@ private:
 #include "hardware/irq.h"
 #include "hardware/spi.h"
 
+#ifdef MLR_PERF_PROFILING
+extern "C" void mlr_perf_count_adc_mux_reset(void);
+extern "C" void mlr_perf_note_adc_fifo_level(uint32_t level);
+#endif
+
 // Input normalisation probe pin
 #define NORMALISATION_PROBE 4
 
@@ -643,23 +648,24 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	static volatile int32_t cvsm[2] = { 0, 0 };
 	__attribute__((unused)) static int np = 0, np1 = 0, np2 = 0;
 
-	// ADC mux-alignment guard. A nonzero adc_fifo_get_level() at IRQ
-	// entry just means BufferFull was late — the DMA will drain those
-	// queued samples in order when re-armed and round-robin alignment
-	// is preserved. The only condition that actually corrupts mux
-	// alignment is FIFO overflow: when the FIFO reached its 4-entry
-	// limit before the DMA could read, the ADC dropped one or more
-	// samples and the channel sequence in the resulting buffer is
-	// shifted. ADC_FCS_OVER is the hardware sticky flag for that.
-	// Recover only on overflow; clear the flag afterwards.
-	if (adc_hw->fcs & ADC_FCS_OVER_BITS)
+	// ADC mux-alignment guard. Testing variant: react when the FIFO
+	// backs up past the normal 1-2 sample transit. Less surgical than
+	// the ADC_FCS_OVER trigger (which fires only on real overflow),
+	// but catches more recovery events for A/B comparison.
+	uint32_t fifo_level = adc_fifo_get_level();
+#ifdef MLR_PERF_PROFILING
+	mlr_perf_note_adc_fifo_level(fifo_level);
+#endif
+	if (fifo_level > 7)
 	{
+#ifdef MLR_PERF_PROFILING
+		mlr_perf_count_adc_mux_reset();
+#endif
 		adc_run(false);
 		adc_fifo_drain();
 		adc_select_input(0);
 		adc_set_round_robin(0);
 		adc_set_round_robin(0b0001111U);
-		adc_hw->fcs = ADC_FCS_OVER_BITS;   // W1C: writing 1 clears the sticky flag
 		adc_run(true);
 	}
 
