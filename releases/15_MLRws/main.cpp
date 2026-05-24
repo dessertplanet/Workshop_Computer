@@ -64,6 +64,14 @@ extern "C" {
 #define GRIDLESS_REC_HOLD_SAMPLES 96000u  /* 2 seconds at 48 kHz */
 #define RECORD_REARM_DELAY_SAMPLES 24000u /* 0.5 seconds at 48 kHz */
 #define FORCE_8X8_GRID_LAYOUT 0  /* for testing: force compact grid layout regardless of detected width */
+#define CUT_PULSE_TRIG_SAMPLES 960u  /* 20 ms at 48 kHz: CUT-page PulseOut1 trigger width */
+#define CV_ENV_PEAK            2047  /* CV2 envelope peak (matches CV full positive range) */
+#define CV2_FLOOR_OFFSET       341   /* raw DAC subtract: -1 V at rest (assuming +6 V = +2047 raw) */
+#define CV_DECAY_MIN_SAMPLES   480u     /* 10 ms at 48 kHz: decay length at Y=0 */
+#define CV_DECAY_MAX_SAMPLES   144000u  /* 3 s at 48 kHz: decay length at Y=4095 */
+#define CV_NOTE_BASE_MIDI      48       /* C3: column 0 with X knob centered yields MIDI 48 */
+#define CV_X_OFFSET_SEMITONES  24       /* ±24 semitones (~±2 V) at X knob extremes */
+#define X_KNOB_LPF_SHIFT       10       /* one-pole IIR on Knob::X (sample-rate). tau≈21 ms */
 #define DELETE_RESET_HOLD_SAMPLES 240000u  /* 5 seconds at 48 kHz */
 #define DELETE_RESET_FLASH_PERIOD_SAMPLES 4800u  /* 100 ms half-period */
 #define DELETE_RESET_FLASH_SAMPLES (DELETE_RESET_FLASH_PERIOD_SAMPLES * 6u)  /* three quick flashes */
@@ -367,6 +375,11 @@ public:
 			break;  /* fall through to MLR processing */
 		}
 
+		/* Smooth Knob::X once per sample. Gridful uses (input gain, CV1
+		 * transpose, LED 2) all read x_knob_filtered_ rather than the raw
+		 * ADC value, so dither at semitone/gain boundaries doesn't flicker. */
+		x_knob_filtered_ += ((int32_t)KnobVal(Knob::X) - x_knob_filtered_) >> X_KNOB_LPF_SHIFT;
+
 		ui_ctrl_div_++;
 		bool run_ui_control = false;
 		if (ui_ctrl_div_ >= MAIN_CTRL_DIV) {
@@ -519,7 +532,7 @@ public:
 			if (route_track >= 0) rec_ch = mlr_tracks[route_track].recorded_channel;
 			dry_in = (rec_ch == 1) ? (int16_t)audio_in2 : (int16_t)audio_in1;
 		}
-		uint8_t dry_level = (uint8_t)(KnobVal(Knob::X) >> 4);  /* 0–255 */
+		uint8_t dry_level = (uint8_t)(x_knob_filtered_ >> 4);  /* 0–255, from LPF'd Knob::X */
 		if (mlr_rec_track >= 0) {
 			/* Recording captures the input scaled only by the input gain knob.
 			 * The mixer slot is a playback control and is applied during
@@ -646,6 +659,60 @@ public:
 		}
 		PERF_UI_SECTION_END(4);
 
+		/* ---- Cut-event-driven CV / pulse outputs ----
+		 *   CV1     = quantized note (major scale, S&H) + live X-knob offset
+		 *   CV2     = exponential decay envelope, triggered on cut events
+		 *   Pulse1  = 20 ms trigger countdown, fires on each cut event
+		 *   Pulse2  = gate, high while any held CUT-page track-row key
+		 * CV1 / CV2 / Pulse1 all mirror through pattern/recall playback via
+		 * mlr_event_playback_hook. Pulse2 is live-only (grid key hold isn't
+		 * recorded). */
+
+		/* Gate detection + CV1 refresh at UI-control rate (~3 kHz, 333 µs
+		 * latency). Gate drives PulseOut2 and LED 5; CV1 only needs UI-tick
+		 * rate since DAC holds the value between writes — saves the
+		 * per-sample MIDIToDAC math. */
+		if (run_ui_control) {
+			bool new_gate = false;
+			if (play_page == PAGE_CUT) {
+				/* Empty tracks count for gating too. */
+				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+					if (grid.heldRowMask((uint8_t)(t + 1))) {
+						new_gate = true;
+						break;
+					}
+				}
+			}
+			gate_high_ = new_gate;
+
+			int x_knob = (int)x_knob_filtered_;  /* 0..4095, LPF'd */
+			int x_off  = ((x_knob - 2048) * CV_X_OFFSET_SEMITONES) / 2048;
+			int note   = (int)cv_step_base_midi_ + x_off;
+			if (note < 0)   note = 0;
+			if (note > 127) note = 127;
+			CVOut1MIDINote((uint8_t)note);
+		}
+
+		/* Per-sample linear decay. env_val_q16_ subtracts a constant step
+		 * each sample and clamps to 0 when it would go negative — envelope
+		 * terminates cleanly at the latched T_dec. */
+		if (env_val_q16_ > 0) {
+			env_val_q16_ -= env_step_q16_;
+			if (env_val_q16_ < 0) env_val_q16_ = 0;
+		}
+
+		if (cv_pulse1_remaining_ > 0) {
+			cv_pulse1_remaining_--;
+			PulseOut1(true);
+		} else {
+			PulseOut1(false);
+		}
+		PulseOut2(gate_high_);
+		/* CV2 raw output: (env_val >> 16) - CV2_FLOOR_OFFSET shifts the
+		 * rest value to roughly -1 V (assuming +6 V = +2047 raw). Peak is
+		 * reduced from +6 V to ~+5 V; calibration not applied. */
+		CVOut2((int16_t)((env_val_q16_ >> 16) - CV2_FLOOR_OFFSET));
+
 		/* ---- mix and output ---- */
 		PERF_UI_SECTION_START(5);
 		int knob_main_raw = KnobVal(Knob::Main);
@@ -730,23 +797,46 @@ public:
 				rec_blink = (rec_blink + 1) & 15;
 				gate_pulse++;
 
-				if (vu_in_accum_ > vu_in_peak_) vu_in_peak_ = vu_in_accum_;
-				else if (vu_in_peak_ > 24) vu_in_peak_ -= 24;
-				else vu_in_peak_ = 0;
-
-				if (vu_out_accum_ > vu_out_peak_) vu_out_peak_ = vu_out_accum_;
-				else if (vu_out_peak_ > 24) vu_out_peak_ -= 24;
-				else vu_out_peak_ = 0;
-
-				vu_in_accum_ = 0;
-				vu_out_accum_ = 0;
-
-				panel_vu_led_[4] = vu_in_peak_ > 100 ? (uint16_t)(vu_in_peak_ * 2) : 0;
-				panel_vu_led_[2] = vu_in_peak_ > 600 ? (uint16_t)((vu_in_peak_ - 600) * 3) : 0;
-				panel_vu_led_[0] = vu_in_peak_ > 1400 ? (uint16_t)((vu_in_peak_ - 1400) * 6) : 0;
-				panel_vu_led_[5] = vu_out_peak_ > 100 ? (uint16_t)(vu_out_peak_ * 2) : 0;
-				panel_vu_led_[3] = vu_out_peak_ > 600 ? (uint16_t)((vu_out_peak_ - 600) * 3) : 0;
-				panel_vu_led_[1] = vu_out_peak_ > 1400 ? (uint16_t)((vu_out_peak_ - 1400) * 6) : 0;
+				/* Panel LED layout:
+				 *   LED 0 = input  level     LED 1 = output level
+				 *   LED 2 = CV1    level     LED 3 = CV2    level
+				 *   LED 4 = Pulse1 trigger   LED 5 = Pulse2 gate
+				 * LEDs 0/1: just |sample| at this LED tick, scaled to brightness.
+				 * Single-sample snapshot — simple and cheap; the LED's slow refresh
+				 * naturally averages out per-tick variation. */
+				{
+					int32_t in_abs = dry_in < 0 ? -dry_in : dry_in;
+					uint32_t v = (uint32_t)in_abs << 1;
+					if (v > 4095u) v = 4095u;
+					panel_vu_led_[0] = (uint16_t)v;
+				}
+				{
+					int32_t l = outL < 0 ? -outL : outL;
+					int32_t r = outR < 0 ? -outR : outR;
+					int32_t out_abs = (l > r) ? l : r;
+					uint32_t v = (uint32_t)out_abs << 1;
+					if (v > 4095u) v = 4095u;
+					panel_vu_led_[1] = (uint16_t)v;
+				}
+				{
+					/* CV1 brightness tracks the live note (with X-knob offset)
+					 * so the LED moves as you transpose, not just on cuts. */
+					int x_knob = (int)x_knob_filtered_;
+					int x_off  = ((x_knob - 2048) * CV_X_OFFSET_SEMITONES) / 2048;
+					int note   = (int)cv_step_base_midi_ + x_off;
+					if (note < 0)   note = 0;
+					if (note > 127) note = 127;
+					panel_vu_led_[2] = (uint16_t)((note * 4095) / 127);
+				}
+				{
+					int32_t v = env_val_q16_ >> 15;  /* 0..(CV_ENV_PEAK<<1) ~= 0..4094 */
+					if (v < 0)    v = 0;
+					if (v > 4095) v = 4095;
+					panel_vu_led_[3] = (uint16_t)v;
+				}
+				panel_vu_led_[4] = pulse1_led_latch_ ? 4095u : 0u;
+				pulse1_led_latch_ = false;
+				panel_vu_led_[5] = gate_high_ ? 4095u : 0u;
 				__dmb();
 				panel_vu_led_pending_ = true;
 
@@ -784,18 +874,6 @@ public:
 		}
 		was_flushing_ = mlr_flushing;
 
-		/* ---- card VU accumulation (LED writes are decimated above) ---- */
-		{
-			int32_t in_scaled_abs = dry_in < 0 ? -dry_in : dry_in;
-			in_scaled_abs = (in_scaled_abs * (int32_t)dry_level) >> 8;  /* 0..2048 */
-			if (in_scaled_abs > vu_in_accum_) vu_in_accum_ = in_scaled_abs;
-
-			int32_t out_abs = outL < 0 ? -outL : outL;
-			int32_t out_abs_r = outR < 0 ? -outR : outR;
-			if (out_abs_r > out_abs) out_abs = out_abs_r;
-			if (out_abs > vu_out_accum_) vu_out_accum_ = out_abs;
-		}
-
 		if (mlr_rec_track >= 0) prev_rec_track = mlr_rec_track;
 	}
 
@@ -828,10 +906,6 @@ private:
 	bool       rec_limit_latched;
 	int        prev_rec_track = -1;  /* last track that was recording */
 	uint8_t    rec_blink = 0;        /* blink counter for record indicator */
-	int32_t    vu_in_peak_ = 0;      /* peak hold for input VU */
-	int32_t    vu_out_peak_ = 0;     /* peak hold for output VU */
-	int32_t    vu_in_accum_ = 0;     /* per-sample input VU accumulator */
-	int32_t    vu_out_accum_ = 0;    /* per-sample output VU accumulator */
 	int        rec_armed_track = -1; /* armed track for recording (-1 = none) */
 	int        resume_after_arm_track_ = -1; /* track auto-stopped due to arm; resume on disarm */
 	bool       rec_gated = false;    /* true during press-to-record (gated) */
@@ -881,6 +955,22 @@ private:
 	bool       cut_loop_pending_[MLR_NUM_TRACKS] = {};  /* non-gated CUT loop commits on first release */
 	int        cut_loop_pending_start_[MLR_NUM_TRACKS] = {};
 	int        cut_loop_pending_end_[MLR_NUM_TRACKS] = {};
+	/* Cut-event-driven CV / pulse outputs (fire on manual cuts and on
+	 * pattern/recall playback via mlr_event_playback_hook). */
+	uint32_t   cv_pulse1_remaining_ = 0;   /* PulseOut1 trigger countdown (samples) */
+	bool       pulse1_led_latch_ = false;  /* latch PulseOut1 events for LED visibility (cleared each LED frame) */
+	int8_t     cv_step_base_midi_ = CV_NOTE_BASE_MIDI;  /* CV1 S&H base note from last cut col */
+	int32_t    x_knob_filtered_ = 2048;    /* one-pole LPF of Knob::X (sample-rate) to suppress
+	                                          ADC dither flicker at semitone/gain boundaries */
+	/* CV2 decay-only envelope: jumps to peak on each cut trigger, then
+	 * linearly steps down to 0. env_val_q16_ holds the value in Q16 for
+	 * precision; env_step_q16_ is the per-sample subtract latched at trigger
+	 * so the total decay length equals exactly Y-knob's T_dec samples. */
+	int32_t    env_val_q16_ = 0;           /* 0 .. CV_ENV_PEAK << 16 */
+	int32_t    env_step_q16_ = 0;          /* per-sample subtract, Q16 */
+	/* PulseOut2 / LED 5 gate: high while any CUT-page track-row key is held
+	 * (independent of envelope state — useful for VCA gates / mutes). */
+	bool       gate_high_ = false;
 	uint32_t   delete_reset_hold_samples_ = 0;    /* continuous DELETE hold duration */
 	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
 	bool       delete_reset_fired_ = false;       /* require DELETE release before another reset */
@@ -893,7 +983,9 @@ private:
 	 * Written by core 1, read by core 0. */
 	inline static volatile bool s_sample_mgr_active_ = false;
 	inline static volatile bool s_rescan_needed_ = false;
+public:
 	inline static MLRCard *s_card_ = nullptr;
+private:
 
 	/* ---- Gridless mode state ---- */
 	int        gl_active_track_ = -1;    /* currently selected/playing track index */
@@ -1589,8 +1681,59 @@ private:
 		e.param_b = b;
 		mlr_pattern_event(&e);
 		mlr_recall_event(&e);
+
+		/* Mirror cut events to CV / pulse outputs for manual gestures.
+		 * Pattern/recall replay reaches cut_trigger() via the C hook
+		 * mlr_event_playback_hook below. */
+		if (type == MLR_EVT_CUT)
+			cut_trigger((int)track, (int)a);
 	}
 
+	/* ================================================================ */
+	/* cut_trigger — fire CV1 S&H, CV2 decay envelope, PulseOut1 on cut.*/
+	/* Called from dispatch_event() (manual) and from the C playback    */
+	/* hook (pattern / recall replay). Must be cheap and safe to call   */
+	/* from the audio core.                                              */
+	/* ================================================================ */
+public:
+	void __not_in_flash_func(cut_trigger)(int track, int col)
+	{
+		if (track < 0 || track >= MLR_NUM_TRACKS) return;
+		if (col < 0) col = 0;
+		if (col > 15) col = 15;
+		/* Empty tracks still drive CV1/Pulse1/envelope: the track row acts
+		 * as a playable mini-keyboard even before audio is recorded. */
+
+		/* CV1 sample-and-hold: quantize the cut grid column to a major
+		 * scale degree, two octaves+ span, root = C3 (MIDI 48). */
+		static const uint8_t kMajor[7] = {0, 2, 4, 5, 7, 9, 11};
+		int octave = col / 7;
+		int step   = col % 7;
+		int midi   = CV_NOTE_BASE_MIDI + octave * 12 + (int)kMajor[step];
+		if (midi < 0)   midi = 0;
+		if (midi > 127) midi = 127;
+		cv_step_base_midi_ = (int8_t)midi;
+
+		/* CV2 linear decay envelope: jump to peak, then subtract a constant
+		 * step per sample so the envelope reaches 0 in exactly T_dec samples.
+		 * Y knob (square-law) sets total decay length, 10 ms .. 3 s.
+		 * Latched at trigger so mid-decay Y twiddling can't disturb the
+		 * in-flight envelope. */
+		uint32_t y = (uint32_t)KnobVal(Knob::Y);
+		if (y > 4095u) y = 4095u;
+		uint32_t y_sq = (y * y) / 4095u;  /* 0..4095, square-law for musical knob feel */
+		uint32_t T_dec = CV_DECAY_MIN_SAMPLES +
+			(uint32_t)(((uint64_t)(CV_DECAY_MAX_SAMPLES - CV_DECAY_MIN_SAMPLES) * y_sq) / 4095u);
+		if (T_dec < 1u) T_dec = 1u;
+		env_val_q16_  = (int32_t)CV_ENV_PEAK << 16;
+		env_step_q16_ = (int32_t)(((uint32_t)CV_ENV_PEAK << 16) / T_dec);
+		if (env_step_q16_ < 1) env_step_q16_ = 1;
+
+		/* PulseOut1: 20 ms gate trigger. */
+		cv_pulse1_remaining_ = CUT_PULSE_TRIG_SAMPLES;
+		pulse1_led_latch_ = true;
+	}
+private:
 	void process_bottom_master_control()
 	{
 		int row = MLR_NUM_TRACKS + 1;
@@ -2679,8 +2822,22 @@ private:
 					grid.frameLedUnchecked(c, row, 4);
 			}
 
+			if (!has) {
+				/* Empty track: no playhead to show, but the row is still
+				 * playable for CV/pulse output. Highlight held cut keys. */
+				int ce = cut_col_end();
+				uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
+				uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
+				while (held_in_zone) {
+					int c = __builtin_ctz(held_in_zone);
+					grid.frameLedUnchecked(c, row, 12);
+					held_in_zone &= (uint16_t)~(1u << c);
+				}
+				return;
+			}
+
 			/* Gate-paused grouped tracks keep showing their frozen playhead. */
-			if (!has || (!mlr_tracks[t].playing && !track_gate_paused(t))) return;
+			if (!mlr_tracks[t].playing && !track_gate_paused(t)) return;
 
 			int icol = mlr_get_column(t);  /* 0–15 internal */
 			int gcol = cut_internal_to_grid(icol);
@@ -2747,6 +2904,22 @@ private:
 		LedBrightness(5, led5);
 	}
 };
+
+/* ------------------------------------------------------------------ */
+/* C-linkage hook called by mlr.c::event_exec for every replayed      */
+/* pattern/recall event. Routes cut events to the same trigger path   */
+/* manual gestures use, so CV/pulse outputs replay along with the     */
+/* recorded performance.                                              */
+/* ------------------------------------------------------------------ */
+
+extern "C" void __not_in_flash_func(mlr_event_playback_hook)(const mlr_event_t *e)
+{
+	if (!e) return;
+	if (!MLRCard::s_card_) return;
+	if (e->type == MLR_EVT_CUT || e->type == MLR_EVT_GROUP_CUT) {
+		MLRCard::s_card_->cut_trigger((int)e->track, (int)e->param_a);
+	}
+}
 
 /* ------------------------------------------------------------------ */
 /* main                                                               */

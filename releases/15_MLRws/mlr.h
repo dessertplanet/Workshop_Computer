@@ -457,6 +457,11 @@ void     mlr_pattern_play_stop(int pat);
 void     mlr_pattern_clear(int pat);
 void     mlr_pattern_tick(uint32_t now_ms);         /* call at pattern playback tick rate */
 
+/* Called by mlr.c from event_exec() for every pattern/recall event that is
+ * replayed. Implemented in main.cpp so the card can mirror events (cuts in
+ * particular) to CV/pulse outputs. Keep it short — called from audio core. */
+void     mlr_event_playback_hook(const mlr_event_t *e);
+
 /* ---- Recall engine (core 0) ---- */
 void     mlr_recall_event(const mlr_event_t *e);   /* record into armed recalls */
 void     mlr_recall_arm(int slot);

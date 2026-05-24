@@ -1816,6 +1816,7 @@ int __not_in_flash_func(mlr_get_flush_track)(void)
 
 static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 {
+	mlr_event_playback_hook(e);
 	switch (e->type) {
 	case MLR_EVT_CUT:
 		mlr_choke_group_cut(e->track, e->param_a);
