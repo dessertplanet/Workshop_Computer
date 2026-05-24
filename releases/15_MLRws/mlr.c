@@ -392,8 +392,8 @@ static inline uint16_t speed_shift_to_frac(int8_t s)
 	return kSpeedFrac[s + 3];
 }
 
-/* Convert volume slot (0=loudest, 5=quietest) to 8.8 fixed-point.
- * Slot 2 = unity (0 dB).  Slots 0–1 boost above unity for
+/* Convert volume slot (0=loudest, MLR_NUM_VOL_SLOTS-1=quietest) to 8.8
+ * fixed-point.  Slot 1 = unity (0 dB).  Slot 0 boosts above unity for
  * intentional soft clipping into the ADPCM codec. */
 static inline uint16_t volume_slot_to_frac(uint8_t slot)
 {
@@ -2439,17 +2439,24 @@ void mlr_recall_clear(int slot)
 /* ------------------------------------------------------------------ */
 
 /* Scene is serialized into MLR_SCENE_SECTORS * 4096 bytes in flash.
- * Layout:
+ * Layout (offsets assume MLR_NUM_TRACKS=6, MLR_NUM_PATTERNS=4,
+ * MLR_NUM_RECALLS=4, sizeof(mlr_track_scene_t)=8):
  *   [0]    uint32_t magic (MLR_SCENE_MAGIC)
  *   [4]    uint32_t data_len (bytes following, excluding CRC)
- *   [8]    mlr_track_scene_t[7]  (28 bytes)
- *   [36]   pattern_count[4] as uint16_t (8 bytes)
- *   [44]   pattern_loop_len_ms[4] as uint32_t (16 bytes)
- *   [60]   pattern events (count * 8 bytes per pattern, concatenated)
- *   [...]  recall_count[4] as uint16_t (8 bytes)
- *   [...]  recall_has_data[4] as uint8_t (4 bytes)
- *   [...]  recall events (count * 8 bytes per recall, concatenated)
+ *   [8]    mlr_track_scene_t[MLR_NUM_TRACKS]  (48 bytes)
+ *          (track 0 _pad encodes master_level_raw + 0xA5 sentinel)
+ *   [56]   pattern_count[MLR_NUM_PATTERNS] as uint16_t (8 bytes)
+ *   [64]   pattern_loop_len_ms[MLR_NUM_PATTERNS] as uint32_t (16 bytes)
+ *   [80]   pattern events (count * sizeof(mlr_event_t) per pattern, concatenated)
+ *   [...]  recall_count[MLR_NUM_RECALLS] as uint16_t (8 bytes)
+ *   [...]  recall_has_data[MLR_NUM_RECALLS] as uint8_t (4 bytes)
+ *   [...]  recall events (count * sizeof(mlr_event_t) per recall, concatenated)
+ *   [...]  groups_version (uint8_t) + mlr_track_groups[MLR_NUM_TRACKS] (7 bytes)
+ *   [...]  gate_version  (uint8_t) + mlr_gate_mode[MLR_NUM_TRACKS]    (7 bytes)
  *   [end]  uint32_t CRC32 (over everything from offset 0 to here)
+ *
+ * Loaders gate the trailing groups / gate_mode blocks on data_len, so
+ * older scenes without them remain compatible.
  */
 
 /* Simple CRC32 (no table — small code size, only runs on save/load) */
@@ -3680,7 +3687,7 @@ void mlr_io_task(void)
 		}
 	}
 
-	/* 5. Write header after recording stops or metadata changes */
+	/* 6. Write header after recording stops or metadata changes */
 	if (hdr_write_pending && mlr_page_ring.r == mlr_page_ring.w) {
 		write_track_header(hdr_write_track, hdr_write_start_playback);
 		hdr_write_pending = false;
@@ -3693,7 +3700,7 @@ void mlr_io_task(void)
 		copy_track_task();
 	}
 
-	/* 6. No header write pending: flushing ends once page ring is drained */
+	/* 7. No header write pending: flushing ends once page ring is drained */
 	if (!hdr_write_pending && !copy_pending && copy_dst_track < 0 &&
 	    mlr_flushing && rec_track_idx < 0 &&
 	    mlr_page_ring.r == mlr_page_ring.w &&
@@ -3719,7 +3726,7 @@ void mlr_io_task(void)
 		}
 	}
 
-	/* 7. Scene save — interleaved: erase one sector, then program one
+	/* 8. Scene save — interleaved: erase one sector, then program one
 	 *    256-byte page per io_task call.  Ring refills happen between
 	 *    each page write, keeping audio fed even at high speeds. */
 	if (scene_save_pending && !hdr_write_pending && !clear_pending &&

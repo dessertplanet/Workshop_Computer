@@ -3,26 +3,29 @@
  *
  * 6 looping ADPCM tracks stored in flash.  Grid rows 1–6 control
  * tracks.  Row 0 is page navigation + pattern/recall controls.
- * Row 7 is output VU in grid mode.
+ * Row 7 is a master-volume gradient bar (right-to-left fill).
  *
  * Pages (selected via row 0):
  *   REC (col 0): per-track speed, reverse, volume, record arm
  *   CUT (col 1): playhead cutting, loop-a-section
  *
- * Row 0 layout (both pages):
+ * Row 0 layout (16-wide grid; 8x8 collapses Cols 4–7 → 3–6 and
+ * Col 14 → Col 7, and omits the recall block):
  *   Col 0     = REC page
  *   Col 1     = CUT page
  *   Cols 4–7  = Pattern 1–4 (timed motion recorders)
- *   Cols 9–12 = Recall 1–4 (instant snapshot slots)
+ *   Cols 9–12 = Recall 1–4 (instant snapshot slots, 16-wide only)
  *   Col 14    = ALT modifier
  *
- * Recording: hold col 0 on a track row + switch up/down.
+ * Recording: hold col 0 (or col 1 on 16-wide, to select input
+ *   channel 2) on a track row + switch up/down.
  *   Speed-linked — tape speed controls both record and playback rate.
  *   Records from position 0, variable length up to flash limit.
  *
  * Knob Main      = master output volume
- * Audio In 1     = record source (monitored while recording)
- * Audio Out 1    = mixed playback
+ * Audio In 1/2   = record source (per-track recorded_channel selects
+ *                  which input is captured; the other can be left idle)
+ * Audio Out 1/2  = mixed playback, split L/R by per-track recorded_channel
  */
 
 #include "ComputerCard.h"
@@ -64,7 +67,7 @@ extern "C" {
 #define GRIDLESS_REC_HOLD_SAMPLES 96000u  /* 2 seconds at 48 kHz */
 #define RECORD_REARM_DELAY_SAMPLES 24000u /* 0.5 seconds at 48 kHz */
 #define FORCE_8X8_GRID_LAYOUT 0  /* for testing: force compact grid layout regardless of detected width */
-#define CUT_PULSE_TRIG_SAMPLES 960u  /* 20 ms at 48 kHz: CUT-page PulseOut1 trigger width */
+#define CUT_PULSE_TRIG_SAMPLES 960u  /* 20 ms at 48 kHz: PulseOut1 trigger width fired on every cut event (manual or pattern/recall playback) */
 #define CV_ENV_PEAK            2047  /* CV2 envelope peak (matches CV full positive range) */
 #define CV2_FLOOR_OFFSET       341   /* raw DAC subtract: -1 V at rest (assuming +6 V = +2047 raw) */
 #define CV_DECAY_MIN_SAMPLES   480u     /* 10 ms at 48 kHz: decay length at Y=0 */
@@ -774,7 +777,7 @@ public:
 		AudioOut2((int16_t)outR);
 		PERF_UI_SECTION_END(5);
 
-		/* ---- tick pattern playback (~5ms resolution) ---- */
+		/* ---- tick pattern playback (~1 ms resolution) ---- */
 		PERF_UI_SECTION_START(6);
 		if (!mlr_flushing || mlr_copying) {
 			mlr_recall_task();
@@ -1240,17 +1243,17 @@ private:
 	 *
 	 * Global mode (switch middle):
 	 *   Knob Main = channel select
+	 *   Knob X    = playback layer gain (unity at center)
+	 *   Knob Y    = radiate amount (left=selected only, right=all channels)
 	 * Channel mode (switch up):
 	 *   Knob Main = bipolar speed control
 	 *     center ~0 (muted hold), left = reverse, right = forward
 	 *     edges map to ±2 octaves
-	 *   Knob X = per-channel level (grid mixer style)
-	 *   Knob Y = reset start position (column 0–15)
-	 * Global mode (switch middle):
-	 *   Knob X = playback layer gain (unity at center)
-	 *   Knob Y = radiate amount (left=selected only, right=all channels)
+	 *   Knob X    = per-channel level (grid mixer style)
+	 *   Knob Y    = reset start position (column 0–15)
 	 * Switch Down / Pulse In 1 rising edge = reset to start position
-	 * Tracks always play and loop. No recording in this mode.
+	 * Hold Switch Down ~2 s to arm recording onto the active track
+	 * (switch Down again to start, Down release to stop).
 	 */
 	void __not_in_flash("gridless") gridless_process_sample()
 	{
