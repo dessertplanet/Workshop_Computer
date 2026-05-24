@@ -74,6 +74,8 @@ volatile uint32_t mlr_perf_refill_max_us;
 volatile uint32_t mlr_perf_seek_max_us;
 volatile uint32_t mlr_perf_flash_erase_max_us;
 volatile uint32_t mlr_perf_flash_program_max_us;
+volatile uint32_t mlr_perf_adc_mux_resets;
+volatile uint32_t mlr_perf_adc_fifo_level_max;
 
 static inline void perf_update_max(volatile uint32_t *dst, uint32_t value)
 {
@@ -156,6 +158,8 @@ void mlr_perf_reset(void)
 	mlr_perf_seek_max_us = 0;
 	mlr_perf_flash_erase_max_us = 0;
 	mlr_perf_flash_program_max_us = 0;
+	mlr_perf_adc_mux_resets = 0;
+	mlr_perf_adc_fifo_level_max = 0;
 	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 		mlr_perf.pcm_ring_min[t] = MLR_RING_SAMPLES;
 		mlr_perf_pcm_ring_min[t] = MLR_RING_SAMPLES;
@@ -182,6 +186,16 @@ void mlr_perf_count_mext_event_drop(void)
 {
 	mlr_perf.grid_event_drops++;
 	mlr_perf_grid_event_drops++;
+}
+
+void mlr_perf_count_adc_mux_reset(void)
+{
+	mlr_perf_adc_mux_resets++;
+}
+
+void mlr_perf_note_adc_fifo_level(uint32_t level)
+{
+	perf_update_max(&mlr_perf_adc_fifo_level_max, level);
 }
 
 void mlr_perf_note_grid_poll(uint32_t processed, uint32_t backlog_before, uint32_t backlog_after)

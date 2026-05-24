@@ -391,6 +391,8 @@ extern volatile uint32_t mlr_perf_refill_max_us;
 extern volatile uint32_t mlr_perf_seek_max_us;
 extern volatile uint32_t mlr_perf_flash_erase_max_us;
 extern volatile uint32_t mlr_perf_flash_program_max_us;
+extern volatile uint32_t mlr_perf_adc_mux_resets;
+extern volatile uint32_t mlr_perf_adc_fifo_level_max;
 void mlr_perf_reset(void);
 void mlr_perf_count_grid_frame_drop(void);
 void mlr_perf_count_mext_event_drop(void);
@@ -398,6 +400,8 @@ void mlr_perf_note_grid_poll(uint32_t processed, uint32_t backlog_before, uint32
 void mlr_perf_count_process_sample(void);
 void mlr_perf_note_process_sample_us(uint32_t elapsed_us, bool ui_tick);
 void mlr_perf_note_ui_section_us(uint32_t section, uint32_t elapsed_us);
+void mlr_perf_count_adc_mux_reset(void);
+void mlr_perf_note_adc_fifo_level(uint32_t level);
 #endif
 
 /* ------------------------------------------------------------------ */
