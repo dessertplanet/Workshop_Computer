@@ -699,9 +699,9 @@ public:
 		}
 		outL = (outL * (int32_t)master_level) >> 8;
 		outR = (outR * (int32_t)master_level) >> 8;
-		if (outL > 2047)  outL = 2047;
+		if (outL >  2047) outL =  2047;
 		if (outL < -2048) outL = -2048;
-		if (outR > 2047)  outR = 2047;
+		if (outR >  2047) outR =  2047;
 		if (outR < -2048) outR = -2048;
 		AudioOut1((int16_t)outL);
 		AudioOut2((int16_t)outR);

@@ -1457,10 +1457,35 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(int16_t *out_right)
 {
 	int32_t mixR;
 	int32_t mixL = mlr_play_mix_dual_sum(&mixR);
+
+	/* Three-stage cascaded soft clip applied at 16-bit scale before the
+	 * final >>4 to 12-bit DAC range. Knees are the 12-bit master knees
+	 * (1638/1945/2007 ≈ 80%/95%/98% of full scale) scaled by 16 so the
+	 * curve shape lands at the same proportional output positions after
+	 * the shift. This replaces what used to be a hard int16 clip and
+	 * keeps multi-track summing overshoots out of the brick wall. */
+	#define MLR_MIX_KNEE_1_16  26208   /* 1638 << 4 */
+	#define MLR_MIX_KNEE_2_16  31120   /* 1945 << 4 */
+	#define MLR_MIX_KNEE_3_16  32112   /* 2007 << 4 */
+
+	if (mixL >  MLR_MIX_KNEE_1_16) mixL =  MLR_MIX_KNEE_1_16 + ((mixL - MLR_MIX_KNEE_1_16) >> 1);
+	if (mixL < -MLR_MIX_KNEE_1_16) mixL = -MLR_MIX_KNEE_1_16 + ((mixL + MLR_MIX_KNEE_1_16) >> 1);
+	if (mixL >  MLR_MIX_KNEE_2_16) mixL =  MLR_MIX_KNEE_2_16 + ((mixL - MLR_MIX_KNEE_2_16) >> 1);
+	if (mixL < -MLR_MIX_KNEE_2_16) mixL = -MLR_MIX_KNEE_2_16 + ((mixL + MLR_MIX_KNEE_2_16) >> 1);
+	if (mixL >  MLR_MIX_KNEE_3_16) mixL =  MLR_MIX_KNEE_3_16 + ((mixL - MLR_MIX_KNEE_3_16) >> 1);
+	if (mixL < -MLR_MIX_KNEE_3_16) mixL = -MLR_MIX_KNEE_3_16 + ((mixL + MLR_MIX_KNEE_3_16) >> 1);
 	if (mixL >  32767) mixL =  32767;
 	if (mixL < -32768) mixL = -32768;
+
+	if (mixR >  MLR_MIX_KNEE_1_16) mixR =  MLR_MIX_KNEE_1_16 + ((mixR - MLR_MIX_KNEE_1_16) >> 1);
+	if (mixR < -MLR_MIX_KNEE_1_16) mixR = -MLR_MIX_KNEE_1_16 + ((mixR + MLR_MIX_KNEE_1_16) >> 1);
+	if (mixR >  MLR_MIX_KNEE_2_16) mixR =  MLR_MIX_KNEE_2_16 + ((mixR - MLR_MIX_KNEE_2_16) >> 1);
+	if (mixR < -MLR_MIX_KNEE_2_16) mixR = -MLR_MIX_KNEE_2_16 + ((mixR + MLR_MIX_KNEE_2_16) >> 1);
+	if (mixR >  MLR_MIX_KNEE_3_16) mixR =  MLR_MIX_KNEE_3_16 + ((mixR - MLR_MIX_KNEE_3_16) >> 1);
+	if (mixR < -MLR_MIX_KNEE_3_16) mixR = -MLR_MIX_KNEE_3_16 + ((mixR + MLR_MIX_KNEE_3_16) >> 1);
 	if (mixR >  32767) mixR =  32767;
 	if (mixR < -32768) mixR = -32768;
+
 	*out_right = (int16_t)(mixR >> 4);
 	return (int16_t)(mixL >> 4);
 }
