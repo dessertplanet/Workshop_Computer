@@ -45,7 +45,8 @@ extern "C" {
 /* ------------------------------------------------------------------ */
 #define LED_UPDATE_INTERVAL 2400  /* ~50 ms at 48 kHz → 20 fps grid update */
 #define PAT_TICK_INTERVAL     48  /* ~1 ms at 48 kHz → pattern playback resolution */
-#define MAIN_CTRL_DIV        4    /* 48 kHz / 4 = 12 kHz UI/control polling */
+#define MAIN_CTRL_DIV        16   /* 48 kHz / 16 = 3 kHz UI/control polling (~333 us quantization) */
+#define GRID_POLL_MAX_EVENTS 16   /* Bound USB/grid event burst work per UI-control tick */
 #define GATE_HOLD_THRESHOLD 48000  /* 1 second at 48 kHz sample rate */
 
 /* Group-creation/dissolve flash feedback (samples at 48 kHz). */
@@ -374,6 +375,8 @@ public:
 		perf_ui_tick = run_ui_control;
 		uint32_t perf_ui_section_start = 0;
 		uint8_t perf_ui_section_probe = 0xFF;
+		/* UI section profiling samples one rotating section per UI tick; full
+		 * process_sample_ui counters measure the whole tick, including audio mix. */
 		if (run_ui_control) {
 			perf_ui_section_probe = perf_ui_section_probe_;
 			perf_ui_section_probe_ = (uint8_t)((perf_ui_section_probe_ + 1u) & (MLR_PERF_UI_SECTIONS - 1u));
@@ -392,7 +395,7 @@ public:
 
 		PERF_UI_SECTION_START(0);
 		if (run_ui_control) {
-			grid.poll();
+			grid.poll(GRID_POLL_MAX_EVENTS);
 			if (!mlr_flushing) {
 				process_delete_reset_hold();
 				process_bottom_master_control();
@@ -658,7 +661,7 @@ public:
 
 		uint8_t master_level = (uint8_t)(mlr_master_level_raw >> 4);
 		int16_t mix_r;
-		int16_t mix = mlr_play_mix_dual(255, &mix_r);
+		int16_t mix = mlr_play_mix_dual_255(&mix_r);
 		int32_t outL = (int32_t)mix;
 		int32_t outR = (int32_t)mix_r;
 		if (dry_level > 0 && (rec_armed_track >= 0 || sw == Switch::Up)) {

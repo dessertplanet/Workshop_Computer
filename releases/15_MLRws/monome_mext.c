@@ -15,6 +15,10 @@
 #include "pico/time.h"
 #include "pico/platform.h"
 
+#ifdef MLR_PERF_PROFILING
+void mlr_perf_count_mext_event_drop(void);
+#endif
+
 /* ------------------------------------------------------------------ */
 /* Global state                                                       */
 /* ------------------------------------------------------------------ */
@@ -75,9 +79,13 @@ static void mext_send(const uint8_t *data, uint32_t len)
 
 static void event_push(const mext_event_t *e)
 {
-	uint8_t next = (g_mext.events.w + 1) % MEXT_EVENT_QUEUE_SIZE;
-	if (next == g_mext.events.r)
+	uint8_t next = (g_mext.events.w + 1) & MEXT_EVENT_QUEUE_MASK;
+	if (next == g_mext.events.r) {
+#ifdef MLR_PERF_PROFILING
+		mlr_perf_count_mext_event_drop();
+#endif
 		return; /* queue full, drop event */
+	}
 	g_mext.events.buf[g_mext.events.w] = *e;
 	g_mext.events.w = next;
 }
@@ -409,8 +417,13 @@ bool __not_in_flash_func(mext_event_pop)(mext_event_t *out)
 		return false;
 
 	*out = g_mext.events.buf[g_mext.events.r];
-	g_mext.events.r = (g_mext.events.r + 1) % MEXT_EVENT_QUEUE_SIZE;
+	g_mext.events.r = (g_mext.events.r + 1) & MEXT_EVENT_QUEUE_MASK;
 	return true;
+}
+
+uint8_t __not_in_flash_func(mext_event_backlog)(void)
+{
+	return (uint8_t)((g_mext.events.w - g_mext.events.r) & MEXT_EVENT_QUEUE_MASK);
 }
 
 bool __not_in_flash_func(mext_grid_ready)(void)

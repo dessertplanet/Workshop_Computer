@@ -51,6 +51,10 @@ typedef struct {
 /* Event queue (lock-free single-producer / single-consumer ring)     */
 /* ------------------------------------------------------------------ */
 #define MEXT_EVENT_QUEUE_SIZE 128
+#if (MEXT_EVENT_QUEUE_SIZE & (MEXT_EVENT_QUEUE_SIZE - 1)) != 0
+#error "MEXT_EVENT_QUEUE_SIZE must be a power of two"
+#endif
+#define MEXT_EVENT_QUEUE_MASK (MEXT_EVENT_QUEUE_SIZE - 1)
 
 typedef struct {
 	mext_event_t buf[MEXT_EVENT_QUEUE_SIZE];
@@ -166,6 +170,7 @@ void mext_rx_feed(const uint8_t *data, uint32_t len);
 
 /** Pop next event; returns false if queue is empty. */
 bool mext_event_pop(mext_event_t *out);
+uint8_t mext_event_backlog(void);
 
 #ifdef __cplusplus
 }

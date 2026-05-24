@@ -61,6 +61,11 @@ extern "C" {
 #define MLR_SEEK_PRIME_SAMPLES (MLR_KEYFRAME_INTERVAL * 2)  /* post-seek refill to cover direction changes */
 #define MLR_PERF_UI_SECTIONS   8
 
+#define MLR_TRANS_HANDOFF 0x01u
+#define MLR_TRANS_FADE    0x02u
+#define MLR_TRANS_XFADE   0x04u
+#define MLR_TRANS_WRAP    0x08u
+
 /* Recording page ring (ADPCM pages, core 0 fills, core 1 writes) */
 #define MLR_PAGE_SIZE          256
 #define MLR_PAGE_RING_COUNT    32
@@ -254,6 +259,7 @@ typedef struct {
 	uint32_t          wrap_preview_start;
 	uint32_t          wrap_preview_end;
 	uint16_t          wrap_preview_speed_frac;
+	volatile uint8_t  transition_flags;
 
 	/* loop-a-section: sub-loop boundaries (set by core 0) */
 	bool           loop_active;
@@ -332,6 +338,10 @@ typedef struct {
 	volatile uint32_t page_ring_max;
 	volatile uint32_t seek_count[MLR_NUM_TRACKS];
 	volatile uint32_t grid_frame_drops;
+	volatile uint32_t grid_event_drops;
+	volatile uint32_t grid_poll_events_max;
+	volatile uint32_t grid_poll_backlog_max;
+	volatile uint32_t grid_poll_backlog_last;
 	volatile uint32_t rec_page_flush_count;
 	volatile uint32_t scene_save_count;
 	volatile uint32_t refill_max_us;
@@ -363,6 +373,11 @@ extern volatile uint32_t mlr_perf_reverse_handoff_count[MLR_NUM_TRACKS];
 extern volatile uint32_t mlr_perf_page_ring_max;
 extern volatile uint32_t mlr_perf_seek_count[MLR_NUM_TRACKS];
 extern volatile uint32_t mlr_perf_grid_frame_drops;
+extern volatile uint32_t mlr_perf_grid_event_drops;
+extern volatile uint32_t mlr_perf_grid_poll_events_last;
+extern volatile uint32_t mlr_perf_grid_poll_events_max;
+extern volatile uint32_t mlr_perf_grid_poll_backlog_last;
+extern volatile uint32_t mlr_perf_grid_poll_backlog_max;
 extern volatile uint32_t mlr_perf_rec_page_flush_count;
 extern volatile uint32_t mlr_perf_scene_save_count;
 extern volatile uint32_t mlr_perf_refill_max_us;
@@ -371,6 +386,8 @@ extern volatile uint32_t mlr_perf_flash_erase_max_us;
 extern volatile uint32_t mlr_perf_flash_program_max_us;
 void mlr_perf_reset(void);
 void mlr_perf_count_grid_frame_drop(void);
+void mlr_perf_count_mext_event_drop(void);
+void mlr_perf_note_grid_poll(uint32_t processed, uint32_t backlog_before, uint32_t backlog_after);
 void mlr_perf_count_process_sample(void);
 void mlr_perf_note_process_sample_us(uint32_t elapsed_us, bool ui_tick);
 void mlr_perf_note_ui_section_us(uint32_t section, uint32_t elapsed_us);
@@ -386,9 +403,7 @@ void     mlr_start_record(int track);
 void     mlr_record_sample(int16_t sample);  /* mono: single sample */
 void     mlr_stop_record(void);
 int16_t  mlr_play_mix(uint8_t volume);
-/* Route per-track playback to L (recorded_channel=0) or R (recorded_channel=1).
- * Used by grid mode for dual-mono output routing. */
-int16_t  mlr_play_mix_dual(uint8_t volume, int16_t *out_right);
+int16_t  mlr_play_mix_dual_255(int16_t *out_right);
 void     mlr_cut(int track, int column);
 void     mlr_cut_sample(int track, uint32_t sample_pos);
 void     mlr_stop_track(int track);

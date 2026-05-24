@@ -24,6 +24,7 @@ extern "C" {
 #include "monome_mext.h"
 #ifdef MLR_PERF_PROFILING
 void mlr_perf_count_grid_frame_drop(void);
+void mlr_perf_note_grid_poll(uint32_t processed, uint32_t backlog_before, uint32_t backlog_after);
 #endif
 }
 
@@ -63,13 +64,18 @@ public:
 	 * After calling, use keyDown()/keyUp()/keyHeld()/lastKey() to
 	 * inspect what happened this sample.
 	 */
-	void poll()
+	void poll(uint8_t max_events = 0)
 	{
 		key_down_this_sample = false;
 		key_up_this_sample   = false;
 
+#ifdef MLR_PERF_PROFILING
+		uint32_t backlog_before = mext_event_backlog();
+#endif
 		mext_event_t ev;
-		while (mext_event_pop(&ev)) {
+		uint8_t processed = 0;
+		while ((max_events == 0 || processed < max_events) && mext_event_pop(&ev)) {
+			processed++;
 			if (ev.type == MEXT_EVENT_GRID_KEY) {
 				last_event_x = ev.grid.x;
 				last_event_y = ev.grid.y;
@@ -87,6 +93,9 @@ public:
 				}
 			}
 		}
+#ifdef MLR_PERF_PROFILING
+		mlr_perf_note_grid_poll(processed, backlog_before, mext_event_backlog());
+#endif
 	}
 
 	/** True if any key was pressed down this sample. */

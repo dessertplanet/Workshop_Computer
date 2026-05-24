@@ -63,6 +63,11 @@ volatile uint32_t mlr_perf_reverse_handoff_count[MLR_NUM_TRACKS];
 volatile uint32_t mlr_perf_page_ring_max;
 volatile uint32_t mlr_perf_seek_count[MLR_NUM_TRACKS];
 volatile uint32_t mlr_perf_grid_frame_drops;
+volatile uint32_t mlr_perf_grid_event_drops;
+volatile uint32_t mlr_perf_grid_poll_events_last;
+volatile uint32_t mlr_perf_grid_poll_events_max;
+volatile uint32_t mlr_perf_grid_poll_backlog_last;
+volatile uint32_t mlr_perf_grid_poll_backlog_max;
 volatile uint32_t mlr_perf_rec_page_flush_count;
 volatile uint32_t mlr_perf_scene_save_count;
 volatile uint32_t mlr_perf_refill_max_us;
@@ -140,6 +145,11 @@ void mlr_perf_reset(void)
 	mlr_perf_page_ring_max = 0;
 	memset((void *)mlr_perf_seek_count, 0, sizeof(mlr_perf_seek_count));
 	mlr_perf_grid_frame_drops = 0;
+	mlr_perf_grid_event_drops = 0;
+	mlr_perf_grid_poll_events_last = 0;
+	mlr_perf_grid_poll_events_max = 0;
+	mlr_perf_grid_poll_backlog_last = 0;
+	mlr_perf_grid_poll_backlog_max = 0;
 	mlr_perf_rec_page_flush_count = 0;
 	mlr_perf_scene_save_count = 0;
 	mlr_perf_refill_max_us = 0;
@@ -166,6 +176,24 @@ void mlr_perf_count_grid_frame_drop(void)
 {
 	mlr_perf.grid_frame_drops++;
 	mlr_perf_grid_frame_drops++;
+}
+
+void mlr_perf_count_mext_event_drop(void)
+{
+	mlr_perf.grid_event_drops++;
+	mlr_perf_grid_event_drops++;
+}
+
+void mlr_perf_note_grid_poll(uint32_t processed, uint32_t backlog_before, uint32_t backlog_after)
+{
+	uint32_t backlog_max = backlog_before > backlog_after ? backlog_before : backlog_after;
+	mlr_perf_grid_poll_events_last = processed;
+	mlr_perf.grid_poll_backlog_last = backlog_after;
+	mlr_perf_grid_poll_backlog_last = backlog_after;
+	perf_update_max(&mlr_perf.grid_poll_events_max, processed);
+	perf_update_max(&mlr_perf_grid_poll_events_max, processed);
+	perf_update_max(&mlr_perf.grid_poll_backlog_max, backlog_max);
+	perf_update_max(&mlr_perf_grid_poll_backlog_max, backlog_max);
 }
 
 void mlr_perf_count_process_sample(void)
@@ -282,6 +310,24 @@ static uint32_t      scene_save_total_sectors = 0;
 /* ------------------------------------------------------------------ */
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
+
+#if (MLR_RING_SAMPLES & (MLR_RING_SAMPLES - 1)) != 0
+#error "MLR_RING_SAMPLES must be a power of two"
+#endif
+#define MLR_RING_MASK (MLR_RING_SAMPLES - 1u)
+
+static inline void transition_update_track_state(mlr_track_t *tr)
+{
+	uintptr_t idx = (uintptr_t)(tr - mlr_tracks);
+	uint8_t bit = idx < MLR_NUM_TRACKS ? (uint8_t)(1u << idx) : 0;
+	(void)bit;
+	uint8_t flags = 0;
+	if (tr->seek_handoff_pending) flags |= MLR_TRANS_HANDOFF;
+	if (tr->seek_xfade_active) flags |= MLR_TRANS_XFADE;
+	if (tr->fade_out_active || tr->fade_in_count > 0) flags |= MLR_TRANS_FADE;
+	if (tr->wrap_preview_ready) flags |= MLR_TRANS_WRAP;
+	tr->transition_flags = flags;
+}
 
 static inline const uint8_t *track_audio_xip(int t)
 {
@@ -409,6 +455,7 @@ static inline void reset_track_audio_state(mlr_track_t *tr)
 	tr->seek_xfade_active = false;
 	tr->seek_handoff_reverse_pending = false;
 	tr->wrap_preview_ready = false;
+	transition_update_track_state(tr);
 }
 
 static inline void begin_track_declick(mlr_track_t *tr, bool stop_after)
@@ -416,6 +463,7 @@ static inline void begin_track_declick(mlr_track_t *tr, bool stop_after)
 	tr->declick_hist_pos = tr->out_hist_pos;
 	tr->declick_count = MLR_DECLICK_SAMPLES;
 	tr->stop_pending = stop_after;
+	transition_update_track_state(tr);
 }
 
 static inline void check_seek_handoff(mlr_track_t *tr)
@@ -432,6 +480,7 @@ static inline void check_seek_handoff(mlr_track_t *tr)
 		tr->playing = true;
 		tr->seek_handoff_pending = false;
 		tr->fade_in_count = MLR_FADE_SAMPLES;
+		transition_update_track_state(tr);
 	} else if (tr->seek_handoff_pending && !tr->seek_xfade_active) {
 		tr->fade_out_active = false;
 		tr->fade_out_count = 0;
@@ -449,6 +498,7 @@ static inline void check_seek_handoff(mlr_track_t *tr)
 			}
 			tr->fade_in_count = MLR_FADE_SAMPLES;
 		}
+		transition_update_track_state(tr);
 	}
 }
 
@@ -471,6 +521,7 @@ static inline void trigger_track_fade_and_seek(mlr_track_t *tr, uint32_t target,
 	tr->seek_start_pending = start_pending;
 	__dmb();
 	tr->fill_seek_pending = true;
+	transition_update_track_state(tr);
 }
 
 static inline void maybe_start_wrap_preview_xfade(mlr_track_t *tr, uint32_t wrap_start, uint32_t wrap_end)
@@ -485,6 +536,7 @@ static inline void maybe_start_wrap_preview_xfade(mlr_track_t *tr, uint32_t wrap
 	    tr->wrap_preview_end != wrap_end ||
 	    tr->wrap_preview_speed_frac != tr->speed_frac) {
 		tr->wrap_preview_ready = false;
+		transition_update_track_state(tr);
 		return;
 	}
 
@@ -509,6 +561,7 @@ static inline void maybe_start_wrap_preview_xfade(mlr_track_t *tr, uint32_t wrap
 	}
 	tr->seek_xfade_active = true;
 	tr->wrap_preview_ready = false;
+	transition_update_track_state(tr);
 }
 
 static inline int32_t apply_seek_preview_xfade(mlr_track_t *tr, int32_t old_sample)
@@ -519,6 +572,7 @@ static inline int32_t apply_seek_preview_xfade(mlr_track_t *tr, int32_t old_samp
 	uint16_t count = tr->seek_preview_count;
 	if (count == 0 || pos >= count) {
 		tr->seek_xfade_active = false;
+		transition_update_track_state(tr);
 		return old_sample;
 	}
 
@@ -546,6 +600,7 @@ static inline int32_t apply_seek_preview_xfade(mlr_track_t *tr, int32_t old_samp
 		}
 		tr->last_pcm[0] = tr->seek_preview[count - 1u];
 		tr->interp_prev[0] = tr->last_pcm[0];
+		transition_update_track_state(tr);
 	}
 
 	return mixed;
@@ -1176,18 +1231,73 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
  * Multiple tracks on the same channel sum on that bus; the other bus stays
  * silent for those tracks. This keeps gridless mode untouched (which still
  * uses the single-output mlr_play_mix). */
-int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_right)
+static inline bool mix_track_steady_integer_dual(int t, mlr_track_t *tr, int32_t *mixL, int32_t *mixR)
+{
+	if ((tr->transition_flags & (uint8_t)~MLR_TRANS_WRAP) != 0 || !tr->playing || tr->stop_pending)
+		return false;
+	if (tr->volume_frac != tr->volume_target)
+		return false;
+	if (tr->speed_accum != 0)
+		return false;
+
+	uint32_t steps = integer_speed_steps(tr->speed_frac);
+	if (steps == 0) return false;
+
+	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
+	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+	bool no_wrap = tr->reverse
+		? (tr->playhead >= wrap_start + steps)
+		: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
+	if (!no_wrap) return false;
+
+	uint32_t pcm_r = tr->pcm.r;
+	uint32_t avail = tr->pcm.w - pcm_r;
+	if (avail < steps) return false;
+
+	PERF_NOTE_PCM_AVAIL(t, avail);
+	uint32_t ring_pos = pcm_r & MLR_RING_MASK;
+	uint32_t final_pos = (ring_pos + steps - 1u) & MLR_RING_MASK;
+	tr->interp_prev[0] = tr->last_pcm[0];
+	tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
+	tr->pcm.r = pcm_r + steps;
+	if (tr->reverse) tr->playhead -= steps;
+	else             tr->playhead += steps;
+
+	if (!tr->muted) {
+		int32_t sample_out = tr->last_pcm[0];
+		if (tr->volume_frac != 256)
+			sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
+		if (tr->recorded_channel == 1) *mixR += sample_out;
+		else                           *mixL += sample_out;
+	}
+	return true;
+}
+
+static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 {
 	int32_t mixL = 0, mixR = 0;
 
 	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 		mlr_track_t *tr = &mlr_tracks[t];
-		check_seek_handoff(tr);
-		if (!tr->has_content || (!tr->playing && !tr->stop_pending)) continue;
+		if (!tr->has_content) continue;
+		uint8_t transition_flags = tr->transition_flags;
+		if (transition_flags & MLR_TRANS_HANDOFF) {
+			check_seek_handoff(tr);
+			transition_flags = tr->transition_flags;
+		}
+		if (!tr->playing && !tr->stop_pending) continue;
+		if (transition_flags & MLR_TRANS_WRAP) {
+			uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
+			uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+			maybe_start_wrap_preview_xfade(tr, wrap_start, wrap_end);
+			transition_flags = tr->transition_flags;
+		}
+		if (mix_track_steady_integer_dual(t, tr, &mixL, &mixR)) {
+			continue;
+		}
 
 		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
-		maybe_start_wrap_preview_xfade(tr, wrap_start, wrap_end);
 		bool wrapped = false;
 		int32_t sample_out = 0;
 
@@ -1205,10 +1315,8 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 			avail = (steps > 0 && no_wrap) ? tr->pcm.w - pcm_r : 0;
 			if (avail >= steps && steps > 0) {
 				PERF_NOTE_PCM_AVAIL(t, avail);
-				ring_pos = pcm_r % MLR_RING_SAMPLES;
-				uint32_t final_pos = ring_pos + steps - 1u;
-				if (final_pos >= MLR_RING_SAMPLES)
-					final_pos -= MLR_RING_SAMPLES;
+				ring_pos = pcm_r & MLR_RING_MASK;
+				uint32_t final_pos = (ring_pos + steps - 1u) & MLR_RING_MASK;
 				tr->interp_prev[0] = tr->last_pcm[0];
 				tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
 				tr->pcm.r = pcm_r + steps;
@@ -1226,13 +1334,13 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 					if (!ring_state_loaded) {
 						avail = tr->pcm.w - pcm_r;
 						PERF_NOTE_PCM_AVAIL(t, avail);
-						ring_pos = pcm_r % MLR_RING_SAMPLES;
+						ring_pos = pcm_r & MLR_RING_MASK;
 						ring_state_loaded = true;
 					}
 					if (avail > 0) {
 						tr->interp_prev[0] = tr->last_pcm[0];
 						tr->last_pcm[0] = tr->pcm.buf[ring_pos * MLR_NUM_CHANNELS];
-						if (++ring_pos >= MLR_RING_SAMPLES) ring_pos = 0;
+						ring_pos = (ring_pos + 1u) & MLR_RING_MASK;
 						pcm_r++;
 						avail--;
 						if (tr->reverse) {
@@ -1258,6 +1366,7 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 				if (wrapped && !tr->seek_xfade_active) {
 					tr->fade_out_active = true;
 					tr->fade_out_count = MLR_FADE_SAMPLES;
+					transition_update_track_state(tr);
 				}
 
 				int16_t x0 = tr->last_pcm[0];
@@ -1268,7 +1377,7 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 					if (!ring_state_loaded) {
 						avail = tr->pcm.w - pcm_r;
 						PERF_NOTE_PCM_AVAIL(t, avail);
-						ring_pos = pcm_r % MLR_RING_SAMPLES;
+						ring_pos = pcm_r & MLR_RING_MASK;
 					}
 					int16_t x1 = x0;
 					if (avail > 0) {
@@ -1290,29 +1399,36 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 			if (tr->volume_frac < tr->volume_target)
 				tr->volume_frac = tr->volume_target;
 		}
-		sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
-		sample_out = apply_seek_preview_xfade(tr, sample_out);
+		if (tr->volume_frac != 256)
+			sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
+		if (transition_flags & MLR_TRANS_XFADE)
+			sample_out = apply_seek_preview_xfade(tr, sample_out);
+		transition_flags = tr->transition_flags;
 
-		if (tr->fade_out_active) {
+		if (transition_flags & MLR_TRANS_FADE && tr->fade_out_active) {
 			if (tr->fade_out_count > 0) {
 				tr->fade_out_count--;
 				sample_out = (sample_out * tr->fade_out_count) / MLR_FADE_SAMPLES;
 				if (tr->fade_out_count == 0 && !tr->seek_handoff_pending && tr->fill_seek_pending) {
 					sample_out = 0;
+					transition_update_track_state(tr);
 				} else if (tr->fade_out_count == 0) {
 					tr->fade_out_active = false;
 					if (tr->stop_pending) {
 						finish_pending_stop(tr);
 					} else if (!tr->fill_seek_pending) {
 						tr->fade_in_count = MLR_FADE_SAMPLES;
+						transition_update_track_state(tr);
 					}
 				}
 			} else {
 				sample_out = 0;
 			}
-		} else if (tr->fade_in_count > 0) {
+		} else if (transition_flags & MLR_TRANS_FADE && tr->fade_in_count > 0) {
 			tr->fade_in_count--;
 			sample_out = (sample_out * (MLR_FADE_SAMPLES - tr->fade_in_count)) / MLR_FADE_SAMPLES;
+			if (tr->fade_in_count == 0)
+				transition_update_track_state(tr);
 		}
 
 		if (!tr->muted) {
@@ -1321,8 +1437,16 @@ int16_t __not_in_flash_func(mlr_play_mix_dual)(uint8_t volume, int16_t *out_righ
 		}
 	}
 
-	mixL = (mixL * (int32_t)volume) >> 8;
-	mixR = (mixR * (int32_t)volume) >> 8;
+	*out_right = mixR;
+	return mixL;
+}
+
+int16_t __not_in_flash_func(mlr_play_mix_dual_255)(int16_t *out_right)
+{
+	int32_t mixR;
+	int32_t mixL = mlr_play_mix_dual_sum(&mixR);
+	mixL = (mixL * 255) >> 8;
+	mixR = (mixR * 255) >> 8;
 	if (mixL > 32767)  mixL = 32767;
 	if (mixL < -32768) mixL = -32768;
 	if (mixR > 32767)  mixR = 32767;
@@ -1381,6 +1505,7 @@ void __not_in_flash_func(mlr_stop_track)(int track)
 	tr->fade_out_active = true;
 	tr->fade_out_count = MLR_FADE_SAMPLES;
 	tr->stop_pending = true;
+	transition_update_track_state(tr);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1442,6 +1567,7 @@ void __not_in_flash_func(mlr_set_speed)(int track, int speed_shift)
 	tr->speed_accum = 0;
 	tr->fade_out_active = true;
 	tr->fade_out_count = MLR_FADE_SAMPLES;
+	transition_update_track_state(tr);
 }
 
 void __not_in_flash_func(mlr_set_speed_frac)(int track, uint16_t speed_frac)
@@ -1455,6 +1581,7 @@ void __not_in_flash_func(mlr_set_speed_frac)(int track, uint16_t speed_frac)
 	tr->speed_accum = 0;
 	tr->fade_out_active = true;
 	tr->fade_out_count = MLR_FADE_SAMPLES;
+	transition_update_track_state(tr);
 }
 
 void __not_in_flash_func(mlr_set_speed_frac_nondeclick)(int track, uint16_t speed_frac)
@@ -1482,6 +1609,7 @@ void __not_in_flash_func(mlr_set_reverse)(int track, bool reverse)
 		tr->seek_xfade_active = false;
 		tr->fill_seek_pending = false;
 		tr->wrap_preview_ready = false;
+		transition_update_track_state(tr);
 		return;
 	}
 
@@ -1491,6 +1619,7 @@ void __not_in_flash_func(mlr_set_reverse)(int track, bool reverse)
 	tr->seek_target_sample = tr->playhead;
 	__dmb();
 	tr->fill_seek_pending = true;
+	transition_update_track_state(tr);
 }
 
 void __not_in_flash_func(mlr_set_volume)(int track, int slot)
@@ -1552,6 +1681,7 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	/* schedule flash erase of header sector */
 	clear_track   = track;
 	clear_pending = true;
+	transition_update_track_state(tr);
 }
 
 bool __not_in_flash_func(mlr_rewrite_track_header)(int track)
@@ -3087,6 +3217,7 @@ static void prepare_wrap_preview(int t)
 	tr->wrap_preview_speed_frac = tr->speed_frac;
 	__dmb();
 	tr->wrap_preview_ready = (preview_count > 0);
+	transition_update_track_state(tr);
 }
 
 /** Handle a pending seek: restore decoder state from keyframe, refill. */
@@ -3155,6 +3286,7 @@ static void handle_seek(int t)
 	tr->seek_handoff_start_pending = start_pending;
 	__dmb();
 	tr->seek_handoff_pending = true;
+	transition_update_track_state(tr);
 
 	tr->seek_start_pending = false;
 #ifdef MLR_PERF_PROFILING
@@ -3217,7 +3349,7 @@ static void write_track_header(int t, bool start_playback)
 	if (start_playback) {
 		/* mark track as playable */
 		tr->has_content     = true;
-		tr->playing         = true;
+		tr->playing = true;
 		tr->playhead        = 0;
 		tr->fill_byte_pos   = 0;
 		tr->fill_high_nyb   = false;
@@ -3236,6 +3368,7 @@ static void write_track_header(int t, bool start_playback)
 		tr->speed_accum = 0;
 		reset_track_audio_state(tr);
 		tr->fade_in_count = MLR_FADE_SAMPLES;
+		transition_update_track_state(tr);
 		/* preserve reverse — only affects playback, recording always forward */
 	}
 }
