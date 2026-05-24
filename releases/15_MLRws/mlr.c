@@ -703,6 +703,16 @@ void mlr_choke_group_cut(int t, int col)
 	stop_other_group_members(t);
 }
 
+/* Choke-resume: like choke-cut but does NOT clear the track's loop.
+ * Used by REC-page play-toggle so that resuming a stopped track stays
+ * inside its previous loop boundaries. */
+void mlr_choke_group_resume(int t, int col)
+{
+	if (t < 0 || t >= MLR_NUM_TRACKS) return;
+	mlr_cut(t, col);
+	stop_other_group_members(t);
+}
+
 void mlr_choke_group_set_loop(int t, int a, int b)
 {
 	if (t < 0 || t >= MLR_NUM_TRACKS) return;

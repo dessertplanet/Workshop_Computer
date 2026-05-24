@@ -1979,7 +1979,7 @@ private:
 		int start_col = mlr_tracks[t].reverse ? (MLR_GRID_COLS - 1) : 0;
 		if (mlr_tracks[t].loop_active)
 			start_col = mlr_tracks[t].reverse ? mlr_tracks[t].loop_col_end : mlr_tracks[t].loop_col_start;
-		mlr_choke_group_cut(t, start_col);
+		mlr_choke_group_resume(t, start_col);
 		dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)start_col, 0);
 	}
 

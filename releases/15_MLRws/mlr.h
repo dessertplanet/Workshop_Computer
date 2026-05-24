@@ -435,6 +435,7 @@ void     mlr_leave_group(int track);            /* remove track from its group *
  * behavior depending on how the grouped tracks were started. */
 void     mlr_group_stop_track(int track);
 void     mlr_choke_group_cut(int track, int column);
+void     mlr_choke_group_resume(int track, int column);
 void     mlr_choke_group_set_loop(int track, int col_start, int col_end);
 
 /* ---- Pattern engine (core 0) ---- */
