@@ -10,5 +10,4 @@ Description: Playable generative rhythm and melody organism inspired by Pet Rock
 Language: C++
 Creator: Adrian Vos with Vibecode support
 Version: 0.9
-Status: WIP but useable
-Currently working on MIDI integration
+Status: WIP but useable. Currently working on MIDI integration
