@@ -68,6 +68,9 @@ extern "C" {
 #define DELETE_RESET_FLASH_PERIOD_SAMPLES 4800u  /* 100 ms half-period */
 #define DELETE_RESET_FLASH_SAMPLES (DELETE_RESET_FLASH_PERIOD_SAMPLES * 6u)  /* three quick flashes */
 
+/* Monitor fade step per sample (Q8). 256/4 = 64 samples ≈ 1.3 ms fade. */
+#define MLR_MON_FADE_STEP 4
+
 /* ------------------------------------------------------------------ */
 /* Pages                                                              */
 /* ------------------------------------------------------------------ */
@@ -508,7 +511,10 @@ public:
 		{
 			int audio_in1 = (int)AudioIn1();
 			int audio_in2 = (int)AudioIn2();
-			uint8_t rec_ch = 0;
+			/* Default to the last-known monitor channel so a disarm during
+			 * monitor fade-out doesn't flip dry_in between AudioIn1/AudioIn2
+			 * in a single sample (which would click through the envelope). */
+			uint8_t rec_ch = mon_ch_last_;
 			int route_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
 			if (route_track >= 0) rec_ch = mlr_tracks[route_track].recorded_channel;
 			dry_in = (rec_ch == 1) ? (int16_t)audio_in2 : (int16_t)audio_in1;
@@ -665,22 +671,28 @@ public:
 		int32_t outL = (int32_t)mix;
 		int32_t outR = (int32_t)mix_r;
 		if (dry_level > 0 && (rec_armed_track >= 0 || sw == Switch::Up)) {
-			/* Dry monitor: sum the live input straight into the mix.
-			 * No ADPCM round-trip — the codec preview was inconsistent at
-			 * low signal levels (4-bit quantization steps + persistent
-			 * predictor state) and isn't a faithful representation of the
-			 * actual recording anyway. */
-			uint16_t mon_vol = 256;
-			uint8_t mon_ch  = 0;
+			/* Latch channel/volume while the monitor is active so the
+			 * fade-out tail keeps using the right routing/gain after the
+			 * armed track or switch state changes. */
 			int mon_track = (mlr_rec_track >= 0) ? mlr_rec_track : rec_armed_track;
 			if (mon_track >= 0) {
-				mon_vol = mlr_tracks[mon_track].volume_frac;
-				mon_ch  = mlr_tracks[mon_track].recorded_channel;
+				mon_vol_last_ = mlr_tracks[mon_track].volume_frac;
+				mon_ch_last_  = mlr_tracks[mon_track].recorded_channel;
 			}
+			uint16_t next = (uint16_t)(mon_fade_frac_ + MLR_MON_FADE_STEP);
+			mon_fade_frac_ = (next > 256u) ? 256u : next;
+		} else if (mon_fade_frac_ > 0) {
+			mon_fade_frac_ = (mon_fade_frac_ <= MLR_MON_FADE_STEP)
+				? 0u
+				: (uint16_t)(mon_fade_frac_ - MLR_MON_FADE_STEP);
+		}
+
+		if (mon_fade_frac_ > 0) {
 			int32_t in_scaled = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
-			in_scaled = (in_scaled * (int32_t)mon_vol) >> 8;
-			if (mon_ch == 1) outR += in_scaled;
-			else             outL += in_scaled;
+			in_scaled = (in_scaled * (int32_t)mon_vol_last_) >> 8;
+			in_scaled = (in_scaled * (int32_t)mon_fade_frac_) >> 8;
+			if (mon_ch_last_ == 1) outR += in_scaled;
+			else                   outL += in_scaled;
 		}
 		outL = (outL * (int32_t)master_level) >> 8;
 		outR = (outR * (int32_t)master_level) >> 8;
@@ -868,6 +880,9 @@ private:
 	uint32_t   delete_reset_hold_samples_ = 0;    /* continuous DELETE hold duration */
 	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
 	bool       delete_reset_fired_ = false;       /* require DELETE release before another reset */
+	uint16_t   mon_fade_frac_ = 0;   /* monitor fade-in envelope, 0..256 */
+	uint16_t   mon_vol_last_  = 256; /* last-known armed/rec track volume_frac */
+	uint8_t    mon_ch_last_   = 0;   /* last-known armed/rec track recorded_channel */
 	inline static Mode s_mode_ = Mode::HostMLR;
 
 	/* Cross-core volatile state for DeviceGridless ↔ DeviceSampleMgr transitions.
@@ -1728,7 +1743,7 @@ private:
 		if (track < 0 || track >= MLR_NUM_TRACKS) return;
 		channel &= 0x01;
 		bool changed = (mlr_tracks[track].recorded_channel != channel);
-		mlr_tracks[track].recorded_channel    = channel;
+		mlr_set_recorded_channel(track, channel);
 		mlr_tracks[track].channel_user_chosen = true;
 		if (changed && persist_existing && mlr_tracks[track].has_content)
 			mlr_rewrite_track_header(track);

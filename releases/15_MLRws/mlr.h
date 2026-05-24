@@ -305,6 +305,9 @@ typedef struct {
 	uint8_t        pan_class;            /* Reserved; kept for flash header compatibility. */
 	bool           channel_user_chosen;  /* RAM-only: true once the user has explicitly picked
 	                                      * a channel on the grid; suppresses auto-detect override */
+	uint8_t        pending_channel;      /* RAM-only: target channel queued behind a fade-out. */
+	bool           channel_swap_pending; /* RAM-only: when true, fade-out completion applies
+	                                      * pending_channel before starting fade-in. */
 
 	/* keyframes (copied to RAM at boot) */
 	uint32_t          num_keyframes;
@@ -436,6 +439,7 @@ void     mlr_leave_group(int track);            /* remove track from its group *
 void     mlr_group_stop_track(int track);
 void     mlr_choke_group_cut(int track, int column);
 void     mlr_choke_group_resume(int track, int column);
+void     mlr_set_recorded_channel(int track, uint8_t channel);
 void     mlr_choke_group_set_loop(int track, int col_start, int col_end);
 
 /* ---- Pattern engine (core 0) ---- */

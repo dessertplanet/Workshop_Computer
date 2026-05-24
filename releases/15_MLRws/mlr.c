@@ -713,6 +713,33 @@ void mlr_choke_group_resume(int t, int col)
 	stop_other_group_members(t);
 }
 
+/* Smoothly swap a track's output channel. If the track is currently
+ * playing, queues a fade-out → swap → fade-in around the change to
+ * avoid the click that would otherwise occur from re-routing the active
+ * sample stream between mixL and mixR. Stopped tracks change instantly. */
+void __not_in_flash_func(mlr_set_recorded_channel)(int track, uint8_t channel)
+{
+	if (track < 0 || track >= MLR_NUM_TRACKS) return;
+	channel &= 0x01;
+	mlr_track_t *tr = &mlr_tracks[track];
+
+	if (!tr->has_content || !tr->playing || tr->stop_pending) {
+		tr->recorded_channel = channel;
+		tr->channel_swap_pending = false;
+		return;
+	}
+
+	if (tr->recorded_channel == channel && !tr->channel_swap_pending) {
+		return;
+	}
+
+	tr->pending_channel = channel;
+	tr->channel_swap_pending = true;
+	tr->fade_out_active = true;
+	tr->fade_out_count = MLR_FADE_SAMPLES;
+	transition_update_track_state(tr);
+}
+
 void mlr_choke_group_set_loop(int t, int a, int b)
 {
 	if (t < 0 || t >= MLR_NUM_TRACKS) return;
@@ -1398,6 +1425,10 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 					if (tr->stop_pending) {
 						finish_pending_stop(tr);
 					} else if (!tr->fill_seek_pending) {
+						if (tr->channel_swap_pending) {
+							tr->recorded_channel = tr->pending_channel;
+							tr->channel_swap_pending = false;
+						}
 						tr->fade_in_count = MLR_FADE_SAMPLES;
 						transition_update_track_state(tr);
 					}
