@@ -643,20 +643,23 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	static volatile int32_t cvsm[2] = { 0, 0 };
 	__attribute__((unused)) static int np = 0, np1 = 0, np2 = 0;
 
-	// ADC mux-alignment guard: when the DMA-driven round-robin loses
-	// sync, leftover samples remain in the ADC FIFO at the moment
-	// BufferFull is entered. Drain the FIFO and re-arm the round-robin
-	// so subsequent samples come from the expected ADC channels.
-	// Threshold > 2 because the FIFO normally carries 1–2 samples in
-	// transit between DMA completion and reconfiguration; a true
-	// misalignment shows up as deeper backlog.
-	if (adc_fifo_get_level() > 2)
+	// ADC mux-alignment guard. A nonzero adc_fifo_get_level() at IRQ
+	// entry just means BufferFull was late — the DMA will drain those
+	// queued samples in order when re-armed and round-robin alignment
+	// is preserved. The only condition that actually corrupts mux
+	// alignment is FIFO overflow: when the FIFO reached its 4-entry
+	// limit before the DMA could read, the ADC dropped one or more
+	// samples and the channel sequence in the resulting buffer is
+	// shifted. ADC_FCS_OVER is the hardware sticky flag for that.
+	// Recover only on overflow; clear the flag afterwards.
+	if (adc_hw->fcs & ADC_FCS_OVER_BITS)
 	{
 		adc_run(false);
 		adc_fifo_drain();
 		adc_select_input(0);
 		adc_set_round_robin(0);
 		adc_set_round_robin(0b0001111U);
+		adc_hw->fcs = ADC_FCS_OVER_BITS;   // W1C: writing 1 clears the sticky flag
 		adc_run(true);
 	}
 
