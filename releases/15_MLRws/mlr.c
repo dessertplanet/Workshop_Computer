@@ -660,31 +660,20 @@ void mlr_leave_group(int t)
 }
 
 /* ------------------------------------------------------------------ */
-/* Group-broadcast wrappers — apply an action to every member of the  */
-/* group containing track t, using each member's own state where the  */
-/* operation is naturally per-track (e.g. lengths in mlr_cut).        */
-/* Forward declarations of the single-track engine ops follow below.  */
+/* Choke-group helpers — apply an action to track t and stop the other */
+/* members of its group. The group can host at most one playing track  */
+/* at a time. mlr_group_stop_track() stops every member of the group   */
+/* (cheap no-op for members that are already stopped under choke).     */
+/* Forward decls of the single-track engine ops follow below.          */
 /* ------------------------------------------------------------------ */
 
 void mlr_cut(int track, int column);
 void mlr_stop_track(int track);
 void mlr_set_loop(int track, int col_start, int col_end);
 void mlr_clear_loop(int track);
-void mlr_set_speed(int track, int speed_shift);
-void mlr_set_reverse(int track, bool reverse);
-void mlr_set_volume(int track, int slot);
 
-/* Use volatile function pointers to force real calls and stop the compiler
- * from inlining/unrolling 6 copies of mlr_cut/etc. into each wrapper. */
-void mlr_group_cut(int t, int col)
-{
-	if (t < 0 || t >= MLR_NUM_TRACKS) return;
-	void (*volatile fn)(int, int) = mlr_cut;
-	uint8_t mask = mlr_track_groups[t];
-	for (int u = 0; u < MLR_NUM_TRACKS; u++)
-		if (mask & (1u << u)) fn(u, col);
-}
-
+/* Volatile function pointer prevents the compiler from inlining 6 copies
+ * of mlr_stop_track into mlr_group_stop_track / stop_other_group_members. */
 void mlr_group_stop_track(int t)
 {
 	if (t < 0 || t >= MLR_NUM_TRACKS) return;
@@ -692,51 +681,6 @@ void mlr_group_stop_track(int t)
 	uint8_t mask = mlr_track_groups[t];
 	for (int u = 0; u < MLR_NUM_TRACKS; u++)
 		if (mask & (1u << u)) fn(u);
-}
-
-void mlr_group_set_loop(int t, int a, int b)
-{
-	if (t < 0 || t >= MLR_NUM_TRACKS) return;
-	void (*volatile fn)(int, int, int) = mlr_set_loop;
-	uint8_t mask = mlr_track_groups[t];
-	for (int u = 0; u < MLR_NUM_TRACKS; u++)
-		if (mask & (1u << u)) fn(u, a, b);
-}
-
-void mlr_group_clear_loop(int t)
-{
-	if (t < 0 || t >= MLR_NUM_TRACKS) return;
-	void (*volatile fn)(int) = mlr_clear_loop;
-	uint8_t mask = mlr_track_groups[t];
-	for (int u = 0; u < MLR_NUM_TRACKS; u++)
-		if (mask & (1u << u)) fn(u);
-}
-
-void mlr_group_set_speed(int t, int speed_shift)
-{
-	if (t < 0 || t >= MLR_NUM_TRACKS) return;
-	void (*volatile fn)(int, int) = mlr_set_speed;
-	uint8_t mask = mlr_track_groups[t];
-	for (int u = 0; u < MLR_NUM_TRACKS; u++)
-		if (mask & (1u << u)) fn(u, speed_shift);
-}
-
-void mlr_group_set_reverse(int t, bool reverse)
-{
-	if (t < 0 || t >= MLR_NUM_TRACKS) return;
-	void (*volatile fn)(int, bool) = mlr_set_reverse;
-	uint8_t mask = mlr_track_groups[t];
-	for (int u = 0; u < MLR_NUM_TRACKS; u++)
-		if (mask & (1u << u)) fn(u, reverse);
-}
-
-void mlr_group_set_volume(int t, int slot)
-{
-	if (t < 0 || t >= MLR_NUM_TRACKS) return;
-	void (*volatile fn)(int, int) = mlr_set_volume;
-	uint8_t mask = mlr_track_groups[t];
-	for (int u = 0; u < MLR_NUM_TRACKS; u++)
-		if (mask & (1u << u)) fn(u, slot);
 }
 
 static void stop_other_group_members(int t)
@@ -1792,31 +1736,36 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 		mlr_choke_group_cut(e->track, e->param_a);
 		break;
 	case MLR_EVT_GROUP_CUT:
-		mlr_group_cut(e->track, e->param_a);
+		/* legacy event — group-broadcast mode was removed; behave like a
+		 * regular choke cut so previously saved patterns still work. */
+		mlr_choke_group_cut(e->track, e->param_a);
 		break;
 	case MLR_EVT_STOP:
 		mlr_group_stop_track(e->track);
 		break;
 	case MLR_EVT_START:
-		mlr_group_cut(e->track, 0);  /* start from beginning */
+		mlr_choke_group_cut(e->track, 0);  /* start from beginning, choke siblings */
 		break;
 	case MLR_EVT_SPEED:
 		mlr_set_speed(e->track, e->param_a);
 		break;
 	case MLR_EVT_GROUP_SPEED:
-		mlr_group_set_speed(e->track, e->param_a);
+		/* legacy event — group-broadcast removed; apply to single track. */
+		mlr_set_speed(e->track, e->param_a);
 		break;
 	case MLR_EVT_REVERSE:
 		mlr_set_reverse(e->track, e->param_a != 0);
 		break;
 	case MLR_EVT_GROUP_REVERSE:
-		mlr_group_set_reverse(e->track, e->param_a != 0);
+		/* legacy event — group-broadcast removed; apply to single track. */
+		mlr_set_reverse(e->track, e->param_a != 0);
 		break;
 	case MLR_EVT_LOOP:
 		mlr_choke_group_set_loop(e->track, e->param_a, e->param_b);
 		break;
 	case MLR_EVT_GROUP_LOOP:
-		mlr_group_set_loop(e->track, e->param_a, e->param_b);
+		/* legacy event — group-broadcast removed; behave like a choke loop. */
+		mlr_choke_group_set_loop(e->track, e->param_a, e->param_b);
 		break;
 	case MLR_EVT_LOOP_CLR:
 		mlr_clear_loop(e->track);
@@ -1825,7 +1774,8 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 		mlr_set_volume(e->track, e->param_a);
 		break;
 	case MLR_EVT_GROUP_VOLUME:
-		mlr_group_set_volume(e->track, e->param_a);
+		/* legacy event — group-broadcast removed; apply to single track. */
+		mlr_set_volume(e->track, e->param_a);
 		break;
 	case MLR_EVT_PAT_PLAY:
 		if (e->track < MLR_NUM_PATTERNS &&

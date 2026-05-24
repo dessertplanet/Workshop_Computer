@@ -868,7 +868,6 @@ private:
 	uint32_t   delete_reset_hold_samples_ = 0;    /* continuous DELETE hold duration */
 	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
 	bool       delete_reset_fired_ = false;       /* require DELETE release before another reset */
-	bool       group_started_from_rec_[MLR_NUM_TRACKS] = {};  /* group play-toggle provenance */
 	inline static Mode s_mode_ = Mode::HostMLR;
 
 	/* Cross-core volatile state for DeviceGridless ↔ DeviceSampleMgr transitions.
@@ -1720,7 +1719,6 @@ private:
 			play_col_armed[t] = false;
 			play_col_hold_time[t] = 0;
 			gate_entered[t] = false;
-			group_started_from_rec_[t] = false;
 			release_gated_choke_pauses(t);
 		}
 
@@ -1817,10 +1815,6 @@ private:
 			if (new_mask & (1u << u))
 				mlr_track_groups[u] = new_mask;
 		}
-		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
-			if (new_mask & (1u << u))
-				group_started_from_rec_[u] = false;
-		}
 		mlr_scene_save_start();
 	}
 
@@ -1833,7 +1827,6 @@ private:
 		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
 			if (old & (1u << u)) {
 				mlr_track_groups[u] = (uint8_t)(1u << u);
-				group_started_from_rec_[u] = false;
 			}
 		}
 		return old;
@@ -1918,86 +1911,51 @@ private:
 		}
 	}
 
-	/* --- Group-aware action helpers. Play-column actions broadcast through
-	 *     the group. REC-origin playback keeps phase-linked groups together by
-	 *     broadcasting CUT-page cuts/loops and REC-page parameters. --- */
-
-	bool __not_in_flash("group_cut_should_broadcast") group_cut_should_broadcast(int t) const
-	{
-		if (t < 0 || t >= MLR_NUM_TRACKS) return false;
-		uint8_t mask = mlr_track_groups[t];
-		if (mask == (uint8_t)(1u << t)) return false;
-		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
-			if ((mask & (1u << u)) && !group_started_from_rec_[u])
-				return false;
-		}
-		return true;
-	}
+	/* --- Group-aware action helpers. Grouped tracks behave as a single
+	 *     choke voice: starting one track stops all other members of its
+	 *     group. Parameter changes (speed/reverse/volume) and loops apply
+	 *     only to the tapped track — there is no in-sync broadcast mode. */
 
 	void __not_in_flash("group_cut") group_cut(int t, int col)
 	{
-		if (group_cut_should_broadcast(t)) {
-			mlr_group_clear_loop(t);
-			mlr_group_cut(t, col);
-			dispatch_event(MLR_EVT_GROUP_CUT, (uint8_t)t, (int8_t)col, 0);
-		} else if (mlr_gate_mode[t]) {
+		if (mlr_gate_mode[t]) {
 			mlr_clear_loop(t);
 			mlr_cut(t, col);
 			pause_other_group_members_for_gate(t);
-			dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)col, 0);
 		} else {
 			mlr_choke_group_cut(t, col);
-			dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)col, 0);
 		}
+		dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)col, 0);
 	}
 
 	void __not_in_flash("group_set_loop") group_set_loop(int t, int a, int b)
 	{
 		if (!mlr_tracks[t].has_content) return;
-		if (group_cut_should_broadcast(t)) {
-			mlr_group_set_loop(t, a, b);
-			dispatch_event(MLR_EVT_GROUP_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
-		} else if (mlr_gate_mode[t]) {
+		if (mlr_gate_mode[t]) {
 			mlr_set_loop(t, a, b);
 			pause_other_group_members_for_gate(t);
-			dispatch_event(MLR_EVT_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
 		} else {
 			mlr_choke_group_set_loop(t, a, b);
-			dispatch_event(MLR_EVT_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
 		}
+		dispatch_event(MLR_EVT_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
 	}
 
 	void __not_in_flash("group_set_speed") group_set_speed(int t, int speed)
 	{
-		if (group_cut_should_broadcast(t)) {
-			mlr_group_set_speed(t, speed);
-			dispatch_event(MLR_EVT_GROUP_SPEED, (uint8_t)t, (int8_t)speed, 0);
-		} else {
-			mlr_set_speed(t, speed);
-			dispatch_event(MLR_EVT_SPEED, (uint8_t)t, (int8_t)speed, 0);
-		}
+		mlr_set_speed(t, speed);
+		dispatch_event(MLR_EVT_SPEED, (uint8_t)t, (int8_t)speed, 0);
 	}
 
 	void __not_in_flash("group_set_reverse") group_set_reverse(int t, bool reverse)
 	{
-		if (group_cut_should_broadcast(t)) {
-			mlr_group_set_reverse(t, reverse);
-			dispatch_event(MLR_EVT_GROUP_REVERSE, (uint8_t)t, reverse ? 1 : 0, 0);
-		} else {
-			mlr_set_reverse(t, reverse);
-			dispatch_event(MLR_EVT_REVERSE, (uint8_t)t, reverse ? 1 : 0, 0);
-		}
+		mlr_set_reverse(t, reverse);
+		dispatch_event(MLR_EVT_REVERSE, (uint8_t)t, reverse ? 1 : 0, 0);
 	}
 
 	void __not_in_flash("group_set_volume") group_set_volume(int t, int slot)
 	{
-		if (group_cut_should_broadcast(t)) {
-			mlr_group_set_volume(t, slot);
-			dispatch_event(MLR_EVT_GROUP_VOLUME, (uint8_t)t, (int8_t)slot, 0);
-		} else {
-			mlr_set_volume(t, slot);
-			dispatch_event(MLR_EVT_VOLUME, (uint8_t)t, (int8_t)slot, 0);
-		}
+		mlr_set_volume(t, slot);
+		dispatch_event(MLR_EVT_VOLUME, (uint8_t)t, (int8_t)slot, 0);
 	}
 
 	void __not_in_flash("group_stop_track") group_stop_track(int t)
@@ -2007,17 +1965,15 @@ private:
 		for (int u = 0; u < MLR_NUM_TRACKS; u++) {
 			if ((mask & (1u << u)) && mlr_tracks[u].playing) { any_was_playing = true; break; }
 		}
-		for (int u = 0; u < MLR_NUM_TRACKS; u++)
-			if (mask & (1u << u)) group_started_from_rec_[u] = false;
 		mlr_group_stop_track(t);
 		if (any_was_playing)
 			dispatch_event(MLR_EVT_STOP, (uint8_t)t, 0, 0);
 	}
 
-	/* Snap all group members to a single play/pause state. If any member is
-	 * currently playing, the play column stops the group; otherwise it starts
-	 * all playable members from their own loop_col_start (or 0). */
-	void __not_in_flash("group_play_toggle") group_play_toggle(int t, int source_page)
+	/* Toggle a single tapped track in choke mode: if any group member is
+	 * playing, stop the group; otherwise start only the tapped track from
+	 * its loop_col_start (or 0) and choke any stragglers. */
+	void __not_in_flash("group_play_toggle") group_play_toggle(int t)
 	{
 		uint8_t mask = mlr_track_groups[t];
 		bool any_playing = false;
@@ -2027,27 +1983,22 @@ private:
 				break;
 			}
 		}
-		bool target_start = !any_playing;
-		if (target_start) {
-			bool rec_origin = (source_page == PAGE_REC);
-			for (int u = 0; u < MLR_NUM_TRACKS; u++) {
-				if (!(mask & (1u << u))) continue;
-				group_started_from_rec_[u] = rec_origin;
-				if (!mlr_tracks[u].has_content || mlr_tracks[u].playing) continue;
-				if (rec_armed_track == u) {
-					rec_armed_track = -1;
-					if (resume_after_arm_track_ == u) resume_after_arm_track_ = -1;
-					rec_limit_latched = false;
-				}
-				int start_col = mlr_tracks[u].reverse ? (MLR_GRID_COLS - 1) : 0;
-				if (mlr_tracks[u].loop_active)
-					start_col = mlr_tracks[u].reverse ? mlr_tracks[u].loop_col_end : mlr_tracks[u].loop_col_start;
-				mlr_cut(u, start_col);  /* single-track call — no re-broadcast */
-			}
-			dispatch_event(MLR_EVT_START, (uint8_t)t, 0, 0);
-		} else {
+		if (any_playing) {
 			group_stop_track(t);
+			return;
 		}
+
+		if (!mlr_tracks[t].has_content) return;
+		if (rec_armed_track == t) {
+			rec_armed_track = -1;
+			if (resume_after_arm_track_ == t) resume_after_arm_track_ = -1;
+			rec_limit_latched = false;
+		}
+		int start_col = mlr_tracks[t].reverse ? (MLR_GRID_COLS - 1) : 0;
+		if (mlr_tracks[t].loop_active)
+			start_col = mlr_tracks[t].reverse ? mlr_tracks[t].loop_col_end : mlr_tracks[t].loop_col_start;
+		mlr_choke_group_cut(t, start_col);
+		dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)start_col, 0);
 	}
 
 	/* Gate mode is per-track even when tracks are grouped; only play toggles
@@ -2055,7 +2006,6 @@ private:
 	void __not_in_flash("set_gate_mode") set_gate_mode(int t, bool on)
 	{
 		if (t < 0 || t >= MLR_NUM_TRACKS) return;
-		group_started_from_rec_[t] = false;
 		mlr_gate_mode[t] = on;
 		if (on)
 			mlr_stop_track(t);
@@ -2258,7 +2208,7 @@ private:
 					mlr_stop_track(track);
 				} else {
 					/* Normal play/stop toggle, state-synced across group. */
-					group_play_toggle(track, play_page);
+					group_play_toggle(track);
 				}
 			}
 		}
@@ -2371,9 +2321,6 @@ private:
 
 			if (alt_held) {
 				if (mlr_tracks[track].playing) {
-					uint8_t mask = mlr_track_groups[track];
-					for (int u = 0; u < MLR_NUM_TRACKS; u++)
-						if (mask & (1u << u)) group_started_from_rec_[u] = false;
 					mlr_stop_track(track);
 				}
 				return;
