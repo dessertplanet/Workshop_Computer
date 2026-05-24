@@ -1163,19 +1163,22 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 			}
 
 		/* apply per-track volume (slew toward target to avoid clicks) */
-		if (tr->volume_frac < tr->volume_target) {
-			tr->volume_frac += 4;
-			if (tr->volume_frac > tr->volume_target)
-				tr->volume_frac = tr->volume_target;
-		} else if (tr->volume_frac > tr->volume_target) {
-			if (tr->volume_frac < 4)
-				tr->volume_frac = tr->volume_target;
-			else
-				tr->volume_frac -= 4;
-			if (tr->volume_frac < tr->volume_target)
-				tr->volume_frac = tr->volume_target;
+		if (tr->volume_frac != tr->volume_target) {
+			if (tr->volume_frac < tr->volume_target) {
+				tr->volume_frac += 4;
+				if (tr->volume_frac > tr->volume_target)
+					tr->volume_frac = tr->volume_target;
+			} else {
+				if (tr->volume_frac < 4)
+					tr->volume_frac = tr->volume_target;
+				else
+					tr->volume_frac -= 4;
+				if (tr->volume_frac < tr->volume_target)
+					tr->volume_frac = tr->volume_target;
+			}
 		}
-		sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
+		if (tr->volume_frac != 256)
+			sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
 		sample_out = apply_seek_preview_xfade(tr, sample_out);
 		
 		if (tr->fade_out_active) {
@@ -1393,17 +1396,19 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 				}
 			}
 
-		if (tr->volume_frac < tr->volume_target) {
-			tr->volume_frac += 4;
-			if (tr->volume_frac > tr->volume_target)
-				tr->volume_frac = tr->volume_target;
-		} else if (tr->volume_frac > tr->volume_target) {
-			if (tr->volume_frac < 4)
-				tr->volume_frac = tr->volume_target;
-			else
-				tr->volume_frac -= 4;
-			if (tr->volume_frac < tr->volume_target)
-				tr->volume_frac = tr->volume_target;
+		if (tr->volume_frac != tr->volume_target) {
+			if (tr->volume_frac < tr->volume_target) {
+				tr->volume_frac += 4;
+				if (tr->volume_frac > tr->volume_target)
+					tr->volume_frac = tr->volume_target;
+			} else {
+				if (tr->volume_frac < 4)
+					tr->volume_frac = tr->volume_target;
+				else
+					tr->volume_frac -= 4;
+				if (tr->volume_frac < tr->volume_target)
+					tr->volume_frac = tr->volume_target;
+			}
 		}
 		if (tr->volume_frac != 256)
 			sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
@@ -1413,34 +1418,36 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 		 * fade_in_count, so the snapshotted transition_flags above still
 		 * describes the FADE state accurately. Skip the volatile re-read. */
 
-		if ((transition_flags & MLR_TRANS_FADE) && tr->fade_out_active) {
-			if (tr->fade_out_count > 0) {
-				tr->fade_out_count--;
-				sample_out = (sample_out * tr->fade_out_count) / MLR_FADE_SAMPLES;
-				if (tr->fade_out_count == 0 && !tr->seek_handoff_pending && tr->fill_seek_pending) {
-					sample_out = 0;
-					transition_update_track_state(tr);
-				} else if (tr->fade_out_count == 0) {
-					tr->fade_out_active = false;
-					if (tr->stop_pending) {
-						finish_pending_stop(tr);
-					} else if (!tr->fill_seek_pending) {
-						if (tr->channel_swap_pending) {
-							tr->recorded_channel = tr->pending_channel;
-							tr->channel_swap_pending = false;
-						}
-						tr->fade_in_count = MLR_FADE_SAMPLES;
+		if (transition_flags & MLR_TRANS_FADE) {
+			if (tr->fade_out_active) {
+				if (tr->fade_out_count > 0) {
+					tr->fade_out_count--;
+					sample_out = (sample_out * tr->fade_out_count) / MLR_FADE_SAMPLES;
+					if (tr->fade_out_count == 0 && !tr->seek_handoff_pending && tr->fill_seek_pending) {
+						sample_out = 0;
 						transition_update_track_state(tr);
+					} else if (tr->fade_out_count == 0) {
+						tr->fade_out_active = false;
+						if (tr->stop_pending) {
+							finish_pending_stop(tr);
+						} else if (!tr->fill_seek_pending) {
+							if (tr->channel_swap_pending) {
+								tr->recorded_channel = tr->pending_channel;
+								tr->channel_swap_pending = false;
+							}
+							tr->fade_in_count = MLR_FADE_SAMPLES;
+							transition_update_track_state(tr);
+						}
 					}
+				} else {
+					sample_out = 0;
 				}
-			} else {
-				sample_out = 0;
+			} else if (tr->fade_in_count > 0) {
+				tr->fade_in_count--;
+				sample_out = (sample_out * (MLR_FADE_SAMPLES - tr->fade_in_count)) / MLR_FADE_SAMPLES;
+				if (tr->fade_in_count == 0)
+					transition_update_track_state(tr);
 			}
-		} else if ((transition_flags & MLR_TRANS_FADE) && tr->fade_in_count > 0) {
-			tr->fade_in_count--;
-			sample_out = (sample_out * (MLR_FADE_SAMPLES - tr->fade_in_count)) / MLR_FADE_SAMPLES;
-			if (tr->fade_in_count == 0)
-				transition_update_track_state(tr);
 		}
 
 		if (!tr->muted) {

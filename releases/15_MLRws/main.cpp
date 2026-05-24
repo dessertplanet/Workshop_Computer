@@ -844,6 +844,7 @@ private:
 	bool       was_flushing_ = false; /* edge detect for flush completion */
 	uint32_t   play_col_hold_time[MLR_NUM_TRACKS] = {};  /* sample counter for play-col hold */
 	bool       play_col_armed[MLR_NUM_TRACKS] = {};  /* true while play-col is held */
+	uint8_t    armed_mask_ = 0;                       /* bit t set iff play_col_armed[t] */
 	bool       gate_entered[MLR_NUM_TRACKS] = {}; /* true once hold crossed threshold */
 	bool       small_grid_ = false;  /* true when connected grid is 8x8 or smaller */
 	bool       grid_size_latched_ = false;  /* true once grid size has been detected */
@@ -1721,6 +1722,7 @@ private:
 			gate_entered[t] = false;
 			release_gated_choke_pauses(t);
 		}
+		armed_mask_ = 0;
 
 		delete_reset_flash_samples_remaining_ = DELETE_RESET_FLASH_SAMPLES;
 		delete_reset_fired_ = true;
@@ -1853,6 +1855,7 @@ private:
 			gate_entered[u] = false;
 			release_gated_choke_pauses(u);
 		}
+		armed_mask_ &= (uint8_t)~old_mask;
 		return true;
 	}
 
@@ -2090,13 +2093,21 @@ private:
 	void __not_in_flash("process_gate_hold") process_gate_hold()
 	{
 		int pc = play_col();
+
+		/* Fast path: skip the whole function when nothing relevant is
+		 * happening this sample. This is the common state (no play-col
+		 * keys held, no armed timers, no multi-hold gesture in progress)
+		 * and keeps the REC-page UI tick close to CUT-page cost. */
+		bool any_event = grid.keyDown() || grid.keyUp();
+		uint16_t col_mask_raw = grid.heldColMask((uint8_t)pc);
+		uint8_t held_now = (uint8_t)((col_mask_raw >> 1) & ((1u << MLR_NUM_TRACKS) - 1u));
+		if (!any_event && held_now == 0 && group_gesture_mask_ == 0 && armed_mask_ == 0)
+			return;
+
 		bool alt_held = delete_action_held();
 
 		/* Snapshot of which play-col keys are currently held. Empty tracks
 		 * may be tapped normally, but they are not eligible for grouping. */
-		/* heldColMask(pc) bit y = held at (pc, y); tracks live on rows 1..N. */
-		uint16_t col_mask = grid.heldColMask((uint8_t)pc);
-		uint8_t held_now = (uint8_t)((col_mask >> 1) & ((1u << MLR_NUM_TRACKS) - 1u));
 		uint8_t groupable_held = 0;
 		{
 			uint8_t m = held_now;
@@ -2119,13 +2130,15 @@ private:
 				group_gesture_committed_ = false;
 			}
 			group_gesture_mask_ |= groupable_held;
-			for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-				if (held_now & (1u << t)) {
-					play_col_armed[t] = false;
-					play_col_hold_time[t] = 0;
-					gate_entered[t] = false;
-				}
+			uint8_t m = held_now;
+			while (m) {
+				int t = __builtin_ctz(m);
+				play_col_armed[t] = false;
+				play_col_hold_time[t] = 0;
+				gate_entered[t] = false;
+				m &= (uint8_t)(m - 1);
 			}
+			armed_mask_ &= (uint8_t)~held_now;
 		}
 
 		/* Arm on key-down of play col on any track row (single-hold path). */
@@ -2135,20 +2148,24 @@ private:
 				play_col_armed[track] = true;
 				play_col_hold_time[track] = 0;
 				gate_entered[track] = false;
+				armed_mask_ |= (uint8_t)(1u << track);
 			}
 		}
 
-		/* Increment hold counters and enter gate mode at threshold (only
-		 * for tracks not part of a multi-hold gesture). */
-		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-			if (group_gesture_mask_ & (1u << t)) continue;
-			if (play_col_armed[t]) {
+		/* Increment hold counters and enter gate mode at threshold. Walk
+		 * only the armed tracks; mask out any that are now part of a
+		 * multi-hold gesture. */
+		{
+			uint8_t m = (uint8_t)(armed_mask_ & ~group_gesture_mask_);
+			while (m) {
+				int t = __builtin_ctz(m);
 				play_col_hold_time[t] += MAIN_CTRL_DIV;
 				if (play_col_hold_time[t] >= GATE_HOLD_THRESHOLD && !gate_entered[t]) {
 					gate_entered[t] = true;
 					/* Long-press: enable gate_mode for this track and stop it. */
 					set_gate_mode(t, true);
 				}
+				m &= (uint8_t)(m - 1);
 			}
 		}
 
@@ -2161,6 +2178,7 @@ private:
 			play_col_armed[track] = false;
 			play_col_hold_time[track] = 0;
 			gate_entered[track] = false;
+			armed_mask_ &= (uint8_t)~(1u << track);
 
 			if (group_gesture_mask_ & (1u << track)) {
 				/* This release participates in the multi-hold gesture. */
