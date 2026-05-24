@@ -521,9 +521,12 @@ public:
 		}
 		uint8_t dry_level = (uint8_t)(KnobVal(Knob::X) >> 4);  /* 0–255 */
 		if (mlr_rec_track >= 0) {
-			/* scale input by dry knob and track volume before encoding */
+			/* Recording captures the input scaled only by the input gain knob.
+			 * The mixer slot is a playback control and is applied during
+			 * playback (mlr_play_mix_dual_sum) and during monitoring
+			 * (section 5 below); applying it here too would double-attenuate
+			 * the audio on playback. */
 			int32_t scaled = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
-			scaled = (scaled * (int32_t)mlr_tracks[mlr_rec_track].volume_frac) >> 8;
 			if (scaled > 2047) scaled = 2047;
 			if (scaled < -2048) scaled = -2048;
 			uint16_t spd = mlr_tracks[mlr_rec_track].speed_frac;
@@ -667,7 +670,7 @@ public:
 
 		uint8_t master_level = (uint8_t)(mlr_master_level_raw >> 4);
 		int16_t mix_r;
-		int16_t mix = mlr_play_mix_dual_255(&mix_r);
+		int16_t mix = mlr_play_mix_dual(&mix_r);
 		int32_t outL = (int32_t)mix;
 		int32_t outR = (int32_t)mix_r;
 		if (dry_level > 0 && (rec_armed_track >= 0 || sw == Switch::Up)) {

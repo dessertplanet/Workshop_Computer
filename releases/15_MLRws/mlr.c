@@ -1453,15 +1453,13 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 	return mixL;
 }
 
-int16_t __not_in_flash_func(mlr_play_mix_dual_255)(int16_t *out_right)
+int16_t __not_in_flash_func(mlr_play_mix_dual)(int16_t *out_right)
 {
 	int32_t mixR;
 	int32_t mixL = mlr_play_mix_dual_sum(&mixR);
-	mixL = (mixL * 255) >> 8;
-	mixR = (mixR * 255) >> 8;
-	if (mixL > 32767)  mixL = 32767;
+	if (mixL >  32767) mixL =  32767;
 	if (mixL < -32768) mixL = -32768;
-	if (mixR > 32767)  mixR = 32767;
+	if (mixR >  32767) mixR =  32767;
 	if (mixR < -32768) mixR = -32768;
 	*out_right = (int16_t)(mixR >> 4);
 	return (int16_t)(mixL >> 4);

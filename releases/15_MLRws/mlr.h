@@ -410,7 +410,7 @@ void     mlr_start_record(int track);
 void     mlr_record_sample(int16_t sample);  /* mono: single sample */
 void     mlr_stop_record(void);
 int16_t  mlr_play_mix(uint8_t volume);
-int16_t  mlr_play_mix_dual_255(int16_t *out_right);
+int16_t  mlr_play_mix_dual(int16_t *out_right);
 void     mlr_cut(int track, int column);
 void     mlr_cut_sample(int track, uint32_t sample_pos);
 void     mlr_stop_track(int track);
