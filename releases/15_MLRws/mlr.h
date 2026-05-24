@@ -259,6 +259,10 @@ typedef struct {
 	uint32_t          wrap_preview_start;
 	uint32_t          wrap_preview_end;
 	uint16_t          wrap_preview_speed_frac;
+	/* Per-sample skip threshold for maybe_start_wrap_preview_xfade(): set by
+	 * Core 1 when wrap_preview_ready becomes true, read by Core 0 to skip the
+	 * heavy check while the playhead is still far from the wrap boundary. */
+	volatile uint32_t wrap_preview_arm_playhead;
 	volatile uint8_t  transition_flags;
 
 	/* loop-a-section: sub-loop boundaries (set by core 0) */

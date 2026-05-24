@@ -643,6 +643,20 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	static volatile int32_t cvsm[2] = { 0, 0 };
 	__attribute__((unused)) static int np = 0, np1 = 0, np2 = 0;
 
+	// ADC mux-alignment guard: when the DMA-driven round-robin loses
+	// sync, leftover samples remain in the ADC FIFO at the moment
+	// BufferFull is entered. Drain the FIFO and re-arm the round-robin
+	// so subsequent samples come from the expected ADC channels.
+	if (!adc_fifo_is_empty())
+	{
+		adc_run(false);
+		adc_fifo_drain();
+		adc_select_input(0);
+		adc_set_round_robin(0);
+		adc_set_round_robin(0b0001111U);
+		adc_run(true);
+	}
+
 	adc_select_input(0);
 
 	// Advance external mux to next state

@@ -83,13 +83,17 @@ public:
 				if (ev.grid.z) {
 					key_down_this_sample = true;
 					any_key_held_count++;
-					if (ev.grid.x < MEXT_MAX_GRID_X && ev.grid.y < MEXT_MAX_GRID_Y)
-						held_state[ev.grid.y][ev.grid.x] = true;
+					if (ev.grid.x < MEXT_MAX_GRID_X && ev.grid.y < MEXT_MAX_GRID_Y) {
+						held_row_mask_[ev.grid.y] |= (uint16_t)(1u << ev.grid.x);
+						held_col_mask_[ev.grid.x] |= (uint16_t)(1u << ev.grid.y);
+					}
 				} else {
 					key_up_this_sample = true;
 					if (any_key_held_count > 0) any_key_held_count--;
-					if (ev.grid.x < MEXT_MAX_GRID_X && ev.grid.y < MEXT_MAX_GRID_Y)
-						held_state[ev.grid.y][ev.grid.x] = false;
+					if (ev.grid.x < MEXT_MAX_GRID_X && ev.grid.y < MEXT_MAX_GRID_Y) {
+						held_row_mask_[ev.grid.y] &= (uint16_t)~(1u << ev.grid.x);
+						held_col_mask_[ev.grid.x] &= (uint16_t)~(1u << ev.grid.y);
+					}
 				}
 			}
 		}
@@ -111,7 +115,21 @@ public:
 	bool held(uint8_t x, uint8_t y) const
 	{
 		if (x >= MEXT_MAX_GRID_X || y >= MEXT_MAX_GRID_Y) return false;
-		return held_state[y][x];
+		return (held_row_mask_[y] >> x) & 1u;
+	}
+
+	/** Bitmask of held columns in row y (bit x set => (x, y) is held). */
+	uint16_t heldRowMask(uint8_t y) const
+	{
+		if (y >= MEXT_MAX_GRID_Y) return 0;
+		return held_row_mask_[y];
+	}
+
+	/** Bitmask of held rows in column x (bit y set => (x, y) is held). */
+	uint16_t heldColMask(uint8_t x) const
+	{
+		if (x >= MEXT_MAX_GRID_X) return 0;
+		return held_col_mask_[x];
 	}
 
 	/** X coordinate of the most recent key event. */
@@ -201,10 +219,15 @@ public:
 	void showHeld(uint8_t level = 15)
 	{
 		if (!ready()) return;
-		for (uint8_t y = 0; y < rows(); y++)
-			for (uint8_t x = 0; x < cols(); x++)
-				if (held_state[y][x])
-					led(x, y, level);
+		uint16_t col_mask = (cols() >= 16) ? 0xFFFFu : (uint16_t)((1u << cols()) - 1u);
+		for (uint8_t y = 0; y < rows(); y++) {
+			uint16_t m = (uint16_t)(held_row_mask_[y] & col_mask);
+			while (m) {
+				uint8_t x = (uint8_t)__builtin_ctz(m);
+				led(x, y, level);
+				m &= (uint16_t)(m - 1);
+			}
+		}
 	}
 
 	/* ---- batched frame writes ---- */
@@ -273,7 +296,11 @@ private:
 	uint8_t last_event_x = 0;
 	uint8_t last_event_y = 0;
 	uint8_t any_key_held_count = 0;
-	bool    held_state[MEXT_MAX_GRID_Y][MEXT_MAX_GRID_X] = {};
+	/* held_row_mask_[y]: bit x set => (x, y) currently held.
+	 * held_col_mask_[x]: bit y set => (x, y) currently held.
+	 * Both are updated together in poll() so they stay coherent. */
+	uint16_t held_row_mask_[MEXT_MAX_GRID_Y] = {};
+	uint16_t held_col_mask_[MEXT_MAX_GRID_X] = {};
 	uint8_t frame_[MEXT_MAX_GRID_X * MEXT_MAX_GRID_Y] = {};
 	bool    frame_dirty_ = false;
 };

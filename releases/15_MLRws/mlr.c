@@ -1082,7 +1082,11 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 		/* wrap boundaries */
 		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
-		maybe_start_wrap_preview_xfade(tr, wrap_start, wrap_end);
+		if (tr->wrap_preview_ready) {
+			uint32_t arm = tr->wrap_preview_arm_playhead;
+			bool near = tr->reverse ? (tr->playhead <= arm) : (tr->playhead >= arm);
+			if (near) maybe_start_wrap_preview_xfade(tr, wrap_start, wrap_end);
+		}
 		bool wrapped = false;
 		int32_t sample_out = 0;
 
@@ -1231,9 +1235,11 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
  * Multiple tracks on the same channel sum on that bus; the other bus stays
  * silent for those tracks. This keeps gridless mode untouched (which still
  * uses the single-output mlr_play_mix). */
-static inline bool mix_track_steady_integer_dual(int t, mlr_track_t *tr, int32_t *mixL, int32_t *mixR)
+static inline bool mix_track_steady_integer_dual(int t, mlr_track_t *tr,
+	uint8_t transition_flags, uint32_t wrap_start, uint32_t wrap_end,
+	int32_t *mixL, int32_t *mixR)
 {
-	if ((tr->transition_flags & (uint8_t)~MLR_TRANS_WRAP) != 0 || !tr->playing || tr->stop_pending)
+	if ((transition_flags & (uint8_t)~MLR_TRANS_WRAP) != 0 || !tr->playing || tr->stop_pending)
 		return false;
 	if (tr->volume_frac != tr->volume_target)
 		return false;
@@ -1243,8 +1249,6 @@ static inline bool mix_track_steady_integer_dual(int t, mlr_track_t *tr, int32_t
 	uint32_t steps = integer_speed_steps(tr->speed_frac);
 	if (steps == 0) return false;
 
-	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
-	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
 	bool no_wrap = tr->reverse
 		? (tr->playhead >= wrap_start + steps)
 		: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
@@ -1286,18 +1290,31 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 			transition_flags = tr->transition_flags;
 		}
 		if (!tr->playing && !tr->stop_pending) continue;
+
+		/* Wrap boundaries — computed once and reused by the wrap-preview
+		 * gate, the steady fast path, and the slow path below. */
+		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
+		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+
+		/* Cheap pre-gate: skip the heavy maybe_start_wrap_preview_xfade()
+		 * call until the playhead is within the arm window of the wrap
+		 * boundary. The arm position is computed on core 1 when the
+		 * preview is primed, with a guard band to absorb accumulator
+		 * drift. */
 		if (transition_flags & MLR_TRANS_WRAP) {
-			uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
-			uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
-			maybe_start_wrap_preview_xfade(tr, wrap_start, wrap_end);
-			transition_flags = tr->transition_flags;
+			uint32_t arm = tr->wrap_preview_arm_playhead;
+			bool near = tr->reverse ? (tr->playhead <= arm) : (tr->playhead >= arm);
+			if (near) {
+				maybe_start_wrap_preview_xfade(tr, wrap_start, wrap_end);
+				transition_flags = tr->transition_flags;
+			}
 		}
-		if (mix_track_steady_integer_dual(t, tr, &mixL, &mixR)) {
+
+		if (mix_track_steady_integer_dual(t, tr, transition_flags,
+		                                  wrap_start, wrap_end, &mixL, &mixR)) {
 			continue;
 		}
 
-		uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
-		uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
 		bool wrapped = false;
 		int32_t sample_out = 0;
 
@@ -1307,23 +1324,30 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 		uint32_t ring_pos = 0;
 		bool ring_state_loaded = false;
 
+		/* Integer fast-step retry: only meaningful when speed_frac is one
+		 * of the integer ratios and the accumulator is aligned; otherwise
+		 * fall straight through to the variable-speed accumulator path. */
 		if (tr->speed_accum == 0) {
 			uint32_t steps = integer_speed_steps(tr->speed_frac);
-			bool no_wrap = tr->reverse
-				? (tr->playhead >= wrap_start + steps)
-				: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
-			avail = (steps > 0 && no_wrap) ? tr->pcm.w - pcm_r : 0;
-			if (avail >= steps && steps > 0) {
-				PERF_NOTE_PCM_AVAIL(t, avail);
-				ring_pos = pcm_r & MLR_RING_MASK;
-				uint32_t final_pos = (ring_pos + steps - 1u) & MLR_RING_MASK;
-				tr->interp_prev[0] = tr->last_pcm[0];
-				tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
-				tr->pcm.r = pcm_r + steps;
-				if (tr->reverse) tr->playhead -= steps;
-				else             tr->playhead += steps;
-				sample_out = tr->last_pcm[0];
-				fast_integer = true;
+			if (steps > 0) {
+				bool no_wrap = tr->reverse
+					? (tr->playhead >= wrap_start + steps)
+					: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
+				if (no_wrap) {
+					avail = tr->pcm.w - pcm_r;
+					if (avail >= steps) {
+						PERF_NOTE_PCM_AVAIL(t, avail);
+						ring_pos = pcm_r & MLR_RING_MASK;
+						uint32_t final_pos = (ring_pos + steps - 1u) & MLR_RING_MASK;
+						tr->interp_prev[0] = tr->last_pcm[0];
+						tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
+						tr->pcm.r = pcm_r + steps;
+						if (tr->reverse) tr->playhead -= steps;
+						else             tr->playhead += steps;
+						sample_out = tr->last_pcm[0];
+						fast_integer = true;
+					}
+				}
 			}
 		}
 
@@ -1363,10 +1387,11 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 				}
 				if (ring_state_loaded)
 					tr->pcm.r = pcm_r;
-				if (wrapped && !tr->seek_xfade_active) {
+				if (wrapped && !(transition_flags & MLR_TRANS_XFADE)) {
 					tr->fade_out_active = true;
 					tr->fade_out_count = MLR_FADE_SAMPLES;
 					transition_update_track_state(tr);
+					transition_flags = tr->transition_flags;
 				}
 
 				int16_t x0 = tr->last_pcm[0];
@@ -1403,9 +1428,11 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 			sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
 		if (transition_flags & MLR_TRANS_XFADE)
 			sample_out = apply_seek_preview_xfade(tr, sample_out);
-		transition_flags = tr->transition_flags;
+		/* apply_seek_preview_xfade() doesn't change fade_out_active or
+		 * fade_in_count, so the snapshotted transition_flags above still
+		 * describes the FADE state accurately. Skip the volatile re-read. */
 
-		if (transition_flags & MLR_TRANS_FADE && tr->fade_out_active) {
+		if ((transition_flags & MLR_TRANS_FADE) && tr->fade_out_active) {
 			if (tr->fade_out_count > 0) {
 				tr->fade_out_count--;
 				sample_out = (sample_out * tr->fade_out_count) / MLR_FADE_SAMPLES;
@@ -1424,7 +1451,7 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 			} else {
 				sample_out = 0;
 			}
-		} else if (transition_flags & MLR_TRANS_FADE && tr->fade_in_count > 0) {
+		} else if ((transition_flags & MLR_TRANS_FADE) && tr->fade_in_count > 0) {
 			tr->fade_in_count--;
 			sample_out = (sample_out * (MLR_FADE_SAMPLES - tr->fade_in_count)) / MLR_FADE_SAMPLES;
 			if (tr->fade_in_count == 0)
@@ -1567,6 +1594,8 @@ void __not_in_flash_func(mlr_set_speed)(int track, int speed_shift)
 	tr->speed_accum = 0;
 	tr->fade_out_active = true;
 	tr->fade_out_count = MLR_FADE_SAMPLES;
+	/* speed change invalidates the cached wrap-preview arm position */
+	tr->wrap_preview_ready = false;
 	transition_update_track_state(tr);
 }
 
@@ -1581,6 +1610,8 @@ void __not_in_flash_func(mlr_set_speed_frac)(int track, uint16_t speed_frac)
 	tr->speed_accum = 0;
 	tr->fade_out_active = true;
 	tr->fade_out_count = MLR_FADE_SAMPLES;
+	/* speed change invalidates the cached wrap-preview arm position */
+	tr->wrap_preview_ready = false;
 	transition_update_track_state(tr);
 }
 
@@ -1591,7 +1622,11 @@ void __not_in_flash_func(mlr_set_speed_frac_nondeclick)(int track, uint16_t spee
 	if (speed_frac > 1024) speed_frac = 1024;
 
 	mlr_track_t *tr = &mlr_tracks[track];
+	if (tr->speed_frac == speed_frac) return;
 	tr->speed_frac = speed_frac;
+	/* speed change invalidates the cached wrap-preview arm position */
+	tr->wrap_preview_ready = false;
+	transition_update_track_state(tr);
 }
 
 void __not_in_flash_func(mlr_set_reverse)(int track, bool reverse)
@@ -3215,6 +3250,23 @@ static void prepare_wrap_preview(int t)
 	tr->wrap_preview_start = wrap_start;
 	tr->wrap_preview_end = wrap_end;
 	tr->wrap_preview_speed_frac = tr->speed_frac;
+	/* Per-sample fast-skip threshold. The actual trigger fires within ~one
+	 * sample of (wrap_end - source_span) for forward / (wrap_start + source_span)
+	 * for reverse. Add a small guard band so accumulator drift / boundary
+	 * fuzziness can't cause the pre-gate to miss the trigger window. */
+	{
+		uint32_t guard = (source_span >> 2) + 4u;
+		uint32_t arm;
+		if (tr->reverse) {
+			arm = wrap_start + source_span + guard;
+			if (arm > wrap_end) arm = wrap_end;
+		} else {
+			arm = (wrap_end > source_span + guard)
+				? wrap_end - source_span - guard
+				: 0u;
+		}
+		tr->wrap_preview_arm_playhead = arm;
+	}
 	__dmb();
 	tr->wrap_preview_ready = (preview_count > 0);
 	transition_update_track_state(tr);

@@ -2154,13 +2154,17 @@ private:
 
 		/* Snapshot of which play-col keys are currently held. Empty tracks
 		 * may be tapped normally, but they are not eligible for grouping. */
-		uint8_t held_now = 0;
+		/* heldColMask(pc) bit y = held at (pc, y); tracks live on rows 1..N. */
+		uint16_t col_mask = grid.heldColMask((uint8_t)pc);
+		uint8_t held_now = (uint8_t)((col_mask >> 1) & ((1u << MLR_NUM_TRACKS) - 1u));
 		uint8_t groupable_held = 0;
-		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-			if (grid.held((uint8_t)pc, (uint8_t)(t + 1))) {
-				held_now |= (uint8_t)(1u << t);
+		{
+			uint8_t m = held_now;
+			while (m) {
+				int t = __builtin_ctz(m);
 				if (mlr_tracks[t].has_content)
 					groupable_held |= (uint8_t)(1u << t);
+				m &= (uint8_t)(m - 1);
 			}
 		}
 
@@ -2168,9 +2172,7 @@ private:
 		 * cancel any pending long-press timers (so no gate_mode side-effect
 		 * fires) and accumulate the participants into group_gesture_mask_.
 		 * The group commits on the first release of a participating key. */
-		int held_count = 0;
-		for (int t = 0; t < MLR_NUM_TRACKS; t++)
-			if (groupable_held & (1u << t)) held_count++;
+		int held_count = __builtin_popcount(groupable_held);
 		if (held_count >= 2) {
 			if (group_gesture_committed_ && (groupable_held & (uint8_t)~group_gesture_mask_)) {
 				group_gesture_mask_ = 0;
@@ -2350,14 +2352,9 @@ private:
 			int column = grid.lastX();
 			if (column >= cs && column <= ce && mlr_gate_mode[track] && mlr_tracks[track].playing) {
 				int row = track + 1;
-				bool any_held = false;
-				for (int c = cs; c <= ce; c++) {
-					if (grid.held((uint8_t)c, (uint8_t)row)) {
-						any_held = true;
-						break;
-					}
-				}
-				if (!any_held) {
+				uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
+				uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
+				if (held_in_zone == 0) {
 					if (mlr_tracks[track].loop_active) {
 						mlr_clear_loop(track);
 						dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)track, 0, 0);
@@ -2405,39 +2402,38 @@ private:
 		/* ---- loop-a-section: detect 2+ held keys per track row ---- */
 		bool track_row_event = grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS;
 		if (!alt_held && track_row_event && (grid.keyDown() || grid.keyUp())) {
-			int changed_track = grid.lastY() - 1;
-			for (int t = changed_track; t <= changed_track; t++) {
-				int row = t + 1;
-				int held_count = 0;
-				int held_min = 16, held_max = -1;
+			int t = grid.lastY() - 1;
+			int row = t + 1;
+			uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
+			uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
+			int held_count = __builtin_popcount(held_in_zone);
+			int held_min = 16, held_max = -1;
+			if (held_in_zone) {
+				/* cut_grid_to_internal() is monotonic non-decreasing,
+				 * so min/max grid cols map to min/max internal cols. */
+				int min_grid_c = __builtin_ctz(held_in_zone);
+				int max_grid_c = 31 - __builtin_clz((uint32_t)held_in_zone);
+				held_min = cut_grid_to_internal(min_grid_c);
+				held_max = cut_grid_to_internal(max_grid_c);
+			}
 
-				for (int c = cs; c <= ce; c++) {
-					if (grid.held((uint8_t)c, (uint8_t)row)) {
-						held_count++;
-						int ic = cut_grid_to_internal(c);
-						if (ic < held_min) held_min = ic;
-						if (ic > held_max) held_max = ic;
-					}
-				}
+			bool cut_key_released = grid.keyUp() && grid.lastY() == row &&
+			                        grid.lastX() >= cs && grid.lastX() <= ce;
 
-				bool cut_key_released = grid.keyUp() && grid.lastY() == row &&
-				                        grid.lastX() >= cs && grid.lastX() <= ce;
-
-				if (!mlr_gate_mode[t] && cut_key_released && cut_loop_pending_[t]) {
-					group_set_loop(t, cut_loop_pending_start_[t], cut_loop_pending_end_[t]);
+			if (!mlr_gate_mode[t] && cut_key_released && cut_loop_pending_[t]) {
+				group_set_loop(t, cut_loop_pending_start_[t], cut_loop_pending_end_[t]);
+				cut_loop_pending_[t] = false;
+			} else if (held_count >= 2 && mlr_tracks[t].has_content) {
+				if (mlr_gate_mode[t]) {
+					group_set_loop(t, held_min, held_max);
 					cut_loop_pending_[t] = false;
-				} else if (held_count >= 2 && mlr_tracks[t].has_content) {
-					if (mlr_gate_mode[t]) {
-						group_set_loop(t, held_min, held_max);
-						cut_loop_pending_[t] = false;
-					} else {
-						cut_loop_pending_[t] = true;
-						cut_loop_pending_start_[t] = held_min;
-						cut_loop_pending_end_[t] = held_max;
-					}
-				} else if (held_count == 0) {
-					cut_loop_pending_[t] = false;
+				} else {
+					cut_loop_pending_[t] = true;
+					cut_loop_pending_start_[t] = held_min;
+					cut_loop_pending_end_[t] = held_max;
 				}
+			} else if (held_count == 0) {
+				cut_loop_pending_[t] = false;
 			}
 		}
 	}
