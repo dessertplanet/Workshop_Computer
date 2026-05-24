@@ -21,7 +21,7 @@ The Basinski connection: he recorded tape loops that were literally falling apar
 | Big Knob | Mix level (MIX) / Rate of change (DEGRADE). Full left freezes state |
 | Knob X | Harmonic effects: Saturation → Filter Drift → Tape Hiss |
 | Knob Y | Destructive effects: Oxide Shedding → Bit Crush → Bit Rot |
-| Z Switch | Down = Record, Middle = Mix (overdub), Up = Degrade (irreversible) |
+| Z Switch | Down = RECORD or slot modes (context-dependent), Middle = MIX, Up = DEGRADE |
 
 Big Knob at full left means no change, the current state is frozen. Turning it clockwise increases the rate of change, from barely perceptible to instant.
 
@@ -29,9 +29,14 @@ Big Knob at full left means no change, the current state is frozen. Turning it c
 
 | Position | Mode | Big Knob | Knob X | Knob Y |
 |----------|------|----------|--------|--------|
-| Down | RECORD | Not used | — | — |
-| Middle | MIX | Mix level (quadratic) | Shapes incoming audio through harmonic effects | Shapes incoming audio through destructive effects |
-| Up | DEGRADE | Commit rate (quadratic) | Selects harmonic degradation applied to buffer | Selects destructive degradation applied to buffer |
+| Down | RECORD or slot mode | Record: not used, Slot mode: select slot | — | — |
+| Middle | MIX | Mix level (quadratic `>>16`). Below ~1.2% (<50) = bypass | Shapes incoming audio through harmonic effects | Shapes incoming audio through destructive effects |
+| Up | DEGRADE | Commit rate (quadratic `>>15`). Below ~1.2% (<50) = bypass | Selects harmonic degradation applied to buffer | Selects destructive degradation applied to buffer |
+
+## Slot modes (flash save/load)
+
+- `SELECT_SLOT`: hold Z down at boot, or send `Pulse In 2` while Z is down. Big Knob selects slot `0-3`. Release Z to load the selected slot and return to MIX/DEGRADE. If the slot is empty, the module enters RECORD.
+- `STORE_SLOT`: from MIX or DEGRADE, move Z down with Big Knob near zero (`< 50`). Big Knob selects slot `0-3`. Press Z down to write the current buffer. Move Z up to cancel back to DEGRADE. Audio mutes briefly during flash write.
 
 ### RECORD (Z down)
 
@@ -143,7 +148,7 @@ Both X and Y crossfade at zone boundaries. With X at ~33% and Y at ~33%, you hea
 | CV In 1 | Adds voltage to the Big Knob |
 | CV In 2 | Adds voltage to the Y knob |
 | Pulse In 1 | Record trigger, rising edge starts recording |
-| Pulse In 2 | Loop position reset, rising edge returns to start and resets degradation |
+| Pulse In 2 | Loop reset, or enter SELECT_SLOT when Z is down |
 
 | Output | Function |
 |--------|----------|
@@ -156,7 +161,7 @@ Both X and Y crossfade at zone boundaries. With X at ~33% and Y at ~33%, you hea
 
 ### CV In 1
 
-Adds voltage to the Big Knob. The effective value is `knob + cv`, where cv is the bipolar signal scaled to 0-4095. This lets you voltage-control loop length (RECORD), mix level (MIX), or degrade rate (DEGRADE). Patch an LFO to CV In 1 in DEGRADE mode and the degrade rate will oscillate cyclically.
+Adds voltage to the Big Knob. The effective value is `knob + cv`, where cv is the bipolar signal scaled to 0-4095. This lets you voltage-control mix level (MIX), degrade rate (DEGRADE), and slot selection in STORE/SELECT slot modes.
 
 ### CV In 2
 
@@ -164,11 +169,11 @@ Adds voltage to the Y knob, giving you voltage control over destructive effects.
 
 ### Pulse In 1
 
-Starts recording on a rising edge. Connect another module's clock or trigger to start recording in sync with a sequence. The Z switch is still needed to select RECORD mode first.
+Starts recording on a rising edge. Connect another module's clock or trigger to start recording in sync with a sequence.
 
 ### Pulse In 2
 
-Resets loop position to the start. A rising edge sets `phasePos = 0` and resets all degradation state. Useful for external clock sync, resyncing after exploring degradation, or triggering the start of each bar or beat from a sequencer.
+Resets loop position to the start when Z is not down. A rising edge sets `phasePos = 0` and resets all degradation state. When Z is down, the same trigger enters `SELECT_SLOT` mode. Useful for external clock sync, resyncing after exploring degradation, or jumping into slot selection without power-cycling.
 
 ### Pulse Out 1
 
@@ -275,8 +280,11 @@ DEGRADE mode:
 Both MIX level and DEGRADE rate use quadratic scaling from the Big Knob:
 
 ```
-level = (knob * knob) >> 15
+MIX level:  (knob * knob) >> 16
+DEGRADE rate: (knob * knob) >> 15
 ```
+
+MIX uses `>>16` (quadratic range 0-255) so that the knob must be turned further before overdub becomes audible. DEGRADE uses `>>15` (range 0-511, clamped to 255) for a faster rate of change at lower knob positions.
 
 | Big Knob | Level/Rate |
 |----------|-----------|
@@ -287,6 +295,12 @@ level = (knob * knob) >> 15
 | 100% (4095) | 255 |
 
 In DEGRADE, a rate of 128 means 50% of the affected sample replaces the original per pass. A rate of 1 means the change is nearly imperceptible per pass but accumulates over many loops.
+
+### Knob reference tracking
+
+When entering MIX or DEGRADE, the module records the Big Knob's current position. The effect engages only after you turn the knob past this reference point. This prevents accidental changes if the knob happens to be in a sensitive position when switching modes.
+
+For example: if the Big Knob is at 75% when you flip to MIX, the mix level stays at zero until you turn past 75%. Turn back to 25% and the mix level follows downward as well. The reference updates whenever you cross it in either direction.
 
 ### Buffer
 
@@ -325,6 +339,22 @@ cmake --build build -j$(sysctl -n hw.logicalcpu)
 ```
 
 Flash by holding BOOTSEL and copying `degenerator.uf2` to the mounted drive.
+
+## Web interface
+
+The Degenerator Manager is a browser-based tool for uploading and downloading loops to the module's flash memory. It uses WebUSB to communicate with the Pico in BOOTSEL mode.
+
+**Run locally:** start a web server in the `web/` directory:
+
+```sh
+# Option A: use the convenience script
+./web/serve.sh
+
+# Option B: Python one-liner
+cd web && python3 -m http.server 8080
+```
+
+Then open `http://localhost:8080` in Chrome or Edge (WebUSB is required; Firefox and Safari are not supported).
 
 ## Credits
 
