@@ -427,7 +427,7 @@ public:
 		if (rec_armed_track >= 0 && rec_modifier && mlr_rec_track < 0 && !rec_limit_latched && rec_start_lockout_samples_ == 0) {
 			if (resume_after_arm_track_ == rec_armed_track)
 				resume_after_arm_track_ = -1;
-			start_record_with_limit(rec_armed_track);
+			mlr_start_record(rec_armed_track);
 			rec_speed_accum = 0;
 		}
 		/* Stop recording if switch returns to middle or armed track changes */
@@ -435,7 +435,7 @@ public:
 			mlr_stop_record();
 			rec_speed_accum = 0;
 			if (rec_armed_track >= 0 && rec_modifier && rec_armed_track != mlr_rec_track && !mlr_flushing && !rec_limit_latched && rec_start_lockout_samples_ == 0) {
-				start_record_with_limit(rec_armed_track);
+				mlr_start_record(rec_armed_track);
 				rec_speed_accum = 0;
 			}
 		}
@@ -474,7 +474,7 @@ public:
 					resume_after_arm_track_ = rec_armed_track;
 					mlr_stop_track(rec_armed_track);
 				}
-				start_record_with_limit(rec_armed_track);
+				mlr_start_record(rec_armed_track);
 				rec_speed_accum = 0;
 				rec_pulse_gated_ = true;
 			}
@@ -525,7 +525,7 @@ public:
 			while (rec_speed_accum >= 256) {
 				rec_speed_accum -= 256;
 				mlr_record_sample((int16_t)scaled);
-				if (mlr_get_rec_progress() >= record_progress_limit()) {
+				if (mlr_get_rec_progress() >= MLR_MAX_SAMPLES) {
 					mlr_stop_record();
 					rec_speed_accum = 0;
 					rec_limit_latched = true;
@@ -1213,7 +1213,7 @@ private:
 			gl_switch_down_rise_pending_ = false;
 			if (gl_active_track_ >= 0 && gl_active_track_ < MLR_NUM_TRACKS) {
 				gl_record_track_ = gl_active_track_;
-				start_record_with_limit(gl_record_track_);
+				mlr_start_record(gl_record_track_);
 				rec_speed_accum = 0;
 				gl_recording_active_ = true;
 			}
@@ -1237,7 +1237,7 @@ private:
 			while (rec_speed_accum >= 256) {
 				rec_speed_accum -= 256;
 				mlr_record_sample(rec_monitor_l);
-				if (mlr_get_rec_progress() >= record_progress_limit()) {
+				if (mlr_get_rec_progress() >= MLR_MAX_SAMPLES) {
 					stop_record = true;
 					break;
 				}
@@ -1610,7 +1610,7 @@ private:
 		int sw_now = SwitchVal();
 		bool rec_pos = (sw_now == Switch::Up || sw_now == Switch::Down);
 		if (rec_pos && rec_armed_track < 0 && mlr_rec_track < 0 && !mlr_flushing && !rec_limit_latched && rec_start_lockout_samples_ == 0) {
-			start_record_with_limit(track);
+			mlr_start_record(track);
 			rec_speed_accum = 0;
 			rec_gated = true;
 		} else if (!rec_pos || rec_armed_track >= 0) {
@@ -1622,24 +1622,6 @@ private:
 				rec_limit_latched = false;
 			}
 		}
-	}
-
-	void __not_in_flash("start_record_with_limit") start_record_with_limit(int track)
-	{
-		if (track < 0 || track >= MLR_NUM_TRACKS) return;
-		uint32_t limit = MLR_MAX_SAMPLES;
-		if (mlr_tracks[track].has_content && mlr_tracks[track].length_samples > 0)
-			limit = mlr_tracks[track].length_samples;
-		if (limit > MLR_MAX_SAMPLES) limit = MLR_MAX_SAMPLES;
-		rec_auto_stop_samples_ = limit;
-		mlr_start_record(track);
-	}
-
-	uint32_t __not_in_flash("record_progress_limit") record_progress_limit() const
-	{
-		uint32_t limit = rec_auto_stop_samples_;
-		if (limit == 0 || limit > MLR_MAX_SAMPLES) limit = MLR_MAX_SAMPLES;
-		return limit;
 	}
 
 	void __not_in_flash("handle_rec_arm_col_press") handle_rec_arm_col_press(int track, int column)
@@ -1668,7 +1650,7 @@ private:
 		int sw_now = SwitchVal();
 		bool rec_pos = (sw_now == Switch::Up || sw_now == Switch::Down);
 		if (rec_pos && rec_armed_track < 0 && mlr_rec_track < 0 && !mlr_flushing && !rec_limit_latched && rec_start_lockout_samples_ == 0) {
-			start_record_with_limit(track);
+			mlr_start_record(track);
 			rec_speed_accum = 0;
 			rec_gated = true;
 		} else if (!rec_pos || rec_armed_track >= 0) {
@@ -2557,7 +2539,7 @@ private:
 				/* 8x8 REC: col 1=reverse, cols 2-6=speed */
 				/* record progress: cols 1-6 during recording */
 				if (actively_rec) {
-					uint32_t progress = mlr_get_rec_progress() * 6 / record_progress_limit();
+					uint32_t progress = mlr_get_rec_progress() * 6 / MLR_MAX_SAMPLES;
 					if (progress > 6) progress = 6;
 					for (uint32_t c = 0; c < progress; c++)
 						grid.frameLedUnchecked(c + 1, row, 12);
@@ -2580,7 +2562,7 @@ private:
 				 * cols 2-6=mixer (5 slots), col 7=reverse, cols 8-14=speed */
 				/* record progress: cols 2–6 (overlays mixer during recording) */
 				if (actively_rec) {
-					uint32_t progress = mlr_get_rec_progress() * 5 / record_progress_limit();
+					uint32_t progress = mlr_get_rec_progress() * 5 / MLR_MAX_SAMPLES;
 					if (progress > 5) progress = 5;
 					for (uint32_t c = 0; c < progress; c++)
 						grid.frameLedUnchecked(c + 2, row, 12);
@@ -2645,7 +2627,7 @@ private:
 
 			/* recording track: progress bar on cut columns */
 			if (actively_rec) {
-				uint32_t progress = mlr_get_rec_progress() * (uint32_t)nc / record_progress_limit();
+				uint32_t progress = mlr_get_rec_progress() * (uint32_t)nc / MLR_MAX_SAMPLES;
 				if (progress > (uint32_t)nc) progress = (uint32_t)nc;
 				for (uint32_t c = 0; c < progress; c++)
 					grid.frameLedUnchecked((int)c + cs, row, 12);
