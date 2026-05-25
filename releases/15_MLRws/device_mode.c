@@ -24,6 +24,8 @@
 #endif
 
 #define SAMPLE_CDC_ITF 0u
+#define SAMPLE_READ_CHUNK_SIZE 1024u
+#define SAMPLE_READ_ACK 'A'
 
 typedef enum {
     SAMPLE_RX_WAIT_CMD = 0,
@@ -55,6 +57,9 @@ typedef struct {
     uint16_t          page_fill;
     uint8_t           prefix[4];
     uint8_t           prefix_sent;
+    uint16_t          read_chunk_len;
+    uint16_t          read_chunk_sent;
+    bool              read_wait_ack;
     absolute_time_t   data_deadline;    /* write/drain data timeout */
     bool              was_connected;
     uint8_t           injected_byte;    /* byte pre-read during detection */
@@ -156,6 +161,9 @@ static void __attribute__((section(".flashdata.devmode"))) sample_mgr_reset_sess
     g_sample_mgr.drain_remaining = 0;
     g_sample_mgr.page_fill = 0;
     g_sample_mgr.prefix_sent = 0;
+    g_sample_mgr.read_chunk_len = 0;
+    g_sample_mgr.read_chunk_sent = 0;
+    g_sample_mgr.read_wait_ack = false;
     g_sample_mgr.data_deadline = at_the_end_of_time;
     g_sample_mgr.op = SAMPLE_OP_NONE;
 }
@@ -197,6 +205,8 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
         return false;
     used += (uint32_t)n;
 
+    if (!cdc_write_all(&used, sizeof(used)))
+        return false;
     return cdc_write_all(info, used);
 }
 
@@ -224,6 +234,9 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_begin_read
     g_sample_mgr.total_len = MLR_HEADER_SIZE + hdr->adpcm_bytes;
     g_sample_mgr.bytes_done = 0;
     g_sample_mgr.prefix_sent = 0;
+    g_sample_mgr.read_chunk_len = 0;
+    g_sample_mgr.read_chunk_sent = 0;
+    g_sample_mgr.read_wait_ack = false;
     memcpy(g_sample_mgr.prefix, &g_sample_mgr.total_len, sizeof(g_sample_mgr.prefix));
     return true;
 }
@@ -315,33 +328,66 @@ static void __attribute__((section(".flashdata.devmode"))) sample_mgr_pump_read(
         g_sample_mgr.prefix_sent += (uint8_t)written;
     }
 
-    if (g_sample_mgr.bytes_done < g_sample_mgr.total_len) {
+    if (g_sample_mgr.read_wait_ack) {
+        while (tud_cdc_n_available(SAMPLE_CDC_ITF) > 0) {
+            uint8_t byte = 0;
+            tud_cdc_n_read(SAMPLE_CDC_ITF, &byte, 1);
+            if (byte == SAMPLE_READ_ACK) {
+                g_sample_mgr.bytes_done += g_sample_mgr.read_chunk_len;
+                g_sample_mgr.read_chunk_len = 0;
+                g_sample_mgr.read_chunk_sent = 0;
+                g_sample_mgr.read_wait_ack = false;
+                break;
+            }
+
+            sample_mgr_reset_session();
+            cdc_write_str("SYNC\n");
+            return;
+        }
+
+        if (g_sample_mgr.read_wait_ack)
+            return;
+    }
+
+    if (g_sample_mgr.bytes_done >= g_sample_mgr.total_len) {
+        cdc_write_str("DONE\n");
+        sample_mgr_reset_session();
+        return;
+    }
+
+    if (g_sample_mgr.read_chunk_len == 0) {
+        uint32_t remain = g_sample_mgr.total_len - g_sample_mgr.bytes_done;
+        g_sample_mgr.read_chunk_len = (uint16_t)(remain < SAMPLE_READ_CHUNK_SIZE ? remain : SAMPLE_READ_CHUNK_SIZE);
+        g_sample_mgr.read_chunk_sent = 0;
+    }
+
+    if (g_sample_mgr.read_chunk_sent < g_sample_mgr.read_chunk_len) {
         uint32_t avail = tud_cdc_n_write_available(SAMPLE_CDC_ITF);
         if (avail == 0) {
             tud_cdc_n_write_flush(SAMPLE_CDC_ITF);
             return;
         }
 
-        uint32_t remain = g_sample_mgr.total_len - g_sample_mgr.bytes_done;
+        uint32_t remain = g_sample_mgr.read_chunk_len - g_sample_mgr.read_chunk_sent;
         uint32_t chunk = remain;
         if (chunk > avail) chunk = avail;
         if (chunk > 64)    chunk = 64;
 
-        const uint8_t *src = (const uint8_t *)(XIP_BASE + g_sample_mgr.flash_off + g_sample_mgr.bytes_done);
+        const uint8_t *src = (const uint8_t *)(XIP_BASE + g_sample_mgr.flash_off +
+                                               g_sample_mgr.bytes_done +
+                                               g_sample_mgr.read_chunk_sent);
         uint32_t written = tud_cdc_n_write(SAMPLE_CDC_ITF, src, chunk);
         if (written == 0) {
             tud_cdc_n_write_flush(SAMPLE_CDC_ITF);
             return;
         }
-        g_sample_mgr.bytes_done += written;
+        g_sample_mgr.read_chunk_sent += (uint16_t)written;
     }
 
     tud_cdc_n_write_flush(SAMPLE_CDC_ITF);
 
-    if (g_sample_mgr.bytes_done >= g_sample_mgr.total_len) {
-        cdc_write_str("DONE\n");
-        sample_mgr_reset_session();
-    }
+    if (g_sample_mgr.read_chunk_sent >= g_sample_mgr.read_chunk_len)
+        g_sample_mgr.read_wait_ack = true;
 }
 
 static void __attribute__((section(".flashdata.devmode"))) sample_mgr_pump_write(void)
@@ -428,14 +474,6 @@ void __attribute__((section(".flashdata.devmode"))) device_mode_task(void)
     }
 
     if (g_sample_mgr.op == SAMPLE_OP_READ_STREAM) {
-        /* Any byte from host during a read stream = abort request */
-        if (tud_cdc_n_available(SAMPLE_CDC_ITF) > 0) {
-            uint8_t dummy;
-            tud_cdc_n_read(SAMPLE_CDC_ITF, &dummy, 1);
-            sample_mgr_reset_session();
-            cdc_write_str("SYNC\n");
-            return;
-        }
         sample_mgr_pump_read();
         return;
     }

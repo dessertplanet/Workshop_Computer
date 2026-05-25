@@ -8,8 +8,11 @@
  * Sample manager protocol (binary, over CDC serial):
  *   Command byte followed by parameters.
  *
- *   'I' (0x49)         → Info: respond with "MLR1\n" + track info
- *   'R' <track>        → Read track: stream header + ADPCM data + "DONE\n"
+ *   'I' (0x49)         → Info: respond with <len4>, then metadata text
+ *                         "MLR1 ...\n" + track info + "END\n"
+ *   'R' <track>        → Read track: respond with <len4>, then stream header
+ *                         + ADPCM data in 1024-byte chunks. Host sends 'A'
+ *                         after each chunk, then firmware sends "DONE\n".
  *   'E' <track>        → Erase track (header sector only)
  *   'W' <track> <len4> → Write track: respond "OK\n" when ready, then
  *                         receive <data...>, respond "OK\n" on completion
@@ -17,8 +20,8 @@
  *   'X'                → Sync/cancel: abort any in-progress operation,
  *                         respond "SYNC\n"
  *
- *   Read stream aborts if any byte is received from the host mid-stream
- *   (the host shouldn't be sending during reads), responding "SYNC\n".
+ *   Read stream aborts if any byte other than chunk ACK 'A' is received
+ *   mid-stream, responding "SYNC\n".
  *
  *   Write/drain data has a 5-second inactivity timeout, responding
  *   "TIMEOUT\n" on expiry.
