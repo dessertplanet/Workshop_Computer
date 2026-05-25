@@ -367,7 +367,14 @@ public:
 				knob_hard_takeover_arm(Knob::X);
 				knob_hard_takeover_arm(Knob::Y);
 			}
-			gridless_process_sample();
+			{
+				bool gridless_control_tick = gridless_process_sample();
+#ifdef MLR_PERF_PROFILING
+				perf_ui_tick = gridless_control_tick;
+#else
+				(void)gridless_control_tick;
+#endif
+			}
 			return;
 		case Mode::DeviceSampleMgr:
 			/* Silence — sample manager owns flash exclusively */
@@ -1022,6 +1029,13 @@ private:
 	uint16_t   gl_playback_gain_frac_ = 256; /* playback-layer gain, Q8: 256 = unity */
 	uint16_t   gl_radiate_frac_ = 0;      /* global-mode radiate amount, Q8: 0..256 */
 	uint16_t   gl_playback_track_gain_frac_[MLR_NUM_TRACKS] = {}; /* per-track playback layer gain */
+	bool       gl_mix_cache_valid_ = false;
+	int        gl_mix_cache_active_track_ = -1;
+	bool       gl_mix_cache_record_mode_ = false;
+	bool       gl_mix_cache_recording_active_ = false;
+	uint16_t   gl_mix_cache_playback_gain_frac_ = 0;
+	uint16_t   gl_mix_cache_radiate_frac_ = 0;
+	uint8_t    gl_mix_cache_volume_slot_[MLR_NUM_TRACKS] = {};
 	enum class GridlessMixMode {
 		HardCutSolo,
 	};
@@ -1214,6 +1228,44 @@ private:
 		}
 	}
 
+	static bool gridless_update_u16_hysteresis(uint16_t *dst, uint16_t value, uint16_t threshold)
+	{
+		int delta = (int)value - (int)*dst;
+		if (delta < 0) delta = -delta;
+		if (delta < (int)threshold) return false;
+		*dst = value;
+		return true;
+	}
+
+	bool gridless_mix_inputs_changed()
+	{
+		bool changed = !gl_mix_cache_valid_ ||
+			gl_mix_cache_active_track_ != gl_active_track_ ||
+			gl_mix_cache_record_mode_ != gl_record_mode_ ||
+			gl_mix_cache_recording_active_ != gl_recording_active_ ||
+			gl_mix_cache_playback_gain_frac_ != gl_playback_gain_frac_ ||
+			gl_mix_cache_radiate_frac_ != gl_radiate_frac_;
+
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			uint8_t slot = mlr_tracks[t].volume_slot;
+			if (!gl_mix_cache_valid_ || gl_mix_cache_volume_slot_[t] != slot) {
+				changed = true;
+				gl_mix_cache_volume_slot_[t] = slot;
+			}
+		}
+
+		if (changed) {
+			gl_mix_cache_valid_ = true;
+			gl_mix_cache_active_track_ = gl_active_track_;
+			gl_mix_cache_record_mode_ = gl_record_mode_;
+			gl_mix_cache_recording_active_ = gl_recording_active_;
+			gl_mix_cache_playback_gain_frac_ = gl_playback_gain_frac_;
+			gl_mix_cache_radiate_frac_ = gl_radiate_frac_;
+		}
+
+		return changed;
+	}
+
 	void gridless_apply_mix_matrix(bool switch_middle)
 	{
 		(void)switch_middle;
@@ -1284,7 +1336,7 @@ private:
 	 * Hold Switch Down ~2 s to arm recording onto the active track
 	 * (switch Down again to start, Down release to stop).
 	 */
-	void __not_in_flash("gridless") gridless_process_sample()
+	bool __not_in_flash("gridless") gridless_process_sample()
 	{
 		/* Keep pulse outputs one-sample wide. */
 		PulseOut1(false);
@@ -1433,8 +1485,8 @@ private:
 			gl_post_record_start_track_ = -1;
 		}
 
-		/* Run control path at reduced rate to save CPU in gridless mode. */
-		const uint8_t kGridlessControlDiv = 4;  /* 48 kHz / 4 = 12 kHz control loop */
+		/* Match gridful UI/control rate: 48 kHz / 16 = 3 kHz. */
+		const uint8_t kGridlessControlDiv = MAIN_CTRL_DIV;
 		gl_ctrl_div_++;
 		bool run_control = false;
 		if (gl_ctrl_div_ >= kGridlessControlDiv) {
@@ -1541,11 +1593,13 @@ private:
 			mlr_set_volume(gl_active_track_, slot);
 			} else if (!gl_recording_active_ && switch_middle && (x_accept || cv1_connected)) {
 			/* Global mode: playback-layer level, unity at center. */
+				uint16_t target_gain;
 				if (mod_x <= 2048) {
-					gl_playback_gain_frac_ = (uint16_t)(((uint32_t)mod_x * 256u) / 2048u);  /* 0..256 */
+					target_gain = (uint16_t)(((uint32_t)mod_x * 256u) / 2048u);  /* 0..256 */
 			} else {
-					gl_playback_gain_frac_ = (uint16_t)(256u + (((uint32_t)(mod_x - 2048) * 256u) / 2047u));  /* 256..512 */
+					target_gain = (uint16_t)(256u + (((uint32_t)(mod_x - 2048) * 256u) / 2047u));  /* 256..512 */
 			}
+				gridless_update_u16_hysteresis(&gl_playback_gain_frac_, target_gain, 2);
 			}
 
 			/* ---- Y knob layer controls ---- */
@@ -1568,7 +1622,8 @@ private:
 			gl_prev_start_col_ = start_col;
 			} else if (!gl_recording_active_ && switch_middle && (y_accept || cv2_connected)) {
 			/* Global mode: radiate amount. */
-				gl_radiate_frac_ = (uint16_t)(((uint32_t)mod_y * 256u) / 4095u);
+				uint16_t target_radiate = (uint16_t)(((uint32_t)mod_y * 256u) / 4095u);
+				gridless_update_u16_hysteresis(&gl_radiate_frac_, target_radiate, 2);
 			}
 
 			/* ---- Channel mode speed from Knob Main ---- */
@@ -1622,8 +1677,10 @@ private:
 				}
 			}
 
-			gridless_apply_mix_matrix(switch_middle);
-			gridless_apply_level_layers();
+			if (gridless_mix_inputs_changed()) {
+				gridless_apply_mix_matrix(switch_middle);
+				gridless_apply_level_layers();
+			}
 
 			/* ---- Reset: Switch Down or Pulse In 1 rising edge ---- */
 			bool switch_reset = gl_switch_down_rise_pending_;
@@ -1679,6 +1736,8 @@ private:
 			gl_led_pulse_++;
 			gridless_update_leds();
 		}
+
+		return run_control;
 
 	}
 
