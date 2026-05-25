@@ -34,6 +34,7 @@
 | 39_knots | Six-engine oscillator firmware for the Music Thing Workshop System | 0.2<br>Released | C++ (RPi Pico SDK / ComputerCard) | Jeff Fletcher |
 | 41_blackbird | A scriptable, live-codable, USB-serial-to-CV device implementing monome crow's protocol<br>[Web editor](https://dessertplanet.github.io/web-druid/) | 1.1<br>Released | Pico SDK + Lua | Dune Desormeaux |
 | 42_backyard_rain | Nature soundscape audio. A cozy rain ambience mix for background listening. You control the intensity. This card plays rain ambience which was recorded in my backyard. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
+| 44_Birds | Two birds sing to each other controlled by a Turing-style shift register sequencer with clock in and CV/pulse out. | 0.5.0<br>Beta | C++ (Pico SDK / ComputerCard) | Tom Whitwell |
 | 47_NZT | Grain Noise and Noise Tools | 1.0.0<br>Released | C++ (ComputerCard) | @kjnilsson |
 | 50_flux | Effects, Synthesizer and Utility<br>[Web editor](https://vincentmaurer.de/flux/flux_manager.html) | 1.0<br>Release | C++ (RPi Pico SDK), C | Vincent Maurer (vincentmaurer.de) |
 | 51_grains | Granular Sampler and Effect<br>[Web editor](https://vincentmaurer.de/grains/grains_manager.html) | 1.0<br>Release | C++ | Vincent Maurer (vincentmaurer.de) |
