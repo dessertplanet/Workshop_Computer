@@ -1179,6 +1179,7 @@ private:
 	{
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 			if (!mlr_tracks[t].has_content) continue;
+			if (gl_playback_track_gain_frac_[t] == 0) continue;
 			if (!mlr_tracks[t].playing && !mlr_tracks[t].stop_pending) {
 				int col = mlr_get_column(t);
 				if (col < 0) col = 0;
@@ -1255,6 +1256,18 @@ private:
 
 		if (gl_active_deadzone_mute_ && gl_active_track_ >= 0 && gl_active_track_ < MLR_NUM_TRACKS)
 			gl_playback_track_gain_frac_[gl_active_track_] = 0;
+
+		/* Gridless can keep several tracks logically ready, but refilling silent
+		 * background tracks competes with the selected track. This is especially
+		 * audible when the selected track is reverse/speed-shifted, since reverse
+		 * refill is seek-heavy. Stop non-active tracks that are fully silent; they
+		 * restart from their current column when radiate/selection makes them
+		 * audible again. Keep the active track alive during center-mute hold. */
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			if (t == gl_active_track_) continue;
+			if (gl_playback_track_gain_frac_[t] == 0 && mlr_tracks[t].playing)
+				mlr_stop_track(t);
+		}
 	}
 
 	/**
@@ -1565,26 +1578,45 @@ private:
 
 			/* ---- Channel mode speed from Knob Main ---- */
 			if (switch_up && gl_active_track_ >= 0 && knob_hard_takeover_accept(Knob::Main, knob_main)) {
-			int centered = knob_main - 2048;        /* -2048..+2047 */
-			int magnitude = centered < 0 ? -centered : centered;
-			const int deadzone = 64;
-			const int max_mag = 2048 - deadzone;
+				int centered = knob_main - 2048;        /* -2048..+2047 */
+				int magnitude = centered < 0 ? -centered : centered;
+				const int deadzone = 64;
+				const int max_mag = 2048 - deadzone;
+				bool was_deadzone_muted = gl_active_deadzone_mute_;
 
-			if (magnitude <= deadzone) {
-				gl_active_deadzone_mute_ = true;
-			} else {
-				uint32_t speed_frac = ((uint32_t)(magnitude - deadzone) * 1024u) / (uint32_t)max_mag;
-				if (speed_frac > 1024u) speed_frac = 1024u;
-
-				if (speed_frac < 64u) {
+				if (magnitude <= deadzone) {
 					gl_active_deadzone_mute_ = true;
 				} else {
-					gl_active_deadzone_mute_ = false;
-					mlr_set_reverse(gl_active_track_, centered < 0);
-					gl_base_speed_frac_[gl_active_track_] = (uint16_t)speed_frac;
-					mlr_set_speed_frac_nondeclick(gl_active_track_, (uint16_t)speed_frac);
+					uint32_t speed_frac = ((uint32_t)(magnitude - deadzone) * 1024u) / (uint32_t)max_mag;
+					if (speed_frac > 1024u) speed_frac = 1024u;
+
+					if (speed_frac < 64u) {
+						gl_active_deadzone_mute_ = true;
+					} else {
+						bool target_reverse = centered < 0;
+						uint16_t target_speed = (uint16_t)speed_frac;
+						mlr_track_t *tr = &mlr_tracks[gl_active_track_];
+						bool effective_reverse = tr->seek_reverse_pending ? tr->seek_reverse_target :
+							(tr->seek_handoff_reverse_pending ? tr->seek_handoff_reverse_target : tr->reverse);
+						uint16_t prev_speed = gl_base_speed_frac_[gl_active_track_];
+						int speed_delta = (int)target_speed - (int)prev_speed;
+						if (speed_delta < 0) speed_delta = -speed_delta;
+
+						gl_active_deadzone_mute_ = false;
+						bool reverse_changed = effective_reverse != target_reverse;
+						if (reverse_changed)
+							mlr_set_reverse(gl_active_track_, target_reverse);
+
+						/* Main-knob ADC dither can constantly perturb continuous speed,
+						 * which is especially audible in reverse because it invalidates
+						 * wrap previews. Ignore tiny movements but apply immediately
+						 * when leaving the center hold or changing direction. */
+						if (was_deadzone_muted || reverse_changed || speed_delta >= 4) {
+							gl_base_speed_frac_[gl_active_track_] = target_speed;
+							mlr_set_speed_frac_nondeclick(gl_active_track_, target_speed);
+						}
+					}
 				}
-			}
 			} else if (!switch_up) {
 				gl_active_deadzone_mute_ = false;
 			}
