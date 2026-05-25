@@ -1871,6 +1871,12 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 		/* legacy event — group-broadcast removed; apply to single track. */
 		mlr_set_volume(e->track, e->param_a);
 		break;
+	case MLR_EVT_CHANNEL:
+		if (e->track < MLR_NUM_TRACKS) {
+			mlr_set_recorded_channel(e->track, (uint8_t)e->param_a & 0x01u);
+			mlr_tracks[e->track].channel_user_chosen = true;
+		}
+		break;
 	case MLR_EVT_PAT_PLAY:
 		if (e->track < MLR_NUM_PATTERNS &&
 		    mlr_patterns[e->track].count > 0)
@@ -2351,18 +2357,23 @@ void __not_in_flash_func(mlr_recall_task)(void)
 					recall_snapshot_track_step = 2;
 					break;
 				case 2:
-					emitted = recall_snapshot_add(MLR_EVT_VOLUME, recall_snapshot_track,
-						(int8_t)tr->volume_slot, 0);
+					emitted = recall_snapshot_add(MLR_EVT_CHANNEL, recall_snapshot_track,
+						(int8_t)(tr->recorded_channel & 0x01), 0);
 					recall_snapshot_track_step = 3;
 					break;
 				case 3:
+					emitted = recall_snapshot_add(MLR_EVT_VOLUME, recall_snapshot_track,
+						(int8_t)tr->volume_slot, 0);
+					recall_snapshot_track_step = 4;
+					break;
+				case 4:
 					if (tr->loop_active) {
 						emitted = recall_snapshot_add(MLR_EVT_LOOP, recall_snapshot_track,
 							(int8_t)tr->loop_col_start, (int8_t)tr->loop_col_end);
 					} else {
 						emitted = recall_snapshot_add(MLR_EVT_LOOP_CLR, recall_snapshot_track, 0, 0);
 					}
-					recall_snapshot_track_step = 4;
+					recall_snapshot_track_step = 5;
 					break;
 				default:
 					if (tr->has_content) {

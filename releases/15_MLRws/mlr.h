@@ -105,6 +105,7 @@ extern "C" {
 #define MLR_EVT_GROUP_SPEED  16   /* speed change broadcast to every member of track's group */
 #define MLR_EVT_GROUP_REVERSE 17  /* reverse change broadcast to every member of track's group */
 #define MLR_EVT_GROUP_VOLUME 18   /* volume change broadcast to every member of track's group */
+#define MLR_EVT_CHANNEL      19   /* per-track input/output channel: param_a=0/1 */
 
 /* Volume slots: 5 levels (cols 2–6 on REC page). Slot 1 = unity. */
 #define MLR_NUM_VOL_SLOTS      5

@@ -1951,6 +1951,8 @@ private:
 		bool changed = (mlr_tracks[track].recorded_channel != channel);
 		mlr_set_recorded_channel(track, channel);
 		mlr_tracks[track].channel_user_chosen = true;
+		if (changed)
+			dispatch_event(MLR_EVT_CHANNEL, (uint8_t)track, (int8_t)channel, 0);
 		if (changed && persist_existing && mlr_tracks[track].has_content)
 			mlr_rewrite_track_header(track);
 	}
