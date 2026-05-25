@@ -97,7 +97,7 @@ you anything useful for a pre-prepared sample.
 
 MLRws stores one mono ADPCM stream per track. In the sample manager, each track has a Channel 1/2 selector; that selector chooses the stored output routing and, for multi-channel source files, which source channel is encoded. Channel 1 uses source channel 1, Channel 2 uses source channel 2 when present, and single-channel files can be assigned to either output channel.
 
-When uploading a stereo file, if the next track is empty, the app offers to split it across the two tracks: left to the selected track on Channel 1, right to the following track on Channel 2.
+Uploading always writes only the selected track. For stereo source files, use the Channel selector to choose whether source channel 1 or source channel 2 is encoded and which output channel the stored track uses.
 
 
 ## Browser and Web Serial caveats
