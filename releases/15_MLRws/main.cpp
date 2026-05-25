@@ -469,7 +469,8 @@ public:
 		/* ---- Pulse In handling (gridful mode) ----
 		 * Pulse In 1: rising edge resets the playhead to loop_col_start
 		 *   for every track that is currently playing AND has an active
-		 *   loop. Loop stays active. (Mirrors gridless Pulse In 1 = reset.)
+		 *   loop. It always triggers the CV2 envelope. Loop stays active.
+		 *   (Mirrors gridless Pulse In 1 = reset.)
 		 * Pulse In 2: gate-style record for the armed track. Rising edge
 		 *   starts recording (same gates as switch-driven start); falling
 		 *   edge stops it. While pulse-gated, the switch-stop path is
@@ -485,6 +486,7 @@ public:
 					mlr_cut(t, mlr_tracks[t].loop_col_start);
 				}
 			}
+			trigger_cv2_envelope();
 		}
 		if (PulseIn2RisingEdge()) {
 			if (rec_armed_track >= 0 && mlr_rec_track < 0 && !mlr_flushing &&
@@ -1269,6 +1271,7 @@ private:
 	 *   Knob X    = per-channel level (grid mixer style)
 	 *   Knob Y    = reset start position (column 0–15)
 	 * Switch Down / Pulse In 1 rising edge = reset to start position
+	 *   Pulse In 1 also triggers the CV2 envelope
 	 * Hold Switch Down ~2 s to arm recording onto the active track
 	 * (switch Down again to start, Down release to stop).
 	 */
@@ -1619,6 +1622,8 @@ private:
 
 			if (!gl_record_mode_ && !gl_recording_active_ && (switch_reset || pulse_reset) && gl_active_track_ >= 0) {
 				mlr_cut(gl_active_track_, gl_prev_start_col_);
+				if (pulse_reset)
+					trigger_cv2_envelope();
 
 				/* Pulse out 1: reset trigger echo */
 				PulseOut1(true);
@@ -1762,6 +1767,15 @@ public:
 		if (midi > 127) midi = 127;
 		cv_step_base_midi_ = (int8_t)midi;
 
+		trigger_cv2_envelope();
+
+		/* PulseOut1: 20 ms gate trigger. */
+		cv_pulse1_remaining_ = CUT_PULSE_TRIG_SAMPLES;
+		pulse1_led_latch_ = true;
+	}
+private:
+	void __not_in_flash_func(trigger_cv2_envelope)()
+	{
 		/* CV2 linear decay envelope: jump to peak, then subtract a constant
 		 * step per sample so the envelope reaches 0 in exactly T_dec samples.
 		 * Y knob (square-law) sets total decay length, 10 ms .. 3 s.
@@ -1776,12 +1790,8 @@ public:
 		env_val_q16_  = (int32_t)CV_ENV_PEAK << 16;
 		env_step_q16_ = (int32_t)(((uint32_t)CV_ENV_PEAK << 16) / T_dec);
 		if (env_step_q16_ < 1) env_step_q16_ = 1;
-
-		/* PulseOut1: 20 ms gate trigger. */
-		cv_pulse1_remaining_ = CUT_PULSE_TRIG_SAMPLES;
-		pulse1_led_latch_ = true;
 	}
-private:
+
 	void process_bottom_master_control()
 	{
 		int row = MLR_NUM_TRACKS + 1;
