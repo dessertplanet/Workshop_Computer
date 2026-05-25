@@ -987,7 +987,7 @@ private:
 	 * so the total decay length equals exactly Y-knob's T_dec samples. */
 	int32_t    env_val_q16_ = 0;           /* 0 .. CV_ENV_PEAK << 16 */
 	int32_t    env_step_q16_ = 0;          /* per-sample subtract, Q16 */
-	uint32_t   cv1_noise_state_ = 0x6D2B79F5u;  /* gridless CV1 audio-rate xorshift noise */
+	uint32_t   gl_turing_rng_state_ = 0x6D2B79F5u;
 	/* PulseOut2 / LED 5 gate: high while any CUT-page track-row key is held
 	 * (independent of envelope state — useful for VCA gates / mutes). */
 	bool       gate_high_ = false;
@@ -1039,7 +1039,13 @@ private:
 	uint8_t    gl_start_maint_div_ = 0;       /* all-track restart maintenance divider */
 	bool       gl_pulse1_pending_ = false;    /* latched PulseIn1 edge between control ticks */
 	bool       gl_pulse2_pending_ = false;    /* latched PulseIn2 edge between control ticks */
-	uint16_t   gl_cv1_noise_gain_raw_ = 0;    /* X knob, sampled at gridless control rate */
+	uint16_t   gl_turing_probability_raw_ = 0; /* Main knob, sampled at gridless control rate */
+	uint8_t    gl_turing_range_semitones_ = 0; /* X knob: 1 note .. 3 octaves before major quantize */
+	uint8_t    gl_turing_length_ = 6;          /* Y knob: 3 .. 8 active cells */
+	uint8_t    gl_turing_cells_[8] = {0, 1, 2, 3, 0, 1, 2, 3}; /* BYO_Benjolin-style 2-bit cells */
+	uint8_t    gl_turing_cv_midi_ = CV_NOTE_BASE_MIDI;
+	bool       gl_turing_cv_dirty_ = true;
+	bool       gl_turing_clocked_ = false;
 	uint32_t   gl_wrap_pulse_remaining_ = 0;  /* PulseOut1: 20 ms when any playing track wraps */
 	uint32_t   gl_env_end_pulse_remaining_ = 0; /* PulseOut2: 20 ms when CV2 envelope reaches rest */
 	bool       gl_prev_switch_down_sample_ = false;
@@ -1316,24 +1322,23 @@ private:
 	 * Gridless ProcessSample
 	 *
 	 * Global mode (switch middle):
-	 *   Knob Main = channel select
-	 *   Knob X    = playback layer gain (unity at center)
+	 *   Knob Main = channel select + CV1 Turing probability
+	 *   Knob X    = playback layer gain (unity at center) + CV1 range
 	 *   Knob Y    = radiate amount (left=selected only, right=all channels)
 	 * Channel mode (switch up):
-	 *   Knob Main = bipolar speed control
+	 *   Knob Main = bipolar speed control + CV1 Turing probability
 	 *     center = minimum speed, left = reverse, right = forward
 	 *     edges map to ±2 octaves
-	 *   Knob X    = per-channel level (grid mixer style)
+	 *   Knob X    = per-channel level (grid mixer style) + CV1 range
 	 *   Knob Y    = reset start position (column 0–15)
 	 * Switch Down / Pulse In 1 rising edge = reset to start position
-	 *   Pulse In 1 also triggers the CV2 envelope
+	 * Pulse In 1/2 rising edge = clock CV1 Turing output + trigger CV2 envelope
+	 * Pulse In 2 also advances the active track
 	 * Hold Switch Down ~2 s to arm recording onto the active track
 	 * (switch Down again to start, Down release to stop).
 	 */
 	bool __not_in_flash("gridless") gridless_process_sample()
 	{
-		CVOut1(gridless_cv1_noise_sample());
-
 		/* Latch external pulse edges at full sample rate; consume at control rate. */
 		if (PulseIn1RisingEdge()) gl_pulse1_pending_ = true;
 		if (PulseIn2RisingEdge()) gl_pulse2_pending_ = true;
@@ -1520,6 +1525,7 @@ private:
 
 			/* ---- Track selection from Knob Main ---- */
 			int knob_main = KnobVal(Knob::Main);  /* 0–4095 */
+			gridless_update_u16_hysteresis(&gl_turing_probability_raw_, (uint16_t)knob_main, 2);
 			int new_track = gl_active_track_;
 			if (switch_up && gl_locked_track_ >= 0 && gl_locked_track_ < MLR_NUM_TRACKS) {
 				new_track = gl_locked_track_;
@@ -1539,9 +1545,8 @@ private:
 				new_track = (base + offset) % MLR_NUM_TRACKS;
 			}
 
-			/* Pulse In 2 rising edge: advance to next channel (wrap 7->1). */
+			/* Pulse In 2 rising edge: advance to next track (wrap 6->1). */
 			if (gl_pulse2_pending_) {
-				gl_pulse2_pending_ = false;
 				int base = (new_track >= 0 && new_track < MLR_NUM_TRACKS) ? new_track : 0;
 				new_track = (base + 1) % MLR_NUM_TRACKS;
 				if (switch_up) gl_locked_track_ = new_track;
@@ -1563,7 +1568,9 @@ private:
 
 			/* ---- X knob layer controls ---- */
 			int knob_x = KnobVal(Knob::X);  /* 0..4095 */
-			gridless_update_u16_hysteresis(&gl_cv1_noise_gain_raw_, (uint16_t)knob_x, 2);
+			uint8_t turing_range = (uint8_t)(((uint32_t)knob_x * 36u) / 4095u);
+			if (turing_range != gl_turing_range_semitones_)
+				gl_turing_range_semitones_ = turing_range;
 			bool cv1_connected = Connected(Input::CV1);
 			int mod_x = knob_x;
 			if (cv1_connected) {
@@ -1604,6 +1611,9 @@ private:
 			}
 
 			bool y_accept = knob_hard_takeover_accept(Knob::Y, knob_y);
+			uint8_t turing_length = (uint8_t)(3u + (((uint32_t)knob_y * 5u) / 4095u));
+			if (turing_length != gl_turing_length_)
+				gl_turing_length_ = turing_length;
 			if (!gl_recording_active_ && switch_up && (y_accept || cv2_connected)) {
 			/* Channel mode: reset start position for selected channel resets. */
 				int start_col = (mod_y * MLR_GRID_COLS) >> 12;
@@ -1678,11 +1688,15 @@ private:
 
 			bool pulse_reset = gl_pulse1_pending_;
 			gl_pulse1_pending_ = false;
+			bool turing_clock = pulse_reset || gl_pulse2_pending_;
+			gl_pulse2_pending_ = false;
 
 			if (!gl_record_mode_ && !gl_recording_active_ && (switch_reset || pulse_reset) && gl_active_track_ >= 0) {
 				mlr_cut(gl_active_track_, gl_prev_start_col_);
-				if (pulse_reset)
-					trigger_cv2_envelope();
+			}
+			if (!gl_record_mode_ && !gl_recording_active_ && turing_clock) {
+				gridless_step_turing();
+				trigger_cv2_envelope();
 			}
 
 			gl_prev_switch_mode_ = static_cast<Switch>(sw);
@@ -1719,8 +1733,14 @@ private:
 		AudioOut1((int16_t)outL);
 		AudioOut2((int16_t)outR);
 
-		if (mlr_consume_wrap_events())
+		if (mlr_consume_wrap_events()) {
 			gl_wrap_pulse_remaining_ = CUT_PULSE_TRIG_SAMPLES;
+		}
+		if (gl_turing_clocked_ && gl_turing_cv_dirty_) {
+			gl_turing_clocked_ = false;
+			gl_turing_cv_dirty_ = false;
+			CVOut1MIDINote(gl_turing_cv_midi_);
+		}
 
 		if (gl_wrap_pulse_remaining_ > 0) {
 			gl_wrap_pulse_remaining_--;
@@ -1851,17 +1871,56 @@ public:
 		pulse1_led_latch_ = true;
 	}
 private:
-	int16_t __not_in_flash_func(gridless_cv1_noise_sample)()
+	uint32_t __not_in_flash_func(gridless_turing_rand12)()
 	{
-		uint16_t gain_raw = gl_cv1_noise_gain_raw_;
-		if (gain_raw > 4095u) gain_raw = 4095u;
-		uint32_t x = cv1_noise_state_;
+		uint32_t x = gl_turing_rng_state_;
 		x ^= x << 13;
 		x ^= x >> 17;
 		x ^= x << 5;
-		cv1_noise_state_ = x ? x : 0x6D2B79F5u;
-		int32_t noise = (int32_t)((x >> 20) & 0x0FFFu) - 2048;
-		return (int16_t)((noise * (int32_t)gain_raw) / 4095);
+		gl_turing_rng_state_ = x ? x : 0x6D2B79F5u;
+		return (x >> 20) & 0x0FFFu;
+	}
+
+	void __not_in_flash_func(gridless_update_turing_cv)()
+	{
+		static const uint8_t kMajor[12] = {0, 0, 2, 2, 4, 4, 5, 7, 7, 9, 9, 11};
+		uint8_t value = (uint8_t)((gl_turing_cells_[0] & 0x03u) |
+			((gl_turing_cells_[1] & 0x03u) << 2) |
+			((gl_turing_cells_[2] & 0x03u) << 4));
+		uint8_t semitone = (uint8_t)(((uint32_t)value * (uint32_t)gl_turing_range_semitones_ + 31u) / 63u);
+		uint8_t midi = (uint8_t)(CV_NOTE_BASE_MIDI + (semitone / 12u) * 12u + kMajor[semitone % 12u]);
+		if (midi > 127u) midi = 127u;
+		gl_turing_cv_midi_ = midi;
+		gl_turing_cv_dirty_ = true;
+	}
+
+	void __not_in_flash_func(gridless_step_turing)()
+	{
+		uint16_t probability = gl_turing_probability_raw_;
+		bool force_toggle = false;
+		if (probability < 15u) {
+			probability = 0;
+			force_toggle = true;
+		} else if (probability > (4095u - 15u)) {
+			probability = 4095u;
+		}
+
+		uint8_t length = gl_turing_length_;
+		if (length < 3u) length = 3u;
+		if (length > 8u) length = 8u;
+
+		uint8_t feedback = gl_turing_cells_[length - 1u] & 0x03u;
+		for (int i = (int)length - 1; i > 0; i--)
+			gl_turing_cells_[i] = gl_turing_cells_[i - 1] & 0x03u;
+
+		uint32_t r = gridless_turing_rand12();
+		if (force_toggle)
+			feedback = (uint8_t)((~feedback) & 0x03u);
+		else if (r > probability)
+			feedback = (uint8_t)((~r) & 0x03u);
+		gl_turing_cells_[0] = feedback;
+		gridless_update_turing_cv();
+		gl_turing_clocked_ = true;
 	}
 
 	bool __not_in_flash_func(update_cv2_envelope_output)()

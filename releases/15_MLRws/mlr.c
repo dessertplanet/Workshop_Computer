@@ -1262,10 +1262,9 @@ static inline bool mix_track_steady_integer_dual(int t, mlr_track_t *tr,
 	uint32_t steps = integer_speed_steps(tr->speed_frac);
 	if (steps == 0) return false;
 
-	bool no_wrap = tr->reverse
-		? (tr->playhead >= wrap_start + steps)
-		: (tr->playhead >= wrap_start && tr->playhead + steps < wrap_end);
-	if (!no_wrap) return false;
+	bool will_wrap = tr->reverse
+		? (tr->playhead < wrap_start + steps)
+		: (tr->playhead < wrap_start || tr->playhead + steps >= wrap_end);
 
 	uint32_t pcm_r = tr->pcm.r;
 	uint32_t avail = tr->pcm.w - pcm_r;
@@ -1277,8 +1276,14 @@ static inline bool mix_track_steady_integer_dual(int t, mlr_track_t *tr,
 	tr->interp_prev[0] = tr->last_pcm[0];
 	tr->last_pcm[0] = tr->pcm.buf[final_pos * MLR_NUM_CHANNELS];
 	tr->pcm.r = pcm_r + steps;
-	if (tr->reverse) tr->playhead -= steps;
-	else             tr->playhead += steps;
+	if (will_wrap) {
+		if (tr->reverse) tr->playhead = wrap_end > 0 ? wrap_end - 1 : 0;
+		else             tr->playhead = wrap_start;
+		note_track_wrap(t);
+	} else {
+		if (tr->reverse) tr->playhead -= steps;
+		else             tr->playhead += steps;
+	}
 
 	if (!tr->muted) {
 		int32_t sample_out = tr->last_pcm[0];
