@@ -2487,11 +2487,11 @@ private:
 				uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
 				uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
 				if (held_in_zone == 0) {
+					mlr_stop_track(track);
 					if (mlr_tracks[track].loop_active) {
 						mlr_clear_loop(track);
 						dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)track, 0, 0);
 					}
-					mlr_stop_track(track);
 					release_gated_choke_pauses(track);
 				}
 			}

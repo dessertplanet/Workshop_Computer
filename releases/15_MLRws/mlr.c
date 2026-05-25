@@ -1607,11 +1607,10 @@ void __not_in_flash_func(mlr_clear_loop)(int track)
 
 	tr->loop_active = false;
 
-	/* Seek core 1 only when something is currently driving playback, so
-	 * it stops feeding stale loop samples. For a fully stopped track no
-	 * engine is reading; restarting it here would be a surprise side
-	 * effect (DELETE+key clear-loop on a stopped track would resume it). */
-	if (tr->playing || tr->stop_pending) {
+	/* Seek core 1 only while active playback needs fresh non-loop samples.
+	 * If a stop fade is already pending, clearing the loop must not queue a
+	 * seek handoff that can keep the playhead alive after the stop. */
+	if (tr->playing && !tr->stop_pending) {
 		bool start_pending = !tr->playing || tr->stop_pending;
 		trigger_track_fade_and_seek(tr, tr->playhead, start_pending);
 	}
