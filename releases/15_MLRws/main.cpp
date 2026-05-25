@@ -721,13 +721,7 @@ public:
 			CVOut1MIDINote((uint8_t)note);
 		}
 
-		/* Per-sample linear decay. env_val_q16_ subtracts a constant step
-		 * each sample and clamps to 0 when it would go negative — envelope
-		 * terminates cleanly at the latched T_dec. */
-		if (env_val_q16_ > 0) {
-			env_val_q16_ -= env_step_q16_;
-			if (env_val_q16_ < 0) env_val_q16_ = 0;
-		}
+		(void)update_cv2_envelope_output();
 
 		if (cv_pulse1_remaining_ > 0) {
 			cv_pulse1_remaining_--;
@@ -736,10 +730,6 @@ public:
 			PulseOut1(false);
 		}
 		PulseOut2(gate_high_);
-		/* CV2 raw output: (env_val >> 16) - CV2_FLOOR_OFFSET shifts the
-		 * rest value to roughly -1 V (assuming +6 V = +2047 raw). Peak is
-		 * reduced from +6 V to ~+5 V; calibration not applied. */
-		CVOut2((int16_t)((env_val_q16_ >> 16) - CV2_FLOOR_OFFSET));
 
 		/* ---- mix and output ---- */
 		PERF_UI_SECTION_START(5);
@@ -997,6 +987,7 @@ private:
 	 * so the total decay length equals exactly Y-knob's T_dec samples. */
 	int32_t    env_val_q16_ = 0;           /* 0 .. CV_ENV_PEAK << 16 */
 	int32_t    env_step_q16_ = 0;          /* per-sample subtract, Q16 */
+	uint32_t   cv1_noise_state_ = 0x6D2B79F5u;  /* gridless CV1 audio-rate xorshift noise */
 	/* PulseOut2 / LED 5 gate: high while any CUT-page track-row key is held
 	 * (independent of envelope state — useful for VCA gates / mutes). */
 	bool       gate_high_ = false;
@@ -1048,6 +1039,9 @@ private:
 	uint8_t    gl_start_maint_div_ = 0;       /* all-track restart maintenance divider */
 	bool       gl_pulse1_pending_ = false;    /* latched PulseIn1 edge between control ticks */
 	bool       gl_pulse2_pending_ = false;    /* latched PulseIn2 edge between control ticks */
+	uint16_t   gl_cv1_noise_gain_raw_ = 0;    /* X knob, sampled at gridless control rate */
+	uint32_t   gl_wrap_pulse_remaining_ = 0;  /* PulseOut1: 20 ms when any playing track wraps */
+	uint32_t   gl_env_end_pulse_remaining_ = 0; /* PulseOut2: 20 ms when CV2 envelope reaches rest */
 	bool       gl_prev_switch_down_sample_ = false;
 	bool       gl_switch_down_rise_pending_ = false;
 	bool       gl_switch_down_fall_pending_ = false;
@@ -1338,9 +1332,7 @@ private:
 	 */
 	bool __not_in_flash("gridless") gridless_process_sample()
 	{
-		/* Keep pulse outputs one-sample wide. */
-		PulseOut1(false);
-		PulseOut2(false);
+		CVOut1(gridless_cv1_noise_sample());
 
 		/* Latch external pulse edges at full sample rate; consume at control rate. */
 		if (PulseIn1RisingEdge()) gl_pulse1_pending_ = true;
@@ -1567,13 +1559,11 @@ private:
 
 				/* Hard-cut selected channel from last accepted start position */
 				mlr_cut(gl_active_track_, gl_prev_start_col_);
-
-				/* Pulse out 2: track change trigger */
-				PulseOut2(true);
 			}
 
 			/* ---- X knob layer controls ---- */
 			int knob_x = KnobVal(Knob::X);  /* 0..4095 */
+			gridless_update_u16_hysteresis(&gl_cv1_noise_gain_raw_, (uint16_t)knob_x, 2);
 			bool cv1_connected = Connected(Input::CV1);
 			int mod_x = knob_x;
 			if (cv1_connected) {
@@ -1693,13 +1683,13 @@ private:
 				mlr_cut(gl_active_track_, gl_prev_start_col_);
 				if (pulse_reset)
 					trigger_cv2_envelope();
-
-				/* Pulse out 1: reset trigger echo */
-				PulseOut1(true);
 			}
 
 			gl_prev_switch_mode_ = static_cast<Switch>(sw);
 		}
+
+		if (update_cv2_envelope_output())
+			gl_env_end_pulse_remaining_ = CUT_PULSE_TRIG_SAMPLES;
 
 		/* ---- Mix and output ----
 		 * Use the same dual-bus soft-clipped mixer as gridful so the
@@ -1728,6 +1718,22 @@ private:
 		if (outR < -2048) outR = -2048;
 		AudioOut1((int16_t)outL);
 		AudioOut2((int16_t)outR);
+
+		if (mlr_consume_wrap_events())
+			gl_wrap_pulse_remaining_ = CUT_PULSE_TRIG_SAMPLES;
+
+		if (gl_wrap_pulse_remaining_ > 0) {
+			gl_wrap_pulse_remaining_--;
+			PulseOut1(true);
+		} else {
+			PulseOut1(false);
+		}
+		if (gl_env_end_pulse_remaining_ > 0) {
+			gl_env_end_pulse_remaining_--;
+			PulseOut2(true);
+		} else {
+			PulseOut2(false);
+		}
 
 		/* ---- LED update (sub-sampled) ---- */
 		gl_led_counter_++;
@@ -1845,6 +1851,37 @@ public:
 		pulse1_led_latch_ = true;
 	}
 private:
+	int16_t __not_in_flash_func(gridless_cv1_noise_sample)()
+	{
+		uint16_t gain_raw = gl_cv1_noise_gain_raw_;
+		if (gain_raw > 4095u) gain_raw = 4095u;
+		uint32_t x = cv1_noise_state_;
+		x ^= x << 13;
+		x ^= x >> 17;
+		x ^= x << 5;
+		cv1_noise_state_ = x ? x : 0x6D2B79F5u;
+		int32_t noise = (int32_t)((x >> 20) & 0x0FFFu) - 2048;
+		return (int16_t)((noise * (int32_t)gain_raw) / 4095);
+	}
+
+	bool __not_in_flash_func(update_cv2_envelope_output)()
+	{
+		/* Per-sample linear decay. env_val_q16_ subtracts a constant step
+		 * each sample and clamps to 0 when it would go negative — envelope
+		 * terminates cleanly at the latched T_dec. */
+		bool was_active = (env_val_q16_ > 0);
+		if (env_val_q16_ > 0) {
+			env_val_q16_ -= env_step_q16_;
+			if (env_val_q16_ < 0) env_val_q16_ = 0;
+		}
+
+		/* CV2 raw output: (env_val >> 16) - CV2_FLOOR_OFFSET shifts the
+		 * rest value to roughly -1 V (assuming +6 V = +2047 raw). Peak is
+		 * reduced from +6 V to ~+5 V; calibration not applied. */
+		CVOut2((int16_t)((env_val_q16_ >> 16) - CV2_FLOOR_OFFSET));
+		return was_active && env_val_q16_ == 0;
+	}
+
 	void __not_in_flash_func(trigger_cv2_envelope)()
 	{
 		/* CV2 linear decay envelope: jump to peak, then subtract a constant

@@ -30,6 +30,7 @@ volatile bool   mlr_copying    = false;
 mlr_page_ring_t mlr_page_ring;
 volatile uint16_t mlr_master_level_raw = 4095;
 volatile bool     mlr_master_override = false;
+static volatile uint8_t mlr_wrap_event_mask;
 
 mlr_pattern_t   mlr_patterns[MLR_NUM_PATTERNS];
 mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
@@ -38,6 +39,19 @@ volatile int    mlr_recall_active = -1;
 static uint32_t mlr_clock_ms = 0;
 
 static inline uint32_t page_ring_used_pages(void);
+
+static inline void note_track_wrap(int track)
+{
+	if (track >= 0 && track < MLR_NUM_TRACKS)
+		mlr_wrap_event_mask |= (uint8_t)(1u << track);
+}
+
+uint8_t __not_in_flash_func(mlr_consume_wrap_events)(void)
+{
+	uint8_t mask = mlr_wrap_event_mask;
+	mlr_wrap_event_mask = 0;
+	return mask;
+}
 
 #ifdef MLR_PERF_PROFILING
 volatile mlr_perf_t mlr_perf;
@@ -1151,6 +1165,7 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 				if (ring_state_loaded)
 					tr->pcm.r = pcm_r;
 				if (wrapped && !tr->seek_xfade_active) {
+					note_track_wrap(t);
 					/* loop wraps don't do full handoff seek as they are contiguous in ring */
 					tr->fade_out_active = true;
 					tr->fade_out_count = MLR_FADE_SAMPLES;
@@ -1386,6 +1401,7 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 				if (ring_state_loaded)
 					tr->pcm.r = pcm_r;
 				if (wrapped && !(transition_flags & MLR_TRANS_XFADE)) {
+					note_track_wrap(t);
 					tr->fade_out_active = true;
 					tr->fade_out_count = MLR_FADE_SAMPLES;
 					transition_update_track_state(tr);

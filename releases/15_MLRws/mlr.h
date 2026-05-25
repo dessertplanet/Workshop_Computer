@@ -431,6 +431,7 @@ void     mlr_set_reverse(int track, bool reverse);
 void     mlr_set_volume(int track, int slot);
 int      mlr_get_column(int track);
 void     mlr_get_loop_cols(int track, int *col_start, int *col_end);
+uint8_t  mlr_consume_wrap_events(void);
 uint32_t mlr_get_rec_progress(void);
 int      mlr_get_flush_track(void);
 
