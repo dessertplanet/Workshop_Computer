@@ -1823,15 +1823,19 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 	mlr_event_playback_hook(e);
 	switch (e->type) {
 	case MLR_EVT_CUT:
-		mlr_choke_group_cut(e->track, e->param_a);
-		break;
 	case MLR_EVT_GROUP_CUT:
-		/* legacy event — group-broadcast mode was removed; behave like a
-		 * regular choke cut so previously saved patterns still work. */
-		mlr_choke_group_cut(e->track, e->param_a);
+		if (e->track < MLR_NUM_TRACKS && mlr_gate_mode[e->track]) {
+			mlr_clear_loop(e->track);
+			mlr_cut(e->track, e->param_a);
+		} else {
+			mlr_choke_group_cut(e->track, e->param_a);
+		}
 		break;
 	case MLR_EVT_STOP:
-		mlr_group_stop_track(e->track);
+		if (e->track < MLR_NUM_TRACKS && mlr_gate_mode[e->track])
+			mlr_stop_track(e->track);
+		else
+			mlr_group_stop_track(e->track);
 		break;
 	case MLR_EVT_START:
 		mlr_choke_group_cut(e->track, 0);  /* start from beginning, choke siblings */
@@ -1851,11 +1855,11 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 		mlr_set_reverse(e->track, e->param_a != 0);
 		break;
 	case MLR_EVT_LOOP:
-		mlr_choke_group_set_loop(e->track, e->param_a, e->param_b);
-		break;
 	case MLR_EVT_GROUP_LOOP:
-		/* legacy event — group-broadcast removed; behave like a choke loop. */
-		mlr_choke_group_set_loop(e->track, e->param_a, e->param_b);
+		if (e->track < MLR_NUM_TRACKS && mlr_gate_mode[e->track])
+			mlr_set_loop(e->track, e->param_a, e->param_b);
+		else
+			mlr_choke_group_set_loop(e->track, e->param_a, e->param_b);
 		break;
 	case MLR_EVT_LOOP_CLR:
 		mlr_clear_loop(e->track);

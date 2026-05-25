@@ -571,13 +571,21 @@ public:
 			bool alt_held = delete_action_held();
 			int pcs = pat_col_start();
 			if (col == 0) {
+				bool leaving_cut = (play_page == PAGE_CUT);
 				play_page = PAGE_REC;
 				page_switched = true;
-				/* stop all gated tracks when leaving CUT page */
-				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-					if (mlr_gate_mode[t] && mlr_tracks[t].playing) {
-						mlr_stop_track(t);
-						dispatch_event(MLR_EVT_STOP, (uint8_t)t, 0, 0);
+				if (leaving_cut) {
+					/* Treat page navigation as releasing any held gated CUT voices,
+					 * but do not record navigation side effects into patterns. */
+					for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+						if (mlr_gate_mode[t]) {
+							if (mlr_tracks[t].playing) {
+								mlr_stop_track(t);
+								if (mlr_tracks[t].loop_active)
+									mlr_clear_loop(t);
+							}
+							release_gated_choke_pauses(t);
+						}
 					}
 				}
 			}
@@ -681,6 +689,14 @@ public:
 				/* Empty tracks count for gating too. */
 				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 					if (grid.heldRowMask((uint8_t)(t + 1))) {
+						new_gate = true;
+						break;
+					}
+				}
+			}
+			if (!new_gate) {
+				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+					if (mlr_gate_mode[t] && mlr_tracks[t].playing) {
 						new_gate = true;
 						break;
 					}
@@ -2493,6 +2509,7 @@ private:
 						dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)track, 0, 0);
 					}
 					release_gated_choke_pauses(track);
+					dispatch_event(MLR_EVT_STOP, (uint8_t)track, 0, 0);
 				}
 			}
 		}
