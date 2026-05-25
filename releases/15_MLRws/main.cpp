@@ -252,7 +252,7 @@ public:
 	static bool sample_mgr_wake_byte(uint8_t byte)
 	{
 		return byte == 'I' || byte == 'S' || byte == 'R' ||
-		       byte == 'E' || byte == 'W' || byte == 'X';
+		       byte == 'E' || byte == 'W' || byte == 'P' || byte == 'X';
 	}
 
 	static void run_sample_manager_until_disconnect(uint8_t first_byte, bool resume_gridless)
@@ -1877,15 +1877,17 @@ public:
 		/* Empty tracks still drive CV1/Pulse1/envelope: the track row acts
 		 * as a playable mini-keyboard even before audio is recorded. */
 
-		/* CV1 sample-and-hold: quantize the cut grid column to a major
-		 * scale degree, two octaves+ span, root = C3 (MIDI 48). */
-		static const uint8_t kMajor[7] = {0, 2, 4, 5, 7, 9, 11};
-		int octave = col / 7;
-		int step   = col % 7;
-		int midi   = CV_NOTE_BASE_MIDI + octave * 12 + (int)kMajor[step];
-		if (midi < 0)   midi = 0;
-		if (midi > 127) midi = 127;
-		cv_step_base_midi_ = (int8_t)midi;
+		if (mlr_tracks[track].cv1_pitch_enabled) {
+			/* CV1 sample-and-hold: quantize the cut grid column to a major
+			 * scale degree, two octaves+ span, root = C3 (MIDI 48). */
+			static const uint8_t kMajor[7] = {0, 2, 4, 5, 7, 9, 11};
+			int octave = col / 7;
+			int step   = col % 7;
+			int midi   = CV_NOTE_BASE_MIDI + octave * 12 + (int)kMajor[step];
+			if (midi < 0)   midi = 0;
+			if (midi > 127) midi = 127;
+			cv_step_base_midi_ = (int8_t)midi;
+		}
 
 		trigger_cv2_envelope();
 

@@ -818,6 +818,7 @@ void mlr_init(void)
 		tr->volume_target = 256;
 		tr->recorded_channel  = 0;
 		tr->pan_class         = 0;
+		tr->cv1_pitch_enabled = true;
 		tr->channel_user_chosen = false;
 
 		if (hdr->magic == MLR_MAGIC &&
@@ -832,6 +833,7 @@ void mlr_init(void)
 			tr->record_speed_shift = hdr->record_speed_shift;
 			tr->recorded_channel   = hdr->recorded_channel & 0x01;
 			tr->pan_class          = (hdr->pan_class <= 2) ? hdr->pan_class : 0;
+			tr->cv1_pitch_enabled  = (hdr->cv1_pitch_mode != MLR_CV1_PITCH_DISABLED_MODE);
 			tr->playing        = false;
 			tr->playhead       = 0;
 
@@ -890,6 +892,7 @@ void mlr_rescan_track(int track)
 	tr->volume_target = 256;
 	tr->recorded_channel  = 0;
 	tr->pan_class         = 0;
+	tr->cv1_pitch_enabled = true;
 	tr->channel_user_chosen = false;
 	tr->fill_seek_pending = false;
 
@@ -905,6 +908,7 @@ void mlr_rescan_track(int track)
 		tr->record_speed_shift = hdr->record_speed_shift;
 		tr->recorded_channel   = hdr->recorded_channel & 0x01;
 		tr->pan_class          = (hdr->pan_class <= 2) ? hdr->pan_class : 0;
+		tr->cv1_pitch_enabled  = (hdr->cv1_pitch_mode != MLR_CV1_PITCH_DISABLED_MODE);
 		tr->playhead       = 0;
 
 		memcpy(tr->keyframes, hdr->keyframes,
@@ -1763,6 +1767,7 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	tr->volume_target = 256;
 	tr->recorded_channel    = 0;
 	tr->pan_class           = 0;
+	tr->cv1_pitch_enabled   = true;
 	tr->channel_user_chosen = false;
 	tr->pcm.w = 0;
 	tr->pcm.r = 0;
@@ -3473,7 +3478,7 @@ static void write_track_header(int t, bool start_playback)
 	hdr->record_speed_shift  = tr->record_speed_shift;
 	hdr->recorded_channel    = (uint8_t)(tr->recorded_channel & 0x01);
 	hdr->pan_class           = (uint8_t)((tr->pan_class <= 2) ? tr->pan_class : 0);
-	hdr->_hdr_pad[0]         = 0xFF;
+	hdr->cv1_pitch_mode      = tr->cv1_pitch_enabled ? MLR_CV1_PITCH_ENABLED_MODE : MLR_CV1_PITCH_DISABLED_MODE;
 	memcpy(hdr->keyframes, tr->keyframes,
 	       tr->num_keyframes * sizeof(mlr_keyframe_channels_t));
 
@@ -3575,7 +3580,7 @@ static void copy_finish_track(void)
 	hdr->record_speed_shift  = src->record_speed_shift;
 	hdr->recorded_channel    = (uint8_t)(src->recorded_channel & 0x01);
 	hdr->pan_class           = (uint8_t)((src->pan_class <= 2) ? src->pan_class : 0);
-	hdr->_hdr_pad[0]         = 0xFF;
+	hdr->cv1_pitch_mode      = src->cv1_pitch_enabled ? MLR_CV1_PITCH_ENABLED_MODE : MLR_CV1_PITCH_DISABLED_MODE;
 	memcpy(hdr->keyframes, src->keyframes,
 	       src->num_keyframes * sizeof(mlr_keyframe_channels_t));
 
@@ -3590,6 +3595,7 @@ static void copy_finish_track(void)
 	dst->record_speed_shift = src->record_speed_shift;
 	dst->recorded_channel   = src->recorded_channel & 0x01;
 	dst->pan_class          = (src->pan_class <= 2) ? src->pan_class : 0;
+	dst->cv1_pitch_enabled  = src->cv1_pitch_enabled;
 	memcpy(dst->keyframes, src->keyframes,
 	       src->num_keyframes * sizeof(mlr_keyframe_channels_t));
 	for (int ch = 0; ch < MLR_NUM_CHANNELS; ch++) {

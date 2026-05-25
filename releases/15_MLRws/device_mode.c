@@ -30,6 +30,7 @@
 typedef enum {
     SAMPLE_RX_WAIT_CMD = 0,
     SAMPLE_RX_WAIT_TRACK,
+    SAMPLE_RX_WAIT_CV1_PITCH,
     SAMPLE_RX_WAIT_WRITE_LEN,
     SAMPLE_RX_WAIT_WRITE_DATA,
     SAMPLE_RX_DRAIN_DATA,
@@ -67,6 +68,7 @@ typedef struct {
 } sample_mgr_state_t;
 
 static sample_mgr_state_t g_sample_mgr;
+static uint8_t g_header_sector[MLR_SECTOR_SIZE] __attribute__((aligned(4)));
 
 static bool __attribute__((section(".flashdata.devmode"))) cdc_write_all(const void *data, uint32_t len)
 {
@@ -182,17 +184,19 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
         uint32_t flash_off = MLR_TRACK_OFFSET(t);
         const mlr_track_header_t *hdr =
             (const mlr_track_header_t *)(XIP_BASE + flash_off);
+        unsigned cv1_pitch_enabled = mlr_tracks[t].cv1_pitch_enabled ? 1u : 0u;
 
         if (hdr->magic == MLR_MAGIC) {
-            n = snprintf(info + used, sizeof(info) - used, "T%d %lu %lu %lu %d %u\n",
+            n = snprintf(info + used, sizeof(info) - used, "T%d %lu %lu %lu %d %u %u\n",
                  t,
                  (unsigned long)hdr->sample_count,
                  (unsigned long)hdr->adpcm_bytes,
                  (unsigned long)hdr->num_keyframes,
                  (int)hdr->record_speed_shift,
-                 (unsigned)(hdr->recorded_channel & 0x01));
+                 (unsigned)(hdr->recorded_channel & 0x01),
+                 cv1_pitch_enabled);
         } else {
-            n = snprintf(info + used, sizeof(info) - used, "T%d 0 0 0 0 0\n", t);
+            n = snprintf(info + used, sizeof(info) - used, "T%d 0 0 0 0 0 %u\n", t, cv1_pitch_enabled);
         }
 
         if (n < 0 || (uint32_t)n >= sizeof(info) - used)
@@ -279,6 +283,27 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_erase_trac
         return cdc_write_str("ERR\n");
 
     flash_range_erase(MLR_TRACK_OFFSET(track), MLR_SECTOR_SIZE);
+    return cdc_write_str("OK\n");
+}
+
+static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_set_cv1_pitch(uint8_t track, bool enabled)
+{
+    if (track >= MLR_NUM_TRACKS)
+        return cdc_write_str("ERR\n");
+
+    mlr_tracks[track].cv1_pitch_enabled = enabled;
+    if (mlr_tracks[track].has_content) {
+        uint32_t flash_off = MLR_TRACK_OFFSET(track);
+        memcpy(g_header_sector, (const void *)(XIP_BASE + flash_off), sizeof(g_header_sector));
+        mlr_track_header_t *hdr = (mlr_track_header_t *)g_header_sector;
+        if (hdr->magic != MLR_MAGIC)
+            return cdc_write_str("ERR\n");
+
+        hdr->cv1_pitch_mode = enabled ? MLR_CV1_PITCH_ENABLED_MODE : MLR_CV1_PITCH_DISABLED_MODE;
+        flash_range_erase(flash_off, MLR_SECTOR_SIZE);
+        flash_range_program(flash_off, g_header_sector, sizeof(g_header_sector));
+    }
+
     return cdc_write_str("OK\n");
 }
 
@@ -519,6 +544,7 @@ void __attribute__((section(".flashdata.devmode"))) device_mode_task(void)
             case 'R':
             case 'E':
             case 'W':
+            case 'P':
                 g_sample_mgr.pending_cmd = byte;
                 g_sample_mgr.rx_state = SAMPLE_RX_WAIT_TRACK;
                 break;
@@ -546,9 +572,23 @@ void __attribute__((section(".flashdata.devmode"))) device_mode_task(void)
                 sample_mgr_reset_session();
                 return;
             }
+            if (g_sample_mgr.pending_cmd == 'P') {
+                g_sample_mgr.rx_state = SAMPLE_RX_WAIT_CV1_PITCH;
+                break;
+            }
             g_sample_mgr.rx_state = SAMPLE_RX_WAIT_WRITE_LEN;
             g_sample_mgr.len_got = 0;
             break;
+
+        case SAMPLE_RX_WAIT_CV1_PITCH:
+            if (byte == 'X') {
+                sample_mgr_reset_session();
+                cdc_write_str("SYNC\n");
+                return;
+            }
+            sample_mgr_set_cv1_pitch(g_sample_mgr.track, byte != 0);
+            sample_mgr_reset_session();
+            return;
 
         case SAMPLE_RX_WAIT_WRITE_LEN:
             if (byte == 'X' && g_sample_mgr.len_got == 0) {
@@ -617,7 +657,7 @@ device_detect_result_t device_mode_detect_protocol(uint32_t timeout_ms)
     result.first_byte = byte;
     result.has_pending_byte = true;
 
-    if (byte == 'I' || byte == 'S' || byte == 'R' || byte == 'E' || byte == 'W' || byte == 'X') {
+    if (byte == 'I' || byte == 'S' || byte == 'R' || byte == 'E' || byte == 'W' || byte == 'P' || byte == 'X') {
         result.protocol = DEVICE_PROTO_SAMPLE_MGR;
     } else {
         result.protocol = DEVICE_PROTO_MEXT;

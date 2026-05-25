@@ -77,6 +77,8 @@ extern "C" {
 
 /* Track header magic. v4 added record_speed_shift field. */
 #define MLR_MAGIC              0x4D4C5234  /* 'MLR4' — mono ADPCM v2 */
+#define MLR_CV1_PITCH_ENABLED_MODE   0u
+#define MLR_CV1_PITCH_DISABLED_MODE  1u
 
 /* ------------------------------------------------------------------ */
 /* Pattern / recall / scene constants                                 */
@@ -150,7 +152,7 @@ typedef struct {
 	int8_t                record_speed_shift;  /* speed at time of recording */
 	uint8_t               recorded_channel;    /* 0 = Audio1/Out1, 1 = Audio2/Out2 in dual-mono grid mode. */
 	uint8_t               pan_class;           /* Reserved; kept for flash header compatibility. */
-	uint8_t               _hdr_pad[1];
+	uint8_t               cv1_pitch_mode;      /* 0/0xFF = update CV1 pitch on cuts, 1 = leave CV1 pitch unchanged. */
 	mlr_keyframe_channels_t keyframes[MLR_MAX_KEYFRAMES];
 } mlr_track_header_t;
 
@@ -304,6 +306,7 @@ typedef struct {
 	 * 0 = Audio1/Out1, 1 = Audio2/Out2. Persisted in the track header. */
 	uint8_t        recorded_channel;
 	uint8_t        pan_class;            /* Reserved; kept for flash header compatibility. */
+	bool           cv1_pitch_enabled;    /* true = cut keys on this row update CV1 pitch. */
 	bool           channel_user_chosen;  /* RAM-only: true once the user has explicitly picked
 	                                      * a channel on the grid; suppresses auto-detect override */
 	uint8_t        pending_channel;      /* RAM-only: target channel queued behind a fade-out. */
