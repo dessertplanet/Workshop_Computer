@@ -1,0 +1,9 @@
+name: Tapegrade
+version: 0.8.0
+creator: Adrian Vos
+WIP but functional
+
+short_description: >
+  Mono-input stereo cassette warble processor
+  with wow, flutter, hiss, crackle, and tape wear morphing.
+
