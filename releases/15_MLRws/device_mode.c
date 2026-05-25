@@ -63,24 +63,43 @@ typedef struct {
 
 static sample_mgr_state_t g_sample_mgr;
 
-static bool __attribute__((section(".flashdata.devmode"))) cdc_write_small(const void *data, uint32_t len)
+static bool __attribute__((section(".flashdata.devmode"))) cdc_write_all(const void *data, uint32_t len)
 {
     if (!tud_cdc_n_connected(SAMPLE_CDC_ITF))
         return false;
 
-    if (tud_cdc_n_write_available(SAMPLE_CDC_ITF) < len) {
-        tud_cdc_n_write_flush(SAMPLE_CDC_ITF);
-        return false;
+    const uint8_t *bytes = (const uint8_t *)data;
+    uint32_t sent = 0;
+    absolute_time_t deadline = make_timeout_time_ms(3000);
+
+    while (sent < len && tud_cdc_n_connected(SAMPLE_CDC_ITF) && !time_reached(deadline)) {
+        uint32_t avail = tud_cdc_n_write_available(SAMPLE_CDC_ITF);
+        if (avail == 0) {
+            tud_cdc_n_write_flush(SAMPLE_CDC_ITF);
+            tud_task();
+            continue;
+        }
+
+        uint32_t chunk = len - sent;
+        if (chunk > avail)
+            chunk = avail;
+
+        uint32_t written = tud_cdc_n_write(SAMPLE_CDC_ITF, bytes + sent, chunk);
+        if (written == 0) {
+            tud_cdc_n_write_flush(SAMPLE_CDC_ITF);
+            tud_task();
+            continue;
+        }
+        sent += written;
     }
 
-    tud_cdc_n_write(SAMPLE_CDC_ITF, data, len);
     tud_cdc_n_write_flush(SAMPLE_CDC_ITF);
-    return true;
+    return sent == len;
 }
 
 static bool __attribute__((section(".flashdata.devmode"))) cdc_write_str(const char *s)
 {
-    return cdc_write_small(s, (uint32_t)strlen(s));
+    return cdc_write_all(s, (uint32_t)strlen(s));
 }
 
 static bool __attribute__((section(".flashdata.devmode"))) cdc_read_byte(uint8_t *out)
@@ -143,12 +162,13 @@ static void __attribute__((section(".flashdata.devmode"))) sample_mgr_reset_sess
 
 static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(void)
 {
-    char line[64];
+    char info[512];
+    uint32_t used = 0;
 
-    char hdr_line[16];
-    snprintf(hdr_line, sizeof(hdr_line), "MLR1 %d\n", MLR_NUM_CHANNELS);
-    if (!cdc_write_str(hdr_line))
+    int n = snprintf(info + used, sizeof(info) - used, "MLR1 %d\n", MLR_NUM_CHANNELS);
+    if (n < 0 || (uint32_t)n >= sizeof(info) - used)
         return false;
+    used += (uint32_t)n;
 
     for (int t = 0; t < MLR_NUM_TRACKS; t++) {
         uint32_t flash_off = MLR_TRACK_OFFSET(t);
@@ -156,7 +176,7 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
             (const mlr_track_header_t *)(XIP_BASE + flash_off);
 
         if (hdr->magic == MLR_MAGIC) {
-            snprintf(line, sizeof(line), "T%d %lu %lu %lu %d %u\n",
+            n = snprintf(info + used, sizeof(info) - used, "T%d %lu %lu %lu %d %u\n",
                  t,
                  (unsigned long)hdr->sample_count,
                  (unsigned long)hdr->adpcm_bytes,
@@ -164,14 +184,20 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
                  (int)hdr->record_speed_shift,
                  (unsigned)(hdr->recorded_channel & 0x01));
         } else {
-            snprintf(line, sizeof(line), "T%d 0 0 0 0 0\n", t);
+            n = snprintf(info + used, sizeof(info) - used, "T%d 0 0 0 0 0\n", t);
         }
 
-        if (!cdc_write_str(line))
+        if (n < 0 || (uint32_t)n >= sizeof(info) - used)
             return false;
+        used += (uint32_t)n;
     }
 
-    return cdc_write_str("END\n");
+    n = snprintf(info + used, sizeof(info) - used, "END\n");
+    if (n < 0 || (uint32_t)n >= sizeof(info) - used)
+        return false;
+    used += (uint32_t)n;
+
+    return cdc_write_all(info, used);
 }
 
 static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_begin_read(uint8_t track)
@@ -190,7 +216,7 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_begin_read
 
     if (hdr->magic != MLR_MAGIC || hdr->sample_count == 0) {
         uint32_t zero = 0;
-        return cdc_write_small(&zero, sizeof(zero));
+        return cdc_write_all(&zero, sizeof(zero));
     }
 
     g_sample_mgr.op = SAMPLE_OP_READ_STREAM;
@@ -279,8 +305,14 @@ static void __attribute__((section(".flashdata.devmode"))) sample_mgr_pump_read(
 
         uint32_t remain = sizeof(g_sample_mgr.prefix) - g_sample_mgr.prefix_sent;
         uint32_t chunk = remain < avail ? remain : avail;
-        tud_cdc_n_write(SAMPLE_CDC_ITF, g_sample_mgr.prefix + g_sample_mgr.prefix_sent, chunk);
-        g_sample_mgr.prefix_sent += (uint8_t)chunk;
+        uint32_t written = tud_cdc_n_write(SAMPLE_CDC_ITF,
+                                           g_sample_mgr.prefix + g_sample_mgr.prefix_sent,
+                                           chunk);
+        if (written == 0) {
+            tud_cdc_n_write_flush(SAMPLE_CDC_ITF);
+            return;
+        }
+        g_sample_mgr.prefix_sent += (uint8_t)written;
     }
 
     if (g_sample_mgr.bytes_done < g_sample_mgr.total_len) {
@@ -293,11 +325,15 @@ static void __attribute__((section(".flashdata.devmode"))) sample_mgr_pump_read(
         uint32_t remain = g_sample_mgr.total_len - g_sample_mgr.bytes_done;
         uint32_t chunk = remain;
         if (chunk > avail) chunk = avail;
-        if (chunk > 256)   chunk = 256;
+        if (chunk > 64)    chunk = 64;
 
         const uint8_t *src = (const uint8_t *)(XIP_BASE + g_sample_mgr.flash_off + g_sample_mgr.bytes_done);
-        tud_cdc_n_write(SAMPLE_CDC_ITF, src, chunk);
-        g_sample_mgr.bytes_done += chunk;
+        uint32_t written = tud_cdc_n_write(SAMPLE_CDC_ITF, src, chunk);
+        if (written == 0) {
+            tud_cdc_n_write_flush(SAMPLE_CDC_ITF);
+            return;
+        }
+        g_sample_mgr.bytes_done += written;
     }
 
     tud_cdc_n_write_flush(SAMPLE_CDC_ITF);
@@ -521,7 +557,7 @@ device_detect_result_t device_mode_detect_protocol(uint32_t timeout_ms)
         return result;  /* timeout — nothing connected */
 
     /* Phase 2: wait for first incoming byte (shorter timeout) */
-    uint32_t byte_timeout = timeout_ms > 500 ? 500 : timeout_ms;
+    uint32_t byte_timeout = timeout_ms > 1000 ? 1000 : timeout_ms;
     absolute_time_t byte_deadline = make_timeout_time_ms(byte_timeout);
 
     while (!time_reached(byte_deadline)) {

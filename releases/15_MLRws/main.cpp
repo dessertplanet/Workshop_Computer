@@ -249,6 +249,42 @@ public:
 			s_card_->apply_panel_vu_leds();
 	}
 
+	static bool sample_mgr_wake_byte(uint8_t byte)
+	{
+		return byte == 'I' || byte == 'S' || byte == 'R' ||
+		       byte == 'E' || byte == 'W' || byte == 'X';
+	}
+
+	static void run_sample_manager_until_disconnect(uint8_t first_byte, bool resume_gridless)
+	{
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			if (mlr_tracks[t].playing) {
+				mlr_tracks[t].playing = false;
+				mlr_tracks[t].pcm.r = mlr_tracks[t].pcm.w;
+			}
+		}
+
+		s_sample_mgr_active_ = true;
+		__dmb();
+
+		device_mode_init();
+		device_mode_inject_byte(first_byte);
+
+		while (tud_cdc_n_connected(0)) {
+			tud_task();
+			device_mode_task();
+		}
+
+		for (int t = 0; t < MLR_NUM_TRACKS; t++)
+			mlr_rescan_track(t);
+
+		if (resume_gridless)
+			s_rescan_needed_ = true;
+
+		s_sample_mgr_active_ = false;
+		__dmb();
+	}
+
 	/* Core 1: USB + I/O — mode-specific loop */
 	static void core1_entry()
 	{
@@ -267,6 +303,15 @@ public:
 			/* board_init + tud_init already done in constructor */
 			while (true) {
 				tud_task();
+				if (tud_cdc_n_connected(0) && tud_cdc_n_available(0) > 0) {
+					uint8_t peek = 0;
+					tud_cdc_n_read(0, &peek, 1);
+					if (sample_mgr_wake_byte(peek)) {
+						run_sample_manager_until_disconnect(peek, false);
+					} else {
+						mext_rx_feed(&peek, 1);
+					}
+				}
 				mext_task();
 				mlr_io_task();
 				service_panel_vu_leds_core1();
@@ -284,35 +329,8 @@ public:
 					uint8_t peek = 0;
 					tud_cdc_n_read(0, &peek, 1);
 
-					if (peek == 'I' || peek == 'S' ||
-					    peek == 'R' || peek == 'E' || peek == 'W' || peek == 'X') {
-						/* ---- Enter sample manager mode ---- */
-						for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-							if (mlr_tracks[t].playing) {
-								mlr_tracks[t].playing = false;
-								mlr_tracks[t].pcm.r = mlr_tracks[t].pcm.w;
-							}
-						}
-
-						s_sample_mgr_active_ = true;
-						__dmb();
-
-						device_mode_init();
-						device_mode_inject_byte(peek);
-
-						/* Run sample manager until CDC disconnects */
-						while (tud_cdc_n_connected(0)) {
-							tud_task();
-							device_mode_task();
-						}
-
-						/* CDC disconnected — rescan tracks and resume gridless */
-						for (int t = 0; t < MLR_NUM_TRACKS; t++)
-							mlr_rescan_track(t);
-
-						s_rescan_needed_ = true;
-						s_sample_mgr_active_ = false;
-						__dmb();
+					if (sample_mgr_wake_byte(peek)) {
+						run_sample_manager_until_disconnect(peek, true);
 					}
 					/* else: unknown byte — ignore, stay in gridless mode */
 				}
@@ -380,8 +398,13 @@ public:
 			/* Silence — sample manager owns flash exclusively */
 			AudioOut1(0);
 			return;
-		case Mode::HostMLR:
 		case Mode::DeviceMLR:
+			if (s_sample_mgr_active_) {
+				AudioOut1(0);
+				return;
+			}
+			break;
+		case Mode::HostMLR:
 			break;  /* fall through to MLR processing */
 		}
 
