@@ -658,7 +658,7 @@ public:
 		if (run_ui_control && !mlr_flushing && !page_switched) {
 			if (play_page == PAGE_REC) {
 				process_gate_hold();  /* REC play/stop/gate/group-dissolve */
-				process_copy_gesture();  /* REC col-0 copy/paste gesture */
+				process_copy_gesture();  /* REC arm/channel copy/paste gesture */
 			}
 			if (mlr_flushing) {
 				/* A copy gesture just committed; suppress any same-event
@@ -960,13 +960,14 @@ private:
 	uint8_t    group_flash_mask_ = 0;             /* tracks whose play LED is currently flashing */
 	uint32_t   group_flash_samples_remaining_ = 0;  /* countdown for confirmation blink */
 	uint16_t   group_flash_period_ = GROUP_FLASH_CREATE_PERIOD;  /* current blink half-period */
-	int        copy_source_track_ = -1;           /* source for first-column copy gesture */
+	int        copy_source_track_ = -1;           /* source for arm/channel copy gesture */
+	int        copy_source_column_ = 0;           /* arm/channel column where source press began */
 	int        copy_source_page_ = PAGE_REC;      /* page where source press began */
-	uint8_t    copy_participant_mask_ = 0;        /* col-0 keys suppressed by copy gesture */
+	uint8_t    copy_participant_mask_ = 0;        /* arm/channel keys suppressed by copy gesture */
 	uint8_t    copy_target_mask_ = 0;             /* empty tracks selected as copy destinations */
 	bool       copy_gesture_committed_ = false;
 	bool       copy_gesture_touched_other_ = false;
-	bool       copy_col0_suppress_event_ = false;
+	bool       copy_arm_suppress_event_ = false;
 	uint8_t    copy_flash_mask_ = 0;              /* tracks whose record/copy LED is flashing */
 	uint32_t   copy_flash_samples_remaining_ = 0;
 	uint16_t   copy_flash_period_ = COPY_FLASH_PERIOD;
@@ -1903,7 +1904,7 @@ private:
 		group_flash_mask_ = 0;
 		group_flash_samples_remaining_ = 0;
 		reset_copy_gesture();
-		copy_col0_suppress_event_ = false;
+		copy_arm_suppress_event_ = false;
 		copy_flash_mask_ = 0;
 		copy_flash_samples_remaining_ = 0;
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
@@ -2204,6 +2205,7 @@ private:
 	void __not_in_flash("reset_copy_gesture") reset_copy_gesture()
 	{
 		copy_source_track_ = -1;
+		copy_source_column_ = 0;
 		copy_source_page_ = PAGE_REC;
 		copy_participant_mask_ = 0;
 		copy_target_mask_ = 0;
@@ -2211,13 +2213,19 @@ private:
 		copy_gesture_touched_other_ = false;
 	}
 
-	/* First-column copy/paste gesture. Hold a populated source on col 0,
-	 * touch one or more empty col-0 destination tracks, then release. */
+	bool __not_in_flash("copy_gesture_arm_col") copy_gesture_arm_col(int column) const
+	{
+		return column == 0 || (!small_grid_ && column == 1);
+	}
+
+	/* Arm/channel copy/paste gesture. Hold a populated source arm/channel key,
+	 * touch one or more empty destination arm/channel keys, then release. */
 	void __not_in_flash("process_copy_gesture") process_copy_gesture()
 	{
-		copy_col0_suppress_event_ = false;
+		copy_arm_suppress_event_ = false;
 		if (!(grid.keyDown() || grid.keyUp())) return;
-		if (grid.lastX() != 0 || grid.lastY() < 1 || grid.lastY() > MLR_NUM_TRACKS) return;
+		int column = grid.lastX();
+		if (!copy_gesture_arm_col(column) || grid.lastY() < 1 || grid.lastY() > MLR_NUM_TRACKS) return;
 
 		int track = grid.lastY() - 1;
 		uint8_t bit = (uint8_t)(1u << track);
@@ -2230,17 +2238,18 @@ private:
 			if (copy_source_track_ < 0) {
 				if (!mlr_tracks[track].has_content) return;
 				copy_source_track_ = track;
+				copy_source_column_ = column;
 				copy_source_page_ = play_page;
 				copy_participant_mask_ = bit;
 				copy_target_mask_ = 0;
 				copy_gesture_committed_ = false;
 				copy_gesture_touched_other_ = false;
-				copy_col0_suppress_event_ = true;
+				copy_arm_suppress_event_ = true;
 				return;
 			}
 
 			copy_participant_mask_ |= bit;
-			copy_col0_suppress_event_ = true;
+			copy_arm_suppress_event_ = true;
 			if (track != copy_source_track_) {
 				copy_gesture_touched_other_ = true;
 				if (!mlr_tracks[track].has_content)
@@ -2250,7 +2259,7 @@ private:
 		}
 
 		if (copy_source_track_ < 0 || !(copy_participant_mask_ & bit)) return;
-		copy_col0_suppress_event_ = true;
+		copy_arm_suppress_event_ = true;
 
 		if (!copy_gesture_committed_ && copy_target_mask_ != 0) {
 			uint8_t accepted = mlr_copy_track_mask(copy_source_track_, copy_target_mask_);
@@ -2268,7 +2277,7 @@ private:
 		if (copy_participant_mask_ == 0) {
 			if (!copy_gesture_committed_ && !copy_gesture_touched_other_ && track == copy_source_track_) {
 				if (copy_source_page_ == PAGE_REC)
-					handle_rec_arm_col_press(copy_source_track_, 0);
+					handle_rec_arm_col_press(copy_source_track_, copy_source_column_);
 				else
 					handle_cut_col0_press(copy_source_track_);
 			}
@@ -2428,7 +2437,7 @@ private:
 	{
 		/* --- gated recording: no track armed + switch in rec + key up on col 0 (or col 1 on 16-wide) = stop --- */
 		if (grid.keyUp() && (grid.lastX() == 0 || (!small_grid_ && grid.lastX() == 1)) && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
-			if (grid.lastX() == 0 && copy_col0_suppress_event_) return;
+			if (copy_arm_suppress_event_) return;
 			int track = grid.lastY() - 1;
 			if (mlr_rec_track == track && rec_gated) {
 				/* gated recording stop on key release */
@@ -2451,7 +2460,7 @@ private:
 		bool is_arm_col = (column == 0) || (!small_grid_ && column == 1);
 
 		if (is_arm_col) {
-			if (column == 0 && copy_col0_suppress_event_) return;
+			if (copy_arm_suppress_event_) return;
 			handle_rec_arm_col_press(track, column);
 			return;
 		}
