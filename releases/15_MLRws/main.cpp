@@ -2849,10 +2849,10 @@ private:
 				return;
 			}
 
-			/* show loop zone dim even when stopped (only if sub-loop, not full track) */
+			/* show loop zone dim even when stopped */
 			int loop_s = -1, loop_e = -1;
 			mlr_get_loop_cols(t, &loop_s, &loop_e);
-			if (loop_s >= 0 && !(loop_s == 0 && loop_e == MLR_GRID_COLS - 1)) {
+			if (loop_s >= 0) {
 				/* remap internal loop cols to display cols */
 				int ds = cut_internal_to_grid(loop_s);
 				int de = cut_internal_to_grid(loop_e);
