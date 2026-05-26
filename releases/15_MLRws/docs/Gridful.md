@@ -72,23 +72,23 @@ Multiple patterns can play simultaneously. Each pattern's loop length is
 determined by the time between record-start and record-stop, so you can
 layer different-length loops.
 
-### Scenes
+### Recall
 
-Scenes are **instant snapshots** of every track's state (current cut
+Recalls are **instant snapshots** of every track's state (current cut
 position, loop region, speed, reverse, volume, gate flags). They have no
 timing — pressing a recall instantly places all tracks into the snapshot
 state.
 
-Scenes are controlled by using the second group of 4 dim LEDs to the right of the pattern looper in the top row. Touch an empty scene slot to capture the current configuration as a scene. Recall a captured scene from any other grid state by touching the corresponding scene key. Note that when you are in a grid state that does not correspond to any recorded scene and you switch to a scene with the scene keys, pressing the same scene key will switch you back to your previous state without having to capture that state- so you can easily have momentary switches to scenes without losing progress.
+Recall are controlled by using the second group of 4 dim LEDs to the right of the pattern looper in the top row. Touch an empty recall slot to capture the current configuration as a recall. Recall a captured recall from any other grid state by touching the corresponding recall key. Note that when you are in a grid state that does not correspond to any recorded recall and you switch to a recall with the recall keys, pressing the same recall key will switch you back to your previous state without having to capture that state- so you can easily have momentary switches to recalls without losing progress.
 
-Scenes are themselves recorded into patterns, so you can build a pattern
-that triggers different scenes at different times.
+Recalls are themselves recorded into patterns, so you can build a pattern
+that triggers different recalls at different times.
 
-Overwriting a scene requires that you clear the old one by holding the delete key then pressing the scene key that you want to clear.
+Overwriting a recall requires that you clear the old one by holding the delete key then pressing the recall key that you want to clear.
 
 ### Delete
 
-The delete key is used to clear data from various places in MLRws. Hold it down and then press a pattern or scene to clear it. Hold it down and press the record-arm button for any track with audio on it and that audio will be cleared.
+The delete key is used to clear data from various places in MLRws. Hold it down and then press a pattern or recall to clear it. Hold it down and press the record-arm button for any track with audio on it and that audio will be cleared.
 
 Hold the delete key by itself for 5 seconds to reset the current REC page parameters to defaults. The delete key flashes three times quickly to confirm. This resets current speed, reverse, loop, mixer level, gate mode, track groups, and active recall state, then saves those defaults to flash. Currently playing patterns are stopped so they do not immediately re-apply old automation. It does **not** reset master volume, or delete audio, patterns, or saved recall slots.
 
@@ -130,6 +130,8 @@ If you have not manually picked a channel for a track, MLRws will auto-select th
 
 More details in [Recording](#recording)
 
+![rec_arm](images/rec_arm.jpg)
+
 ### Mixer
 
 Five discrete level slots. The left side is the loudest (about +3 dB), the right side is the
@@ -168,7 +170,9 @@ Note that these intervals change depending on what speed you originally recorded
 The right most grid column on the REC page controls the playback state of each track. Short press any key in the this column and the corresponding track playback is toggled on/off. Long press one of these and the playback key will flash, indicating "gated playback" mode. In this mode, playback will only occur while a key in the CUT page is held down. Very useful for percussive sounds and very fun to record with the pattern looper. 
 
 Gate mode is per-track, so you can have some rows in gate mode and others
-in normal playback mode. Gate-mode state is saved alongside the scene, so each track returns to its last gated/normal setting after a power cycle.
+in normal playback mode. Gate-mode state is saved alongside the recall, so each track returns to its last gated/normal setting after a power cycle.
+
+![rec_play](images/rec_play.jpg)
 
 ### Track groups
 
@@ -177,7 +181,7 @@ Multiple tracks can be linked into a **group** so that play/pause behaves as a s
 - **Create a group**: hold two or more populated play keys (right-most column) at the same time. Tracks without recorded audio are ignored for grouping. As soon as a second populated play key joins, MLRws cancels the pending gated-playback long-press timer on every held key, so none of them will accidentally enter gated playback. When you start releasing the keys, the **first release** commits the group — every populated play key that was simultaneously held at that moment becomes a group, and their play LEDs flash rapidly to confirm. (The remaining held keys' releases are absorbed silently.) Hold just one play key by itself and the original long-press → gated-playback behaviour is unchanged.
 - **Dissolve a group**: hold the **DELETE** key (row 0 ALT). While DELETE is held, MLRws cycles through every existing group, fast-blinking each group's play keys in turn. Each group flashes twice before moving to the next one so you can see which tracks belong to which group. Touch any key on any member row to dissolve that group; the former members' play LEDs blink twice quickly to confirm.
 - **Choke playback**: a group can host at most one playing member at a time. Tapping a stopped member starts it and chokes any sibling that was playing (the playing member stops instantly). Tapping the playing member stops the whole group. 
-- **Persistence**: groups survive a power cycle and are saved to the scene blob when created or dissolved.
+- **Persistence**: groups survive a power cycle and are saved to the recall blob when created or dissolved.
 
 ### Recording
 

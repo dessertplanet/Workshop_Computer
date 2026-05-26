@@ -1,6 +1,8 @@
 # MLRws
 
-MLRws is a remix of the classic MLR [grid](https://monome.org/docs/grid/)-based performance-oriented sample-cutting instrument originally developed by [tehn](https://nnnnnnnn.co) at monome as a Max MSP patch and subsequently ported to [norns](https://github.com/tehn/mlr). MLR has had many generations and was one of the original instruments implemented for the grid interface, as evidenced by this great video of tehn [performing on a grid prototype in 2007](https://hyper8.monome.org/tehn-with-monome-prototype/).
+![title pic](/docs/images/title.jpg)
+
+MLRws is a remix of the classic MLR [grid](https://monome.org/docs/grid/)-based performance-oriented sample-cutting instrument originally developed by [tehn](https://nnnnnnnn.co) at monome as a Max MSP patch and subsequently ported to [norns](https://github.com/tehn/mlr). MLR has had many generations and was one of the original instruments implemented for the grid interface, as evidenced by this great video of tehn [performing on a grid prototype in 2007](https://hyper8.monome.org/tehn-with-monome-prototype/). In a way that is relatively unique to electronic instruments, MLR also has several virtuoso instrumentalists who have spent years learning its ins and outs such as [Daedelus who you can see absolutely shredding in this KEXP video](https://www.youtube.com/watch?v=Z_zIvFYQWig)
 
 MLRws is my own six-track, grid-optional spin on MLR that works within the constraints of the Workshop Computer and also gave me an oppotunity to demonstrate a few things that I hadn't tried yet on the Computer and provide example code for these things, namely:
 
@@ -14,8 +16,6 @@ MLRws is my own six-track, grid-optional spin on MLR that works within the const
 
 ![web app](/docs/images/web.png)
 
-[Detailed sample manager docs](docs/SampleMgr.md)
-
 You are going to need source materials on your MLRws travels. It is totally possible to record your own sounds via the audio input(s) on the module but you may also want to upload samples from your (non-workshop) computer. For this there is a basic [web app you can find right here](https://dessertplanet.github.io/MLRws-web/).
 
 The web app automatically encodes your audio to the right format for MLRws, and there is a variable resampling/recording speed (equivalent to recording in grid mode at slower-than-1x) allowing you to trade fidelity for more maximum sample time per track. The table below shows the maximum sample time for the dual-mono firmware at each supported speed.
@@ -27,7 +27,9 @@ The web app automatically encodes your audio to the right format for MLRws, and 
 | 0.5x    | 26.3 s |
 | 0.25x   | 52.6 s |
 
-It is possible to record at faster than 1x but **you will encounter potentially interesting weirdness**- only recommended if you like strange digital noise. The resampling trips over itself and encodes who-knows-what.
+Via the grid it is possible to record at faster than 1x but **you will encounter potentially interesting weirdness**- only recommended if you like strange digital noise. The resampling trips over itself and encodes who-knows-what.
+
+[Detailed sample manager docs are here](docs/SampleMgr.md)
 
 ## Modes
 
@@ -39,7 +41,7 @@ Note that MLRws does NOT use [iii](https://monome.org/docs/iii), and any grid de
 
 ![grid_host_mov](docs/images/Grid_host.mov)
 
-[Detailed grid doc here](docs/Gridful.md)
+[Detailed grid docs are here](docs/Gridful.md)
 
 The primary mode of MLRws is USB host with a grid device connected. This mode will be on you power-on the Workshop Computer (and/or system) with a grid plugged directly into the Computer via the USB-C port. Depending on your grid version you may need a specialized cable for this- older FTDI grids with USB Mini ports were tested using [this cable]() from amazon.
 
@@ -59,5 +61,18 @@ Once you have your devices communicating, everything else is identical to the US
 
 I wanted to make MLRws fun even for folks who don't have a grid- and also thought it would be interesting to design an interface for 6 tracks of audio using only the things on the Computer panel. For this I consulted the discord community and some very wild ideas came in! Where this mode landed is something like if a minimal MTM Radio Music (thanks Tom!) and a Make Noise RxMx had a baby. It's weird and modulatable and fun! Oh and of course it has a built in Turing Machine since that is of the Workshop idiom (thanks again Tom!)
 
-## Credits
-TODO
+[Detailed gridless docs are here](/docs/Gridless.md)
+
+## Credits / Thank yous
+
+A huge thank you to [tehn](https://nnnnnnnn.co) for the original MLR, the norns version of which MLRws is the closest sibling, for open sourcing the serial protocol used by grid and arc devices, and for your encouragement and support on this project.
+
+Thank you to [Tom Whitwell](https://github.com/tomwhitwell) for the Workshop Computer and System, as well as Radio Music and Turing Machine that influenced the gridless mode.
+
+Thank you to **Chris Johnson** for the ComputerCard framework on which this is built as well as explaining many many things to me.
+
+Thank you to **Brian Dorsey** for proving that ADPCM is a cool option with his excellent Backyard Rain card.
+
+Thank you to the many members of the Workshop Computer discord for their feedback, testing, time, ideas and patience! In no particular order, thank you to **@emho**, **@q*ben**, **@TSG**, **@philmillman**, **@gnomon**, and **@eclectics**.
+
+Thank you to [Daedelus](https://www.instagram.com/daedelus/) for fielding my cold-message on instagram and providing some feedback on an early MLRws video. They are also responsible for the cool video in the intro.

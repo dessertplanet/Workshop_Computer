@@ -14,15 +14,15 @@ own panel — switch, three knobs, CV/Audio/Pulse jacks, and the six LEDs.
   how everything sounds.
 - One track is always the **active track**. The panel's knobs and switch shape
   that track's playback (or, in global mode, shape the mix around it).
-- The Main knob on the Computer is used to select the active channel.
-- The X knob sets the level of the current active channel (this only ever applies to the **current** active channel).
-- The Y knob is an RxMx style "radiate" control that set the level of tracks **adjacent** to the active channel. Y at 0 means only the active channel plays (Radio Music style). Y at full means **all** channels play at the level set by the X knob.
+- The Main knob on the Computer is used to select the active track.
+- The X knob sets the level of the current active track (this only ever applies to the **current** active track).
+- The Y knob is an RxMx style "radiate" control that set the level of tracks **adjacent** to the active track. Y at 0 means only the active track plays (Radio Music style). Y at full means **all** tracks play at the level set by the X knob.
 - **Audio Out 1 and Audio Out 2 are both active**: each track is routed to one
-  of the two outputs based on its stored channel (Audio Out 1 = channel 1,
-  Audio Out 2 = channel 2). Tracks recorded in gridless mode inherit their
-  channel from the input jack used for the recording (see
+  of the two outputs based on its stored track (Audio Out 1 = track 1,
+  Audio Out 2 = track 2). Tracks recorded in gridless mode inherit their
+  track from the input jack used for the recording (see
   [Recording](#recording) below); tracks recorded in grid mode keep whatever
-  channel was selected there.
+  track was selected there.
 
 
 ## Two switch positions, two roles for the knobs
@@ -42,7 +42,7 @@ The three-position switch picks the role of the knobs.
   sweeping the active track, this gives a soft cross-fade between tracks and
   a kind of swept ensemble.
 
-### Switch Up — Channel mode
+### Switch Up — Track mode
 
 Flipping the switch up **locks** the active track (it will no longer follow
 Main), and re-tasks every knob to operate on that track:
@@ -95,18 +95,18 @@ are doing. CV ranges are the standard Workshop Computer ±6 V.
 
 - **CV In 1** adds to the **X knob** (after the panel value, before the X-knob
   role kicks in). So in global mode it modulates playback-layer gain; in
-  channel mode it modulates the active track's volume slot. While a CV is
+  track mode it modulates the active track's volume slot. While a CV is
   patched, hard-takeover is bypassed on that knob so the CV can take over
   smoothly.
 - **CV In 2** adds to the **Y knob** the same way — radiate in global mode,
-  start-column in channel mode.
+  start-column in track mode.
 - **Audio In 1**, when patched, offsets the active-track selection by an
-  audio-driven amount (0..6 channels, full-scale). This wraps around the six
+  audio-driven amount (0..6 tracks, full-scale). This wraps around the six
   tracks, so loud audio sweeps the active track through the rotation. Useful
-  for envelopes, LFOs, or rhythmic triggers feeding the channel select.
+  for envelopes, LFOs, or rhythmic triggers feeding the track select.
 - **Audio In 2**, when patched, modulates the active track's **playback
   speed**, always forward: −6 V → 0.25×, 0 V → 1×, +6 V → 4×. This overrides
-  the speed set by Main (channel mode) for as long as it is patched.
+  the speed set by Main (track mode) for as long as it is patched.
 - **Pulse In 1** rising edge: reset the active track to its stored start
   column (same as a switch-down tap). Pulse Out 1 echoes it.
 - **Pulse In 2** rising edge: advance the active track to the next one (wraps
