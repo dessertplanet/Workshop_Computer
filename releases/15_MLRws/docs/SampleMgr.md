@@ -97,7 +97,7 @@ you anything useful for a pre-prepared sample.
 
 MLRws stores one mono ADPCM stream per track. In the sample manager, each track has a Channel 1/2 selector; that selector chooses the stored output routing and, for multi-channel source files, which source channel is encoded. Channel 1 uses source channel 1, Channel 2 uses source channel 2 when present, and single-channel files can be assigned to either output channel.
 
-Each track also has a **CV1 pitch** toggle. When it is enabled, touching CUT keys on that track row updates the CV1 pitch sample-and-hold. When it is disabled, the track still cuts, triggers CV2 and Pulse 1, and can be played normally, but it leaves the current CV1 pitch unchanged. The default is enabled for every track, including empty tracks; the web app can change the setting before or after audio is loaded.
+Each track also has a **CV outputs** toggle. When it is enabled, touching CUT keys on that track row updates the CV1 pitch sample-and-hold and triggers the CV2 envelope. When it is disabled, the track still cuts, triggers Pulse 1, and can be played normally, but it leaves both CV outputs unchanged. The default is enabled for every track, including empty tracks; the web app can change the setting before or after audio is loaded.
 
 Uploading always writes only the selected track. For stereo source files, use the Channel selector to choose whether source channel 1 or source channel 2 is encoded and which output channel the stored track uses.
 

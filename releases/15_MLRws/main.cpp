@@ -285,6 +285,40 @@ public:
 		__dmb();
 	}
 
+	static void prepare_gridless_resume_from_sample_manager()
+	{
+		for (int t = 0; t < MLR_NUM_TRACKS; t++)
+			mlr_rescan_track(t);
+
+		s_rescan_needed_ = true;
+		if (s_card_)
+			s_card_->mode_ = Mode::DeviceGridless;
+		s_mode_ = Mode::DeviceGridless;
+		s_sample_mgr_active_ = false;
+		__dmb();
+	}
+
+	static void run_device_gridless_core1_loop()
+	{
+		device_mode_init();  /* pre-init so it's ready if needed */
+		while (true) {
+			tud_task();
+
+			/* ---- Monitor CDC: if a sample-manager byte arrives, transition ---- */
+			if (tud_cdc_n_connected(0) && tud_cdc_n_available(0) > 0) {
+				uint8_t peek = 0;
+				tud_cdc_n_read(0, &peek, 1);
+
+				if (sample_mgr_wake_byte(peek)) {
+					run_sample_manager_until_disconnect(peek, true);
+				}
+				/* else: unknown byte — ignore, stay in gridless mode */
+			}
+
+			mlr_io_task();
+		}
+	}
+
 	/* Core 1: USB + I/O — mode-specific loop */
 	static void core1_entry()
 	{
@@ -320,30 +354,18 @@ public:
 			break;
 		case Mode::DeviceGridless:
 			/* board_init + tud_init already done in constructor */
-			device_mode_init();  /* pre-init so it's ready if needed */
-			while (true) {
-				tud_task();
-
-				/* ---- Monitor CDC: if a sample-manager byte arrives, transition ---- */
-				if (tud_cdc_n_connected(0) && tud_cdc_n_available(0) > 0) {
-					uint8_t peek = 0;
-					tud_cdc_n_read(0, &peek, 1);
-
-					if (sample_mgr_wake_byte(peek)) {
-						run_sample_manager_until_disconnect(peek, true);
-					}
-					/* else: unknown byte — ignore, stay in gridless mode */
-				}
-
-				mlr_io_task();
-			}
+			run_device_gridless_core1_loop();
 			break;
 		case Mode::DeviceSampleMgr:
 			/* board_init + tud_init already done in constructor */
-			while (true) {
+			s_sample_mgr_active_ = true;
+			__dmb();
+			while (tud_cdc_n_connected(0)) {
 				tud_task();
 				device_mode_task();
 			}
+			prepare_gridless_resume_from_sample_manager();
+			run_device_gridless_core1_loop();
 			break;
 		}
 	}
@@ -1887,9 +1909,9 @@ public:
 			if (midi < 0)   midi = 0;
 			if (midi > 127) midi = 127;
 			cv_step_base_midi_ = (int8_t)midi;
-		}
 
-		trigger_cv2_envelope();
+			trigger_cv2_envelope();
+		}
 
 		/* PulseOut1: 20 ms gate trigger. */
 		cv_pulse1_remaining_ = CUT_PULSE_TRIG_SAMPLES;
