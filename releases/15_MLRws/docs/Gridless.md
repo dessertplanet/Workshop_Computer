@@ -5,6 +5,8 @@ device and nothing on the other end is talking to it (no grid, no
 sample manager). The whole six-track instrument is driven from the Computer's
 own panel — switch, three knobs, CV/Audio/Pulse jacks, and the six LEDs.
 
+![gridless ws](/docs/images/MLR_gridless_ws.jpg)
+
 ## At a glance
 
 - Every track that already has audio on it **plays and loops continuously**.
@@ -74,6 +76,22 @@ Main), and re-tasks every knob to operate on that track:
 
 The CV and pulse jacks add modulation on top of whatever the knobs and switch
 are doing. CV ranges are the standard Workshop Computer ±6 V.
+
+### Outputs
+
+- **CV Out 1** is a clocked Turing-style pitch output. Pulse In 1 or Pulse In
+  2 rising edges clock it. Main sets the probability/variation amount and X
+  sets the range, so the output can move from a narrow pitch set to a wider
+  chromatic span.
+- **CV Out 2** is an attack/decay envelope. It is triggered when Pulse In 1 or
+  Pulse In 2 clocks the CV/Turing output. Switch Down + Y sets attack time
+  (instant to about 1 second); Y at trigger time sets decay time (about 10 ms
+  to 3 seconds).
+- **Pulse Out 1** emits a short trigger when any playing track wraps back to
+  the start of its loop/playback span.
+- **Pulse Out 2** emits a short trigger when the CV2 envelope reaches the end of its decay cycle.
+
+### Inputs
 
 - **CV In 1** adds to the **X knob** (after the panel value, before the X-knob
   role kicks in). So in global mode it modulates playback-layer gain; in

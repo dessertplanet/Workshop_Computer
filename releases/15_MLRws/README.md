@@ -8,11 +8,11 @@ MLRws is my own six-track, grid-optional spin on MLR that works within the const
 
 - [ADPCM](https://en.wikipedia.org/wiki/Adaptive_differential_pulse-code_modulation-based) audio encoding, further reducing the number of bits needed to store a sample of audio (technically MLRws stores 4-bits per sample). This is the same tech that Brian Dorsey's excellent [Backyard Rain](https://github.com/TomWhitwell/Workshop_Computer/tree/main/releases/42_backyard_rain) card uses for playback. I also noticed working on this project that ADPCM has additional compression, saturation, and noise-removal characteristics that I kind of love the sound of.
 
-- USB Serial host-mode communication with a monome or DIY grid device via the monome mext [serial protocol](https://monome.org/docs/serialosc/serial.txt). You plug a grid right into the front of the computer. I'm hoping that the code for this problems can be leveraged to create more cards that have grid interfaces.
+- USB Serial host-mode communication with a monome or DIY grid device via the monome mext [serial protocol](https://monome.org/docs/serialosc/serial.txt). You plug a grid right into the front of the computer. I'm hoping that the code for this problems can be leveraged to create more cards that have grid interfaces. [There is a detailed monome device protocol api doc here for those interested](/docs/Computer_monome_api.md)
 
 ## Sample manager web app
 
-(image of web app)
+![web app](/docs/images/web.png)
 
 [Detailed sample manager docs](docs/SampleMgr.md)
 
@@ -57,4 +57,7 @@ Once you have your devices communicating, everything else is identical to the US
 
 ![gridless_mov](docs/images/Gridless.mov)
 
-I wanted to make MLRws fun even for folks who don't have a grid- and also thought it would be interesting to design an interface for 6 tracks of audio using only the things on the Computer panel. For this I consulted the discord community and some very wild ideas came in! Where this mode landed is something like if a minimal MTM Radio Music (thanks Tom!) and a Make Noise RxMx had a baby. It's weird and modulatable and fun!
+I wanted to make MLRws fun even for folks who don't have a grid- and also thought it would be interesting to design an interface for 6 tracks of audio using only the things on the Computer panel. For this I consulted the discord community and some very wild ideas came in! Where this mode landed is something like if a minimal MTM Radio Music (thanks Tom!) and a Make Noise RxMx had a baby. It's weird and modulatable and fun! Oh and of course it has a built in Turing Machine since that is of the Workshop idiom (thanks again Tom!)
+
+## Credits
+TODO

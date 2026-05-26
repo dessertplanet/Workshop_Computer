@@ -473,6 +473,7 @@ public:
 			if (!mlr_flushing) {
 				process_delete_reset_hold();
 				process_bottom_master_control();
+				process_extra_rows();
 			}
 		}
 		PERF_UI_SECTION_END(0);
@@ -771,6 +772,11 @@ public:
 					}
 				}
 			}
+			/* Held cut keys on bottom-half "extra" rows gate Pulse2 the
+			 * same as held cut keys on (empty) top-half track rows.
+			 * Page-agnostic: bottom-half is a free keyboard layer. */
+			if (!new_gate && extra_rows_any_held())
+				new_gate = true;
 			gate_high_ = new_gate;
 
 			int x_knob = (int)x_knob_filtered_;  /* 0..4095, LPF'd */
@@ -1038,6 +1044,13 @@ private:
 	int        cut_loop_pending_end_[MLR_NUM_TRACKS] = {};
 	uint64_t   empty_keyboard_linger_until_us_[MLR_NUM_TRACKS] = {};
 	uint8_t    empty_keyboard_linger_col_[MLR_NUM_TRACKS] = {};
+	/* Bottom-half rows on a 16-row grid: free-running "empty keyboard"
+	 * overlay. Pressing rows 8..15 fires CV1/CV2/Pulse1 and shows the
+	 * piano-key linger overlay just like an empty top-half track row,
+	 * but without any associated track, audio playback, or pattern
+	 * recording. Indexed by (row - 8). */
+	uint64_t   extra_keyboard_linger_until_us_[MEXT_MAX_GRID_Y - 8] = {};
+	uint8_t    extra_keyboard_linger_col_[MEXT_MAX_GRID_Y - 8] = {};
 	/* Cut-event-driven CV / pulse outputs (fire on manual cuts and on
 	 * pattern/recall playback via mlr_event_playback_hook). */
 	uint32_t   cv_pulse1_remaining_ = 0;   /* PulseOut1 trigger countdown (samples) */
@@ -2103,6 +2116,60 @@ private:
 		dispatch_event(MLR_EVT_MASTER, (uint8_t)(raw >> 8), (int8_t)(raw & 0xFF), 0);
 	}
 
+	/* ================================================================ */
+	/* Bottom-half rows (rows 8..grid.rows()-1) on a tall grid behave   */
+	/* like the row-of-an-empty-track keyboard overlay: each key-down   */
+	/* updates CV1 (S&H pitch), fires CV2 envelope + PulseOut1, and     */
+	/* arms a 1-second piano-key linger overlay on that row. The bottom */
+	/* half has no associated track, no audio playback, and is not      */
+	/* recorded into patterns or recalls. Page-agnostic (works the same */
+	/* on CUT and REC pages). */
+	/* ================================================================ */
+	void __not_in_flash("process_extra_rows") process_extra_rows()
+	{
+		if (!grid.ready() || grid.rows() <= 8) return;
+		if (!grid.keyDown()) return;
+		int y = grid.lastY();
+		if (y < 8 || y >= grid.rows()) return;
+		int cs = cut_col_start();
+		int ce = cut_col_end();
+		int col = grid.lastX();
+		if (col < cs || col > ce) return;
+
+		int internal = cut_grid_to_internal(col);
+		int idx = y - 8;
+		if (idx < 0 || idx >= (int)(sizeof(extra_keyboard_linger_col_) /
+		                            sizeof(extra_keyboard_linger_col_[0])))
+			return;
+
+		extra_keyboard_linger_until_us_[idx] = time_us_64() + EMPTY_KEYBOARD_LINGER_US;
+		extra_keyboard_linger_col_[idx] = (uint8_t)internal;
+
+		int midi = CV_NOTE_BASE_MIDI + internal;
+		if (midi < 0)   midi = 0;
+		if (midi > 127) midi = 127;
+		cv_step_base_midi_ = (int8_t)midi;
+		trigger_cv2_envelope();
+		cv_pulse1_remaining_ = CUT_PULSE_TRIG_SAMPLES;
+		pulse1_led_latch_ = true;
+	}
+
+	/* True if any cut-zone key on a bottom-half row is currently held. */
+	bool extra_rows_any_held() const
+	{
+		if (!grid.ready() || grid.rows() <= 8) return false;
+		int rmax = grid.rows();
+		if (rmax > MEXT_MAX_GRID_Y) rmax = MEXT_MAX_GRID_Y;
+		int cs = cut_col_start();
+		int ce = cut_col_end();
+		uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
+		for (int row = 8; row < rmax; row++) {
+			if (grid.heldRowMask((uint8_t)row) & zone_mask)
+				return true;
+		}
+		return false;
+	}
+
 	void __not_in_flash("handle_cut_col0_press") handle_cut_col0_press(int track)
 	{
 		if (delete_action_held()) {
@@ -2973,6 +3040,52 @@ private:
 		}
 	}
 
+	/* Bottom-half "extra" rows on a tall grid (rows 8..grid.rows()-1).
+	 * Mirrors the empty-track keyboard overlay on top-half track rows:
+	 * held keys light at full brightness, and while a row's linger is
+	 * active the white-key positions are shown dim with the latched
+	 * column lit at level 12. No-op on grids with 8 or fewer rows. */
+	void __not_in_flash("draw_extra_rows") draw_extra_rows()
+	{
+		if (!grid.ready() || grid.rows() <= 8) return;
+		int rmax = grid.rows();
+		if (rmax > MEXT_MAX_GRID_Y) rmax = MEXT_MAX_GRID_Y;
+		int cs = cut_col_start();
+		int ce = cut_col_end();
+		uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
+		uint64_t now = time_us_64();
+		static const bool kWhiteKey[12] = {
+			true, false, true, false, true, true,
+			false, true, false, true, false, true
+		};
+		for (int row = 8; row < rmax; row++) {
+			int idx = row - 8;
+			uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
+			if (held_in_zone) {
+				/* Re-arm linger every frame while keys are held so the
+				 * overlay fades out 1 s after the last release. */
+				extra_keyboard_linger_until_us_[idx] = now + EMPTY_KEYBOARD_LINGER_US;
+				extra_keyboard_linger_col_[idx] =
+					(uint8_t)cut_grid_to_internal(__builtin_ctz(held_in_zone));
+			}
+			bool show = (now < extra_keyboard_linger_until_us_[idx]);
+			if (show) {
+				for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
+					if (kWhiteKey[(internal + 4) % 12])
+						grid_frame_led_max(cut_internal_to_grid(internal), row, 2);
+				}
+				grid_frame_led_max(cut_internal_to_grid(extra_keyboard_linger_col_[idx]),
+				                   row, 12);
+			}
+			uint16_t m = held_in_zone;
+			while (m) {
+				int c = __builtin_ctz(m);
+				grid_frame_led_max(c, row, 12);
+				m &= (uint16_t)(m - 1);
+			}
+		}
+	}
+
 	/* ================================================================ */
 	/* Grid display: REC page                                          */
 	/* ================================================================ */
@@ -2989,6 +3102,7 @@ private:
 		}
 		if (phase > MLR_NUM_TRACKS) {
 			draw_bottom_vu_row();
+			draw_extra_rows();
 			grid.submitFrame();
 			return;
 		}
@@ -3148,6 +3262,7 @@ private:
 		}
 		if (phase > MLR_NUM_TRACKS) {
 			draw_bottom_vu_row();
+			draw_extra_rows();
 			grid.submitFrame();
 			return;
 		}

@@ -4,8 +4,9 @@ This document describes the monome API used by the MLRws firmware on the
 [Music Thing Modular Workshop System](https://www.musicthing.co.uk/workshopsystem/)
 Computer card.
 
-Compatible with **all monome grid hardware** — modern CDC/RP2040 grids and older
-FTDI-based editions (including DIY Neotrellis grids).
+Compatible with modern CDC/RP2040 grids and the older FTDI-based monome grids
+tested with this firmware. DIY grids that speak the same mext serial protocol
+over CDC/FTDI should work too.
 
 ## Files
 
@@ -13,7 +14,7 @@ FTDI-based editions (including DIY Neotrellis grids).
 |---|---|
 | `MonomeGrid.h` | Friendly C++ wrapper — the recommended API |
 | `monome_mext.h` | Low-level C header (types, state, raw API) |
-| `monome_mext.c` | Mext protocol engine, USB host loop, TinyUSB callbacks |
+| `monome_mext.c` | Mext protocol engine, TinyUSB host/device transport, CDC callbacks |
 | `tusb_config.h` | TinyUSB configuration (CDC + FTDI host, DTR/RTS, 115200 8N1; also enables CDC device for USB serial) |
 | `main.cpp` | MLRws card firmware (grid-driven sample looper) |
 | `CMakeLists.txt` | Build configuration |
@@ -51,8 +52,9 @@ That happens at a reduced rate controlled by `MAIN_CTRL_DIV`.
 
 ### LEDs
 
-LED changes are buffered and flushed by the USB host loop on core 1.
-In MLRws, redraws typically end with `grid.markDirty()`.
+LED changes are buffered and flushed by the USB loop on core 1. In MLRws,
+redraws are built with frame-buffer helpers and submitted with
+`grid.submitFrame()`.
 
 | Method | Description |
 |---|---|
@@ -69,6 +71,10 @@ In MLRws, redraws typically end with `grid.markDirty()`.
 | `grid.col(x, level)` | Fill a column |
 | `grid.intensity(level)` | Set global brightness (0–15) |
 | `grid.showHeld(level)` | Light all currently held keys |
+| `grid.frameClear()` | Clear the local frame buffer without submitting |
+| `grid.frameLed(x, y, level)` | Set a frame-buffer LED with bounds checks |
+| `grid.frameLedUnchecked(x, y, level)` | Set a known-good frame-buffer LED during redraw |
+| `grid.submitFrame()` | Submit the accumulated frame when core 1 can accept it |
 
 ### Advanced / direct buffer access
 
@@ -105,7 +111,7 @@ void my_core1_func() {
     }
 }
 
-// In ProcessSample (core 0):
+// In ProcessSample or a lower-rate UI tick on core 0:
 mext_event_t ev;
 while (mext_event_pop(&ev)) {
     if (ev.type == MEXT_EVENT_GRID_KEY) {
@@ -144,17 +150,17 @@ MEXT_EVENT_ENC_KEY    // ev.enc_key.n, ev.enc_key.z  (arc)
 ## Architecture
 
 ```
-Core 0                          Core 1
-──────                          ──────
-ComputerCard::Run()             board_init() + tusb_init()
-  └─ ProcessSample() @ 48kHz   └─ while(true) { mext_task(); }
-       │                              │
-       ├─ grid.poll()                 ├─ tuh_task()       ← USB host stack
-       ├─ grid.keyDown() ...          ├─ tuh_cdc_read()   ← serial RX → parser
-       ├─ grid.led(x,y,lev)          ├─ discovery retry   ← if grid_x == 0
-       └─ CVOut / PulseOut            └─ mext_grid_refresh() ← LED TX @ ~60fps
-                    │                           │
-                    └── event queue ────────────┘
+Core 0                                Core 1
+──────                                ──────
+ComputerCard::Run()                   board_init() + tusb_init()/tud_init()
+  └─ ProcessSample() @ 48kHz         └─ while(true) { mext_task(); ... }
+       │                                    │
+       ├─ grid.poll() on UI tick            ├─ tuh_task()/tud_task() ← USB stack
+       ├─ grid.keyDown() ...                ├─ CDC read/write        ← serial RX/TX
+       ├─ frameClear/frameLed/submitFrame   ├─ discovery retry       ← if grid_x == 0
+       └─ CVOut / PulseOut                  └─ mext_grid_refresh()   ← LED TX @ ~60fps
+                    │                                 │
+                    └── event queue ──────────────────┘
                         (lock-free SPSC ring)
 ```
 
@@ -166,7 +172,7 @@ ComputerCard::Run()             board_init() + tusb_init()
 | Grid (2021–2023) | FTDI FT232R | `CFG_TUH_CDC_FTDI` | ✓ |
 | Grid (older) | FTDI FT230X | `CFG_TUH_CDC_FTDI` | ✓ |
 | Neotrellis DIY | FTDI | `CFG_TUH_CDC_FTDI` | ✓ |
-| Arc | Same as above | Same as above | Partial (events only; not used by MLRws) |
+| Arc | Same as above | Same as above | Partial input parsing; LED-ring output is not implemented/used by MLRws |
 
 ## Protocol notes
 
@@ -177,6 +183,8 @@ firmware. Key implementation details (learned from
 
 - **LED commands are padded to 64 bytes** with `0xFF` for USB bulk packet alignment.
   This is essential for reliable operation across all hardware versions.
+- Full-frame redraws are copied into a 16×16 frame buffer and flushed as dirty
+  8×8 level-map quadrants.
 - **Discovery queries are sent unpadded** — FTDI grid firmware doesn't handle
   63 bytes of `0xFF` padding after a system query well.
 - **DTR + RTS must be asserted** during USB enumeration. FTDI chips gate serial
