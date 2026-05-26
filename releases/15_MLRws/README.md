@@ -75,4 +75,6 @@ Thank you to **Brian Dorsey** for proving that ADPCM is a cool option with his e
 
 Thank you to the many members of the Workshop Computer discord for their feedback, testing, time, ideas and patience! In no particular order, thank you to **@emho**, **@q*ben**, **@TSG**, **@philmillman**, **@gnomon**, and **@eclectics**.
 
+Thank you to [Tyler Etters](https://github.com/tyleretters) for his excellent [GridStation](https://tyleretters.github.io/GridStation/) tool that was used heavily in the production of docs for MLRws.
+
 Thank you to [Daedelus](https://www.instagram.com/daedelus/) for fielding my cold-message on instagram and providing some feedback on an early MLRws video. They are also responsible for the cool video in the intro.
