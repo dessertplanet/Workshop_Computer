@@ -1,0 +1,6 @@
+Description: DFAM-style 8-step sequencer
+Language: C++ (ComputerCard)
+Creator: Moses Hoyt
+Version: 1.2.0
+Status: Functional but WIP
+Editor: https://mohoyt.com/drumdrum.html
