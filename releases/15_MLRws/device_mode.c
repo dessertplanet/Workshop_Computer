@@ -184,7 +184,7 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
         uint32_t flash_off = MLR_TRACK_OFFSET(t);
         const mlr_track_header_t *hdr =
             (const mlr_track_header_t *)(XIP_BASE + flash_off);
-        unsigned cv1_pitch_enabled = mlr_tracks[t].cv1_pitch_enabled ? 1u : 0u;
+        unsigned cv1_pitch_enabled = mlr_tracks[t].has_content && mlr_tracks[t].cv1_pitch_enabled ? 1u : 0u;
 
         if (hdr->magic == MLR_MAGIC) {
             n = snprintf(info + used, sizeof(info) - used, "T%d %lu %lu %lu %d %u %u\n",
@@ -289,6 +289,9 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_erase_trac
 static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_set_cv1_pitch(uint8_t track, bool enabled)
 {
     if (track >= MLR_NUM_TRACKS)
+        return cdc_write_str("ERR\n");
+
+    if (!mlr_tracks[track].has_content)
         return cdc_write_str("ERR\n");
 
     mlr_tracks[track].cv1_pitch_enabled = enabled;

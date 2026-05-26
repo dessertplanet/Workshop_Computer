@@ -22,10 +22,12 @@ In grid mode the interface on the Computer itself is intentionally minimal. Trac
 
 **CV and pulse outputs are driven by cut events** (manual taps on the CUT page, and pattern/recall playback that replays those cuts):
 
-- **CV Out 1** — quantized note (sample-and-hold). The cut column is mapped into a C-major scale starting at C3, with the tonal range extending up the grid. **Knob X** adds a continuous ±24-semitone (~±2 V) offset on top of the held note.
-- **CV Out 2** — linear decay envelope that jumps to roughly +5 V on each cut event and decays back toward the resting −1 V floor. **Knob Y** sets the decay time (10 ms at fully left, ~3 s at fully right; square-law taper).
+- **CV Out 1** — chromatic note (sample-and-hold). The cut column maps directly to semitones starting at C3, with the tonal range extending up the grid. **Knob X** adds a continuous ±24-semitone (~±2 V) offset on top of the held note.
+- **CV Out 2** — attack/decay envelope that rises to roughly +5 V on each cut event and decays back toward the resting −1 V floor. **Knob Y** sets the decay time at trigger time (10 ms at fully left, ~3 s at fully right; square-law taper). Hold the front-panel switch Down with no track armed or recording, then move **Knob Y** past hard takeover to set attack time (instant to ~1 s).
 - **Pulse Out 1** — 20 ms trigger fired on every cut event.
 - **Pulse Out 2** — gate. High while any CUT-page track-row key is held (live only — the gate is not replayed by pattern/recall).
+
+For populated tracks, CV1 pitch updates and CV2 envelope triggers are disabled by default and can be enabled per track with the sample-manager web app's **CV output** toggle. Empty tracks always drive CV1/CV2 so they can be used as pitch/envelope rows before audio is loaded.
 
 ![grid computer](images/MLR_grid_ws.jpg)
 
@@ -131,7 +133,7 @@ The CUT page is the performance heart of MLR. Each track row is a scrub bar that
   cuts to that position.
 - **Delete + any cut key on a row**: if the track is playing, stop it (the loop, if any, is left in place so a second Delete + key clears it). If the track is already stopped and has a loop, that press clears the loop instead.
 
-Each cut event also fires the CV1 note, the CV2 decay envelope, and a 20 ms pulse on Pulse Out 1 as described in [Hardware in / out](#hardware-in--out-on-the-computer). Holding any cut key on a track row keeps Pulse Out 2 high as a gate.
+Each cut event can update CV1 pitch and trigger the CV2 attack/decay envelope when CV output is enabled for that row; it always fires a 20 ms pulse on Pulse Out 1. Holding any cut key on a track row keeps Pulse Out 2 high as a gate. Empty track rows always act like chromatic CV keyboards; while a key is held, and briefly after release, the row shows a dim white-key guide with C aligned to column 8 on a 16-wide grid.
 
 Recording from the CUT page is the same as on the REC page: see
 [Recording](#recording).

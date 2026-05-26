@@ -68,7 +68,7 @@ extern "C" {
 #define RECORD_REARM_DELAY_SAMPLES 24000u /* 0.5 seconds at 48 kHz */
 #define FORCE_8X8_GRID_LAYOUT 0  /* for testing: force compact grid layout regardless of detected width */
 #define CUT_PULSE_TRIG_SAMPLES 960u  /* 20 ms at 48 kHz: PulseOut1 trigger width fired on every cut event (manual or pattern/recall playback) */
-#define EMPTY_KEYBOARD_LINGER_US 1500000ull  /* 1.5 seconds */
+#define EMPTY_KEYBOARD_LINGER_US 1000000ull  /* 1 second */
 #define CV_ENV_PEAK            2047  /* CV2 envelope peak (matches CV full positive range) */
 #define CV2_FLOOR_OFFSET       341   /* raw DAC subtract: -1 V at rest (assuming +6 V = +2047 raw) */
 #define CV_ATTACK_MIN_SAMPLES  0u       /* instant attack at Y=0 */
@@ -856,6 +856,7 @@ public:
 		PERF_UI_SECTION_START(6);
 		if (!mlr_flushing || mlr_copying) {
 			mlr_recall_task();
+			mlr_recall_check_active_match();
 			pat_counter++;
 			if (pat_counter >= PAT_TICK_INTERVAL) {
 				pat_counter = 0;
@@ -1036,6 +1037,7 @@ private:
 	int        cut_loop_pending_start_[MLR_NUM_TRACKS] = {};
 	int        cut_loop_pending_end_[MLR_NUM_TRACKS] = {};
 	uint64_t   empty_keyboard_linger_until_us_[MLR_NUM_TRACKS] = {};
+	uint8_t    empty_keyboard_linger_col_[MLR_NUM_TRACKS] = {};
 	/* Cut-event-driven CV / pulse outputs (fire on manual cuts and on
 	 * pattern/recall playback via mlr_event_playback_hook). */
 	uint32_t   cv_pulse1_remaining_ = 0;   /* PulseOut1 trigger countdown (samples) */
@@ -1177,6 +1179,20 @@ private:
 		if (x < 0 || y < 0 || x >= MEXT_MAX_GRID_X || y >= MEXT_MAX_GRID_Y) return;
 		if (grid.ledGet((uint8_t)x, (uint8_t)y) < level)
 			grid.frameLedUnchecked(x, y, level);
+	}
+
+	bool pattern_playing_empty_track_pitch(int track) const
+	{
+		if (track < 0 || track >= MLR_NUM_TRACKS) return false;
+		for (int p = 0; p < MLR_NUM_PATTERNS; p++) {
+			if (mlr_patterns[p].state != MLR_PAT_PLAYING) continue;
+			for (uint16_t i = 0; i < mlr_patterns[p].count; i++) {
+				const mlr_event_t *e = &mlr_patterns[p].events[i];
+				if ((e->type == MLR_EVT_CUT || e->type == MLR_EVT_GROUP_CUT) && e->track == (uint8_t)track)
+					return true;
+			}
+		}
+		return false;
 	}
 
 	/** Map 8x8 REC speed column (2-6) to speed_shift. */
@@ -1932,8 +1948,13 @@ public:
 		if (col > 15) col = 15;
 		/* Empty tracks still drive CV1/Pulse1/envelope: the track row acts
 		 * as a playable mini-keyboard even before audio is recorded. */
+		if (!mlr_tracks[track].has_content) {
+			empty_keyboard_linger_until_us_[track] = time_us_64() + EMPTY_KEYBOARD_LINGER_US;
+			empty_keyboard_linger_col_[track] = (uint8_t)col;
+		}
 
-		if (mlr_tracks[track].cv1_pitch_enabled) {
+		bool cv_outputs_enabled = !mlr_tracks[track].has_content || mlr_tracks[track].cv1_pitch_enabled;
+		if (cv_outputs_enabled) {
 			/* CV1 sample-and-hold: map the cut grid column directly to
 			 * chromatic semitones, root = C3 (MIDI 48). */
 			int midi = CV_NOTE_BASE_MIDI + col;
@@ -2465,7 +2486,7 @@ private:
 		if (mlr_tracks[t].loop_active)
 			start_col = mlr_tracks[t].reverse ? mlr_tracks[t].loop_col_end : mlr_tracks[t].loop_col_start;
 		mlr_choke_group_resume(t, start_col);
-		dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)start_col, 0);
+		dispatch_event(MLR_EVT_START, (uint8_t)t, (int8_t)start_col, 0);
 	}
 
 	/* Gate mode is per-track even when tracks are grouped; only play toggles
@@ -3173,8 +3194,11 @@ private:
 				uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
 				if (held_in_zone) {
 					empty_keyboard_linger_until_us_[t] = time_us_64() + EMPTY_KEYBOARD_LINGER_US;
+					empty_keyboard_linger_col_[t] = (uint8_t)cut_grid_to_internal(__builtin_ctz(held_in_zone));
 				}
-				if (time_us_64() < empty_keyboard_linger_until_us_[t] && mlr_tracks[t].cv1_pitch_enabled) {
+				bool show_empty_keyboard = pattern_playing_empty_track_pitch(t) ||
+					(time_us_64() < empty_keyboard_linger_until_us_[t]);
+				if (show_empty_keyboard) {
 					for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
 						static const bool kWhiteKey[12] = {
 							true, false, true, false, true, true,
@@ -3183,6 +3207,7 @@ private:
 						if (kWhiteKey[(internal + 4) % 12])
 							grid_frame_led_max(cut_internal_to_grid(internal), row, 2);
 					}
+					grid_frame_led_max(cut_internal_to_grid(empty_keyboard_linger_col_[t]), row, 12);
 				}
 				while (held_in_zone) {
 					int c = __builtin_ctz(held_in_zone);

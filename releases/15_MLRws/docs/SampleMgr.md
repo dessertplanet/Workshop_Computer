@@ -31,8 +31,10 @@ card without having to play it into the audio input.
 For each of the six tracks the app shows:
 
 - A **Speed** dropdown — see [Record speed and length](#record-speed-and-length).
-- A **Gain** slider (with the value shown in dB), applied to the audio before
-  upload and preview so you can hear the result before committing.
+- A **CV output** toggle for tracks that already contain audio. Empty tracks
+  always send CV1 pitch and trigger CV2 from their CUT row; populated tracks
+  default to off until enabled here. The toggle is disabled while the web app
+  is disconnected.
 - A **waveform** view with the current crop selection drawn in blue.
 - The action buttons described below.
 - A small info line showing the current selection length, the maximum length
@@ -63,8 +65,8 @@ limit (or hard-clamp if no good transient is available).
 
 - **Load Audio** — open a file picker. (Drag-and-drop onto the row works too.)
 - **Upload** — ADPCM-encode the current selection at the chosen record speed
-  with the chosen gain and write it to the card for this track. Replaces any
-  existing audio.
+  and write it to the card for this track. Replaces any existing audio. Loaded
+  source files are peak-normalized before upload and preview.
 - **Download** — read whatever is currently on the card for this track,
   decode it, and save it as `trackN.wav` via your browser's download flow.
 - **Crop** — commit the current crop selection to the audio buffer in the
@@ -75,8 +77,8 @@ limit (or hard-clamp if no good transient is available).
 - **Preview** — play the current track buffer through your laptop's audio
   output using Web Audio, encoded exactly the way it would be uploaded, with
   a playhead drawn on the waveform. The button becomes **Stop** while
-  playing; changing the speed or gain while playing automatically re-starts
-  the preview at the new settings.
+  playing; preview loops until you stop it. Changing the speed while playing
+  automatically re-starts the preview at the new setting.
 
 ## Record speed and length
 
@@ -97,9 +99,19 @@ you anything useful for a pre-prepared sample.
 
 MLRws stores one mono ADPCM stream per track. In the sample manager, each track has a Channel 1/2 selector; that selector chooses the stored output routing and, for multi-channel source files, which source channel is encoded. Channel 1 uses source channel 1, Channel 2 uses source channel 2 when present, and single-channel files can be assigned to either output channel.
 
-Each track also has a **CV outputs** toggle. When it is enabled, touching CUT keys on that track row updates the CV1 pitch sample-and-hold and triggers the CV2 envelope. When it is disabled, the track still cuts, triggers Pulse 1, and can be played normally, but it leaves both CV outputs unchanged. The default is enabled for every track, including empty tracks; the web app can change the setting before or after audio is loaded.
+Each populated track also has a **CV output** toggle. When it is enabled, touching CUT keys on that track row updates the CV1 pitch sample-and-hold and triggers the CV2 envelope. When it is disabled, the track still cuts, triggers Pulse 1, and can be played normally, but it leaves both CV outputs unchanged. Empty tracks always update CV1 pitch, trigger CV2, and show the keyboard guide; once a track has audio, CV output defaults to off until enabled in the web app.
 
 Uploading always writes only the selected track. For stereo source files, use the Channel selector to choose whether source channel 1 or source channel 2 is encoded and which output channel the stored track uses.
+
+## Serial transfer notes
+
+The sample-manager protocol is framed so Web Serial packet boundaries do not matter:
+
+- `I` returns a 32-bit little-endian metadata length followed by that many bytes of text metadata.
+- `R <track>` returns a 32-bit little-endian track length, then streams the track blob in 1024-byte chunks. The browser acknowledges each chunk with `A`; the firmware sends `DONE\n` after the final acknowledged chunk.
+- `P <track> <enabled>` updates the populated-track CV output setting.
+
+The web app remembers the selected serial port during the current browser session and attempts to reconnect automatically after a USB disconnect. During reconnect it clears the displayed track buffers first, then repopulates them from the card once sync succeeds.
 
 
 ## Browser and Web Serial caveats

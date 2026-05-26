@@ -833,7 +833,7 @@ void mlr_init(void)
 			tr->record_speed_shift = hdr->record_speed_shift;
 			tr->recorded_channel   = hdr->recorded_channel & 0x01;
 			tr->pan_class          = (hdr->pan_class <= 2) ? hdr->pan_class : 0;
-			tr->cv1_pitch_enabled  = (hdr->cv1_pitch_mode != MLR_CV1_PITCH_DISABLED_MODE);
+			tr->cv1_pitch_enabled  = (hdr->cv1_pitch_mode == MLR_CV1_PITCH_ENABLED_MODE);
 			tr->playing        = false;
 			tr->playhead       = 0;
 
@@ -908,7 +908,7 @@ void mlr_rescan_track(int track)
 		tr->record_speed_shift = hdr->record_speed_shift;
 		tr->recorded_channel   = hdr->recorded_channel & 0x01;
 		tr->pan_class          = (hdr->pan_class <= 2) ? hdr->pan_class : 0;
-		tr->cv1_pitch_enabled  = (hdr->cv1_pitch_mode != MLR_CV1_PITCH_DISABLED_MODE);
+		tr->cv1_pitch_enabled  = (hdr->cv1_pitch_mode == MLR_CV1_PITCH_ENABLED_MODE);
 		tr->playhead       = 0;
 
 		memcpy(tr->keyframes, hdr->keyframes,
@@ -945,6 +945,7 @@ void __not_in_flash_func(mlr_start_record)(int track)
 	/* fresh recording — stop any existing playback */
 	tr->playing = false;
 	tr->has_content = false;
+	tr->cv1_pitch_enabled = false;
 
 	/* Any previously saved loop-a-section on this track refers to the
 	 * old sample range; clear it so the freshly recorded loop starts in
@@ -1864,7 +1865,7 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 			mlr_group_stop_track(e->track);
 		break;
 	case MLR_EVT_START:
-		mlr_choke_group_cut(e->track, 0);  /* start from beginning, choke siblings */
+		mlr_choke_group_resume(e->track, e->param_a);  /* start without CV cut trigger */
 		break;
 	case MLR_EVT_SPEED:
 		mlr_set_speed(e->track, e->param_a);
@@ -2111,6 +2112,8 @@ static uint8_t recall_snapshot_track_step;
 static uint8_t recall_snapshot_pattern;
 static int8_t recall_snapshot_slot;
 static bool recall_snapshot_record;
+static uint8_t recall_match_cut_mask;
+static int8_t recall_match_cut_col[MLR_NUM_TRACKS];
 
 static void __not_in_flash_func(recall_apply_start)(const mlr_event_t *events,
 	uint16_t count, int active_after, bool record_events, bool clear_undo)
@@ -2140,6 +2143,7 @@ static void __not_in_flash_func(recall_snapshot_before_apply_start)(int slot, bo
 	recall_snapshot_pattern = 0;
 	recall_snapshot_slot = (int8_t)slot;
 	recall_snapshot_record = record_events;
+	recall_match_cut_mask = 0;
 	recall_snapshot_pending = true;
 }
 
@@ -2443,6 +2447,10 @@ void __not_in_flash_func(mlr_recall_task)(void)
 	if (!recall_apply_events) return;
 
 	const mlr_event_t *e = &recall_apply_events[recall_apply_idx];
+	if ((e->type == MLR_EVT_CUT || e->type == MLR_EVT_GROUP_CUT) && e->track < MLR_NUM_TRACKS) {
+		recall_match_cut_mask |= (uint8_t)(1u << e->track);
+		recall_match_cut_col[e->track] = e->param_a;
+	}
 	event_exec(e);
 	if (recall_apply_record &&
 	    e->type != MLR_EVT_PAT_PLAY &&
@@ -2460,6 +2468,23 @@ void __not_in_flash_func(mlr_recall_task)(void)
 		recall_apply_idx = 0;
 		recall_apply_record = false;
 		recall_apply_clear_undo = false;
+	}
+}
+
+void __not_in_flash_func(mlr_recall_check_active_match)(void)
+{
+	if (mlr_recall_active < 0 || recall_match_cut_mask == 0) return;
+	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+		if (!(recall_match_cut_mask & (uint8_t)(1u << t))) continue;
+		if (!mlr_tracks[t].playing) {
+			mlr_recall_active = -1;
+			return;
+		}
+		int col = mlr_get_column(t);
+		if (col != (int)recall_match_cut_col[t]) {
+			mlr_recall_active = -1;
+			return;
+		}
 	}
 }
 

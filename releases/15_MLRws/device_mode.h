@@ -14,7 +14,7 @@
  *                         + ADPCM data in 1024-byte chunks. Host sends 'A'
  *                         after each chunk, then firmware sends "DONE\n".
  *   'E' <track>        → Erase track (header sector only)
- *   'P' <track> <en>   → Set whether CUT keys on this track update CV1 pitch
+ *   'P' <track> <en>   → Set whether CUT keys on this populated track drive CV outputs
  *   'W' <track> <len4> → Write track: respond "OK\n" when ready, then
  *                         receive <data...>, respond "OK\n" on completion
  *   'S'                → Status: respond with "OK\n" or "BUSY\n"

@@ -461,6 +461,7 @@ void     mlr_pattern_play_start(int pat);
 void     mlr_pattern_play_stop(int pat);
 void     mlr_pattern_clear(int pat);
 void     mlr_pattern_tick(uint32_t now_ms);         /* call at pattern playback tick rate */
+void     mlr_recall_check_active_match(void);       /* dim active recall if restored playheads drift */
 
 /* Called by mlr.c from event_exec() for every pattern/recall event that is
  * replayed. Implemented in main.cpp so the card can mirror events (cuts in

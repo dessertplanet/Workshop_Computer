@@ -61,6 +61,10 @@ Main), and re-tasks every knob to operate on that track:
 
 - **Tap:** reset the active track to its stored start position. Pulse Out 1
   emits a single trigger to echo the reset.
+- **Hold and move Y:** when not armed or recording, moving Y after hard takeover
+  sets the CV2 envelope attack time (instant to ~1 s). The attack setting is
+  latched for future triggers. The decay time is still read from Y at trigger
+  time.
 - **Hold for two seconds:** arm record mode. While you hold the switch down,
   the LEDs fill from one to all six as a progress bar; at six LEDs you are
   armed and the active track's LED begins a slow flash. See
