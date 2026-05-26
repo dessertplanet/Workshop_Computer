@@ -15,6 +15,7 @@
 | 12_am_coupler | AM radio transmitter / coupler | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 13_noisebox |  |  |  |  |
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
+| 15_MLRws | A remix of monome's classic MLR sample cutting platform (grid controller encouraged but optional)<br>[Web editor](https://dessertplanet.github.io/MLRws-web/) | 1.0<br>Released | Pico SDK | Dune Desormeaux |
 | 18_chord_organ | Chord Organ-ish - 16 chords, 8 voices, 1V/oct root. Inspired by Music Thing Chord Organ. | 0.1<br>Working | Pico SDK (C++), ComputerCard | jkeyworth |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface.<br>[Web editor](https://www.musicthing.co.uk/web_config/reverb.html) | 1.5<br>Released | C (RPi Pico SDK) | Chris Johnson |
 | 21_resonator | Karplus-Strong based sympathetic resonator. Can be used for resonant droning as well as plucking sounds.<br>[Web editor](https://johaneklund.io/resonator) | 1.1.1<br>Released | C++ (ComputerCard) | Johan Eklund |
@@ -39,6 +40,7 @@
 | 50_flux | Effects, Synthesizer and Utility<br>[Web editor](https://vincentmaurer.de/flux/flux_manager.html) | 1.0<br>Release | C++ (RPi Pico SDK), C | Vincent Maurer (vincentmaurer.de) |
 | 51_grains | Granular Sampler and Effect<br>[Web editor](https://vincentmaurer.de/grains/grains_manager.html) | 1.0<br>Release | C++ | Vincent Maurer (vincentmaurer.de) |
 | 53_glitter | Granular Looping Sampler | 0.1.0<br>Beta Test | Pico SDK 2.1.1 | Steve Jones |
+| 54_Tapegrade |  |  |  |  |
 | 55_fifths | A quantizer/sequencer that can create harmony and nimbly traverse the circle of fifths in attempts to make jazz | 1.0<br>Ready | Pico SDK | Dune Desormeaux |
 | 56_Krell | Krell | 1.0<br>Mostly complete | Blackbird Lua | Benjamin Reily |
 | 57_glitch | Clock-synced beat-repeater with ratcheting, reversal and audio degradation | 1.0.0<br>Release | C++ (Pico SDK) | Andy Jenkinson (uglifruit) |
