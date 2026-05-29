@@ -6,6 +6,7 @@ cmake_minimum_required(VERSION 3.13)
 
 # Name of the firmware/UF2 produced.
 set(CARD_NAME "MLRws" CACHE STRING "ComputerCard firmware name (also the UF2 filename stem)")
+set(MLR_FIRMWARE_VERSION "1.1.0" CACHE STRING "MLRws firmware version reported to the sample-manager web app")
 
 # USB serial stdio — OFF for this card (USB port is used for host mode).
 set(CARD_STDIO_USB OFF CACHE BOOL "Enable USB stdio")
@@ -60,7 +61,7 @@ pico_sdk_init()
 
 add_executable(${CARD_NAME}
 	${CMAKE_CURRENT_LIST_DIR}/main.cpp
-	${CMAKE_CURRENT_LIST_DIR}/monome_mext.c
+	${CMAKE_CURRENT_LIST_DIR}/monome_ws.c
 	${CMAKE_CURRENT_LIST_DIR}/mlr.c
 	${CMAKE_CURRENT_LIST_DIR}/device_mode.c
 	${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
@@ -70,6 +71,7 @@ target_compile_options(${CARD_NAME} PRIVATE -Wdouble-promotion -Wfloat-conversio
 target_link_options(${CARD_NAME} PRIVATE -Wl,--print-memory-usage)
 
 option(MLR_PERF_PROFILING "Enable debugger-readable performance counters" OFF)
+option(MONOME_WS_FORCE_8X8_MONOBRIGHT "Force modern mext grids to behave like an 8x8 binary monobright grid for testing" OFF)
 option(CARD_STEREO "Deprecated; ignored because MLRws now builds one dual-mono firmware" OFF)
 mark_as_advanced(CARD_STEREO)
 
@@ -77,10 +79,12 @@ mark_as_advanced(CARD_STEREO)
 pico_set_binary_type(${CARD_NAME} copy_to_ram)
 target_compile_definitions(${CARD_NAME} PRIVATE
 	PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64
+	MLR_FIRMWARE_VERSION="${MLR_FIRMWARE_VERSION}"
 	MLR_FIRMWARE_RESERVE=${MLR_FIRMWARE_RESERVE_BYTES}
 	MLR_TRACK_FLASH_SIZE=${MLR_TRACK_FLASH_SIZE_BYTES}
 	MLR_SCENE_SECTORS=${MLR_SCENE_SECTORS_COUNT}
 	MLR_SECTOR_SIZE=${MLR_FLASH_SECTOR_BYTES}
+	$<$<BOOL:${MONOME_WS_FORCE_8X8_MONOBRIGHT}>:MONOME_WS_FORCE_8X8_MONOBRIGHT=1>
 	$<$<BOOL:${MLR_PERF_PROFILING}>:MLR_PERF_PROFILING>
 )
 
@@ -113,6 +117,7 @@ endif()
 
 # Collect generated UF2 files in one place (in addition to the dev-env MAKEFILES helper).
 set(COMPUTERCARD_UF2_DIR "${CMAKE_CURRENT_LIST_DIR}/UF2" CACHE PATH "Directory to copy generated .uf2 files into")
+set(MLR_VERSIONED_UF2_NAME "${CARD_NAME}.${MLR_FIRMWARE_VERSION}.uf2")
 add_custom_command(
 	TARGET ${CARD_NAME}
 	POST_BUILD
@@ -123,5 +128,5 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E make_directory "${COMPUTERCARD_UF2_DIR}"
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
 		"$<TARGET_FILE_DIR:${CARD_NAME}>/${CARD_NAME}.uf2"
-		"${COMPUTERCARD_UF2_DIR}/${CARD_NAME}.uf2"
+		"${COMPUTERCARD_UF2_DIR}/${MLR_VERSIONED_UF2_NAME}"
 )
