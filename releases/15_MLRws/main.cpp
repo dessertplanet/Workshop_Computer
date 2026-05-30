@@ -1663,12 +1663,9 @@ private:
 				new_track = gl_record_track_;
 			}
 
-			/* Track changed — switch to new track */
+			/* Track changed: update the selected mix focus only. */
 			if (new_track != gl_active_track_) {
 				gl_active_track_ = new_track;
-
-				/* Hard-cut selected channel from last accepted start position */
-				mlr_cut(gl_active_track_, gl_prev_start_col_);
 			}
 
 			/* ---- X knob layer controls ---- */
