@@ -28,7 +28,7 @@
 #define SAMPLE_READ_ACK 'A'
 
 #ifndef MLR_FIRMWARE_VERSION
-#define MLR_FIRMWARE_VERSION "1.1.0"
+#error "MLR_FIRMWARE_VERSION must be defined by the build system"
 #endif
 
 typedef enum {
