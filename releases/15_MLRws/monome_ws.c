@@ -28,6 +28,7 @@ void mlr_perf_count_monome_ws_event_drop(void);
 
 #define MONOME_WS_REFRESH_US 16667
 #define MONOME_WS_BINARY_THRESHOLD 7
+#define MONOME_WS_LEGACY_SNIFF_DELAY_US 1500000u
 
 monome_ws_state_t g_monome_ws;
 static uint64_t s_last_refresh_us = 0;
@@ -581,7 +582,11 @@ void monome_ws_arc_led_intensity(uint8_t ring, uint8_t level)
 void monome_ws_rx_feed(const uint8_t *data, uint32_t len)
 {
 	for (uint32_t i = 0; i < len; i++) {
-		if (g_monome_ws.protocol == MONOME_WS_PROTOCOL_UNKNOWN && data[i] == 0x10) {
+		bool legacy_sniff_ready =
+			g_monome_ws.protocol == MONOME_WS_PROTOCOL_UNKNOWN &&
+			(time_us_64() - g_monome_ws.connect_time_us) > MONOME_WS_LEGACY_SNIFF_DELAY_US;
+
+		if (legacy_sniff_ready && data[i] == 0x10) {
 			g_monome_ws.rx_len = 0;
 			g_monome_ws.rx_expected = 0;
 			legacy_rx_consume_byte(data[i]);
