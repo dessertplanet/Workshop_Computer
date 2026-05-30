@@ -32,7 +32,8 @@ The three-position switch picks the role of the knobs.
 ### Switch Middle — Global mode
 
 - **Main knob:** active-track select. The knob travels through tracks 1–6 left
-  to right.
+  to right. Selecting a different active track is a mix action only; it does
+  not reset any track's playhead.
 - **X knob:** playback-layer gain. Centered = unity, fully left = silent, fully
   right = roughly +6 dB. This is a master-style gain that sits on top of every
   track's own volume slot.
@@ -110,8 +111,9 @@ are doing. CV ranges are the standard Workshop Computer ±6 V.
 - **Pulse In 1** rising edge: reset the active track to its stored start
   column (same as a switch-down tap). Pulse Out 1 echoes it.
 - **Pulse In 2** rising edge: advance the active track to the next one (wraps
-  6→1). Pulse Out 2 fires on any track change, whether triggered by Pulse In 2,
-  by the Main knob, or by Audio In 1 modulation.
+  6→1) without resetting any track's playhead. Pulse Out 2 fires on any track
+  change, whether triggered by Pulse In 2, by the Main knob, or by Audio In 1
+  modulation.
 
 A note about audio-driven modulation after recording: once you finish a
 recording pass, Audio In modulation is held off on each input independently
