@@ -9,6 +9,8 @@ import {
   Play,
   Plus,
   Scissors,
+  Moon,
+  Sun,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -28,6 +30,7 @@ import { BreakySerial, DeviceInfo } from './serial';
 const serial = new BreakySerial();
 
 type StatusKind = 'idle' | 'good' | 'warn' | 'bad';
+type Theme = 'light' | 'dark';
 
 interface Status {
   text: string;
@@ -44,12 +47,18 @@ export function App() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [playheadFrame, setPlayheadFrame] = useState(0);
   const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const audioRef = useRef<{
     context: AudioContext;
     source: AudioBufferSourceNode;
     startedAt: number;
     frameCount: number;
   } | null>(null);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem('breaky-theme', theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!playingId || !audioRef.current) {
@@ -282,6 +291,13 @@ export function App() {
             <Cable size={18} />
             {connected ? 'Disconnect' : 'Connect'}
           </button>
+          <button
+            onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+            title={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
+            aria-label={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
+          >
+            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
           <label className={`button ${busy ? 'disabled' : ''}`} title="Add audio">
             <Plus size={18} />
             Add
@@ -459,9 +475,9 @@ function Waveform({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = '#f7f7f4';
+    ctx.fillStyle = cssVar('--wave', '#f7f7f4');
     ctx.fillRect(0, 0, width, height);
-    ctx.strokeStyle = '#202020';
+    ctx.strokeStyle = cssVar('--text', '#202020');
     ctx.lineWidth = Math.max(1, scale);
     ctx.beginPath();
     const mid = height / 2;
@@ -482,15 +498,15 @@ function Waveform({
 
     const left = (sample.cropStart / sample.pcm.length) * width;
     const right = (sample.cropEnd / sample.pcm.length) * width;
-    ctx.fillStyle = 'rgba(28, 105, 212, 0.18)';
+    ctx.fillStyle = colorWithAlpha(cssVar('--accent', '#1c69d4'), 0.22);
     ctx.fillRect(left, 0, Math.max(1, right - left), height);
-    ctx.fillStyle = '#1c69d4';
+    ctx.fillStyle = cssVar('--accent', '#1c69d4');
     ctx.fillRect(left, 0, Math.max(2, 2 * scale), height);
     ctx.fillRect(right, 0, Math.max(2, 2 * scale), height);
 
     if (playheadFrame != null) {
       const playhead = ((sample.cropStart + playheadFrame) / sample.pcm.length) * width;
-      ctx.fillStyle = '#d23b2a';
+      ctx.fillStyle = cssVar('--playhead', '#d23b2a');
       ctx.fillRect(playhead, 0, Math.max(2, 2 * scale), height);
     }
   }
@@ -548,4 +564,32 @@ function formatBytes(bytes: number): string {
 
 function formatDuration(frames: number): string {
   return `${(frames / BANK_SAMPLE_RATE).toFixed(2)} s`;
+}
+
+function loadTheme(): Theme {
+  const stored = window.localStorage.getItem('breaky-theme');
+  if (stored === 'light' || stored === 'dark') return stored;
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function cssVar(name: string, fallback: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+function colorWithAlpha(color: string, alpha: number): string {
+  if (!color.startsWith('#')) return color;
+  const hex = color.slice(1);
+  const full =
+    hex.length === 3
+      ? hex
+          .split('')
+          .map((part) => part + part)
+          .join('')
+      : hex;
+  const value = Number.parseInt(full, 16);
+  if (!Number.isFinite(value)) return color;
+  const r = (value >> 16) & 0xff;
+  const g = (value >> 8) & 0xff;
+  const b = value & 0xff;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
