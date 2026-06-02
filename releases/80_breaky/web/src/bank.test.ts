@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildBankBlob, parseBankBlob } from './bank';
 import { estimateBpmFromFrames, inferBpmFromName } from './audio';
 
-describe('Breaky bank format', () => {
+describe('stretchcore bank format', () => {
   it('round-trips sample metadata and raw pcm', () => {
     const pcm = new Uint8Array([0, 1, 255, 128]);
     const blob = buildBankBlob(
@@ -37,4 +37,3 @@ describe('BPM detection', () => {
     expect(estimateBpmFromFrames(526629)).toBe(175);
   });
 });
-

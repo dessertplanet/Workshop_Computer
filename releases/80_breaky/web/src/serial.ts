@@ -11,7 +11,7 @@ export interface DeviceInfo {
 const READ_CHUNK_SIZE = 1024;
 const READ_CHUNK_ACK = 0x41;
 
-export class BreakySerial {
+export class StretchcoreSerial {
   private port: SerialPort | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -262,7 +262,7 @@ function findSequence(haystack: Uint8Array, needle: Uint8Array): number {
 function parseInfo(text: string): DeviceInfo {
   const first = text.trim().split('\n')[0] ?? '';
   const parts = first.split(/\s+/);
-  if (parts[0] !== 'BRKY1') throw new Error(`Bad metadata: ${first}`);
+  if (parts[0] !== 'STRETCHCORE1' && parts[0] !== 'BRKY1') throw new Error(`Bad metadata: ${first}`);
   const token = (name: string, fallback: string) => {
     const index = parts.indexOf(name);
     return index >= 0 && parts[index + 1] ? parts[index + 1] : fallback;

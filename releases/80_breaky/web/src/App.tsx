@@ -25,9 +25,9 @@ import {
   parseBankBlob,
   usedAudioBytes,
 } from './bank';
-import { BreakySerial, DeviceInfo } from './serial';
+import { DeviceInfo, StretchcoreSerial } from './serial';
 
-const serial = new BreakySerial();
+const serial = new StretchcoreSerial();
 
 type StatusKind = 'idle' | 'good' | 'warn' | 'bad';
 type Theme = 'light' | 'dark';
@@ -57,7 +57,7 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem('breaky-theme', theme);
+    window.localStorage.setItem('stretchcore-theme', theme);
   }, [theme]);
 
   useEffect(() => {
@@ -283,7 +283,7 @@ export function App() {
     <main className="app">
       <header className="topbar">
         <div>
-          <h1>Breaky Loader</h1>
+          <h1>stretchcore Loader</h1>
           <div className={`status ${status.kind}`}>{status.text}</div>
         </div>
         <div className="toolbar">
@@ -567,7 +567,8 @@ function formatDuration(frames: number): string {
 }
 
 function loadTheme(): Theme {
-  const stored = window.localStorage.getItem('breaky-theme');
+  const stored =
+    window.localStorage.getItem('stretchcore-theme') ?? window.localStorage.getItem('breaky-theme');
   if (stored === 'light' || stored === 'dark') return stored;
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }

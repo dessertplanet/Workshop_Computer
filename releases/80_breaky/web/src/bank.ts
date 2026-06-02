@@ -52,7 +52,7 @@ function readName(source: Uint8Array, offset: number): string {
 
 export function buildBankBlob(samples: BankSample[], capacityBytes: number): Uint8Array {
   if (samples.length > BANK_MAX_SAMPLES) {
-    throw new Error(`Breaky supports up to ${BANK_MAX_SAMPLES} samples`);
+    throw new Error(`stretchcore supports up to ${BANK_MAX_SAMPLES} samples`);
   }
   const audioBytes = usedAudioBytes(samples);
   if (audioBytes > capacityBytes) {
@@ -99,7 +99,7 @@ export function parseBankBlob(blob: Uint8Array): ParsedBank {
   const audioBytes = view.getUint32(20, true);
 
   if (magic !== BANK_MAGIC || version !== BANK_VERSION || headerSize !== BANK_HEADER_SIZE) {
-    throw new Error('Unsupported Breaky bank');
+    throw new Error('Unsupported stretchcore bank');
   }
   if (sampleRate !== BANK_SAMPLE_RATE) throw new Error('Unsupported sample rate');
   if (sampleCount > BANK_MAX_SAMPLES) throw new Error('Too many samples in bank');
@@ -128,4 +128,3 @@ export function parseBankBlob(blob: Uint8Array): ParsedBank {
 
   return { samples, audioBytes };
 }
-

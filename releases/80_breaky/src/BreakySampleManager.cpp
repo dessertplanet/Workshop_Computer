@@ -97,7 +97,7 @@ void handle_info() {
   char info[2048];
   uint32_t used = 0;
   int n = snprintf(info + used, sizeof(info) - used,
-                   "BRKY1 FW 1.0 RESERVE %lu CAPACITY %lu USED %lu RATE %lu COUNT %lu\n",
+                   "STRETCHCORE1 FW 1.0 RESERVE %lu CAPACITY %lu USED %lu RATE %lu COUNT %lu\n",
                    static_cast<unsigned long>(BREAKY_AUDIO_FLASH_OFFSET),
                    static_cast<unsigned long>(BREAKY_AUDIO_CAPACITY_BYTES),
                    static_cast<unsigned long>(breaky_audio_audio_bytes()),

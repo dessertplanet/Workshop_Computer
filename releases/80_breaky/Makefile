@@ -1,10 +1,10 @@
 export PICO_SDK_PATH := $(CURDIR)/pico-sdk
 
-PROJECT := breaky
+PROJECT := stretchcore
 BUILD_DIR := build
 PORT ?= /dev/ttyACM0
 PICO_SDK_VERSION := 2.2.0
-PICO_SDK_STAMP := pico-sdk/.breaky-sdk-$(PICO_SDK_VERSION)
+PICO_SDK_STAMP := pico-sdk/.stretchcore-sdk-$(PICO_SDK_VERSION)
 NPROCS := $(shell nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
 NPM := /home/zns/.nvm/versions/node/v25.8.1/bin/npm
 NODE_BIN := $(dir $(NPM))
