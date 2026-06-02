@@ -223,7 +223,7 @@ public:
 		case Mode::DeviceGridless:
 			gridless_scan_tracks();
 			gl_active_track_ = 0;
-			mlr_cut(gl_active_track_, 0);
+			gridless_restart_all_tracks_from_zero();
 			gl_prev_start_col_ = 0;
 			knob_hard_takeover_arm(Knob::Main);
 			knob_hard_takeover_arm(Knob::X);
@@ -405,7 +405,7 @@ public:
 				gridless_scan_tracks();
 				if (gl_active_track_ < 0 || gl_active_track_ >= MLR_NUM_TRACKS)
 					gl_active_track_ = 0;
-				mlr_cut(gl_active_track_, 0);
+				gridless_restart_all_tracks_from_zero();
 				gl_prev_start_col_ = 0;
 				knob_hard_takeover_arm(Knob::Main);
 				knob_hard_takeover_arm(Knob::X);
@@ -1299,17 +1299,25 @@ private:
 		return track_idx;
 	}
 
-	void gridless_start_all_tracks_if_needed()
+	void gridless_restart_all_tracks_from_zero()
 	{
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-			if (!mlr_tracks[t].has_content) continue;
-			if (gl_playback_track_gain_frac_[t] == 0) continue;
-			if (!mlr_tracks[t].playing && !mlr_tracks[t].stop_pending) {
-				int col = mlr_get_column(t);
-				if (col < 0) col = 0;
-				mlr_cut(t, col);
-			}
+			if (mlr_tracks[t].has_content)
+				mlr_cut(t, 0);
 		}
+	}
+
+	void gridless_start_all_tracks_if_needed()
+	{
+		bool any_waiting_to_stop = false;
+		bool any_stopped = false;
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			if (!mlr_tracks[t].has_content) continue;
+			if (mlr_tracks[t].stop_pending) any_waiting_to_stop = true;
+			else if (!mlr_tracks[t].playing) any_stopped = true;
+		}
+		if (any_stopped && !any_waiting_to_stop)
+			gridless_restart_all_tracks_from_zero();
 	}
 
 	void gridless_apply_level_layers()
@@ -1416,17 +1424,8 @@ private:
 			break;
 		}
 
-		/* Gridless can keep several tracks logically ready, but refilling silent
-		 * background tracks competes with the selected track. This is especially
-		 * audible when the selected track is reverse/speed-shifted, since reverse
-		 * refill is seek-heavy. Stop non-active tracks that are fully silent; they
-		 * restart from their current column when radiate/selection makes them
-		 * audible again. */
-		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-			if (t == gl_active_track_) continue;
-			if (gl_playback_track_gain_frac_[t] == 0 && mlr_tracks[t].playing)
-				mlr_stop_track(t);
-		}
+		/* Gridless keeps populated tracks running in phase; the mix matrix only
+		 * controls audibility. */
 	}
 
 	/**
@@ -1585,8 +1584,8 @@ private:
 		if (gl_post_record_start_pending_ && !mlr_flushing) {
 			int t = gl_post_record_start_track_;
 			if (t >= 0 && t < MLR_NUM_TRACKS && mlr_tracks[t].has_content) {
-				mlr_cut(t, 0);
 				gl_active_track_ = t;
+				gridless_restart_all_tracks_from_zero();
 			}
 			rec_start_lockout_samples_ = RECORD_REARM_DELAY_SAMPLES;
 			gl_post_record_start_pending_ = false;
@@ -1804,9 +1803,8 @@ private:
 			bool turing_clock = pulse_reset || gl_pulse2_pending_;
 			gl_pulse2_pending_ = false;
 
-			if (!gl_record_mode_ && !gl_recording_active_ && (switch_reset || pulse_reset) && gl_active_track_ >= 0) {
-				mlr_cut(gl_active_track_, gl_prev_start_col_);
-			}
+			if (!gl_record_mode_ && !gl_recording_active_ && (switch_reset || pulse_reset) && gl_active_track_ >= 0)
+				gridless_restart_all_tracks_from_zero();
 			if (!gl_record_mode_ && !gl_recording_active_ && turing_clock) {
 				gridless_step_turing();
 				trigger_cv2_envelope();
