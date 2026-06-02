@@ -16,6 +16,7 @@ class Breaky : public ComputerCard {
       --boot_mute_samples_;
       AudioOut1(0);
       AudioOut2(0);
+      stop_switch_pulse_outputs();
       for (int i = 0; i < kNumLeds; ++i) {
         LedOff(i);
       }
@@ -25,21 +26,27 @@ class Breaky : public ComputerCard {
     if (breaky_audio_bank_mutating()) {
       AudioOut1(0);
       AudioOut2(0);
+      stop_switch_pulse_outputs();
       update_empty_leds();
       return;
     }
 
     update_random_cv_outputs();
 
-    if (breaky_audio_sample_count() == 0) {
+    const bool has_audio = breaky_audio_sample_count() > 0;
+    if (has_audio) {
+      ensure_active_sample_valid();
+    }
+    handle_switch_actions(has_audio);
+    update_switch_pulse_outputs();
+
+    if (!has_audio) {
       AudioOut1(0);
       AudioOut2(0);
       update_empty_leds();
       return;
     }
 
-    ensure_active_sample_valid();
-    handle_switch_actions();
     handle_pulse_cv_position();
     update_external_clock();
     update_playback_rate();
@@ -69,6 +76,7 @@ class Breaky : public ComputerCard {
   static constexpr uint32_t kPulseFlashSamples = kAudioOutputSampleRate / 20u;
   static constexpr uint32_t kExternalClockPpqn = 2u;
   static constexpr uint16_t kSwitchDebounceSamples = 96u;
+  static constexpr uint32_t kSwitchPulseOutSamples = kAudioOutputSampleRate / 50u;
   static constexpr int16_t kCvMin = -2048;
   static constexpr int16_t kCvMax = 2047;
   static constexpr uint32_t kStretchQ8One = 256u;
@@ -117,6 +125,8 @@ class Breaky : public ComputerCard {
   uint32_t last_external_clock_interval_ = 0;
   uint32_t clock_timeout_samples_ = kExternalClockMinTimeoutSamples;
   uint32_t pulse_flash_samples_ = 0;
+  uint32_t switch_pulse1_samples_ = 0;
+  uint32_t switch_pulse2_samples_ = 0;
   uint32_t stretch_q8_ = kStretchQ8One;
   uint32_t random_cv_seed_ = 0x8badf00du;
   uint16_t switch_down_samples_ = 0;
@@ -405,7 +415,7 @@ class Breaky : public ComputerCard {
     }
   }
 
-  void handle_switch_actions() {
+  void handle_switch_actions(bool has_audio) {
     const Switch switch_value = SwitchVal();
     if (switch_value != Down) {
       switch_down_samples_ = 0;
@@ -413,7 +423,10 @@ class Breaky : public ComputerCard {
     } else if (switch_down_samples_ < kSwitchDebounceSamples) {
       ++switch_down_samples_;
     } else if (switch_jump_armed_) {
-      jump_to_main_knob_position();
+      trigger_switch_pulse1();
+      if (has_audio) {
+        jump_to_main_knob_position();
+      }
       switch_jump_armed_ = false;
     }
 
@@ -423,9 +436,39 @@ class Breaky : public ComputerCard {
     } else if (switch_up_samples_ < kSwitchDebounceSamples) {
       ++switch_up_samples_;
     } else if (switch_change_armed_) {
-      change_sample_from_main_knob_position();
+      trigger_switch_pulse2();
+      if (has_audio) {
+        change_sample_from_main_knob_position();
+      }
       switch_change_armed_ = false;
     }
+  }
+
+  void trigger_switch_pulse1() {
+    switch_pulse1_samples_ = kSwitchPulseOutSamples;
+  }
+
+  void trigger_switch_pulse2() {
+    switch_pulse2_samples_ = kSwitchPulseOutSamples;
+  }
+
+  void update_switch_pulse_outputs() {
+    PulseOut1(switch_pulse1_samples_ > 0);
+    PulseOut2(switch_pulse2_samples_ > 0);
+
+    if (switch_pulse1_samples_ > 0) {
+      --switch_pulse1_samples_;
+    }
+    if (switch_pulse2_samples_ > 0) {
+      --switch_pulse2_samples_;
+    }
+  }
+
+  void stop_switch_pulse_outputs() {
+    switch_pulse1_samples_ = 0;
+    switch_pulse2_samples_ = 0;
+    PulseOut1(false);
+    PulseOut2(false);
   }
 
   void handle_pulse_cv_position() {
