@@ -29,14 +29,17 @@ void mlr_perf_count_monome_ws_event_drop(void);
 #define MONOME_WS_REFRESH_US 16667
 #define MONOME_WS_BINARY_THRESHOLD 7
 #define MONOME_WS_LEGACY_SNIFF_DELAY_US 1500000u
+#define MONOME_WS_OUTPUT_SETTLE_US 2500000ull
+#define MONOME_WS_FORCE_REFRESH_WINDOW_US 1000000ull
+#define MONOME_WS_FORCE_REFRESH_INTERVAL_US 250000ull
 
 monome_ws_state_t g_monome_ws;
 static uint64_t s_last_refresh_us = 0;
 
-static void monome_ws_send_raw(const uint8_t *data, uint32_t len)
+static bool monome_ws_send_raw(const uint8_t *data, uint32_t len)
 {
 	if (!g_monome_ws.connected || g_monome_ws.cdc_idx < 0)
-		return;
+		return false;
 
 	uint8_t padded[64];
 	if (len < 64) {
@@ -44,24 +47,31 @@ static void monome_ws_send_raw(const uint8_t *data, uint32_t len)
 		memset(padded + len, 0xFF, 64 - len);
 		if (g_monome_ws.transport == MONOME_WS_TRANSPORT_DEVICE) {
 			if (tud_cdc_n_write_available(g_monome_ws.device_cdc_itf) < 64)
-				return;
+				return false;
 			tud_cdc_n_write(g_monome_ws.device_cdc_itf, padded, 64);
 			tud_cdc_n_write_flush(g_monome_ws.device_cdc_itf);
 		} else {
-			tuh_cdc_write((uint8_t)g_monome_ws.cdc_idx, padded, 64);
+			if (tuh_cdc_write_available((uint8_t)g_monome_ws.cdc_idx) < 64)
+				return false;
+			if (tuh_cdc_write((uint8_t)g_monome_ws.cdc_idx, padded, 64) != 64)
+				return false;
 			tuh_cdc_write_flush((uint8_t)g_monome_ws.cdc_idx);
 		}
 	} else {
 		if (g_monome_ws.transport == MONOME_WS_TRANSPORT_DEVICE) {
 			if (tud_cdc_n_write_available(g_monome_ws.device_cdc_itf) < len)
-				return;
+				return false;
 			tud_cdc_n_write(g_monome_ws.device_cdc_itf, data, len);
 			tud_cdc_n_write_flush(g_monome_ws.device_cdc_itf);
 		} else {
-			tuh_cdc_write((uint8_t)g_monome_ws.cdc_idx, data, len);
+			if (tuh_cdc_write_available((uint8_t)g_monome_ws.cdc_idx) < len)
+				return false;
+			if (tuh_cdc_write((uint8_t)g_monome_ws.cdc_idx, data, len) != len)
+				return false;
 			tuh_cdc_write_flush((uint8_t)g_monome_ws.cdc_idx);
 		}
 	}
+	return true;
 }
 
 static void monome_ws_send(const uint8_t *data, uint32_t len)
@@ -119,6 +129,9 @@ static uint8_t frame_row_mask(uint8_t x_off, uint8_t y)
 
 static void set_grid_identity(uint8_t cols, uint8_t rows, monome_ws_protocol_t protocol)
 {
+	bool identity_changed = g_monome_ws.protocol != (uint8_t)protocol ||
+		g_monome_ws.grid_x != cols || g_monome_ws.grid_y != rows;
+
 	g_monome_ws.protocol = (uint8_t)protocol;
 	g_monome_ws.device_kind = MONOME_WS_DEVICE_GRID;
 #if MONOME_WS_FORCE_8X8_MONOBRIGHT
@@ -130,6 +143,19 @@ static void set_grid_identity(uint8_t cols, uint8_t rows, monome_ws_protocol_t p
 	g_monome_ws.supports_levels = protocol == MONOME_WS_PROTOCOL_MEXT && !MONOME_WS_FORCE_8X8_MONOBRIGHT;
 	g_monome_ws.grid_x = cols;
 	g_monome_ws.grid_y = rows;
+	if (identity_changed) {
+		uint64_t now_us = time_us_64();
+		uint64_t first_refresh_us = now_us;
+		if (g_monome_ws.transport == MONOME_WS_TRANSPORT_HOST &&
+			(now_us - g_monome_ws.connect_time_us) < MONOME_WS_OUTPUT_SETTLE_US) {
+			first_refresh_us = g_monome_ws.connect_time_us + MONOME_WS_OUTPUT_SETTLE_US;
+		}
+		memset(g_monome_ws.grid_led, 0xFF, sizeof(g_monome_ws.grid_led));
+		for (int q = 0; q < 4; q++)
+			g_monome_ws.grid_dirty[q] = false;
+		g_monome_ws.force_refresh_until_us = first_refresh_us + MONOME_WS_FORCE_REFRESH_WINDOW_US;
+		g_monome_ws.next_force_refresh_us = first_refresh_us;
+	}
 }
 
 static uint8_t mext_response_len(uint8_t header)
@@ -345,6 +371,8 @@ void monome_ws_connect(int cdc_idx)
 	g_monome_ws.grid_frame_pending = false;
 	g_monome_ws.discovery_tick = 0;
 	g_monome_ws.connect_time_us = time_us_64();
+	g_monome_ws.force_refresh_until_us = 0;
+	g_monome_ws.next_force_refresh_us = 0;
 }
 
 void monome_ws_disconnect(void)
@@ -418,8 +446,8 @@ static void refresh_mext_grid(void)
 {
 	if (g_monome_ws.intensity_pending) {
 		uint8_t ibuf[2] = {0x17, g_monome_ws.grid_intensity};
-		monome_ws_send_raw(ibuf, 2);
-		g_monome_ws.intensity_pending = false;
+		if (monome_ws_send_raw(ibuf, 2))
+			g_monome_ws.intensity_pending = false;
 	}
 
 	for (uint8_t yo = 0; yo < g_monome_ws.grid_y; yo += 8) {
@@ -442,8 +470,8 @@ static void refresh_mext_grid(void)
 					*p++ = (uint8_t)((a << 4) | (b & 0x0F));
 				}
 			}
-			monome_ws_send_raw(buf, sizeof(buf));
-			g_monome_ws.grid_dirty[q] = false;
+			if (monome_ws_send_raw(buf, sizeof(buf)))
+				g_monome_ws.grid_dirty[q] = false;
 		}
 	}
 }
@@ -453,8 +481,8 @@ static void refresh_mext_binary_grid(void)
 {
 	if (g_monome_ws.intensity_pending) {
 		uint8_t ibuf[2] = {0x17, g_monome_ws.grid_intensity};
-		monome_ws_send_raw(ibuf, 2);
-		g_monome_ws.intensity_pending = false;
+		if (monome_ws_send_raw(ibuf, 2))
+			g_monome_ws.intensity_pending = false;
 	}
 
 	for (uint8_t yo = 0; yo < g_monome_ws.grid_y; yo += 8) {
@@ -468,8 +496,8 @@ static void refresh_mext_binary_grid(void)
 			buf[2] = yo;
 			for (uint8_t r = 0; r < 8; r++)
 				buf[3 + r] = frame_row_mask(xo, yo + r);
-			monome_ws_send_raw(buf, sizeof(buf));
-			g_monome_ws.grid_dirty[q] = false;
+			if (monome_ws_send_raw(buf, sizeof(buf)))
+				g_monome_ws.grid_dirty[q] = false;
 		}
 	}
 }
@@ -492,8 +520,8 @@ static void refresh_series_grid(void)
 			buf[0] = (uint8_t)(0x80 | q);
 			for (uint8_t r = 0; r < 8; r++)
 				buf[1 + r] = frame_row_mask(xo, yo + r);
-			monome_ws_send_raw(buf, sizeof(buf));
-			g_monome_ws.grid_dirty[q] = false;
+			if (monome_ws_send_raw(buf, sizeof(buf)))
+				g_monome_ws.grid_dirty[q] = false;
 		}
 	}
 }
@@ -509,7 +537,8 @@ static void refresh_40h_grid(void)
 	if (!g_monome_ws.grid_dirty[0]) return;
 	for (uint8_t y = 0; y < 8; y++) {
 		uint8_t buf[2] = {(uint8_t)(0x70 | (y & 0x07)), frame_row_mask(0, y)};
-		monome_ws_send_raw(buf, sizeof(buf));
+		if (!monome_ws_send_raw(buf, sizeof(buf)))
+			return;
 	}
 	g_monome_ws.grid_dirty[0] = false;
 }
@@ -520,10 +549,43 @@ void monome_ws_grid_refresh(void)
 	if (g_monome_ws.grid_x == 0 || g_monome_ws.grid_y == 0) return;
 
 	if (g_monome_ws.grid_frame_pending) {
-		memcpy(g_monome_ws.grid_led, g_monome_ws.grid_next, sizeof(g_monome_ws.grid_led));
-		for (int q = 0; q < 4; q++) g_monome_ws.grid_dirty[q] = true;
+		bool dirty[4] = { false, false, false, false };
+		for (uint8_t y = 0; y < g_monome_ws.grid_y; y++) {
+			for (uint8_t x = 0; x < g_monome_ws.grid_x; x++) {
+				uint16_t idx = (uint16_t)y * MONOME_WS_GRID_MAX_X + x;
+				if (g_monome_ws.grid_led[idx] != g_monome_ws.grid_next[idx])
+					dirty[quad_idx(x, y)] = true;
+			}
+		}
+		for (uint8_t y = 0; y < g_monome_ws.grid_y; y++) {
+			for (uint8_t x = 0; x < g_monome_ws.grid_x; x++) {
+				uint8_t q = quad_idx(x, y);
+				if (!dirty[q]) continue;
+				uint16_t idx = (uint16_t)y * MONOME_WS_GRID_MAX_X + x;
+				g_monome_ws.grid_led[idx] = g_monome_ws.grid_next[idx];
+			}
+		}
+		for (int q = 0; q < 4; q++) g_monome_ws.grid_dirty[q] |= dirty[q];
 		__dmb();
 		g_monome_ws.grid_frame_pending = false;
+	}
+
+	uint64_t now_us = time_us_64();
+	if (g_monome_ws.transport == MONOME_WS_TRANSPORT_HOST &&
+		(now_us - g_monome_ws.connect_time_us) < MONOME_WS_OUTPUT_SETTLE_US) {
+		return;
+	}
+
+	if (g_monome_ws.force_refresh_until_us != 0 && now_us >= g_monome_ws.next_force_refresh_us) {
+		if (now_us <= g_monome_ws.force_refresh_until_us) {
+			for (uint8_t yo = 0; yo < g_monome_ws.grid_y; yo += 8) {
+				for (uint8_t xo = 0; xo < g_monome_ws.grid_x; xo += 8)
+					g_monome_ws.grid_dirty[quad_idx(xo, yo)] = true;
+			}
+			g_monome_ws.next_force_refresh_us = now_us + MONOME_WS_FORCE_REFRESH_INTERVAL_US;
+		} else {
+			g_monome_ws.force_refresh_until_us = 0;
+		}
 	}
 
 	switch (g_monome_ws.protocol) {

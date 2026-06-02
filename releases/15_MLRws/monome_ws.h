@@ -95,6 +95,8 @@ typedef struct {
 
 	uint32_t          discovery_tick;
 	uint64_t          connect_time_us;
+	uint64_t          force_refresh_until_us;
+	uint64_t          next_force_refresh_us;
 
 	monome_ws_event_queue_t events;
 } monome_ws_state_t;

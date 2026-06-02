@@ -463,6 +463,11 @@ void     mlr_pattern_clear(int pat);
 void     mlr_pattern_tick(uint32_t now_ms);         /* call at pattern playback tick rate */
 void     mlr_recall_check_active_match(void);       /* dim active recall if restored playheads drift */
 
+#define MLR_PLAYBACK_SOURCE_NONE    0
+#define MLR_PLAYBACK_SOURCE_PATTERN 1
+#define MLR_PLAYBACK_SOURCE_RECALL  2
+extern volatile uint8_t mlr_event_playback_source;
+
 /* Called by mlr.c from event_exec() for every pattern/recall event that is
  * replayed. Implemented in main.cpp so the card can mirror events (cuts in
  * particular) to CV/pulse outputs. Keep it short — called from audio core. */
