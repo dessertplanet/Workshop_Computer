@@ -25,6 +25,7 @@ class Breaky : public ComputerCard {
     update_external_clock();
     update_playback_rate();
     update_timestretch();
+    update_random_cv_outputs();
 
     const StereoFrame output =
         timestretch_active_ ? render_stretched_sample() : render_direct_sample();
@@ -62,6 +63,9 @@ class Breaky : public ComputerCard {
   static constexpr uint32_t kGrainLengthSamples = 2048u;
   static constexpr uint32_t kGrainHopSamples = 1024u;
   static constexpr uint32_t kGrainHopShift = 10u;
+  static constexpr uint32_t kRandomCv1StepsPerLoop = 16u;
+  static constexpr uint32_t kRandomCv2StepsPerLoop = 8u;
+  static constexpr uint32_t kRandomCvLevels = 16u;
   static constexpr uint64_t kSourceFrameIncQ32 =
       (static_cast<uint64_t>(BREAKY_SAMPLE_RATE) << 32u) / kAudioOutputSampleRate;
 
@@ -89,6 +93,9 @@ class Breaky : public ComputerCard {
   uint32_t pulse_flash_samples_ = 0;
   uint32_t cv_jump_update_divider_ = kCvJumpUpdateDivider;
   uint32_t stretch_q8_ = kStretchQ8One;
+  uint32_t random_cv_seed_ = 0x8badf00du;
+  uint32_t last_random_cv1_step_ = UINT32_MAX;
+  uint32_t last_random_cv2_step_ = UINT32_MAX;
   uint16_t switch_down_samples_ = 0;
   uint16_t switch_up_samples_ = 0;
   uint8_t cv_jump_connected_ticks_ = 0;
@@ -124,6 +131,22 @@ class Breaky : public ComputerCard {
       return kCvMax;
     }
     return static_cast<int16_t>(value);
+  }
+
+  uint32_t next_random_u32() {
+    uint32_t x = random_cv_seed_;
+    x ^= x << 13u;
+    x ^= x >> 17u;
+    x ^= x << 5u;
+    random_cv_seed_ = x;
+    return x;
+  }
+
+  int16_t random_stepped_cv() {
+    const uint32_t level = next_random_u32() % kRandomCvLevels;
+    return static_cast<int16_t>(
+        kCvMin + ((level * static_cast<uint32_t>(kCvMax - kCvMin)) /
+                  (kRandomCvLevels - 1u)));
   }
 
   const BreakyAudioSample& current_sample() const {
@@ -260,6 +283,27 @@ class Breaky : public ComputerCard {
     timestretch_source_inc_q32_ = (phase_inc_q32_ << 8u) / stretch_q8_;
   }
 
+  void update_random_cv_outputs() {
+    const uint32_t frame_count = current_sample().frame_count;
+    const uint32_t frame = current_frame();
+    const uint32_t cv1_step =
+        static_cast<uint32_t>((static_cast<uint64_t>(frame) * kRandomCv1StepsPerLoop) /
+                              frame_count);
+    const uint32_t cv2_step =
+        static_cast<uint32_t>((static_cast<uint64_t>(frame) * kRandomCv2StepsPerLoop) /
+                              frame_count);
+
+    if (cv1_step != last_random_cv1_step_) {
+      last_random_cv1_step_ = cv1_step;
+      CVOut1(random_stepped_cv());
+    }
+
+    if (cv2_step != last_random_cv2_step_) {
+      last_random_cv2_step_ = cv2_step;
+      CVOut2(random_stepped_cv());
+    }
+  }
+
   void update_external_clock() {
     if (clock_age_samples_ < UINT32_MAX) {
       ++clock_age_samples_;
@@ -393,6 +437,7 @@ class Breaky : public ComputerCard {
     const uint32_t frame = static_cast<uint32_t>(
         (static_cast<uint64_t>(knob) * (frame_count - 1u)) / kKnobMax);
     phase_q32_ = static_cast<uint64_t>(frame) << 32u;
+    reset_random_cv_steps();
     invalidate_timestretch_grains();
     update_leds(true);
   }
@@ -403,6 +448,7 @@ class Breaky : public ComputerCard {
     const uint32_t frame = static_cast<uint32_t>(
         (static_cast<uint64_t>(normalized_cv) * (frame_count - 1u)) / kKnobMax);
     phase_q32_ = static_cast<uint64_t>(frame) << 32u;
+    reset_random_cv_steps();
     invalidate_timestretch_grains();
     update_leds(true);
   }
@@ -437,7 +483,13 @@ class Breaky : public ComputerCard {
       refresh_free_playback_rate();
     }
     invalidate_timestretch_grains();
+    reset_random_cv_steps();
     update_leds(true);
+  }
+
+  void reset_random_cv_steps() {
+    last_random_cv1_step_ = UINT32_MAX;
+    last_random_cv2_step_ = UINT32_MAX;
   }
 
   StereoFrame render_direct_sample() {

@@ -9,12 +9,12 @@ import sys
 import tempfile
 
 
-SAMPLE_RATE = 24000
+SAMPLE_RATE = 48000
 CHANNELS = 1
 BITS_PER_SAMPLE = 8
 BYTES_PER_SAMPLE = 1
-LOWPASS_HZ = 12000
-INPUT_HEADROOM = "0.5"
+LOWPASS_HZ = 20000
+INPUT_HEADROOM = "0.75"
 BPM_MIN = 100
 BPM_MAX = 200
 LOOP_BEAT_COUNTS = (4, 8, 16, 32, 48, 64, 72, 96)
@@ -33,7 +33,7 @@ def run_sox(input_path):
             str(LOWPASS_HZ),
             "gain",
             "-n",
-            "-3",
+            "-1",
         ]
         convert_cmd = [
             "sox",
