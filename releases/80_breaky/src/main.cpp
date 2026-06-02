@@ -1,8 +1,10 @@
 #include <stdint.h>
 
+#include "BreakyAudioBank.h"
+#include "BreakySampleManager.h"
 #include "ComputerCard.h"
-#include "breaky_audio.h"
 #include "hardware/clocks.h"
+#include "pico/multicore.h"
 #include "pico/stdlib.h"
 
 class Breaky : public ComputerCard {
@@ -20,6 +22,14 @@ class Breaky : public ComputerCard {
       return;
     }
 
+    if (!audio_ready()) {
+      AudioOut1(0);
+      AudioOut2(0);
+      update_empty_leds();
+      return;
+    }
+
+    ensure_active_sample_valid();
     handle_switch_actions();
     handle_left_cv_jump();
     update_external_clock();
@@ -67,7 +77,7 @@ class Breaky : public ComputerCard {
   static constexpr uint32_t kRandomCv2StepsPerLoop = 8u;
   static constexpr uint32_t kRandomCvLevels = 16u;
   static constexpr uint64_t kSourceFrameIncQ32 =
-      (static_cast<uint64_t>(BREAKY_SAMPLE_RATE) << 32u) / kAudioOutputSampleRate;
+      (static_cast<uint64_t>(BREAKY_BANK_SAMPLE_RATE) << 32u) / kAudioOutputSampleRate;
 
   struct StereoFrame {
     int16_t left;
@@ -88,6 +98,7 @@ class Breaky : public ComputerCard {
   uint32_t stretch_update_divider_ = kControlUpdateDivider;
   uint32_t boot_mute_samples_ = kBootMuteSamples;
   uint32_t clock_age_samples_ = 0;
+  uint32_t empty_led_samples_ = 0;
   uint32_t last_external_clock_interval_ = 0;
   uint32_t clock_timeout_samples_ = kExternalClockMinTimeoutSamples;
   uint32_t pulse_flash_samples_ = 0;
@@ -111,6 +122,22 @@ class Breaky : public ComputerCard {
   bool cv_jump_tracking_ = false;
   bool timestretch_active_ = false;
   bool grains_initialized_ = false;
+
+  bool audio_ready() const {
+    return !breaky_audio_bank_mutating() && breaky_audio_sample_count() > 0;
+  }
+
+  void ensure_active_sample_valid() {
+    const uint32_t count = breaky_audio_sample_count();
+    if (count == 0) {
+      active_sample_ = 0;
+    } else if (active_sample_ >= count) {
+      active_sample_ = 0;
+      phase_q32_ = 0;
+      reset_random_cv_steps();
+      invalidate_timestretch_grains();
+    }
+  }
 
   static int16_t decode_sample(uint8_t value) {
     const int16_t signed_sample = static_cast<int8_t>(value);
@@ -150,7 +177,7 @@ class Breaky : public ComputerCard {
   }
 
   const BreakyAudioSample& current_sample() const {
-    return breaky_audio_samples[active_sample_];
+    return breaky_audio_sample(active_sample_);
   }
 
   uint64_t loop_len_q32() const {
@@ -186,7 +213,7 @@ class Breaky : public ComputerCard {
 
   StereoFrame read_frame(uint32_t frame) const {
     const int16_t sample =
-        decode_sample(breaky_audio_data[current_sample().offset + frame]);
+        decode_sample(breaky_audio_read_byte(current_sample().offset + frame));
     return {sample, sample};
   }
 
@@ -236,7 +263,7 @@ class Breaky : public ComputerCard {
     const uint32_t target_bpm =
         kTempoMinBpm + ((knob * kTempoRangeBpm) + (kKnobMax / 2u)) / kKnobMax;
     phase_inc_q32_ =
-        ((static_cast<uint64_t>(BREAKY_SAMPLE_RATE) * target_bpm) << 32u) /
+        ((static_cast<uint64_t>(BREAKY_BANK_SAMPLE_RATE) * target_bpm) << 32u) /
         (static_cast<uint64_t>(kAudioOutputSampleRate) * current_sample().source_bpm);
     if (timestretch_active_) {
       refresh_timestretch_source_inc();
@@ -345,7 +372,7 @@ class Breaky : public ComputerCard {
 
   void refresh_external_playback_rate(uint32_t interval) {
     const uint64_t numerator =
-        (static_cast<uint64_t>(60u) * BREAKY_SAMPLE_RATE) << 32u;
+        (static_cast<uint64_t>(60u) * BREAKY_BANK_SAMPLE_RATE) << 32u;
     phase_inc_q32_ =
         numerator / (static_cast<uint64_t>(interval) * current_sample().source_bpm *
                      kExternalClockPpqn);
@@ -455,9 +482,13 @@ class Breaky : public ComputerCard {
 
   uint8_t sample_from_main_knob_position() {
     const uint32_t knob = static_cast<uint32_t>(KnobVal(Main));
+    const uint32_t count = breaky_audio_sample_count();
+    if (count == 0) {
+      return 0;
+    }
     const uint32_t scaled =
-        (static_cast<uint64_t>(knob) * BREAKY_SAMPLE_COUNT) / (kKnobMax + 1u);
-    return static_cast<uint8_t>((BREAKY_SAMPLE_COUNT - 1u) - scaled);
+        (static_cast<uint64_t>(knob) * count) / (kKnobMax + 1u);
+    return static_cast<uint8_t>((count - 1u) - scaled);
   }
 
   void change_sample_from_main_knob_position() {
@@ -589,11 +620,22 @@ class Breaky : public ComputerCard {
       LedOn(i, static_cast<uint32_t>(i) == segment);
     }
   }
+
+  void update_empty_leds() {
+    ++empty_led_samples_;
+    const uint32_t step =
+        (empty_led_samples_ / (kAudioOutputSampleRate / 8u)) % kNumLeds;
+    for (int i = 0; i < kNumLeds; ++i) {
+      LedOn(i, static_cast<uint32_t>(i) == step);
+    }
+  }
 };
 
 int main() {
   set_sys_clock_khz(200000, true);
   stdio_init_all();
+  breaky_audio_bank_init();
+  multicore_launch_core1(breaky_sample_manager_core);
 
   Breaky card;
   card.EnableNormalisationProbe();

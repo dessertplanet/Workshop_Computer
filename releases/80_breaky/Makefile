@@ -6,16 +6,13 @@ PORT ?= /dev/ttyACM0
 PICO_SDK_VERSION := 2.2.0
 PICO_SDK_STAMP := pico-sdk/.breaky-sdk-$(PICO_SDK_VERSION)
 NPROCS := $(shell nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
-AUDIO_SOURCES := \
-	data/amen_bpm170_freak.wav \
-	data/09\ Amen\ Bomb.wav \
-	data/19\ Amen\ Raptor.wav \
-	data/38\ Eyes\ of\ Evil.wav
+NPM := /home/zns/.nvm/versions/node/v25.8.1/bin/npm
+NODE_BIN := $(dir $(NPM))
 
-.PHONY: build upload clean pico-sdk encode
+.PHONY: build upload clean pico-sdk encode web-install web-build web-dev
 
 
-build: $(PICO_SDK_STAMP) src/breaky_audio.h $(BUILD_DIR)/Makefile
+build: $(PICO_SDK_STAMP) $(BUILD_DIR)/Makefile
 	cmake --build $(BUILD_DIR) --parallel $(NPROCS)
 	test -f $(BUILD_DIR)/$(PROJECT).uf2
 
@@ -24,10 +21,10 @@ upload: build
 
 encode: src/breaky_audio.h
 
-src/breaky_audio.h: $(AUDIO_SOURCES) scripts/encode_audio.py
-	python3 scripts/encode_audio.py "data/amen_bpm170_freak.wav" "data/09 Amen Bomb.wav" "data/19 Amen Raptor.wav" "data/38 Eyes of Evil.wav" src/breaky_audio.h
+src/breaky_audio.h:
+	@echo "Audio is now loaded through web/ over Web Serial; src/breaky_audio.h is no longer generated."
 
-$(BUILD_DIR)/Makefile: CMakeLists.txt pico_sdk_import.cmake src/main.cpp src/ComputerCard.h src/breaky_audio.h $(PICO_SDK_STAMP)
+$(BUILD_DIR)/Makefile: CMakeLists.txt pico_sdk_import.cmake src/main.cpp src/ComputerCard.h src/BreakyAudioBank.h src/BreakyAudioBank.cpp src/BreakySampleManager.h src/BreakySampleManager.cpp $(PICO_SDK_STAMP)
 	cmake -S . -B $(BUILD_DIR)
 
 pico-sdk: $(PICO_SDK_STAMP)
@@ -44,3 +41,12 @@ $(PICO_SDK_STAMP):
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f src/breaky_audio.h
+
+web-install:
+	cd web && PATH="$(NODE_BIN):$$PATH" $(NPM) install
+
+web-build:
+	cd web && PATH="$(NODE_BIN):$$PATH" $(NPM) run build
+
+web-dev:
+	cd web && PATH="$(NODE_BIN):$$PATH" $(NPM) run dev -- --host 127.0.0.1

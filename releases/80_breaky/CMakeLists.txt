@@ -14,6 +14,8 @@ pico_sdk_init()
 
 add_executable(breaky
     src/main.cpp
+    src/BreakyAudioBank.cpp
+    src/BreakySampleManager.cpp
 )
 
 target_include_directories(breaky PRIVATE
@@ -33,20 +35,32 @@ target_link_options(breaky PRIVATE
 
 target_compile_definitions(breaky PRIVATE
     PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64
+    BREAKY_FIRMWARE_RESERVE=163840u
 )
 
 target_link_libraries(breaky
     pico_unique_id
     pico_stdlib
+    pico_multicore
     hardware_dma
     hardware_i2c
     hardware_pwm
     hardware_adc
     hardware_spi
     hardware_clocks
+    hardware_flash
 )
 
 pico_set_binary_type(breaky copy_to_ram)
 pico_enable_stdio_usb(breaky 1)
 pico_enable_stdio_uart(breaky 0)
 pico_add_extra_outputs(breaky)
+
+add_custom_command(
+    TARGET breaky
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+        -DBIN_FILE="$<TARGET_FILE_DIR:breaky>/breaky.bin"
+        -DFIRMWARE_RESERVE=163840
+        -P "${CMAKE_CURRENT_LIST_DIR}/cmake/check_firmware_reserve.cmake"
+)
