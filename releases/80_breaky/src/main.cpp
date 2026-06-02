@@ -22,7 +22,16 @@ class Breaky : public ComputerCard {
       return;
     }
 
-    if (!audio_ready()) {
+    if (breaky_audio_bank_mutating()) {
+      AudioOut1(0);
+      AudioOut2(0);
+      update_empty_leds();
+      return;
+    }
+
+    update_random_cv_outputs();
+
+    if (breaky_audio_sample_count() == 0) {
       AudioOut1(0);
       AudioOut2(0);
       update_empty_leds();
@@ -31,11 +40,10 @@ class Breaky : public ComputerCard {
 
     ensure_active_sample_valid();
     handle_switch_actions();
-    handle_left_cv_jump();
+    handle_pulse_cv_position();
     update_external_clock();
     update_playback_rate();
     update_timestretch();
-    update_random_cv_outputs();
 
     const StereoFrame output =
         timestretch_active_ ? render_stretched_sample() : render_direct_sample();
@@ -61,10 +69,6 @@ class Breaky : public ComputerCard {
   static constexpr uint32_t kPulseFlashSamples = kAudioOutputSampleRate / 20u;
   static constexpr uint32_t kExternalClockPpqn = 2u;
   static constexpr uint16_t kSwitchDebounceSamples = 96u;
-  static constexpr uint32_t kCvJumpUpdateDivider = kAudioOutputSampleRate / 1000u;
-  static constexpr uint8_t kCvJumpConnectTicks = 32u;
-  static constexpr uint8_t kCvJumpConfirmTicks = 2u;
-  static constexpr int16_t kCvJumpThreshold = 64;
   static constexpr int16_t kCvMin = -2048;
   static constexpr int16_t kCvMax = 2047;
   static constexpr uint32_t kStretchQ8One = 256u;
@@ -73,9 +77,11 @@ class Breaky : public ComputerCard {
   static constexpr uint32_t kGrainLengthSamples = 2048u;
   static constexpr uint32_t kGrainHopSamples = 1024u;
   static constexpr uint32_t kGrainHopShift = 10u;
-  static constexpr uint32_t kRandomCv1StepsPerLoop = 16u;
-  static constexpr uint32_t kRandomCv2StepsPerLoop = 8u;
-  static constexpr uint32_t kRandomCvLevels = 16u;
+  static constexpr uint32_t kRandomCv1PeriodTicks = 14286u;  // 0.07 Hz at ~1 kHz.
+  static constexpr uint32_t kRandomCv2PeriodTicks = 9091u;   // 0.11 Hz at ~1 kHz.
+  static constexpr uint32_t kRandomCv1LagAlphaQ16 = 5u;
+  static constexpr uint32_t kRandomCv2LagAlphaQ16 = 7u;
+  static constexpr int32_t kQ16One = 65536;
   static constexpr uint64_t kSourceFrameIncQ32 =
       (static_cast<uint64_t>(BREAKY_BANK_SAMPLE_RATE) << 32u) / kAudioOutputSampleRate;
 
@@ -90,42 +96,42 @@ class Breaky : public ComputerCard {
     uint16_t age;
   };
 
+  struct SmoothRandomLfo {
+    int32_t value_q16;
+    int32_t target_q16;
+    uint32_t ticks_until_target;
+    uint32_t period_ticks;
+    uint32_t lag_alpha_q16;
+  };
+
   uint64_t phase_q32_ = 0;
   uint64_t phase_inc_q32_ = kSourceFrameIncQ32;
   uint64_t timestretch_source_inc_q32_ = kSourceFrameIncQ32;
   uint32_t led_divider_ = 0;
   uint32_t control_update_divider_ = kControlUpdateDivider;
   uint32_t stretch_update_divider_ = kControlUpdateDivider;
+  uint32_t random_cv_update_divider_ = kControlUpdateDivider;
   uint32_t boot_mute_samples_ = kBootMuteSamples;
   uint32_t clock_age_samples_ = 0;
   uint32_t empty_led_samples_ = 0;
   uint32_t last_external_clock_interval_ = 0;
   uint32_t clock_timeout_samples_ = kExternalClockMinTimeoutSamples;
   uint32_t pulse_flash_samples_ = 0;
-  uint32_t cv_jump_update_divider_ = kCvJumpUpdateDivider;
   uint32_t stretch_q8_ = kStretchQ8One;
   uint32_t random_cv_seed_ = 0x8badf00du;
-  uint32_t last_random_cv1_step_ = UINT32_MAX;
-  uint32_t last_random_cv2_step_ = UINT32_MAX;
   uint16_t switch_down_samples_ = 0;
   uint16_t switch_up_samples_ = 0;
-  uint8_t cv_jump_connected_ticks_ = 0;
-  uint8_t cv_jump_change_ticks_ = 0;
   uint8_t active_sample_ = 0;
-  int16_t last_accepted_cv_ = 0;
+  SmoothRandomLfo random_cv1_ = {0, 0, 0, kRandomCv1PeriodTicks, kRandomCv1LagAlphaQ16};
+  SmoothRandomLfo random_cv2_ = {0, 0, 0, kRandomCv2PeriodTicks, kRandomCv2LagAlphaQ16};
   Grain grains_[2] = {{0, kSourceFrameIncQ32, 0},
                       {0, kSourceFrameIncQ32, kGrainHopSamples}};
   bool clock_seen_once_ = false;
   bool external_clock_active_ = false;
   bool switch_jump_armed_ = true;
   bool switch_change_armed_ = true;
-  bool cv_jump_tracking_ = false;
   bool timestretch_active_ = false;
   bool grains_initialized_ = false;
-
-  bool audio_ready() const {
-    return !breaky_audio_bank_mutating() && breaky_audio_sample_count() > 0;
-  }
 
   void ensure_active_sample_valid() {
     const uint32_t count = breaky_audio_sample_count();
@@ -134,7 +140,6 @@ class Breaky : public ComputerCard {
     } else if (active_sample_ >= count) {
       active_sample_ = 0;
       phase_q32_ = 0;
-      reset_random_cv_steps();
       invalidate_timestretch_grains();
     }
   }
@@ -160,6 +165,16 @@ class Breaky : public ComputerCard {
     return static_cast<int16_t>(value);
   }
 
+  static uint32_t clamp_knob(int32_t value) {
+    if (value < 0) {
+      return 0;
+    }
+    if (value > static_cast<int32_t>(kKnobMax)) {
+      return kKnobMax;
+    }
+    return static_cast<uint32_t>(value);
+  }
+
   uint32_t next_random_u32() {
     uint32_t x = random_cv_seed_;
     x ^= x << 13u;
@@ -169,11 +184,8 @@ class Breaky : public ComputerCard {
     return x;
   }
 
-  int16_t random_stepped_cv() {
-    const uint32_t level = next_random_u32() % kRandomCvLevels;
-    return static_cast<int16_t>(
-        kCvMin + ((level * static_cast<uint32_t>(kCvMax - kCvMin)) /
-                  (kRandomCvLevels - 1u)));
+  int16_t random_bipolar_cv() {
+    return static_cast<int16_t>(kCvMin + static_cast<int32_t>(next_random_u32() & 0x0fffu));
   }
 
   const BreakyAudioSample& current_sample() const {
@@ -277,9 +289,12 @@ class Breaky : public ComputerCard {
     }
     stretch_update_divider_ = 0;
 
-    const uint32_t knob = static_cast<uint32_t>(KnobVal(Y));
+    int32_t y = KnobVal(Y);
+    if (Connected(Input::CV1)) {
+      y += CVIn1();
+    }
     const bool was_active = timestretch_active_;
-    const uint32_t target_stretch_q8 = stretch_from_y_knob_q8(knob);
+    const uint32_t target_stretch_q8 = stretch_from_y_knob_q8(clamp_knob(y));
     if (target_stretch_q8 < kStretchQ8Bypass) {
       timestretch_active_ = false;
       stretch_q8_ = kStretchQ8One;
@@ -311,24 +326,33 @@ class Breaky : public ComputerCard {
   }
 
   void update_random_cv_outputs() {
-    const uint32_t frame_count = current_sample().frame_count;
-    const uint32_t frame = current_frame();
-    const uint32_t cv1_step =
-        static_cast<uint32_t>((static_cast<uint64_t>(frame) * kRandomCv1StepsPerLoop) /
-                              frame_count);
-    const uint32_t cv2_step =
-        static_cast<uint32_t>((static_cast<uint64_t>(frame) * kRandomCv2StepsPerLoop) /
-                              frame_count);
+    if (random_cv_update_divider_ < kControlUpdateDivider) {
+      ++random_cv_update_divider_;
+      return;
+    }
+    random_cv_update_divider_ = 0;
 
-    if (cv1_step != last_random_cv1_step_) {
-      last_random_cv1_step_ = cv1_step;
-      CVOut1(random_stepped_cv());
+    tick_random_lfo(random_cv1_);
+    tick_random_lfo(random_cv2_);
+    CVOut1(q16_to_cv(random_cv1_.value_q16));
+    CVOut2(q16_to_cv(random_cv2_.value_q16));
+  }
+
+  void tick_random_lfo(SmoothRandomLfo& lfo) {
+    if (lfo.ticks_until_target == 0) {
+      lfo.target_q16 = static_cast<int32_t>(random_bipolar_cv()) * kQ16One;
+      lfo.ticks_until_target = lfo.period_ticks;
+    } else {
+      --lfo.ticks_until_target;
     }
 
-    if (cv2_step != last_random_cv2_step_) {
-      last_random_cv2_step_ = cv2_step;
-      CVOut2(random_stepped_cv());
-    }
+    const int64_t delta =
+        static_cast<int64_t>(lfo.target_q16) - static_cast<int64_t>(lfo.value_q16);
+    lfo.value_q16 += static_cast<int32_t>((delta * lfo.lag_alpha_q16) / kQ16One);
+  }
+
+  static int16_t q16_to_cv(int32_t value_q16) {
+    return clamp_cv(value_q16 / kQ16One);
   }
 
   void update_external_clock() {
@@ -404,58 +428,16 @@ class Breaky : public ComputerCard {
     }
   }
 
-  void handle_left_cv_jump() {
-    if (cv_jump_update_divider_ < kCvJumpUpdateDivider) {
-      ++cv_jump_update_divider_;
-      return;
-    }
-    cv_jump_update_divider_ = 0;
-
-    if (Disconnected(Input::CV1)) {
-      reset_left_cv_jump();
+  void handle_pulse_cv_position() {
+    if (!PulseIn2RisingEdge()) {
       return;
     }
 
-    const int16_t cv = clamp_cv(CVIn1());
-    if (cv_jump_connected_ticks_ < kCvJumpConnectTicks) {
-      ++cv_jump_connected_ticks_;
-      if (cv_jump_connected_ticks_ >= kCvJumpConnectTicks) {
-        last_accepted_cv_ = cv;
-        cv_jump_change_ticks_ = 0;
-        cv_jump_tracking_ = true;
-      }
-      return;
+    if (Connected(Input::CV2)) {
+      jump_to_cv_position(clamp_cv(CVIn2()));
+    } else {
+      jump_to_start();
     }
-
-    if (!cv_jump_tracking_) {
-      last_accepted_cv_ = cv;
-      cv_jump_change_ticks_ = 0;
-      cv_jump_tracking_ = true;
-      return;
-    }
-
-    const int32_t diff = static_cast<int32_t>(cv) - static_cast<int32_t>(last_accepted_cv_);
-    const int32_t abs_diff = diff < 0 ? -diff : diff;
-    if (abs_diff < kCvJumpThreshold) {
-      cv_jump_change_ticks_ = 0;
-      return;
-    }
-
-    if (cv_jump_change_ticks_ < kCvJumpConfirmTicks) {
-      ++cv_jump_change_ticks_;
-    }
-
-    if (cv_jump_change_ticks_ >= kCvJumpConfirmTicks) {
-      jump_to_cv_position(cv);
-      last_accepted_cv_ = cv;
-      cv_jump_change_ticks_ = 0;
-    }
-  }
-
-  void reset_left_cv_jump() {
-    cv_jump_connected_ticks_ = 0;
-    cv_jump_change_ticks_ = 0;
-    cv_jump_tracking_ = false;
   }
 
   void jump_to_main_knob_position() {
@@ -464,7 +446,12 @@ class Breaky : public ComputerCard {
     const uint32_t frame = static_cast<uint32_t>(
         (static_cast<uint64_t>(knob) * (frame_count - 1u)) / kKnobMax);
     phase_q32_ = static_cast<uint64_t>(frame) << 32u;
-    reset_random_cv_steps();
+    invalidate_timestretch_grains();
+    update_leds(true);
+  }
+
+  void jump_to_start() {
+    phase_q32_ = 0;
     invalidate_timestretch_grains();
     update_leds(true);
   }
@@ -475,7 +462,6 @@ class Breaky : public ComputerCard {
     const uint32_t frame = static_cast<uint32_t>(
         (static_cast<uint64_t>(normalized_cv) * (frame_count - 1u)) / kKnobMax);
     phase_q32_ = static_cast<uint64_t>(frame) << 32u;
-    reset_random_cv_steps();
     invalidate_timestretch_grains();
     update_leds(true);
   }
@@ -488,7 +474,7 @@ class Breaky : public ComputerCard {
     }
     const uint32_t scaled =
         (static_cast<uint64_t>(knob) * count) / (kKnobMax + 1u);
-    return static_cast<uint8_t>((count - 1u) - scaled);
+    return static_cast<uint8_t>(scaled);
   }
 
   void change_sample_from_main_knob_position() {
@@ -514,13 +500,7 @@ class Breaky : public ComputerCard {
       refresh_free_playback_rate();
     }
     invalidate_timestretch_grains();
-    reset_random_cv_steps();
     update_leds(true);
-  }
-
-  void reset_random_cv_steps() {
-    last_random_cv1_step_ = UINT32_MAX;
-    last_random_cv2_step_ = UINT32_MAX;
   }
 
   StereoFrame render_direct_sample() {

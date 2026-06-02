@@ -385,6 +385,7 @@ export function App() {
               index={index}
               playing={playingId === sample.id}
               playheadFrame={playingId === sample.id ? playheadFrame : null}
+              theme={theme}
               onUpdate={(patch) => updateSample(sample.id, patch)}
               onRemove={() => removeSample(sample.id)}
               onMove={(direction) => moveSample(index, direction)}
@@ -403,6 +404,7 @@ function SampleRow({
   index,
   playing,
   playheadFrame,
+  theme,
   onUpdate,
   onRemove,
   onMove,
@@ -413,6 +415,7 @@ function SampleRow({
   index: number;
   playing: boolean;
   playheadFrame: number | null;
+  theme: Theme;
   onUpdate: (patch: Partial<BankSample>) => void;
   onRemove: () => void;
   onMove: (direction: -1 | 1) => void;
@@ -444,7 +447,7 @@ function SampleRow({
         <span>{formatDuration(length)}</span>
         <span>{formatBytes(length)}</span>
       </div>
-      <Waveform sample={sample} playheadFrame={playheadFrame} onUpdate={onUpdate} />
+      <Waveform sample={sample} playheadFrame={playheadFrame} theme={theme} onUpdate={onUpdate} />
       <div className="row-actions">
         <button onClick={onPreview} title={playing ? 'Stop preview' : 'Preview'}>
           {playing ? <Pause size={16} /> : <Play size={16} />}
@@ -469,10 +472,12 @@ function SampleRow({
 function Waveform({
   sample,
   playheadFrame,
+  theme,
   onUpdate,
 }: {
   sample: BankSample;
   playheadFrame: number | null;
+  theme: Theme;
   onUpdate: (patch: Partial<BankSample>) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -489,10 +494,12 @@ function Waveform({
     }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    const waveBackground = theme === 'dark' ? '#191918' : '#f7f7f4';
+    const waveLine = theme === 'dark' ? '#f1f0ea' : '#202020';
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = cssVar('--wave', '#f7f7f4');
+    ctx.fillStyle = waveBackground;
     ctx.fillRect(0, 0, width, height);
-    ctx.strokeStyle = cssVar('--text', '#202020');
+    ctx.strokeStyle = waveLine;
     ctx.lineWidth = Math.max(1, scale);
     ctx.beginPath();
     const mid = height / 2;
@@ -513,11 +520,15 @@ function Waveform({
 
     const left = (sample.cropStart / sample.pcm.length) * width;
     const right = (sample.cropEnd / sample.pcm.length) * width;
-    ctx.fillStyle = colorWithAlpha(cssVar('--accent', '#1c69d4'), 0.22);
-    ctx.fillRect(left, 0, Math.max(1, right - left), height);
-    ctx.fillStyle = cssVar('--accent', '#1c69d4');
-    ctx.fillRect(left, 0, Math.max(2, 2 * scale), height);
-    ctx.fillRect(right, 0, Math.max(2, 2 * scale), height);
+    const isPartialSelection = sample.cropStart > 0 || sample.cropEnd < sample.pcm.length;
+    if (isPartialSelection) {
+      ctx.fillStyle = colorWithAlpha(waveLine, 0.14);
+      ctx.fillRect(0, 0, left, height);
+      ctx.fillRect(right, 0, Math.max(0, width - right), height);
+      ctx.fillStyle = waveLine;
+      ctx.fillRect(left, 0, Math.max(2, 2 * scale), height);
+      ctx.fillRect(right, 0, Math.max(2, 2 * scale), height);
+    }
 
     if (playheadFrame != null) {
       const playhead = ((sample.cropStart + playheadFrame) / sample.pcm.length) * width;
@@ -528,7 +539,7 @@ function Waveform({
 
   useEffect(() => {
     if (canvasRef.current) draw(canvasRef.current);
-  }, [sample, playheadFrame]);
+  }, [sample, playheadFrame, theme]);
 
   function frameFromEvent(event: MouseEvent<HTMLCanvasElement>): number {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -552,6 +563,10 @@ function Waveform({
       onMouseDown={(event) => {
         dragStart.current = frameFromEvent(event);
         setSelection(dragStart.current, dragStart.current + 1);
+      }}
+      onDoubleClick={() => {
+        dragStart.current = null;
+        onUpdate({ cropStart: 0, cropEnd: sample.pcm.length });
       }}
       onMouseMove={(event) => {
         if (dragStart.current == null) return;

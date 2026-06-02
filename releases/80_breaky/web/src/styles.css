@@ -9,6 +9,7 @@
   --border: #c9c5b8;
   --border-strong: #b9b7ad;
   --wave: #f7f7f4;
+  --wave-line: #202020;
   --meter: #dedbd1;
   --primary: #202020;
   --primary-text: #ffffff;
@@ -37,6 +38,7 @@
   --border: #4b4942;
   --border-strong: #68645b;
   --wave: #191918;
+  --wave-line: #f1f0ea;
   --meter: #38362f;
   --primary: #f1f0ea;
   --primary-text: #151515;
