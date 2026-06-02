@@ -925,14 +925,18 @@ public:
 				__dmb();
 				panel_vu_led_pending_ = true;
 
-				/* detect grid size once ready (latched) */
-				if (!grid_size_latched_ && grid.ready()) {
-					grid_size_latched_ = true;
+				/* Track grid size after ready; some controllers answer size late. */
+				if (grid.ready()) {
 #if FORCE_8X8_GRID_LAYOUT
-					small_grid_ = true;
+					bool detected_small_grid = true;
 #else
-					small_grid_ = (grid.cols() <= 8);
+					bool detected_small_grid = (grid.cols() <= 8);
 #endif
+					if (!grid_size_latched_ || small_grid_ != detected_small_grid) {
+						small_grid_ = detected_small_grid;
+						grid_size_latched_ = true;
+						grid_redraw_phase_ = -1;
+					}
 				}
 
 				if (grid_redraw_phase_ < 0) {
