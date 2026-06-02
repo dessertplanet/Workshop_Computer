@@ -11,6 +11,7 @@ import {
   Scissors,
   Moon,
   Sun,
+  Terminal,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -47,6 +48,7 @@ export function App() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [playheadFrame, setPlayheadFrame] = useState(0);
   const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [debugOpen, setDebugOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const audioRef = useRef<{
     context: AudioContext;
@@ -283,20 +285,13 @@ export function App() {
     <main className="app">
       <header className="topbar">
         <div>
-          <h1>stretchcore Loader</h1>
+          <h1>stretchcore loader</h1>
           <div className={`status ${status.kind}`}>{status.text}</div>
         </div>
         <div className="toolbar">
           <button className="primary" onClick={connect} disabled={busy} title={connected ? 'Disconnect' : 'Connect'}>
             <Cable size={18} />
             {connected ? 'Disconnect' : 'Connect'}
-          </button>
-          <button
-            onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
-            title={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
-            aria-label={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
-          >
-            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
           <label className={`button ${busy ? 'disabled' : ''}`} title="Add audio">
             <Plus size={18} />
@@ -324,6 +319,24 @@ export function App() {
             <Eraser size={18} />
             Erase
           </button>
+          <div className="toolbar-spacer" />
+          <button
+            className="icon-button"
+            onClick={() => setDebugOpen((current) => !current)}
+            title={debugOpen ? 'Hide serial debug' : 'Show serial debug'}
+            aria-label={debugOpen ? 'Hide serial debug' : 'Show serial debug'}
+            aria-pressed={debugOpen}
+          >
+            <Terminal size={18} />
+          </button>
+          <button
+            className="icon-button"
+            onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+            title={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
+            aria-label={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
+          >
+            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
         </div>
       </header>
 
@@ -340,12 +353,14 @@ export function App() {
         {busy && progress > 0 ? <div className="transfer" style={{ width: `${progress * 100}%` }} /> : null}
       </section>
 
-      {debugLog.length > 0 ? (
+      {debugOpen ? (
         <section className="debug-log">
           <div className="debug-title">Serial debug</div>
-          {debugLog.map((entry, index) => (
-            <div key={`${entry}-${index}`}>{entry}</div>
-          ))}
+          {debugLog.length > 0 ? (
+            debugLog.map((entry, index) => <div key={`${entry}-${index}`}>{entry}</div>)
+          ) : (
+            <div className="debug-empty">No serial messages yet</div>
+          )}
         </section>
       ) : null}
 

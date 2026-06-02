@@ -137,10 +137,27 @@ h1 {
 }
 
 .toolbar {
+  flex: 1;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.toolbar-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.icon-button {
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.icon-button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .capacity {
@@ -205,6 +222,10 @@ h1 {
 .debug-title {
   color: var(--debug-title);
   margin-bottom: 4px;
+}
+
+.debug-empty {
+  color: var(--muted-2);
 }
 
 .empty {
@@ -296,6 +317,7 @@ h1 {
   }
 
   .toolbar {
+    width: 100%;
     justify-content: flex-start;
   }
 
