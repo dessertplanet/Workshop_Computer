@@ -5,9 +5,15 @@ stretchcore is a Workshop Computer card for playing uploaded mono sample loops w
 
 ## Quickstart
 
+Get UF2 + instructions + sample manager at https://infinitedigits.co/stretchcore/
+
 <center>
 <img src=web/public/stretchcore.png>
 </center>
+
+## Demo
+
+22 minutes of pure stretchcore: https://www.youtube.com/watch?v=w-iyoTLxIP8
 
 
 ## Audio Loading
