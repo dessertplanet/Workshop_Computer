@@ -10,6 +10,14 @@ export interface DeviceInfo {
 
 const READ_CHUNK_SIZE = 1024;
 const READ_CHUNK_ACK = 0x41;
+const METADATA_TIMEOUT_MS = 20000;
+const METADATA_GRACE_MS = 5000;
+const COMMAND_TIMEOUT_MS = 8000;
+const READ_TIMEOUT_MS = 15000;
+const LINE_TIMEOUT_MS = 5000;
+const WRITE_READY_TIMEOUT_MS = 5000;
+const WRITE_DONE_TIMEOUT_MS = 60000;
+const ERASE_TIMEOUT_MS = 10000;
 
 export class StretchcoreSerial {
   private port: SerialPort | null = null;
@@ -104,24 +112,24 @@ export class StretchcoreSerial {
   async info(skipSync = false): Promise<DeviceInfo> {
     if (!skipSync) await this.sync();
     await this.writeString('I');
-    const lenBytes = await this.waitForBytes(4, 8000);
+    const lenBytes = await this.waitForBytes(4, METADATA_TIMEOUT_MS, METADATA_GRACE_MS);
     const len = new DataView(lenBytes.buffer, lenBytes.byteOffset, 4).getUint32(0, true);
     if (len === 0 || len > 4096) throw new Error(`Invalid metadata length ${len}`);
-    const payload = await this.waitForBytes(len, 8000);
+    const payload = await this.waitForBytes(len, METADATA_TIMEOUT_MS, METADATA_GRACE_MS);
     return parseInfo(new TextDecoder().decode(payload));
   }
 
   async readBank(progress?: (ratio: number) => void): Promise<Uint8Array | null> {
     await this.sync();
     await this.writeString('R');
-    const lenBytes = await this.waitForBytes(4, 8000);
+    const lenBytes = await this.waitForBytes(4, COMMAND_TIMEOUT_MS);
     const totalLen = new DataView(lenBytes.buffer, lenBytes.byteOffset, 4).getUint32(0, true);
     if (totalLen === 0) return null;
     const data = new Uint8Array(totalLen);
     let received = 0;
     let nextAck = Math.min(READ_CHUNK_SIZE, totalLen);
     while (received < totalLen) {
-      if (this.readBuffer.length === 0) await this.waitForData(15000);
+      if (this.readBuffer.length === 0) await this.waitForData(READ_TIMEOUT_MS);
       const chunk = Math.min(this.readBuffer.length, totalLen - received);
       data.set(this.readBuffer.slice(0, chunk), received);
       this.readBuffer = this.readBuffer.slice(chunk);
@@ -133,7 +141,7 @@ export class StretchcoreSerial {
       }
       progress?.(received / totalLen);
     }
-    const done = await this.waitForLine(5000);
+    const done = await this.waitForLine(LINE_TIMEOUT_MS);
     if (done !== 'DONE') throw new Error(`Unexpected read terminator: ${done}`);
     return data;
   }
@@ -144,7 +152,7 @@ export class StretchcoreSerial {
     new DataView(len.buffer).setUint32(0, blob.length, true);
     await this.writeString('W');
     await this.write(len);
-    const ready = await this.waitForLine(5000);
+    const ready = await this.waitForLine(WRITE_READY_TIMEOUT_MS);
     if (ready !== 'OK') throw new Error(`Write rejected: ${ready}`);
     for (let offset = 0; offset < blob.length; offset += 256) {
       const end = Math.min(blob.length, offset + 256);
@@ -152,14 +160,14 @@ export class StretchcoreSerial {
       progress?.(end / blob.length);
       if ((offset & 0x0fff) === 0) await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    const done = await this.waitForLine(60000);
+    const done = await this.waitForLine(WRITE_DONE_TIMEOUT_MS);
     if (done !== 'OK') throw new Error(`Write failed: ${done}`);
   }
 
   async erase(): Promise<void> {
     await this.sync();
     await this.writeString('E');
-    const line = await this.waitForLine(10000);
+    const line = await this.waitForLine(ERASE_TIMEOUT_MS);
     if (line !== 'OK') throw new Error(`Erase failed: ${line}`);
   }
 
@@ -198,7 +206,6 @@ export class StretchcoreSerial {
   }
 
   private async waitForData(timeoutMs: number): Promise<void> {
-    if (this.readBuffer.length > 0) return;
     await new Promise<void>((resolve, reject) => {
       const waiter = () => {
         clearTimeout(timer);
@@ -213,12 +220,25 @@ export class StretchcoreSerial {
     });
   }
 
-  private async waitForBytes(length: number, timeoutMs: number): Promise<Uint8Array> {
+  private async waitForBytes(length: number, timeoutMs: number, graceMs = 0): Promise<Uint8Array> {
     const deadline = Date.now() + timeoutMs;
+    const finalDeadline = deadline + graceMs;
+    let inGrace = false;
     while (this.readBuffer.length < length) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new Error('Timed out waiting for serial bytes');
-      await this.waitForData(remaining);
+      const now = Date.now();
+      if (now >= finalDeadline) throw new Error('Timed out waiting for serial bytes');
+      if (now >= deadline && !inGrace) {
+        inGrace = true;
+        this.log(`serial byte wait entered ${graceMs} ms grace window`);
+      }
+      const waitUntil = now < deadline ? deadline : finalDeadline;
+      try {
+        await this.waitForData(Math.max(1, waitUntil - now));
+      } catch (_) {
+        if (this.readBuffer.length >= length) break;
+        if (Date.now() < finalDeadline) continue;
+        throw new Error('Timed out waiting for serial bytes');
+      }
     }
     const result = this.readBuffer.slice(0, length);
     this.readBuffer = this.readBuffer.slice(length);

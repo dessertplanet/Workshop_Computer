@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "copy-uf2": "mkdir -p public && cp ../UF2/stretchcore.uf2 public/stretchcore.uf2",
+    "build": "npm run copy-uf2 && tsc && vite build",
     "test": "vitest run"
   },
   "dependencies": {

@@ -25,6 +25,16 @@ static constexpr uint32_t kWriteTimeoutMs = 5000u;
 uint8_t header_staging[BREAKY_BANK_HEADER_SIZE] __attribute__((aligned(4)));
 uint8_t page_buf[kFlashPageSize] __attribute__((aligned(4)));
 
+struct ScopedPlaybackMute {
+  ScopedPlaybackMute() {
+    breaky_audio_bank_set_mutating(true);
+  }
+
+  ~ScopedPlaybackMute() {
+    breaky_audio_bank_set_mutating(false);
+  }
+};
+
 int read_byte_timeout(uint32_t timeout_ms) {
   const absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
   while (!time_reached(deadline)) {
@@ -63,8 +73,13 @@ void write_str(const char* text) {
   write_bytes(text, static_cast<uint32_t>(strlen(text)));
 }
 
+void flush_serial() {
+  stdio_flush();
+}
+
 void send_sync() {
   write_str("SYNC\n");
+  flush_serial();
 }
 
 bool validate_header(const BreakyBankHeader& header, uint32_t total_len) {
@@ -132,16 +147,20 @@ void handle_info() {
 
   write_u32(used);
   write_bytes(info, used);
+  flush_serial();
 }
 
 void handle_read() {
   if (!breaky_audio_bank_valid()) {
     write_u32(0);
+    flush_serial();
     return;
   }
 
   const uint32_t total_len = BREAKY_BANK_HEADER_SIZE + breaky_audio_audio_bytes();
+  ScopedPlaybackMute playback_mute;
   write_u32(total_len);
+  flush_serial();
   const uint8_t* src =
       reinterpret_cast<const uint8_t*>(XIP_BASE + BREAKY_AUDIO_FLASH_OFFSET);
 
@@ -150,6 +169,7 @@ void handle_read() {
     const uint32_t chunk =
         total_len - sent < kReadChunkSize ? total_len - sent : kReadChunkSize;
     write_bytes(src + sent, chunk);
+    flush_serial();
     const int ack = read_byte_timeout(kReadTimeoutMs);
     if (ack != kReadAck) {
       send_sync();
@@ -158,6 +178,7 @@ void handle_read() {
     sent += chunk;
   }
   write_str("DONE\n");
+  flush_serial();
 }
 
 void erase_bank_header() {
@@ -182,6 +203,7 @@ void handle_write() {
   uint8_t len_buf[4];
   if (!read_exact(len_buf, sizeof(len_buf), kWriteTimeoutMs)) {
     write_str("TIMEOUT\n");
+    flush_serial();
     return;
   }
   uint32_t total_len = 0;
@@ -190,14 +212,17 @@ void handle_write() {
   if (total_len < BREAKY_BANK_HEADER_SIZE ||
       total_len > BREAKY_BANK_HEADER_SIZE + BREAKY_AUDIO_CAPACITY_BYTES) {
     write_str("ERR\n");
+    flush_serial();
     drain_rejected_write(total_len);
     return;
   }
 
   write_str("OK\n");
+  flush_serial();
 
   if (!read_exact(header_staging, BREAKY_BANK_HEADER_SIZE, kWriteTimeoutMs)) {
     write_str("TIMEOUT\n");
+    flush_serial();
     return;
   }
 
@@ -205,6 +230,7 @@ void handle_write() {
       reinterpret_cast<const BreakyBankHeader*>(header_staging);
   if (!validate_header(*header, total_len)) {
     write_str("ERR\n");
+    flush_serial();
     drain_rejected_write(total_len - BREAKY_BANK_HEADER_SIZE);
     return;
   }
@@ -225,6 +251,7 @@ void handle_write() {
       breaky_audio_bank_rescan();
       breaky_audio_bank_set_mutating(false);
       write_str("TIMEOUT\n");
+      flush_serial();
       return;
     }
 
@@ -246,6 +273,7 @@ void handle_write() {
   breaky_audio_bank_rescan();
   breaky_audio_bank_set_mutating(false);
   write_str("OK\n");
+  flush_serial();
 }
 
 }  // namespace
@@ -278,6 +306,7 @@ void breaky_sample_manager_core() {
       case 'E':
         erase_bank_header();
         write_str("OK\n");
+        flush_serial();
         break;
       default:
         break;

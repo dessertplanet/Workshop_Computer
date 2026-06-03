@@ -5,6 +5,7 @@ import {
   CircleHelp,
   Download,
   Eraser,
+  FileDown,
   FolderOpen,
   Pause,
   Play,
@@ -32,6 +33,7 @@ import { DeviceInfo, StretchcoreSerial } from './serial';
 
 const serial = new StretchcoreSerial();
 const stretchcoreImageUrl = `${import.meta.env.BASE_URL}stretchcore.png`;
+const stretchcoreUf2Url = `${import.meta.env.BASE_URL}stretchcore.uf2`;
 
 type StatusKind = 'idle' | 'good' | 'warn' | 'bad';
 type Theme = 'light' | 'dark';
@@ -98,6 +100,7 @@ export function App() {
   const used = useMemo(() => usedAudioBytes(samples), [samples]);
   const overCapacity = used > capacity;
   const usageRatio = capacity > 0 ? Math.min(1, used / capacity) : 0;
+  const showStatusSpinner = busy && status.kind === 'idle';
 
   async function connect() {
     if (connected) {
@@ -120,6 +123,7 @@ export function App() {
       const info = await initialiseWithRetry();
       setDevice(info);
       setConnected(true);
+      setStatus({ text: 'Downloading', kind: 'idle' });
       const bank = await serial.readBank((ratio) => setProgress(ratio));
       if (bank) {
         const parsed = parseBankBlob(bank);
@@ -146,7 +150,7 @@ export function App() {
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        setStatus({ text: attempt === 0 ? 'Waking device' : 'Retrying device wake', kind: 'idle' });
+        setStatus({ text: attempt === 0 ? 'Connecting' : 'Retrying connection', kind: 'idle' });
         await serial.sync();
         await new Promise((resolve) => setTimeout(resolve, 120));
         return await serial.info(true);
@@ -182,8 +186,8 @@ export function App() {
     try {
       setBusy(true);
       stopPreview();
+      setStatus({ text: 'Uploading', kind: 'idle' });
       const blob = buildBankBlob(samples, capacity);
-      setStatus({ text: 'Uploading bank', kind: 'idle' });
       await serial.writeBank(blob, (ratio) => setProgress(ratio));
       const info = await serial.info();
       setDevice(info);
@@ -201,6 +205,7 @@ export function App() {
     try {
       setBusy(true);
       stopPreview();
+      setStatus({ text: 'Downloading', kind: 'idle' });
       const bank = await serial.readBank((ratio) => setProgress(ratio));
       const info = await serial.info();
       setDevice(info);
@@ -225,6 +230,7 @@ export function App() {
     try {
       setBusy(true);
       stopPreview();
+      setStatus({ text: 'Erasing', kind: 'idle' });
       await serial.erase();
       const info = await serial.info();
       setDevice(info);
@@ -299,14 +305,17 @@ export function App() {
       <header className="topbar">
         <div>
           <h1>stretchcore loader</h1>
-          <div className={`status ${status.kind}`}>{status.text}</div>
+          <div className={`status ${status.kind}`}>
+            {showStatusSpinner ? <span className="spinner" aria-hidden="true" /> : null}
+            {status.text}
+          </div>
         </div>
         <div className="toolbar">
-          <button className="primary" onClick={connect} disabled={busy} title={connected ? 'Disconnect' : 'Connect'}>
+          <button className="primary" onClick={connect} disabled={busy} title={connected ? 'Disconnect from device' : 'Connect to device'}>
             <Cable size={18} />
             {connected ? 'Disconnect' : 'Connect'}
           </button>
-          <label className={`button ${busy ? 'disabled' : ''}`} title="Add audio">
+          <label className={`button ${busy ? 'disabled' : ''}`} title="Add audio files">
             <Plus size={18} />
             Add
             <input
@@ -320,32 +329,36 @@ export function App() {
               }}
             />
           </label>
-          <button onClick={uploadBank} disabled={!connected || busy || overCapacity || samples.length === 0} title="Upload bank">
+          <button onClick={uploadBank} disabled={!connected || busy || overCapacity || samples.length === 0} title="Upload samples to device">
             <Upload size={18} />
             Upload
           </button>
-          <button onClick={readDevice} disabled={!connected || busy} title="Read device">
+          <button onClick={readDevice} disabled={!connected || busy} title="Download samples from device">
             <Download size={18} />
             Read
           </button>
-          <button onClick={eraseDevice} disabled={!connected || busy} title="Erase device">
+          <button onClick={eraseDevice} disabled={!connected || busy} title="Erase samples on device">
             <Eraser size={18} />
             Erase
           </button>
+          <a className="button" href={stretchcoreUf2Url} download="stretchcore.uf2" title="Download firmware UF2">
+            <FileDown size={18} />
+            Firmware
+          </a>
           <div className="toolbar-spacer" />
           <button
             className="icon-button"
             onClick={() => setImageOpen(true)}
-            title="Show stretchcore image"
-            aria-label="Show stretchcore image"
+            title="Show module image"
+            aria-label="Show module image"
           >
             <CircleHelp size={18} />
           </button>
           <button
             className="icon-button"
             onClick={() => setDebugOpen((current) => !current)}
-            title={debugOpen ? 'Hide serial debug' : 'Show serial debug'}
-            aria-label={debugOpen ? 'Hide serial debug' : 'Show serial debug'}
+            title={debugOpen ? 'Hide serial debug log' : 'Show serial debug log'}
+            aria-label={debugOpen ? 'Hide serial debug log' : 'Show serial debug log'}
             aria-pressed={debugOpen}
           >
             <Terminal size={18} />
@@ -353,8 +366,8 @@ export function App() {
           <button
             className="icon-button"
             onClick={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
-            title={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
-            aria-label={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           >
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
@@ -382,7 +395,9 @@ export function App() {
         <div className="capacity-line">
           <span>{formatBytes(used)} used</span>
           <span>{formatBytes(Math.max(0, capacity - used))} free</span>
-          <span>{samples.length}/32 samples</span>
+          <span>
+            {samples.length} sample{samples.length === 1 ? '' : 's'}
+          </span>
           <span>{device ? `FW ${device.firmware}` : 'No device'}</span>
         </div>
         <div className="meter">
@@ -487,19 +502,19 @@ function SampleRow({
       </div>
       <Waveform sample={sample} playheadFrame={playheadFrame} theme={theme} onUpdate={onUpdate} />
       <div className="row-actions">
-        <button onClick={onPreview} title={playing ? 'Stop preview' : 'Preview'}>
+        <button onClick={onPreview} title={playing ? 'Stop sample preview' : 'Play sample preview'}>
           {playing ? <Pause size={16} /> : <Play size={16} />}
         </button>
-        <button onClick={onCrop} disabled={sample.cropStart === 0 && sample.cropEnd === sample.pcm.length} title="Crop">
+        <button onClick={onCrop} disabled={sample.cropStart === 0 && sample.cropEnd === sample.pcm.length} title="Crop sample to selection">
           <Scissors size={16} />
         </button>
-        <button onClick={() => onMove(-1)} disabled={index === 0} title="Move up">
+        <button onClick={() => onMove(-1)} disabled={index === 0} title="Move sample up">
           <ArrowUp size={16} />
         </button>
-        <button onClick={() => onMove(1)} title="Move down">
+        <button onClick={() => onMove(1)} title="Move sample down">
           <ArrowDown size={16} />
         </button>
-        <button onClick={onRemove} title="Remove">
+        <button onClick={onRemove} title="Remove sample">
           <Trash2 size={16} />
         </button>
       </div>
