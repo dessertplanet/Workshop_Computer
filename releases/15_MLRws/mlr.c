@@ -283,6 +283,8 @@ void mlr_perf_note_process_sample_us(uint32_t elapsed_us, bool ui_tick)
 #define PERF_SERVICE_RESET_REQUEST() do { } while (0)
 #endif
 
+volatile uint8_t mlr_event_playback_source = MLR_PLAYBACK_SOURCE_NONE;
+
 /* Per-track group membership bitmask. Invariant: every member of a group
  * has the same mask; the mask always contains the member's own bit.
  * Default = solo, i.e. mlr_track_groups[t] == (1 << t). */
@@ -2081,7 +2083,9 @@ void __not_in_flash_func(mlr_pattern_tick)(uint32_t now_ms)
 		/* Fire at most one event per pattern scan to bound same-sample bursts. */
 		if (pat->play_idx < pat->count &&
 		    pat->events[pat->play_idx].timestamp_ms <= elapsed) {
+			mlr_event_playback_source = MLR_PLAYBACK_SOURCE_PATTERN;
 			event_exec(&pat->events[pat->play_idx]);
+			mlr_event_playback_source = MLR_PLAYBACK_SOURCE_NONE;
 			pat->play_idx++;
 			pat->event_flash = 1;  /* flash for 1 LED update (~50ms) */
 			events_left--;
@@ -2451,7 +2455,9 @@ void __not_in_flash_func(mlr_recall_task)(void)
 		recall_match_cut_mask |= (uint8_t)(1u << e->track);
 		recall_match_cut_col[e->track] = e->param_a;
 	}
+	mlr_event_playback_source = MLR_PLAYBACK_SOURCE_RECALL;
 	event_exec(e);
+	mlr_event_playback_source = MLR_PLAYBACK_SOURCE_NONE;
 	if (recall_apply_record &&
 	    e->type != MLR_EVT_PAT_PLAY &&
 	    e->type != MLR_EVT_PAT_STOP) {

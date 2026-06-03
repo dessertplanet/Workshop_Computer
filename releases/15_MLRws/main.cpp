@@ -69,6 +69,7 @@ extern "C" {
 #define FORCE_8X8_GRID_LAYOUT 0  /* for testing: force compact grid layout regardless of detected width */
 #define CUT_PULSE_TRIG_SAMPLES 960u  /* 20 ms at 48 kHz: PulseOut1 trigger width fired on every cut event (manual or pattern/recall playback) */
 #define EMPTY_KEYBOARD_LINGER_US 1000000ull  /* 1 second */
+#define RECALL_KEY_GATE_US      100000u
 #define CV_ENV_PEAK            2047  /* CV2 envelope peak (matches CV full positive range) */
 #define CV2_FLOOR_OFFSET       341   /* raw DAC subtract: -1 V at rest (assuming +6 V = +2047 raw) */
 #define CV_ATTACK_MIN_SAMPLES  0u       /* instant attack at Y=0 */
@@ -222,7 +223,7 @@ public:
 		case Mode::DeviceGridless:
 			gridless_scan_tracks();
 			gl_active_track_ = 0;
-			mlr_cut(gl_active_track_, 0);
+			gridless_restart_all_tracks_from_zero();
 			gl_prev_start_col_ = 0;
 			knob_hard_takeover_arm(Knob::Main);
 			knob_hard_takeover_arm(Knob::X);
@@ -404,7 +405,7 @@ public:
 				gridless_scan_tracks();
 				if (gl_active_track_ < 0 || gl_active_track_ >= MLR_NUM_TRACKS)
 					gl_active_track_ = 0;
-				mlr_cut(gl_active_track_, 0);
+				gridless_restart_all_tracks_from_zero();
 				gl_prev_start_col_ = 0;
 				knob_hard_takeover_arm(Knob::Main);
 				knob_hard_takeover_arm(Knob::X);
@@ -925,14 +926,18 @@ public:
 				__dmb();
 				panel_vu_led_pending_ = true;
 
-				/* detect grid size once ready (latched) */
-				if (!grid_size_latched_ && grid.ready()) {
-					grid_size_latched_ = true;
+				/* Track grid size after ready; some controllers answer size late. */
+				if (grid.ready()) {
 #if FORCE_8X8_GRID_LAYOUT
-					small_grid_ = true;
+					bool detected_small_grid = true;
 #else
-					small_grid_ = (grid.cols() <= 8);
+					bool detected_small_grid = (grid.cols() <= 8);
 #endif
+					if (!grid_size_latched_ || small_grid_ != detected_small_grid) {
+						small_grid_ = detected_small_grid;
+						grid_size_latched_ = true;
+						grid_redraw_phase_ = -1;
+					}
 				}
 
 				if (grid_redraw_phase_ < 0) {
@@ -1044,6 +1049,9 @@ private:
 	int        cut_loop_pending_end_[MLR_NUM_TRACKS] = {};
 	uint64_t   empty_keyboard_linger_until_us_[MLR_NUM_TRACKS] = {};
 	uint8_t    empty_keyboard_linger_col_[MLR_NUM_TRACKS] = {};
+	uint8_t    empty_pattern_key_col_[MLR_NUM_TRACKS] = {};
+	bool       empty_pattern_key_active_[MLR_NUM_TRACKS] = {};
+	uint32_t   empty_pattern_key_until_us_[MLR_NUM_TRACKS] = {};
 	/* Bottom-half rows on a 16-row grid: free-running "empty keyboard"
 	 * overlay. Pressing rows 8..15 fires CV1/CV2/Pulse1 and shows the
 	 * piano-key linger overlay just like an empty top-half track row,
@@ -1291,17 +1299,25 @@ private:
 		return track_idx;
 	}
 
-	void gridless_start_all_tracks_if_needed()
+	void gridless_restart_all_tracks_from_zero()
 	{
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-			if (!mlr_tracks[t].has_content) continue;
-			if (gl_playback_track_gain_frac_[t] == 0) continue;
-			if (!mlr_tracks[t].playing && !mlr_tracks[t].stop_pending) {
-				int col = mlr_get_column(t);
-				if (col < 0) col = 0;
-				mlr_cut(t, col);
-			}
+			if (mlr_tracks[t].has_content)
+				mlr_cut(t, 0);
 		}
+	}
+
+	void gridless_start_all_tracks_if_needed()
+	{
+		bool any_waiting_to_stop = false;
+		bool any_stopped = false;
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			if (!mlr_tracks[t].has_content) continue;
+			if (mlr_tracks[t].stop_pending) any_waiting_to_stop = true;
+			else if (!mlr_tracks[t].playing) any_stopped = true;
+		}
+		if (any_stopped && !any_waiting_to_stop)
+			gridless_restart_all_tracks_from_zero();
 	}
 
 	void gridless_apply_level_layers()
@@ -1408,17 +1424,8 @@ private:
 			break;
 		}
 
-		/* Gridless can keep several tracks logically ready, but refilling silent
-		 * background tracks competes with the selected track. This is especially
-		 * audible when the selected track is reverse/speed-shifted, since reverse
-		 * refill is seek-heavy. Stop non-active tracks that are fully silent; they
-		 * restart from their current column when radiate/selection makes them
-		 * audible again. */
-		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-			if (t == gl_active_track_) continue;
-			if (gl_playback_track_gain_frac_[t] == 0 && mlr_tracks[t].playing)
-				mlr_stop_track(t);
-		}
+		/* Gridless keeps populated tracks running in phase; the mix matrix only
+		 * controls audibility. */
 	}
 
 	/**
@@ -1577,8 +1584,8 @@ private:
 		if (gl_post_record_start_pending_ && !mlr_flushing) {
 			int t = gl_post_record_start_track_;
 			if (t >= 0 && t < MLR_NUM_TRACKS && mlr_tracks[t].has_content) {
-				mlr_cut(t, 0);
 				gl_active_track_ = t;
+				gridless_restart_all_tracks_from_zero();
 			}
 			rec_start_lockout_samples_ = RECORD_REARM_DELAY_SAMPLES;
 			gl_post_record_start_pending_ = false;
@@ -1796,9 +1803,8 @@ private:
 			bool turing_clock = pulse_reset || gl_pulse2_pending_;
 			gl_pulse2_pending_ = false;
 
-			if (!gl_record_mode_ && !gl_recording_active_ && (switch_reset || pulse_reset) && gl_active_track_ >= 0) {
-				mlr_cut(gl_active_track_, gl_prev_start_col_);
-			}
+			if (!gl_record_mode_ && !gl_recording_active_ && (switch_reset || pulse_reset) && gl_active_track_ >= 0)
+				gridless_restart_all_tracks_from_zero();
 			if (!gl_record_mode_ && !gl_recording_active_ && turing_clock) {
 				gridless_step_turing();
 				trigger_cv2_envelope();
@@ -1978,6 +1984,26 @@ public:
 		/* PulseOut1: 20 ms gate trigger. */
 		cv_pulse1_remaining_ = CUT_PULSE_TRIG_SAMPLES;
 		pulse1_led_latch_ = true;
+	}
+
+	void __not_in_flash_func(pattern_cut_trigger)(int track, int col, uint8_t source)
+	{
+		cut_trigger(track, col);
+		if (track < 0 || track >= MLR_NUM_TRACKS) return;
+		if (!mlr_tracks[track].has_content) {
+			empty_pattern_key_col_[track] = (uint8_t)col;
+			empty_pattern_key_active_[track] = true;
+			empty_pattern_key_until_us_[track] = (source == MLR_PLAYBACK_SOURCE_RECALL)
+				? time_us_32() + RECALL_KEY_GATE_US
+				: 0;
+		}
+	}
+
+	void __not_in_flash_func(pattern_stop_trigger)(int track)
+	{
+		if (track < 0 || track >= MLR_NUM_TRACKS) return;
+		empty_pattern_key_active_[track] = false;
+		empty_pattern_key_until_us_[track] = 0;
 	}
 private:
 	uint32_t __not_in_flash_func(gridless_turing_rand12)()
@@ -2865,6 +2891,15 @@ private:
 		int ce = cut_col_end();
 		bool alt_held = delete_action_held();
 
+		/* Empty-track keyboard patterns need key-up events so replayed pitch
+		 * highlights last for the same duration as the original press. */
+		if (grid.keyUp() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
+			int track = grid.lastY() - 1;
+			int column = grid.lastX();
+			if (column >= cs && column <= ce && !mlr_tracks[track].has_content)
+				dispatch_event(MLR_EVT_STOP, (uint8_t)track, 0, 0);
+		}
+
 		/* Gate-mode CUT playback remains momentary: cuts start on key-down,
 		 * then stop when the last cut key on that track row is released. */
 		if (grid.keyUp() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
@@ -3040,8 +3075,8 @@ private:
 	/* Bottom-half "extra" rows on a tall grid (rows 8..grid.rows()-1).
 	 * Mirrors the empty-track keyboard overlay on top-half track rows:
 	 * held keys light at full brightness, and while a row's linger is
-	 * active the white-key positions are shown dim with the latched
-	 * column lit at level 12. No-op on grids with 8 or fewer rows. */
+	 * active the white-key positions are shown dim. No-op on grids with
+	 * 8 or fewer rows. */
 	void __not_in_flash("draw_extra_rows") draw_extra_rows()
 	{
 		if (!grid.ready() || grid.rows() <= 8) return;
@@ -3071,8 +3106,6 @@ private:
 					if (kWhiteKey[(internal + 4) % 12])
 						grid_frame_led_max(cut_internal_to_grid(internal), row, 2);
 				}
-				grid_frame_led_max(cut_internal_to_grid(extra_keyboard_linger_col_[idx]),
-				                   row, 12);
 			}
 			uint16_t m = held_in_zone;
 			while (m) {
@@ -3308,7 +3341,14 @@ private:
 					empty_keyboard_linger_until_us_[t] = time_us_64() + EMPTY_KEYBOARD_LINGER_US;
 					empty_keyboard_linger_col_[t] = (uint8_t)cut_grid_to_internal(__builtin_ctz(held_in_zone));
 				}
-				bool show_empty_keyboard = pattern_playing_empty_track_pitch(t) ||
+				bool pattern_keyboard_active = pattern_playing_empty_track_pitch(t);
+				uint32_t now32 = time_us_32();
+				if (empty_pattern_key_active_[t] && empty_pattern_key_until_us_[t] != 0 &&
+					(int32_t)(now32 - empty_pattern_key_until_us_[t]) >= 0)
+					empty_pattern_key_active_[t] = false;
+				if (empty_pattern_key_active_[t] && empty_pattern_key_until_us_[t] == 0 && !pattern_keyboard_active)
+					empty_pattern_key_active_[t] = false;
+				bool show_empty_keyboard = pattern_keyboard_active ||
 					(time_us_64() < empty_keyboard_linger_until_us_[t]);
 				if (show_empty_keyboard) {
 					for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
@@ -3319,13 +3359,14 @@ private:
 						if (kWhiteKey[(internal + 4) % 12])
 							grid_frame_led_max(cut_internal_to_grid(internal), row, 2);
 					}
-					grid_frame_led_max(cut_internal_to_grid(empty_keyboard_linger_col_[t]), row, 12);
 				}
 				while (held_in_zone) {
 					int c = __builtin_ctz(held_in_zone);
 					grid_frame_led_max(c, row, 12);
 					held_in_zone &= (uint16_t)~(1u << c);
 				}
+				if (empty_pattern_key_active_[t])
+					grid_frame_led_max(cut_internal_to_grid(empty_pattern_key_col_[t]), row, 12);
 				return;
 			}
 
@@ -3410,7 +3451,9 @@ extern "C" void __not_in_flash_func(mlr_event_playback_hook)(const mlr_event_t *
 	if (!e) return;
 	if (!MLRCard::s_card_) return;
 	if (e->type == MLR_EVT_CUT || e->type == MLR_EVT_GROUP_CUT) {
-		MLRCard::s_card_->cut_trigger((int)e->track, (int)e->param_a);
+		MLRCard::s_card_->pattern_cut_trigger((int)e->track, (int)e->param_a, mlr_event_playback_source);
+	} else if (e->type == MLR_EVT_STOP && mlr_event_playback_source == MLR_PLAYBACK_SOURCE_PATTERN) {
+		MLRCard::s_card_->pattern_stop_trigger((int)e->track);
 	}
 }
 
