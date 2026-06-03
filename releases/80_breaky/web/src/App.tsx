@@ -2,6 +2,7 @@ import {
   ArrowDown,
   ArrowUp,
   Cable,
+  CircleHelp,
   Download,
   Eraser,
   FolderOpen,
@@ -14,6 +15,7 @@ import {
   Terminal,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react';
 import { MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { decodeAndEncodeFile, makePreviewBuffer } from './audio';
@@ -29,6 +31,7 @@ import {
 import { DeviceInfo, StretchcoreSerial } from './serial';
 
 const serial = new StretchcoreSerial();
+const stretchcoreImageUrl = `${import.meta.env.BASE_URL}stretchcore.png`;
 
 type StatusKind = 'idle' | 'good' | 'warn' | 'bad';
 type Theme = 'light' | 'dark';
@@ -49,6 +52,7 @@ export function App() {
   const [playheadFrame, setPlayheadFrame] = useState(0);
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [imageOpen, setImageOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const audioRef = useRef<{
     context: AudioContext;
@@ -61,6 +65,15 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem('stretchcore-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!imageOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setImageOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [imageOpen]);
 
   useEffect(() => {
     if (!playingId || !audioRef.current) {
@@ -322,6 +335,14 @@ export function App() {
           <div className="toolbar-spacer" />
           <button
             className="icon-button"
+            onClick={() => setImageOpen(true)}
+            title="Show stretchcore image"
+            aria-label="Show stretchcore image"
+          >
+            <CircleHelp size={18} />
+          </button>
+          <button
+            className="icon-button"
             onClick={() => setDebugOpen((current) => !current)}
             title={debugOpen ? 'Hide serial debug' : 'Show serial debug'}
             aria-label={debugOpen ? 'Hide serial debug' : 'Show serial debug'}
@@ -339,6 +360,23 @@ export function App() {
           </button>
         </div>
       </header>
+
+      {imageOpen ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setImageOpen(false)}>
+          <div
+            className="image-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="stretchcore image"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button className="icon-button modal-close" onClick={() => setImageOpen(false)} title="Close" aria-label="Close">
+              <X size={18} />
+            </button>
+            <img src={stretchcoreImageUrl} alt="stretchcore" />
+          </div>
+        </div>
+      ) : null}
 
       <section className="capacity">
         <div className="capacity-line">
