@@ -1,8 +1,14 @@
-![stretchcore](web/public/stretchcore.png)
 
 # stretchcore
 
 stretchcore is a Workshop Computer card for playing uploaded mono sample loops with tempo control, timestretch, position jumps, and browser-based audio loading.
+
+## Quickstart
+
+<center>
+<img src=web/public/stretchcore.png>
+</center>
+
 
 ## Audio Loading
 
