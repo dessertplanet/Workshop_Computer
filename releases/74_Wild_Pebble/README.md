@@ -60,7 +60,7 @@ Quantised melodic pitch output.
 
 Generated from evolving scale-constrained note sequences.
 
-Wild Pebble slowly changes between related scales over time depending on mutation amount and switch mode, creating harmonic drift without fully losing musical coherence.
+Wild Pebble slowly changes between related scales over time depending on mutation amount and switch mode, creating harmonic drift without fully losing musical coherence. The internal "tension" makes octave jumps more likely as it increases.
 
 ---
 

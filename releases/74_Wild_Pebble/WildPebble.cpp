@@ -327,15 +327,25 @@ public:
         }
 
         noteIndex[step] += WeightedMelodicMove(mode);
+        
+        // occasional octave mutation
+
+        int32_t octaveChance = tension >> 3;
+
+        if((Random() & 255) < (uint32_t)octaveChance)
+        {
+            noteIndex[step] +=
+                ((Random() & 1) ? 5 : -5);
+        }
 
         if(noteIndex[step] < 0)
         {
             noteIndex[step] = 0;
         }
 
-        if(noteIndex[step] > 14)
+        if(noteIndex[step] > 24)
         {
-            noteIndex[step] = 14;
+            noteIndex[step] = 24;
         }
 
         energy[step] += ((int32_t)(Random() & 63)) - 31;
