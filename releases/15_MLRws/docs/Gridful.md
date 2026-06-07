@@ -20,14 +20,14 @@ In grid mode the interface on the Computer itself is intentionally minimal. Trac
 
 **Pulse In 1 / Pulse In 2** act as transport-style triggers (see [Pulse inputs](#pulse-inputs) below).
 
-**CV and pulse outputs are driven by cut events** (manual taps on the CUT page, and pattern/recall playback that replays those cuts):
+**CV and pulse outputs are driven by output-enabled cut/gate activity** (manual taps on the CUT page, and pattern/recall playback that replays those cuts):
 
 - **CV Out 1** — chromatic note (sample-and-hold). The cut column maps directly to semitones. **Knob X** adds a continuous ±24-semitone (~±2 V) offset on top of the held note.
 - **CV Out 2** — attack/decay envelope that rises to roughly +5 V on each CUT-page key-press and decays back toward the resting −1 V floor (so chosen to fully close the Workshop System filters). **Knob Y** sets the decay time at trigger time (10 ms at fully left, ~3 s at fully right). Hold the front-panel switch Down with no track armed or recording, then move **Knob Y** to set attack time (instant to ~1 s).
-- **Pulse Out 1** — 20 ms trigger fired whenever any CUT-page track-row key is pressed
-- **Pulse Out 2** — gate. High while any CUT-page track-row key is held
+- **Pulse Out 1** — 20 ms trigger fired by output-enabled CUT-page track-row keys, including taps on empty track rows
+- **Pulse Out 2** — gate. High while any output-enabled CUT-page track-row key is held, including held keys on empty track rows, or while an output-enabled gate-mode track is playing
 
-For populated tracks, CV1 pitch updates and CV2 envelope triggers are disabled by default and can be enabled per track with the sample-manager web app's **CV output** toggle. Empty tracks always drive CV1/CV2 so they can be used as pitch/envelope rows before audio is loaded.
+For populated tracks, CV1 pitch updates, CV2 envelope triggers, Pulse Out 1 triggers, and Pulse Out 2 gates are disabled by default and can be enabled per track with the sample-manager web app's **CV output** toggle. Empty tracks always drive CV/pulse outputs so they can be used as pitch/envelope/gate rows before audio is loaded.
 
 ![grid computer](images/MLR_grid_ws.jpg)
 
@@ -38,7 +38,7 @@ Both pulse-in jacks act as transport-style triggers in grid mode:
 - **Pulse In 1** — *loop reset*. A rising edge resets the playhead of every track that is currently playing **and** has an active CUT-page loop, jumping each one to the loop's start column. The loop remains active; only the playhead jumps. Tracks without an active loop, and stopped tracks, are unaffected. (Matches gridless mode, where Pulse In 1 is also the reset trigger.)
 - **Pulse In 2** — *gated record*. While a track is armed via the REC page, holding Pulse In 2 high records into that track for as long as the gate is high. Recording starts on the rising edge and stops on the falling edge. The usual record gates still apply (a track must be armed, recording must not already be in progress, and the per-recording sample limit must not have been reached). While pulse-gated recording is active, the front-panel switch will not interrupt it. Recording automatically stops if the time limit is reached.
 
-Pulse Out 1 and Pulse Out 2 are driven by cut events as described in [Hardware in / out](#hardware-in--out-on-the-computer) above.
+Pulse Out 1 and Pulse Out 2 follow output-enabled cut/gate activity as described in [Hardware in / out](#hardware-in--out-on-the-computer) above.
 
 ## Track layout
 
@@ -109,10 +109,8 @@ The CUT page is the performance heart of MLR. Each track row is a scrub bar that
   cuts to that position.
 - **Delete + any cut key on a row**: if the track is playing, stop it (the loop, if any, is left in place so a second Delete + key clears it). If the track is already stopped and has a loop, that press clears the loop instead.
 
-Each cut event can update CV1 pitch and trigger the CV2 attack/decay envelope when CV output is enabled for that row; it always fires a 20 ms pulse on Pulse Out 1. Holding any cut key on a track row keeps Pulse Out 2 high as a gate. Empty track rows always act like chromatic CV keyboards; while a key is held, and briefly after release, the row shows a dim white-key guide with C aligned to column 8 on a 16-wide grid.
+Each cut event can update CV1 pitch, trigger the CV2 attack/decay envelope, and fire a 20 ms pulse on Pulse Out 1 when CV output is enabled for that row. Holding an output-enabled cut key on a track row keeps Pulse Out 2 high as a gate. Empty track rows are always output-enabled: CUT-page grid interactions on them update CV1, trigger CV2 and Pulse Out 1, and hold Pulse Out 2 high while a key is held. They also act like chromatic CV keyboards; while a key is held, and briefly after release, the row shows a dim white-key guide with C aligned to column 8 on a 16-wide grid.
 
-Recording from the CUT page is the same as on the REC page: see
-[Recording](#recording).
 
 ![CUT page](images/cut.jpg)
 
@@ -134,8 +132,7 @@ More details in [Recording](#recording)
 
 ### Mixer
 
-Five discrete level slots. The left side is the loudest (about +3 dB), the right side is the
-quietest (about −15 dB), the second column from the left (the default, shown below) is unity gain.
+Five discrete level slots. The left side is the loudest (about +3 dB), the right side is silent, and the second column from the left (the default, shown below) is unity gain.
 
 While a track is **actively recording**, the mixer area turns into a record-progress
 bar instead of a mixer, indicating how much recording time remains at the current recording speed.
@@ -193,7 +190,7 @@ It is possible to record at faster than 1x but you will encounter potentially in
 
 While a track is armed or recording, **Knob X** controls how loud the input
 is recorded. The same level is applied to the monitor mix so what you hear
-matches what you'll capture. Note the track level from the grid mixer is also applied both to the monitor and the recording.
+matches what you'll capture. The track level from the grid mixer is applied to monitoring and playback, but recording captures the input using only the input gain.
 
 When the maximum recording length is reached the track auto-stops.
 
@@ -204,7 +201,7 @@ There are two ways to record:
 
 #### Armed recording
 
-1. While the switch is at **Middle**, tap col 0 on the desired track row.
+1. On the REC page, while the switch is at **Middle**, tap col 0 on the desired track row.
    The arm LED starts a slow flash. Any track that was playing on that row
    stops so you do not record over itself, and input monitoring is enabled.
 2. Move the switch **Up or Down**. Recording starts immediately, the arm LED
@@ -213,7 +210,7 @@ There are two ways to record:
 
 #### Quick recording
 
-If no track is armed and the switch is already Up or Down, **press and hold**
+If no track is armed and the switch is already Up or Down, go to the REC page and **press and hold**
 col 0 on a track row — recording runs for as long as you hold the key (or
 until the switch returns to middle, or the track fills up). This is the
 fastest way to grab a quick stab.

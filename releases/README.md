@@ -15,7 +15,7 @@
 | 12_am_coupler | AM radio transmitter / coupler | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 13_noisebox |  |  |  |  |
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
-| 15_MLRws | A remix of monome's classic MLR sample cutting platform (grid controller encouraged but optional)<br>[Web editor](https://dessertplanet.github.io/MLRws-web/) | 1.1.2<br>Released | Pico SDK | Dune Desormeaux |
+| 15_MLRws | A remix of monome's classic MLR sample cutting platform (grid controller encouraged but optional)<br>[Web editor](https://dessertplanet.github.io/MLRws-web/) | 1.1.3<br>Released | Pico SDK | Dune Desormeaux |
 | 18_chord_organ | Chord Organ-ish - 16 chords, 8 voices, 1V/oct root. Inspired by Music Thing Chord Organ. | 0.1<br>Working | Pico SDK (C++), ComputerCard | jkeyworth |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface.<br>[Web editor](https://www.musicthing.co.uk/web_config/reverb.html) | 1.5<br>Released | C (RPi Pico SDK) | Chris Johnson |
 | 21_resonator | Karplus-Strong based sympathetic resonator. Can be used for resonant droning as well as plucking sounds.<br>[Web editor](https://johaneklund.io/resonator) | 1.1.1<br>Released | C++ (ComputerCard) | Johan Eklund |
@@ -45,6 +45,7 @@
 | 56_Krell | Krell | 1.0<br>Mostly complete | Blackbird Lua | Benjamin Reily |
 | 57_glitch | Clock-synced beat-repeater with ratcheting, reversal and audio degradation | 1.4.0<br>Release | C++ (Pico SDK) | Andy Jenkinson (uglifruit) |
 | 58_LoChoVibes | Stereo chorus and vibrato effect featuring triangle, sine, and slow drift LFO modes, modulation-based delay movement, and tape-style saturation. |  |  |  |
+| 59_BitPhase | experimental phaser/tremolo with bit destruction | 0.1.0<br>beta | C++/Computercard | Adrian Vos |
 | 60_markov | Dual generative Markov chain module — evolving melody (MarkoV) left side, rhythmic percussion patterns (MarkovPerc) right side, with internal synth voice | 1.0.0<br>Released | C++ (Pico SDK) | Andy Jenkinson (uglifruit) |
 | 64_voices_of_sid | Dual MOS 6581 SID emulation (reSID engine) with CV/gate control, stereo output, waveform selection, and randomize | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 66_stretchcore | A card for playing and manipulating samples with tempo control, timestretch with browser-based audio loading (infinitedigits.com/stretchcore/) | 1.0<br>Ready% | Pico SDK | Infinite Digits |
