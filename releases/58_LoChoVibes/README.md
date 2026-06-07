@@ -19,7 +19,6 @@ Inspired by the unstable movement and degraded character of the ZVEX Lo-Fi Junky
 * External pulse-clockable LFO
 * CV modulation inputs
 * Dual animated CV LFO outputs
-* Temporary LED overlay for LFO shape selection
 
 ---
 
@@ -244,9 +243,9 @@ When the switch is tapped downward:
 
 | Shape        | LEDs     |
 | ------------ | -------- |
-| Triangle     | LEDs 0–1 |
-| Sine         | LEDs 2–3 |
-| Random Drift | LEDs 4–5 |
+| Triangle     | LEDs 1–2 |
+| Sine         | LEDs 3–4 |
+| Random Drift | LEDs 5–6 |
 
 ---
 
@@ -254,12 +253,12 @@ When the switch is tapped downward:
 
 | LED   | Function           |
 | ----- | ------------------ |
-| LED 0 | Modulation Rate    |
-| LED 1 | Modulation Depth   |
-| LED 2 | Lo-Fi Amount       |
-| LED 3 | Compression Amount |
-| LED 4 | LFO Phase          |
-| LED 5 | Inverted LFO Phase |
+| LED 1 | Modulation Rate    |
+| LED 2 | Modulation Depth   |
+| LED 3 | Lo-Fi Amount       |
+| LED 4 | Compression Amount |
+| LED 5 | LFO Phase          |
+| LED 6 | Inverted LFO Phase |
 
 LED brightness reflects both parameter values and modulation movement.
 
