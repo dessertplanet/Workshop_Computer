@@ -45,6 +45,7 @@
 | 56_Krell | Krell | 1.0<br>Mostly complete | Blackbird Lua | Benjamin Reily |
 | 57_glitch | Clock-synced beat-repeater with ratcheting, reversal and audio degradation | 1.4.0<br>Release | C++ (Pico SDK) | Andy Jenkinson (uglifruit) |
 | 58_LoChoVibes | Stereo chorus and vibrato effect featuring triangle, sine, and slow drift LFO modes, modulation-based delay movement, and tape-style saturation. |  |  |  |
+| 59_BitPhase | experimental phaser/tremolo with bit destruction | 0.1.0<br>beta | C++/Computercard | Adrian Vos |
 | 60_markov | Dual generative Markov chain module — evolving melody (MarkoV) left side, rhythmic percussion patterns (MarkovPerc) right side, with internal synth voice | 1.0.0<br>Released | C++ (Pico SDK) | Andy Jenkinson (uglifruit) |
 | 64_voices_of_sid | Dual MOS 6581 SID emulation (reSID engine) with CV/gate control, stereo output, waveform selection, and randomize | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 66_stretchcore | A card for playing and manipulating samples with tempo control, timestretch with browser-based audio loading (infinitedigits.com/stretchcore/) | 1.0<br>Ready% | Pico SDK | Infinite Digits |
