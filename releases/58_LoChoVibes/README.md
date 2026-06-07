@@ -207,7 +207,7 @@ Useful for subtle pitch movement and gentle tape-style wobble.
 ## Random Drift
 
 A combination of slow modulation and random wandering movement.
-Modulation is affected by the depth knob and speed cotrol
+Modulation is affected by the depth knob and rate cotrol
 * unstable tape transport behaviour
 * slow wandering pitch drift
 * imperfect mechanical motion
@@ -251,17 +251,71 @@ When the switch is tapped downward:
 
 ## Normal Display Mode
 
-| LED   | Function           |
-| ----- | ------------------ |
-| LED 1 | Modulation Rate    |
-| LED 2 | Modulation Depth   |
-| LED 3 | Lo-Fi Amount       |
-| LED 4 | Compression Amount |
-| LED 5 | LFO Phase          |
-| LED 6 | Inverted LFO Phase |
+| LED   | Function                    |
+| ----- | --------------------------- |
+| LED 1 | Clock / Rate Indicator      |
+| LED 2 | Modulation Activity & Depth |
+| LED 3 | Lo-Fi Amount                |
+| LED 4 | Compression Amount          |
+| LED 5 | Shape Animation A           |
+| LED 6 | Shape Animation B           |
 
-LED brightness reflects both parameter values and modulation movement.
+### LED 1 — Clock Indicator
 
+LED 1 displays modulation timing.
+
+* Internal clock: flashes once per LFO cycle
+* External clock: flashes on incoming pulse clocks
+
+This provides immediate visual feedback of modulation speed and clock synchronization.
+
+### LED 2 — Modulation Activity
+
+LED 2 displays modulation movement and depth.
+
+* brighter modulation indicates greater movement
+* responds to both modulation depth and LFO activity
+* makes modulation intensity visible even at slow rates
+
+### LED 3 — Lo-Fi Amount
+
+Displays the amount of lo-fi processing applied by the Character control.
+
+* off at the centre position
+* increases as the Character control is turned counter-clockwise
+
+### LED 4 — Compression Amount
+
+Displays the amount of compression and drive applied by the Character control.
+
+* off at the centre position
+* increases as the Character control is turned clockwise
+
+### LEDs 5 & 6 — LFO Shape Animation
+
+The final LED pair visualizes the currently selected modulation shape.
+
+#### Triangle
+
+A pendulum-style animation.
+
+The LEDs move in opposite directions, reflecting the linear rise and fall of the triangle waveform.
+
+#### Sine
+
+A smooth breathing animation.
+
+Both LEDs brighten and dim together, matching the rounded motion of the sine wave.
+
+#### Random Drift
+
+A wandering imbalance animation.
+
+Brightness slowly shifts between the two LEDs, reflecting the unstable and imperfect movement of worn tape mechanisms.
+
+---
+
+LED brightness reflects both parameter values and modulation movement, providing continuous visual feedback during performance.
 
 ---
 
