@@ -1333,7 +1333,7 @@ private:
 			256,  /* slot 1: unity */
 			181,  /* slot 2: -3 dB */
 			128,  /* slot 3: -6 dB */
-			45,   /* slot 4: -15 dB */
+			0,    /* slot 4: silent */
 		};
 
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
