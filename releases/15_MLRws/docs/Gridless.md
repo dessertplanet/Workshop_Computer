@@ -66,8 +66,8 @@ Main), and re-tasks every knob to operate on that track:
   emits a single trigger to echo the reset.
 - **Hold and move Y:** when not armed or recording, moving Y after hard takeover
   sets the CV2 envelope attack time (instant to ~1 s). The attack setting is
-  latched for future triggers. The decay time is still read from Y at trigger
-  time.
+  latched for future gates. The release time is read from Y when the gate
+  releases.
 - **Hold for two seconds:** arm record mode. While you hold the switch down,
   the LEDs fill from one to all six as a progress bar; at six LEDs you are
   armed and the active track's LED begins a slow flash. See
@@ -84,13 +84,14 @@ are doing. CV ranges are the standard Workshop Computer ±6 V.
   2 rising edges clock it. Main sets the probability/variation amount and X
   sets the range, so the output can move from a narrow pitch set to a wider
   chromatic span.
-- **CV Out 2** is an attack/decay envelope. It is triggered when Pulse In 1 or
-  Pulse In 2 clocks the CV/Turing output. Switch Down + Y sets attack time
-  (instant to about 1 second); Y at trigger time sets decay time (about 10 ms
-  to 3 seconds).
+- **CV Out 2** is an ASR envelope. Pulse In 1 or Pulse In 2 rising edges clock
+  the CV/Turing output and start the envelope attack; the envelope sustains
+  while either pulse input remains high, then releases when both are low.
+  Switch Down + Y sets attack time (instant to about 1 second); Y at release
+  time sets release time (about 10 ms to 3 seconds).
 - **Pulse Out 1** emits a short trigger when any playing track wraps back to
   the start of its loop/playback span.
-- **Pulse Out 2** emits a short trigger when the CV2 envelope reaches the end of its decay cycle.
+- **Pulse Out 2** emits a short trigger when the CV2 envelope reaches the end of its release cycle.
 
 ### Inputs
 

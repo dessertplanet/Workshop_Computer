@@ -664,6 +664,7 @@ public:
 				/* pattern buttons */
 				int p = col - pcs;
 				if (alt_held) {
+					clear_replay_gates();
 					mlr_pattern_rec_stop(p);
 					mlr_pattern_play_stop(p);
 					mlr_pattern_clear(p);
@@ -681,8 +682,10 @@ public:
 				} else if (mlr_patterns[p].state == MLR_PAT_IDLE) {
 					mlr_pattern_arm(p);
 				} else if (mlr_patterns[p].state == MLR_PAT_PLAYING) {
+					clear_replay_gates();
 					mlr_pattern_play_stop(p);
 				} else if (mlr_patterns[p].state == MLR_PAT_STOPPED) {
+					clear_replay_gates();
 					mlr_pattern_play_start(p);
 				}
 			} else if (!small_grid_ && col >= 9 && col <= 12) {
@@ -743,31 +746,30 @@ public:
 
 		/* ---- Cut-event-driven CV / pulse outputs ----
 		 *   CV1     = chromatic note (S&H) + live X-knob offset
-		 *   CV2     = exponential decay envelope, triggered on cut events
+		 *   CV2     = ASR envelope, gated by output-enabled cut keys
 		 *   Pulse1  = 20 ms trigger countdown, fires on output-enabled cut events
 		 *   Pulse2  = gate, high while any output-enabled CUT-page track row is held
-		 * CV1 / CV2 / Pulse1 all mirror through pattern/recall playback via
-		 * mlr_event_playback_hook. Pulse2 is live-only (grid key hold isn't
-		 * recorded). */
+		 * CV1 / CV2 / Pulse1 / Pulse2 all mirror through pattern/recall playback
+		 * via mlr_event_playback_hook. */
 
 		/* Gate detection + CV1 refresh at UI-control rate (~3 kHz, 333 µs
 		 * latency). Gate drives PulseOut2 and LED 5; CV1 only needs UI-tick
 		 * rate since DAC holds the value between writes — saves the
 		 * per-sample MIDIToDAC math. */
 		if (run_ui_control) {
-			bool new_gate = false;
+			bool new_live_gate = false;
 			if (play_page == PAGE_CUT) {
 				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 					if (track_outputs_enabled(t) && grid.heldRowMask((uint8_t)(t + 1))) {
-						new_gate = true;
+						new_live_gate = true;
 						break;
 					}
 				}
 			}
-			if (!new_gate) {
+			if (!new_live_gate) {
 				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 					if (track_outputs_enabled(t) && mlr_gate_mode[t] && mlr_tracks[t].playing) {
-						new_gate = true;
+						new_live_gate = true;
 						break;
 					}
 				}
@@ -775,8 +777,12 @@ public:
 			/* Held cut keys on bottom-half "extra" rows gate Pulse2 the
 			 * same as held cut keys on (empty) top-half track rows.
 			 * Page-agnostic: bottom-half is a free keyboard layer. */
-			if (!new_gate && extra_rows_any_held())
-				new_gate = true;
+			if (!new_live_gate && extra_rows_any_held())
+				new_live_gate = true;
+			live_gate_high_ = new_live_gate;
+			bool new_gate = live_gate_high_ || replay_gate_mask_ != 0;
+			if (!new_gate && env_gate_high_)
+				release_cv2_envelope();
 			gate_high_ = new_gate;
 
 			int x_knob = (int)x_knob_filtered_;  /* 0..4095, LPF'd */
@@ -1064,21 +1070,25 @@ private:
 	int8_t     cv_step_base_midi_ = CV_NOTE_BASE_MIDI;  /* CV1 S&H base note from last cut col */
 	int32_t    x_knob_filtered_ = 2048;    /* one-pole LPF of Knob::X (sample-rate) to suppress
 	                                          ADC dither flicker at semitone/gain boundaries */
-	/* CV2 envelope: attack to peak, then linear decay to 0. env_val_q16_
-	 * holds the value in Q16. Steps are latched at trigger so knob changes
-	 * do not disturb an in-flight envelope. */
+	/* CV2 envelope: attack to peak, sustain while gated, then linear release
+	 * to 0. env_val_q16_ holds the value in Q16. Segment steps are latched
+	 * so knob changes do not disturb an in-flight segment. */
 	static constexpr uint8_t ENV_IDLE = 0;
 	static constexpr uint8_t ENV_ATTACK = 1;
-	static constexpr uint8_t ENV_DECAY = 2;
+	static constexpr uint8_t ENV_SUSTAIN = 2;
+	static constexpr uint8_t ENV_RELEASE = 3;
 	uint8_t    env_stage_ = ENV_IDLE;
 	int32_t    env_val_q16_ = 0;           /* 0 .. CV_ENV_PEAK << 16 */
 	int32_t    env_attack_step_q16_ = 0;   /* per-sample add, Q16 */
-	int32_t    env_decay_step_q16_ = 0;    /* per-sample subtract, Q16 */
+	int32_t    env_release_step_q16_ = 0;  /* per-sample subtract, Q16 */
 	uint32_t   cv_attack_samples_ = CV_ATTACK_MIN_SAMPLES;
+	bool       env_gate_high_ = false;
 	uint32_t   gl_turing_rng_state_ = 0x6D2B79F5u;
 	/* PulseOut2 / LED 5 gate: high while any output-enabled CUT-page track
 	 * row key is held (independent of envelope state — useful for VCA gates / mutes). */
 	bool       gate_high_ = false;
+	bool       live_gate_high_ = false;
+	uint8_t    replay_gate_mask_ = 0;
 	uint32_t   delete_reset_hold_samples_ = 0;    /* continuous DELETE hold duration */
 	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
 	bool       delete_reset_fired_ = false;       /* require DELETE release before another reset */
@@ -1806,6 +1816,7 @@ private:
 			gl_pulse1_pending_ = false;
 			bool turing_clock = pulse_reset || gl_pulse2_pending_;
 			gl_pulse2_pending_ = false;
+			bool pulse_gate_now = PulseIn1() || PulseIn2() || turing_clock;
 
 			if (!gl_record_mode_ && !gl_recording_active_ && (switch_reset || pulse_reset) && gl_active_track_ >= 0)
 				gridless_restart_all_tracks_from_zero();
@@ -1813,6 +1824,8 @@ private:
 				gridless_step_turing();
 				trigger_cv2_envelope();
 			}
+			if (!pulse_gate_now && env_gate_high_)
+				release_cv2_envelope();
 
 			gl_prev_switch_mode_ = static_cast<Switch>(sw);
 		}
@@ -1954,6 +1967,15 @@ private:
 			cut_trigger((int)track, (int)a);
 	}
 
+	void __not_in_flash_func(clear_replay_gates)()
+	{
+		replay_gate_mask_ = 0;
+		bool new_gate = live_gate_high_;
+		if (!new_gate && env_gate_high_)
+			release_cv2_envelope();
+		gate_high_ = new_gate;
+	}
+
 	/* ================================================================ */
 	/* cut_trigger — fire CV1 S&H, CV2 decay envelope, PulseOut1 on cut.*/
 	/* Called from dispatch_event() (manual) and from the C playback    */
@@ -1995,6 +2017,10 @@ public:
 	{
 		cut_trigger(track, col);
 		if (track < 0 || track >= MLR_NUM_TRACKS) return;
+		if (source == MLR_PLAYBACK_SOURCE_PATTERN && track_outputs_enabled(track)) {
+			replay_gate_mask_ |= (uint8_t)(1u << track);
+			gate_high_ = true;
+		}
 		if (!mlr_tracks[track].has_content) {
 			empty_pattern_key_col_[track] = (uint8_t)col;
 			empty_pattern_key_active_[track] = true;
@@ -2002,6 +2028,16 @@ public:
 				? time_us_32() + RECALL_KEY_GATE_US
 				: 0;
 		}
+	}
+
+	void __not_in_flash_func(cut_release_trigger)(int track)
+	{
+		if (track < 0 || track >= MLR_NUM_TRACKS) return;
+		replay_gate_mask_ &= (uint8_t)~(1u << track);
+		bool new_gate = live_gate_high_ || replay_gate_mask_ != 0;
+		if (!new_gate && env_gate_high_)
+			release_cv2_envelope();
+		gate_high_ = new_gate;
 	}
 
 	void __not_in_flash_func(pattern_stop_trigger)(int track)
@@ -2070,10 +2106,12 @@ private:
 			env_val_q16_ += env_attack_step_q16_;
 			if (env_val_q16_ >= ((int32_t)CV_ENV_PEAK << 16)) {
 				env_val_q16_ = (int32_t)CV_ENV_PEAK << 16;
-				env_stage_ = ENV_DECAY;
+				env_stage_ = env_gate_high_ ? ENV_SUSTAIN : ENV_RELEASE;
 			}
-		} else if (env_stage_ == ENV_DECAY) {
-			env_val_q16_ -= env_decay_step_q16_;
+		} else if (env_stage_ == ENV_SUSTAIN) {
+			env_val_q16_ = (int32_t)CV_ENV_PEAK << 16;
+		} else if (env_stage_ == ENV_RELEASE) {
+			env_val_q16_ -= env_release_step_q16_;
 			if (env_val_q16_ <= 0) {
 				env_val_q16_ = 0;
 				env_stage_ = ENV_IDLE;
@@ -2087,6 +2125,22 @@ private:
 		return was_active && env_stage_ == ENV_IDLE;
 	}
 
+	void __not_in_flash_func(latch_cv2_release_from_raw)(uint16_t raw)
+	{
+		uint32_t y = raw;
+		if (y > 4095u) y = 4095u;
+		uint32_t y_sq = (y * y) / 4095u;  /* 0..4095, square-law for musical knob feel */
+		uint32_t T_rel = CV_DECAY_MIN_SAMPLES +
+			(uint32_t)(((uint64_t)(CV_DECAY_MAX_SAMPLES - CV_DECAY_MIN_SAMPLES) * y_sq) / 4095u);
+		if (T_rel < 1u) T_rel = 1u;
+		if (env_val_q16_ <= 0) {
+			env_release_step_q16_ = 1;
+			return;
+		}
+		env_release_step_q16_ = env_val_q16_ / (int32_t)T_rel;
+		if (env_release_step_q16_ < 1) env_release_step_q16_ = 1;
+	}
+
 	void __not_in_flash_func(set_cv2_attack_from_raw)(uint16_t raw)
 	{
 		uint32_t y = raw;
@@ -2098,26 +2152,32 @@ private:
 
 	void __not_in_flash_func(trigger_cv2_envelope)()
 	{
-		/* CV2 envelope: restart at 0, play attack to peak, then decay to 0.
-		 * Decay uses current Y knob at trigger; attack uses cv_attack_samples_;
-		 * both segment lengths are latched for the full envelope. */
-		uint32_t y = (uint32_t)KnobVal(Knob::Y);
-		if (y > 4095u) y = 4095u;
-		uint32_t y_sq = (y * y) / 4095u;  /* 0..4095, square-law for musical knob feel */
-		uint32_t T_dec = CV_DECAY_MIN_SAMPLES +
-			(uint32_t)(((uint64_t)(CV_DECAY_MAX_SAMPLES - CV_DECAY_MIN_SAMPLES) * y_sq) / 4095u);
-		if (T_dec < 1u) T_dec = 1u;
-		env_val_q16_ = 0;
-		env_decay_step_q16_ = (int32_t)(((uint32_t)CV_ENV_PEAK << 16) / T_dec);
-		if (env_decay_step_q16_ < 1) env_decay_step_q16_ = 1;
+		/* CV2 ASR envelope: attack from current value to peak, sustain while
+		 * gated, then release to 0 when the gate source drops. */
+		env_gate_high_ = true;
+		int32_t peak_q16 = (int32_t)CV_ENV_PEAK << 16;
 		if (cv_attack_samples_ == 0) {
-			env_val_q16_ = (int32_t)CV_ENV_PEAK << 16;
-			env_stage_ = ENV_DECAY;
+			env_val_q16_ = peak_q16;
+			env_stage_ = ENV_SUSTAIN;
 		} else {
-			env_attack_step_q16_ = (int32_t)(((uint32_t)CV_ENV_PEAK << 16) / cv_attack_samples_);
+			int32_t remaining_q16 = peak_q16 - env_val_q16_;
+			if (remaining_q16 <= 0) {
+				env_val_q16_ = peak_q16;
+				env_stage_ = ENV_SUSTAIN;
+				return;
+			}
+			env_attack_step_q16_ = remaining_q16 / (int32_t)cv_attack_samples_;
 			if (env_attack_step_q16_ < 1) env_attack_step_q16_ = 1;
 			env_stage_ = ENV_ATTACK;
 		}
+	}
+
+	void __not_in_flash_func(release_cv2_envelope)()
+	{
+		env_gate_high_ = false;
+		if (env_stage_ == ENV_IDLE) return;
+		latch_cv2_release_from_raw((uint16_t)KnobVal(Knob::Y));
+		env_stage_ = ENV_RELEASE;
 	}
 
 	void process_bottom_master_control()
@@ -2868,6 +2928,8 @@ private:
 		if (grid.keyUp() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track = grid.lastY() - 1;
 			int column = grid.lastX();
+			if (column >= cs && column <= ce && track_outputs_enabled(track))
+				dispatch_event(MLR_EVT_CUT_RELEASE, (uint8_t)track, 0, 0);
 			if (column >= cs && column <= ce && !mlr_tracks[track].has_content)
 				dispatch_event(MLR_EVT_STOP, (uint8_t)track, 0, 0);
 		}
@@ -3424,6 +3486,8 @@ extern "C" void __not_in_flash_func(mlr_event_playback_hook)(const mlr_event_t *
 	if (!MLRCard::s_card_) return;
 	if (e->type == MLR_EVT_CUT || e->type == MLR_EVT_GROUP_CUT) {
 		MLRCard::s_card_->pattern_cut_trigger((int)e->track, (int)e->param_a, mlr_event_playback_source);
+	} else if (e->type == MLR_EVT_CUT_RELEASE) {
+		MLRCard::s_card_->cut_release_trigger((int)e->track);
 	} else if (e->type == MLR_EVT_STOP && mlr_event_playback_source == MLR_PLAYBACK_SOURCE_PATTERN) {
 		MLRCard::s_card_->pattern_stop_trigger((int)e->track);
 	}

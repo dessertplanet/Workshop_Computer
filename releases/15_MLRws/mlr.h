@@ -108,6 +108,7 @@ extern "C" {
 #define MLR_EVT_GROUP_REVERSE 17  /* reverse change broadcast to every member of track's group */
 #define MLR_EVT_GROUP_VOLUME 18   /* volume change broadcast to every member of track's group */
 #define MLR_EVT_CHANNEL      19   /* per-track input/output channel: param_a=0/1 */
+#define MLR_EVT_CUT_RELEASE  20   /* CUT key release for CV/pulse gate playback only */
 
 /* Volume slots: 5 levels (cols 2–6 on REC page). Slot 1 = unity. */
 #define MLR_NUM_VOL_SLOTS      5

@@ -1869,6 +1869,8 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 	case MLR_EVT_START:
 		mlr_choke_group_resume(e->track, e->param_a);  /* start without CV cut trigger */
 		break;
+	case MLR_EVT_CUT_RELEASE:
+		break;  /* CV/pulse-only event handled by mlr_event_playback_hook */
 	case MLR_EVT_SPEED:
 		mlr_set_speed(e->track, e->param_a);
 		break;
