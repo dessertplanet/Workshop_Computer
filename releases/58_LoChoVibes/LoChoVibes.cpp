@@ -26,14 +26,7 @@ public:
     int16_t delayBufferR[DELAY_SIZE] = {};
 
     int32_t writeIndex = 0;
-    
-    int32_t driftTarget = 0;
-    int32_t driftCurrent = 0;
 
-    uint32_t driftCounter = 0;
-    uint32_t driftInterval = SAMPLE_RATE;
-    
-    
     // External clocking.
 
     uint32_t samplesSincePulse = 0;
@@ -43,7 +36,7 @@ public:
 
     uint32_t targetIncrement = 900;
     uint32_t currentIncrement = 900;
-    
+    int32_t driftCurrent = 0;
     
     uint32_t randomSeed = 12345;
     uint32_t FastRandom()
@@ -203,6 +196,12 @@ public:
 
         int32_t centered =
             characterKnob - 2048;
+
+        if (centered > -128 &&
+            centered < 128)
+        {
+            centered = 0;
+        }
 
         // LO-FI SIDE.
 
@@ -570,6 +569,12 @@ private:
         int32_t centered =
             character - 2048;
 
+        if (centered > -128 &&
+            centered < 128)
+        {
+            centered = 0;
+        }
+
         int32_t lofiAmount = 0;
         int32_t compAmount = 0;
 
@@ -586,13 +591,60 @@ private:
 
         // LED 0 = rate
 
-        LedBrightness(0,
-            ClampLED(rate));
+        if (externalClock)
+        {
+            LedBrightness(0,
+                (samplesSincePulse < 2000)
+                    ? 4095
+                    : 0);
+        }
+        else
+        {
+            switch(currentShape)
+            {
+                case Triangle:
+                {
+                    uint32_t phase =
+                        lfoPhase >> 24;
+
+                    LedBrightness(0,
+                        (phase < 128)
+                            ? 4095
+                            : 0);
+
+                    break;
+                }
+
+                case Sine:
+                {
+                    int32_t sineDisplay =
+                        2048 + ((lfo * 3) >> 1);
+
+                    LedBrightness(0,
+                        ClampLED(sineDisplay));
+
+                    break;
+                }
+
+                case RandomDrift:
+                {
+                    LedBrightness(0,
+                        ClampLED(
+                            2048 + (driftCurrent << 2)));
+
+                    break;
+                }
+            }
+        }
 
         // LED 1 = modulation depth
 
+        int32_t modDisplay =
+            ((lfo < 0 ? -lfo : lfo) * depth)
+            >> 11;
+
         LedBrightness(1,
-            ClampLED(depth << 3));
+            ClampLED(modDisplay << 1));
 
         // LED 2 = CCW lo-fi amount
 
@@ -606,11 +658,50 @@ private:
 
         // LED pair = modulation animation
 
-        LedBrightness(4,
-            ClampLED(lfo + 2048));
+        switch(currentShape)
+        {
+            // Triangle = pendulum
 
-        LedBrightness(5,
-            ClampLED(2048 - lfo));
+            case Triangle:
+            {
+                LedBrightness(4,
+                    ClampLED(lfo + 2048));
+
+                LedBrightness(5,
+                    ClampLED(2048 - lfo));
+
+                break;
+            }
+
+            // Sine = both LEDs breathe together
+
+            case Sine:
+            {
+                uint16_t brightness =
+                    ClampLED(lfo + 2048);
+
+                LedBrightness(4, brightness);
+                LedBrightness(5, brightness);
+
+                break;
+            }
+
+            // Random Drift = wandering imbalance
+
+            case RandomDrift:
+            {
+                int32_t driftBrightness =
+                    2048 + (driftCurrent << 2);;
+
+                LedBrightness(4,
+                    ClampLED(driftBrightness));
+
+                LedBrightness(5,
+                    ClampLED(4095 - driftBrightness));
+
+                break;
+            }
+        }
     }
 };
 
