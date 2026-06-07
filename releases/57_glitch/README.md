@@ -1,205 +1,189 @@
-# Glitch — Workshop Computer Program Card
+# Glitch — clock-synced beat-repeater for Workshop Computer
 
-A clock-synced beat-repeater and audio degradation effect. Glitch continuously records incoming audio into a circular buffer, then — when triggered — replays a frozen slice of that buffer at a subdivided rate, with optional reversal and lo-fi degradation.
+A clock-synced beat-repeater with two modes. **Glitch mode** loops and ratchets the last beat with reversal and lo-fi degradation. **Stutter mode** is a live breakbeat slicer that shuffles and repeats slices of the beat in real time. Both modes record into a shared 2.33-second circular buffer and work with the same clock, freeze, and output jacks.
 
 ![Glitch key](GLITCH_key.jpg)
 
 ## Installation
 
-1. Workshop computer connected via (data compatible) USB cable
+1. Connect the Workshop Computer via a data-capable USB cable
 2. Power cycle
-3. Hold secret button under knob on Workshop Computer, press reset button on WC, release secret button — it mounts as a drive called RPI-RP2
+3. Hold the secret button under the knob on the Workshop Computer, press the reset button, then release the secret button — it mounts as a drive called RPI-RP2
 4. Drag and drop `glitch.uf2` onto the drive
 5. The Workshop Computer reboots automatically and Glitch is running
 
----
+## Choosing a mode
 
-## Inputs
+Hold the **switch in the desired position while the card powers on** (or resets):
 
-### Audio (top row)
-| Jack | Function |
-|------|----------|
-| Audio In 1 | Main audio input — continuously recorded into the buffer |
+| Switch at reset | Mode |
+|---|---|
+| Middle or Up (or not held) | **Glitch mode** (default) |
+| Down | **Stutter mode** |
 
-### Pulse (bottom row)
-| Jack | Function |
-|------|----------|
-| Pulse In 1 | **Clock input** — rising edge sets the beat length. Each new pulse measures the time since the last pulse (in samples) to define MasterLoopLength. Maximum buffer is 0.5 seconds; longer beats are capped. |
-| Pulse In 2 | **External gate** — used only when Switch is in MID position. While HIGH, forces glitching on the current slice. |
-
-### CV (middle row)
-| Jack | Function |
-|------|----------|
-| CV In 1 | **Freeze** — treated as a comparator. When the voltage is above ~0V (ADC value > 2047), the buffer stops recording. The frozen content loops continuously. Below ~0V, recording resumes. |
+A brief boot animation confirms which mode loaded:
+- **Glitch mode**: LEDs 0, 2, 4 flash in sequence × 3
+- **Stutter mode**: LEDs 5, 3, 1 flash in reverse × 3
 
 ---
 
-## Outputs (top row)
+## Glitch mode
+
+Records incoming audio into a 2.33s circular buffer. On each clock pulse it measures the beat length, then replays a ratcheted sub-slice of that beat — optionally reversed and/or degraded with sample-rate reduction and bitcrushing. When not glitching, live audio passes through unaffected.
+
+### Inputs
 
 | Jack | Function |
 |------|----------|
-| Audio Out 1 | Glitched output — or live pass-through when not glitching |
-| Audio Out 2 | Always dry — live pass-through of Audio In 1 regardless of glitch state |
-| Pulse Out 1 | Sub-slice clock — fires a one-sample pulse at every ratchet slice boundary |
-| CV Out 1 | Glitch gate — high (~+5V) while glitching, low (0V) while passing through |
-| CV Out 2 | Descending ramp — falls from ~+5V to 0V across each slice, resets at boundary. Patch to a VCA to fade out each repeated slice. |
-| Pulse Out 2 | Clock mirror — passes Pulse In 1 straight through |
+| Audio In 1 | Main audio input |
+| Pulse In 1 | Clock — rising edge sets beat length (max 2.33s) |
+| Pulse In 2 | External gate (Switch MID mode: glitch while HIGH) |
+| CV In 1 | Freeze — above ~0V stops recording, loops frozen buffer content |
+| CV In 2 | Bipolar mod — added to both Knob X and Knob Y |
 
----
+### Outputs
 
-## Controls
+| Jack | Function |
+|------|----------|
+| Audio Out 1 | Glitched output — live pass-through when not glitching |
+| Audio Out 2 | Always dry — live pass-through of Audio In 1 |
+| Pulse Out 1 | Sub-slice clock — one pulse at every ratchet slice boundary |
+| CV Out 1 | Glitch gate — high (~+5V) while glitching, low (0V) otherwise |
+| CV Out 2 | Descending ramp — falls from ~+5V to 0V across each slice, resets at boundary |
+| Pulse Out 2 | Clock mirror — Pulse In 1 passed straight through |
 
-### Main Knob — Ratchet Zone + Probability
+### Controls
 
-The Main Knob does two things simultaneously, hidden within a single sweep.
+**Main Knob — Ratchet Zone + Probability**
+Five zones selecting ratchet division ÷1 / ÷2 / ÷3 / ÷4 / ÷6. Position within each zone sets the reverse and glitch probability threshold — LED 5 brightness shows the current value. At the low end of each zone, glitches are rare; near the top they are nearly constant.
 
-The knob range (0–4095) is divided into **5 equal zones**. The zone you are in selects the **ratchet division** — how many times the captured beat slice is subdivided and repeated:
+**Knob X — Degradation Amount**
+First half (CCW to centre): sample-rate decimation, up to 16×. Second half (centre to CW): decimation stays at maximum, bitcrushing added progressively up to 7 bits removed. Fully CCW is clean. CV In 2 shifts this value bipolarly.
 
-| Zone | Ratchet | Effect |
-|------|---------|--------|
-| 1 (fully CCW) | ÷1 | Whole beat repeated once |
-| 2 | ÷2 | Beat cut in half, each half repeated |
-| 3 | ÷3 | Beat cut into thirds |
-| 4 | ÷4 | Beat cut into quarters |
-| 5 (fully CW) | ÷6 | Beat cut into sixths |
+**Knob Y — Degradation Probability**
+How often degradation fires per slice. CCW = never, CW = always. CV In 2 shifts this value bipolarly.
 
-**Hidden within each zone:** the position of the knob *within* that zone sets the **Reverse Probability Threshold**. At the bottom of a zone there is no reversal; approaching the top of the zone, random reversal becomes increasingly likely. This probability also controls whether glitching fires at all in Probabilistic mode (Switch UP).
+**Switch — Glitch Trigger Mode**
 
-LED 5 (bottom right) shows the current probability threshold as brightness — use it to navigate within zones.
+| Position | Mode |
+|----------|------|
+| UP (latching) | Probabilistic — glitch fires randomly, rate set by Main Knob zone remainder |
+| MID | CV gate — glitch fires while Pulse In 2 is HIGH, pass-through when LOW |
+| DOWN (momentary) | Force — always glitch every slice |
 
----
-
-### Knob X — Degradation Amount
-
-Controls the depth of two simultaneous lo-fi effects applied to glitched slices.
-
-**Bitcrushing** — reduces the bit depth of the audio. At minimum (fully CCW) the audio is clean. As the knob increases, low bits are progressively masked off: at mid-range you get 8-bit grit; near maximum, extremely coarse quantisation.
-
-**Decimation (sample-rate reduction)** — quantises the read position so the same sample plays multiple times before advancing. Creates a stepped, aliased texture. At minimum, smooth playback. At maximum, the signal advances in steps of 16 samples, giving a heavily lo-fi character.
-
-Both effects scale together as Knob X increases. At zero, degradation is completely bypassed regardless of Knob Y.
-
----
-
-### Knob Y — Degradation Probability
-
-Sets **how often** the degradation (bitcrush + decimation) actually applies to a given slice. This is evaluated fresh at every slice boundary.
-
-- Fully CCW (0): degradation never applies, even if Knob X is turned up — the audio is always clean
-- Mid-range: degradation fires roughly half the time, alternating between clean and degraded slices
-- Fully CW (4095): degradation always applies
-
-Combine Knob X (amount) and Knob Y (probability) to dial in anything from subtle occasional grit to relentless destruction.
-
----
-
-### Switch — Glitch Trigger Mode
-
-The switch selects how glitching (ratcheting + reversal) is activated. Glitch state is locked in for the full duration of each slice, then re-evaluated at the next slice boundary.
-
-| Position | Mode | Behaviour |
-|----------|------|-----------|
-| **UP** (latching) | Probabilistic | At each slice boundary, a random number is compared to the Main Knob's hidden remainder threshold. If the random value falls below the threshold, glitching fires. Low threshold = rare glitches. High threshold = frequent glitches. |
-| **MID** | External Gate | Glitching is active whenever Pulse In 2 is HIGH. Use an external gate, envelope, or sequencer to control exactly when glitching occurs. |
-| **DOWN** (momentary) | Force | Glitching is always on, regardless of probability or gate. Useful for manual performance — hold down to freeze into the glitch, release to return to pass-through. |
-
-When **not glitching**, the module passes live audio from Audio In 1 directly to the outputs. No buffer playback, no degradation.
-
----
-
-## LEDs
-
-```
-| LED 0   LED 1 |
-| LED 2   LED 3 |
-| LED 4   LED 5 |
-```
+### LEDs
 
 | LED | Function |
 |-----|----------|
-| LED 0 | Lit when Main Knob is in Zone 1 (ratchet ÷1) |
-| LED 1 | Lit when Main Knob is in Zone 2 (ratchet ÷2) |
-| LED 2 | Lit when Main Knob is in Zone 3 (ratchet ÷3) |
-| LED 3 | Lit when Main Knob is in Zone 4 (ratchet ÷4) |
-| LED 4 | Lit when Main Knob is in Zone 5 (ratchet ÷6) |
-| LED 5 | **Brightness** = reverse probability threshold (the hidden remainder within the current zone). Dim = low probability, bright = high probability. |
+| 0–4 | One lit = current ratchet zone (÷1 through ÷6, left column then top-right) |
+| 5 | Brightness = reverse/glitch probability threshold |
 
-Only one of LEDs 0–4 is lit at a time, showing your current ratchet selection at a glance.
+### Freeze
 
----
+CV In 1 above ~0V freezes the buffer — recording stops and the current buffer contents are held. The clock and playback engine keep running, so the card continues glitching and ratcheting the frozen material. Adjust the Main Knob, switch, or Knob X/Y while frozen to re-process the same snapshot. Remove the CV to resume recording.
 
-## Signal Flow
+### Quick start
 
-```
-Audio In 1 ──► Circular Buffer (0.5s) ──► [if glitching] Slice Playback ──► Audio Out 1
-     │               ▲                           │
-     └───────────────────────────────────────────────────────────────────► Audio Out 2 (dry)
-                CV In 1 (Freeze)          Ratchet / Reverse
-                                          Decimate / Bitcrush
+1. Patch a clock into Pulse In 1 and audio into Audio In 1
+2. Set Switch DOWN — the last beat repeats immediately
+3. Turn Main Knob clockwise through zones to hear higher subdivisions
+4. Move Switch UP and use the zone remainder to control how often glitches fire
+5. Bring up Knob X for degradation, Knob Y to control how often it applies
+6. Patch a gate into CV In 1 to freeze a moment and keep re-glitching it
 
-               Pulse In 1 (Clock) ──► MasterLoopLength
-               Pulse In 2 (Gate) ──► [Switch MID only] force glitch
-               CV In 2 (bipolar) ──► offsets Knob X + Knob Y
+### Use cases
 
-               Slice boundary ──────────────────────────────────────────► Pulse Out 1
-               do_glitch flag ──────────────────────────────────────────► CV Out 1 (gate)
-               Slice position (inverted) ───────────────────────────────► CV Out 2 (ramp)
-               Pulse In 1 ──────────────────────────────────────────────► Pulse Out 2 (mirror)
-```
+**Classic beat-repeat** — Patch a clock from a sequencer or drum machine. Route the drum machine audio into Audio In 1. Set Switch DOWN. The last beat loops immediately. Turn the Main Knob to ÷2 or ÷4 for ratcheted subdivisions.
 
-When not glitching, Audio In 1 passes straight to the outputs, bypassing the buffer entirely.
+**Probability glitching** — Switch UP, Main Knob in the upper part of any zone. Glitches fire occasionally, creating an irregular loop effect without being constant. The zone remainder sets how dense the glitching becomes — subtle at the low end of a zone, heavy near the top.
+
+**Freeze and re-degrade** — Send a gate or manual CV to CV In 1 to lock a moment in the buffer. Then sweep Knob X from clean to fully crushed, and Knob Y to control whether degradation fires every slice. The same frozen phrase cycles with increasing grit.
+
+**CV-gated drops** — Patch an envelope, LFO gate, or sequencer gate to Pulse In 2 and set Switch MID. Glitching only happens while the gate is high — use it to trigger drop effects or fill patterns at specific points in a sequence.
+
+**Ramp-faded repeats** — Patch CV Out 2 to a VCA placed after Audio Out 1. The descending ramp naturally fades each repeated slice from loud to quiet, giving each glitch a decaying character.
 
 ---
 
-## Getting Started
+## Stutter mode
 
-1. Patch a clock or LFO square wave into **Pulse In 1**
-2. Patch audio into **Audio In 1**
-3. Listen on **Audio Out 1**
-4. Set Switch to **DOWN** — you should immediately hear the beat repeating
-5. Turn the **Main Knob** clockwise to hear higher ratchet subdivisions
-6. Move Switch to **UP** and explore the probability zone within each ratchet setting
-7. Bring up **Knob X** for degradation; use **Knob Y** to control how often it fires
-8. Patch a gate into **CV In 1** (above 0V) to freeze the buffer at a particular moment
+A live breakbeat slicer. The card records audio into the same 2.33s buffer, divides each beat into equal slices, shuffles their playback order, and optionally repeats slices before advancing. When not shuffling, live audio passes through — so the output is a mix of re-sequenced buffer grabs and real-time audio.
+
+### Inputs
+
+| Jack | Function |
+|------|----------|
+| Audio In 1 | Main audio input |
+| Pulse In 1 | Clock — one pulse per beat (max 2.33s) |
+| Pulse In 2 | CV gate (Switch MID mode: HIGH = shuffle this slice, LOW = pass-through) |
+| CV In 1 | Freeze — above ~0V stops recording, engine keeps stuttering frozen content |
+| CV In 2 | Bipolar mod — added to Knob X (shuffle probability) only |
+
+### Outputs
+
+| Jack | Function |
+|------|----------|
+| Audio Out 1 | Shuffled output — live pass-through when not shuffling this slice |
+| Audio Out 2 | Always dry — live pass-through of Audio In 1 |
+| Pulse Out 1 | Slice clock — one pulse at every slice boundary |
+| CV Out 1 | Shuffle gate — high (+5V) while reading a shuffled slice, low (0V) during pass-through |
+| CV Out 2 | Descending ramp — falls from ~+5V to 0V across each slice, resets at boundary |
+| Pulse Out 2 | Clock mirror — Pulse In 1 passed straight through |
+
+### Controls
+
+**Main Knob — Slice Count + Drift**
+Five zones selecting slice count 1 / 2 / 3 / 4 / 8 per beat. Position within each zone sets **drift probability** (shown on LED 5): how often the beat pool is drawn from an earlier beat rather than the most recent one. At LED 5 dark (zero), slices always come from the current beat, locked to the clock grid. As LED 5 brightens, the engine increasingly reaches back one, two, or three whole beats — the slice grid stays internally coherent (slices are always a fixed fraction of a real past beat) but the material drifts across bars.
+
+**Knob X — Shuffle Probability**
+In Switch UP mode: how often each slice is shuffled rather than passed through live. CCW = all pass-through (clean, no effect). CW = always shuffled. CV In 2 shifts this bipolarly.
+
+**Knob Y — Repeat Probability**
+How often a slice replays before advancing to the next. CCW = always advances, CW = heavy stutter. Works on both shuffled and pass-through slices.
+
+**Switch — Shuffle Trigger Mode**
+
+| Position | Mode |
+|----------|------|
+| UP (latching) | Probabilistic — each slice shuffled randomly based on Knob X threshold |
+| MID | CV gate — Pulse In 2 HIGH shuffles this slice, LOW passes through live |
+| DOWN (momentary) | Force — always shuffle every slice, never pass-through |
+
+### LEDs
+
+| LED | Function |
+|-----|----------|
+| 0–4 | One lit = current slice count zone (1 / 2 / 3 / 4 / 8) |
+| 5 | Brightness = drift probability (how far back beats can reach) |
+
+### Freeze
+
+CV In 1 above ~0V freezes the buffer. Recording stops, but the shuffle engine keeps running against the frozen content — slices are drawn from the locked snapshot. Freeze a phrase then sweep Knob X and Y to chop and stutter it indefinitely. Drift (LED 5) still works within the frozen buffer's content.
+
+### Quick start
+
+1. Patch a clock (one pulse per beat) into Pulse In 1 and rhythmic audio into Audio In 1
+2. Let the buffer fill for two or three beats
+3. Set Switch DOWN — every slice is shuffled, the beat is immediately scrambled
+4. Turn Main Knob to zone 4 (8 slices) for 16th-note chops
+5. Move Switch UP and dial Knob X back to control how often chops fire
+6. Bring Knob Y up to add stutter repeats within slices
+7. Open LED 5 (Main Knob zone remainder) to allow material from earlier beats
+
+### Use cases
+
+**Breakbeat chop** — Drum loop or break into Audio In 1, clock synced to tempo. Switch DOWN, Main Knob zone 4 (8 slices). Every slice of the beat is scrambled — classic cut-up break effect. Adjust the Main Knob within zone 4 to allow occasional drift from earlier bars.
+
+**Controlled variation** — Switch UP, Knob X at about 9 o'clock. Most slices pass through clean, but a random chop drops in roughly one in four beats. The music stays mostly intact with occasional surprise rearrangements.
+
+**CV-triggered scrambles** — Patch a gate from a sequencer step into Pulse In 2, set Switch MID. The beat plays through cleanly except on the gated step, where slices are shuffled. Use it to fire a scramble on the fourth beat of every bar, or on a specific note of a melody.
+
+**Stutter build** — Switch DOWN, Knob Y at 3 o'clock. Each slice replays roughly twice before advancing, creating a rhythmic stutter that doubles the apparent tempo feel. Sweep Knob Y higher to increase tension.
+
+**Time-slip loop** — Let the buffer fill for 4–8 beats. Open LED 5 to half brightness. The engine starts pulling slices from beats 1–3 bars back as well as the current beat. Freeze with CV In 1 to lock a moment in time, then the card creates an evolving collage from multiple past phrases without any new audio coming in.
+
+**Freeze and chop** — Gate CV In 1 high to capture a phrase (spoken word, a chord stab, a percussion hit). The buffer locks. Sweep Knob X and Y to chop and repeat the frozen content at any slice count — turn a single hit into a machine-gun stutter or a melodic fragment into a beat.
 
 ---
 
-## Patch Ideas
-
-### Self-patching
-
-**Self-freezing loop** — Patch CV Out 1 (glitch gate) into CV In 1 (freeze). When glitching starts, the buffer automatically freezes, locking the loop tightly. The glitch feeds itself.
-
-**Subdivided clock from a single source** — Patch one clock into Pulse In 1. Use Pulse Out 1 (sub-slice clock) to drive a sequencer or envelope at the ratchet subdivision rate, and Pulse Out 2 (mirror) to drive something else at the original beat rate. One clock in, two related clocks out.
-
-**Ramp-controlled degradation** — Patch CV Out 2 (descending ramp) into CV In 2. As each slice plays, degradation increases — the repeat starts clean and gets progressively dirtier before resetting at the next boundary.
-
----
-
-### With other modules
-
-**VCA ducking on repeats** — Patch CV Out 2 into a VCA controlling the glitched output. The repeated slice fades out naturally across its duration, giving each ratchet hit a decaying envelope rather than a hard cut.
-
-**Glitch-triggered envelope** — Patch CV Out 1 (glitch gate) into an envelope generator's gate input. Every time Glitch fires, an envelope opens — useful for adding a filter sweep, reverb send, or amplitude swell that only happens during glitch events.
-
-**Sequencer sync** — Patch Pulse Out 1 into a sequencer clock input. The sequencer advances once per ratchet subdivision, so at ÷4 your sequence runs four times per beat. Change the Main Knob zone to change the sequence speed in musically useful ratios.
-
-**Rhythmic filtering** — Patch CV Out 1 into a filter's CV input. The filter opens fully while glitching and closes during pass-through, creating a rhythmic timbral gate in sync with the beat-repeat events.
-
-**Wet/dry blend** — Take Audio Out 1 (glitched) and Audio Out 2 (dry) into a mixer or crossfader. Blend between them manually, or automate the crossfade with a CV source for gradual glitch introduction and removal.
-
-**External glitch trigger** — Set Switch to MID. Patch a sequencer gate, envelope, or LFO square wave into Pulse In 2. The sequencer now decides exactly which beats glitch, while Glitch handles the ratcheting and degradation.
-
-**Freeze on demand** — Patch an envelope or manual gate into CV In 1. Press/hold to freeze the buffer at the moment you want to capture. Release to resume recording. Combine with Switch DOWN to simultaneously force-glitch and freeze — the buffer locks immediately into a repeating loop.
-
-**Degradation from an envelope** — Patch a slow envelope or LFO into CV In 2 (bipolar mod). As the envelope rises, both degradation amount and probability increase together, sweeping Glitch from clean repeats into full lo-fi destruction and back.
-
----
-
-## Notes
-
-- Before the first clock pulse arrives, the module passes audio through without glitching
-- Beat lengths longer than 0.5 seconds are automatically capped at the buffer size
-- Very short beats (faster than ~2ms per subdivision) use the minimum slice of 1 sample with no fade
-- The buffer records even while glitching — on the next beat, fresh audio is available
-- Degradation is evaluated independently of glitch mode — you can have degraded pass-through if Knob Y is high and Switch is DOWN with no gate signal
+Full source: https://github.com/uglifruit/Workshop_Computer/tree/main/Demonstrations%2BHelloWorlds/PicoSDK/ComputerCard/examples/glitch
