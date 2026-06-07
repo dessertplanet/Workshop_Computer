@@ -1,7 +1,6 @@
-name: BitPhase
-author: Adrian Vos
-version: 0.1.0
-status: beta
-language: C++/Computercard
-
-description: experimental phaser/tremolo with bit destruction
+Name: BitPhase
+Creator: Adrian Vos
+Version: 0.1.0
+Status: beta
+Language: C++/Computercard
+Description: experimental phaser/tremolo with bit destruction
