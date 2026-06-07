@@ -197,8 +197,8 @@ public:
         int32_t centered =
             characterKnob - 2048;
 
-        if (centered > -64 &&
-            centered < 64)
+        if (centered > -128 &&
+            centered < 128)
         {
             centered = 0;
         }
@@ -569,8 +569,8 @@ private:
         int32_t centered =
             character - 2048;
 
-        if (centered > -64 &&
-            centered < 64)
+        if (centered > -128 &&
+            centered < 128)
         {
             centered = 0;
         }
