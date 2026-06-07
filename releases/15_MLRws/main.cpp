@@ -1033,7 +1033,6 @@ private:
 	uint16_t   group_flash_period_ = GROUP_FLASH_CREATE_PERIOD;  /* current blink half-period */
 	int        copy_source_track_ = -1;           /* source for arm/channel copy gesture */
 	int        copy_source_column_ = 0;           /* arm/channel column where source press began */
-	int        copy_source_page_ = PAGE_REC;      /* page where source press began */
 	uint8_t    copy_participant_mask_ = 0;        /* arm/channel keys suppressed by copy gesture */
 	uint8_t    copy_target_mask_ = 0;             /* empty tracks selected as copy destinations */
 	bool       copy_gesture_committed_ = false;
@@ -2199,34 +2198,6 @@ private:
 		return false;
 	}
 
-	void __not_in_flash("handle_cut_col0_press") handle_cut_col0_press(int track)
-	{
-		if (delete_action_held()) {
-			mlr_clear_track(track);
-			if (rec_armed_track == track) {
-				rec_armed_track = -1;
-				if (resume_after_arm_track_ == track) resume_after_arm_track_ = -1;
-			}
-			return;
-		}
-
-		int sw_now = SwitchVal();
-		bool rec_pos = (sw_now == Switch::Up || sw_now == Switch::Down);
-		if (rec_pos && rec_armed_track < 0 && mlr_rec_track < 0 && !mlr_flushing && !rec_limit_latched && rec_start_lockout_samples_ == 0) {
-			mlr_start_record(track);
-			rec_speed_accum = 0;
-			rec_gated = true;
-		} else if (!rec_pos || rec_armed_track >= 0) {
-			if (rec_armed_track == track) {
-				set_armed_track(-1);
-				rec_limit_latched = false;
-			} else {
-				set_armed_track(track);
-				rec_limit_latched = false;
-			}
-		}
-	}
-
 	void __not_in_flash("handle_rec_arm_col_press") handle_rec_arm_col_press(int track, int column)
 	{
 		if (delete_action_held()) {
@@ -2601,7 +2572,6 @@ private:
 	{
 		copy_source_track_ = -1;
 		copy_source_column_ = 0;
-		copy_source_page_ = PAGE_REC;
 		copy_participant_mask_ = 0;
 		copy_target_mask_ = 0;
 		copy_gesture_committed_ = false;
@@ -2618,6 +2588,7 @@ private:
 	void __not_in_flash("process_copy_gesture") process_copy_gesture()
 	{
 		copy_arm_suppress_event_ = false;
+		if (play_page != PAGE_REC) return;
 		if (!(grid.keyDown() || grid.keyUp())) return;
 		int column = grid.lastX();
 		if (!copy_gesture_arm_col(column) || grid.lastY() < 1 || grid.lastY() > MLR_NUM_TRACKS) return;
@@ -2634,7 +2605,6 @@ private:
 				if (!mlr_tracks[track].has_content) return;
 				copy_source_track_ = track;
 				copy_source_column_ = column;
-				copy_source_page_ = play_page;
 				copy_participant_mask_ = bit;
 				copy_target_mask_ = 0;
 				copy_gesture_committed_ = false;
@@ -2670,12 +2640,8 @@ private:
 
 		copy_participant_mask_ &= (uint8_t)~bit;
 		if (copy_participant_mask_ == 0) {
-			if (!copy_gesture_committed_ && !copy_gesture_touched_other_ && track == copy_source_track_) {
-				if (copy_source_page_ == PAGE_REC)
-					handle_rec_arm_col_press(copy_source_track_, copy_source_column_);
-				else
-					handle_cut_col0_press(copy_source_track_);
-			}
+			if (!copy_gesture_committed_ && !copy_gesture_touched_other_ && track == copy_source_track_)
+				handle_rec_arm_col_press(copy_source_track_, copy_source_column_);
 			reset_copy_gesture();
 		}
 	}
