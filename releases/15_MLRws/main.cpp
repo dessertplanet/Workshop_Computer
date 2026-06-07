@@ -2809,7 +2809,7 @@ private:
 		}
 
 		if (!grid.keyDown()) return;
-		if (grid.lastY() < 1 || grid.lastY() > 7) return;
+		if (grid.lastY() < 1 || grid.lastY() > MLR_NUM_TRACKS) return;
 
 		int track  = grid.lastY() - 1;
 		int column = grid.lastX();
