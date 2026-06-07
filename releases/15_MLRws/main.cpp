@@ -67,7 +67,7 @@ extern "C" {
 #define GRIDLESS_REC_HOLD_SAMPLES 96000u  /* 2 seconds at 48 kHz */
 #define RECORD_REARM_DELAY_SAMPLES 24000u /* 0.5 seconds at 48 kHz */
 #define FORCE_8X8_GRID_LAYOUT 0  /* for testing: force compact grid layout regardless of detected width */
-#define CUT_PULSE_TRIG_SAMPLES 960u  /* 20 ms at 48 kHz: PulseOut1 trigger width fired on every cut event (manual or pattern/recall playback) */
+#define CUT_PULSE_TRIG_SAMPLES 960u  /* 20 ms at 48 kHz: PulseOut1 trigger width fired on output-enabled cut events (manual or pattern/recall playback) */
 #define EMPTY_KEYBOARD_LINGER_US 1000000ull  /* 1 second */
 #define RECALL_KEY_GATE_US      100000u
 #define CV_ENV_PEAK            2047  /* CV2 envelope peak (matches CV full positive range) */
@@ -744,8 +744,8 @@ public:
 		/* ---- Cut-event-driven CV / pulse outputs ----
 		 *   CV1     = chromatic note (S&H) + live X-knob offset
 		 *   CV2     = exponential decay envelope, triggered on cut events
-		 *   Pulse1  = 20 ms trigger countdown, fires on each cut event
-		 *   Pulse2  = gate, high while any held CUT-page track-row key
+		 *   Pulse1  = 20 ms trigger countdown, fires on output-enabled cut events
+		 *   Pulse2  = gate, high while any output-enabled CUT-page track row is held
 		 * CV1 / CV2 / Pulse1 all mirror through pattern/recall playback via
 		 * mlr_event_playback_hook. Pulse2 is live-only (grid key hold isn't
 		 * recorded). */
@@ -757,9 +757,8 @@ public:
 		if (run_ui_control) {
 			bool new_gate = false;
 			if (play_page == PAGE_CUT) {
-				/* Empty tracks count for gating too. */
 				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-					if (grid.heldRowMask((uint8_t)(t + 1))) {
+					if (track_outputs_enabled(t) && grid.heldRowMask((uint8_t)(t + 1))) {
 						new_gate = true;
 						break;
 					}
@@ -767,7 +766,7 @@ public:
 			}
 			if (!new_gate) {
 				for (int t = 0; t < MLR_NUM_TRACKS; t++) {
-					if (mlr_gate_mode[t] && mlr_tracks[t].playing) {
+					if (track_outputs_enabled(t) && mlr_gate_mode[t] && mlr_tracks[t].playing) {
 						new_gate = true;
 						break;
 					}
@@ -1078,8 +1077,8 @@ private:
 	int32_t    env_decay_step_q16_ = 0;    /* per-sample subtract, Q16 */
 	uint32_t   cv_attack_samples_ = CV_ATTACK_MIN_SAMPLES;
 	uint32_t   gl_turing_rng_state_ = 0x6D2B79F5u;
-	/* PulseOut2 / LED 5 gate: high while any CUT-page track-row key is held
-	 * (independent of envelope state — useful for VCA gates / mutes). */
+	/* PulseOut2 / LED 5 gate: high while any output-enabled CUT-page track
+	 * row key is held (independent of envelope state — useful for VCA gates / mutes). */
 	bool       gate_high_ = false;
 	uint32_t   delete_reset_hold_samples_ = 0;    /* continuous DELETE hold duration */
 	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
@@ -1193,6 +1192,12 @@ private:
 		if (internal_col >= MLR_GRID_COLS) internal_col = MLR_GRID_COLS - 1;
 		int max_grid_col = cut_cols() - 1;
 		return (internal_col * max_grid_col + ((MLR_GRID_COLS - 1) / 2)) / (MLR_GRID_COLS - 1);
+	}
+
+	bool track_outputs_enabled(int track) const
+	{
+		if (track < 0 || track >= MLR_NUM_TRACKS) return false;
+		return !mlr_tracks[track].has_content || mlr_tracks[track].cv1_pitch_enabled;
 	}
 
 	void grid_frame_led_max(int x, int y, uint8_t level)
@@ -1969,7 +1974,7 @@ public:
 			empty_keyboard_linger_col_[track] = (uint8_t)col;
 		}
 
-		bool cv_outputs_enabled = !mlr_tracks[track].has_content || mlr_tracks[track].cv1_pitch_enabled;
+		bool cv_outputs_enabled = track_outputs_enabled(track);
 		if (cv_outputs_enabled) {
 			/* CV1 sample-and-hold: map the cut grid column directly to
 			 * chromatic semitones, root = C3 (MIDI 48). */
@@ -1981,9 +1986,10 @@ public:
 			trigger_cv2_envelope();
 		}
 
-		/* PulseOut1: 20 ms gate trigger. */
-		cv_pulse1_remaining_ = CUT_PULSE_TRIG_SAMPLES;
-		pulse1_led_latch_ = true;
+		if (cv_outputs_enabled) {
+			cv_pulse1_remaining_ = CUT_PULSE_TRIG_SAMPLES;
+			pulse1_led_latch_ = true;
+		}
 	}
 
 	void __not_in_flash_func(pattern_cut_trigger)(int track, int col, uint8_t source)
