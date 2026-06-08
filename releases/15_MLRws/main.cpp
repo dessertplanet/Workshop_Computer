@@ -82,6 +82,7 @@ extern "C" {
 #define DELETE_RESET_HOLD_SAMPLES 240000u  /* 5 seconds at 48 kHz */
 #define DELETE_RESET_FLASH_PERIOD_SAMPLES 4800u  /* 100 ms half-period */
 #define DELETE_RESET_FLASH_SAMPLES (DELETE_RESET_FLASH_PERIOD_SAMPLES * 6u)  /* three quick flashes */
+#define EXTRA_GUIDE_TOGGLE_ENABLED 0x01u
 
 /* Monitor fade step per sample (Q8). 256/4 = 64 samples ≈ 1.3 ms fade. */
 #define MLR_MON_FADE_STEP 4
@@ -1056,13 +1057,9 @@ private:
 	uint8_t    empty_pattern_key_col_[MLR_NUM_TRACKS] = {};
 	bool       empty_pattern_key_active_[MLR_NUM_TRACKS] = {};
 	uint32_t   empty_pattern_key_until_us_[MLR_NUM_TRACKS] = {};
-	/* Bottom-half rows on a 16-row grid: free-running "empty keyboard"
-	 * overlay. Pressing rows 8..15 fires CV1/CV2/Pulse1 and shows the
-	 * piano-key linger overlay just like an empty top-half track row,
-	 * but without any associated track, audio playback, or pattern
-	 * recording. Indexed by (row - 8). */
-	uint64_t   extra_keyboard_linger_until_us_[MONOME_WS_GRID_MAX_Y - 8] = {};
-	uint8_t    extra_keyboard_linger_col_[MONOME_WS_GRID_MAX_Y - 8] = {};
+	/* Bottom-half rows on a 16-row grid: free-running keyboard overlay,
+	 * without any associated track, audio playback, or pattern recording. */
+	uint8_t    extra_guide_toggle_state_ = EXTRA_GUIDE_TOGGLE_ENABLED;
 	/* Cut-event-driven CV / pulse outputs (fire on manual cuts and on
 	 * pattern/recall playback via mlr_event_playback_hook). */
 	uint32_t   cv_pulse1_remaining_ = 0;   /* PulseOut1 trigger countdown (samples) */
@@ -1230,6 +1227,11 @@ private:
 	bool keyboard_is_c(int internal_col, int row) const
 	{
 		return (keyboard_midi_from_internal(internal_col, row) % 12) == 0;
+	}
+
+	bool extra_keyboard_guide_enabled() const
+	{
+		return (extra_guide_toggle_state_ & EXTRA_GUIDE_TOGGLE_ENABLED) != 0;
 	}
 
 	bool track_outputs_enabled(int track) const
@@ -2297,21 +2299,18 @@ private:
 		if (!grid.ready() || grid.rows() <= 8) return;
 		if (!grid.keyDown()) return;
 		int y = grid.lastY();
+		int col = grid.lastX();
+		if (!small_grid_ && grid.rows() >= 16 && y == 15 &&
+		    ((col == 0 && grid.held(15, 15)) || (col == 15 && grid.held(0, 15)))) {
+			extra_guide_toggle_state_ ^= EXTRA_GUIDE_TOGGLE_ENABLED;
+			return;
+		}
 		if (y < 8 || y >= grid.rows()) return;
 		int cs = cut_col_start();
 		int ce = cut_col_end();
-		int col = grid.lastX();
 		if (col < cs || col > ce) return;
 
 		int internal = cut_grid_to_internal(col);
-		int idx = y - 8;
-		if (idx < 0 || idx >= (int)(sizeof(extra_keyboard_linger_col_) /
-		                            sizeof(extra_keyboard_linger_col_[0])))
-			return;
-
-		extra_keyboard_linger_until_us_[idx] = time_us_64() + EMPTY_KEYBOARD_LINGER_US;
-		extra_keyboard_linger_col_[idx] = (uint8_t)internal;
-
 		int midi = keyboard_midi_from_internal(internal, y);
 		cv_step_base_midi_ = (int8_t)midi;
 		trigger_cv2_envelope();
@@ -3194,22 +3193,16 @@ private:
 		int cs = cut_col_start();
 		int ce = cut_col_end();
 		uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
-		uint64_t now = time_us_64();
+		bool show_guide = extra_keyboard_guide_enabled();
 		for (int row = 8; row < rmax; row++) {
-			int idx = row - 8;
 			uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
-			if (held_in_zone) {
-				/* Re-arm linger every frame while keys are held so the
-				 * octave helper fades out 1 s after the last release. */
-				extra_keyboard_linger_until_us_[idx] = now + EMPTY_KEYBOARD_LINGER_US;
-				extra_keyboard_linger_col_[idx] =
-					(uint8_t)cut_grid_to_internal(__builtin_ctz(held_in_zone));
-			}
-			for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
-				if (keyboard_is_c(internal, row))
-					grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_OCTAVE_LEVEL);
-				else if (keyboard_is_white_key(internal, row))
-					grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_GUIDE_LEVEL);
+			if (show_guide) {
+				for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
+					if (keyboard_is_c(internal, row))
+						grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_OCTAVE_LEVEL);
+					else if (keyboard_is_white_key(internal, row))
+						grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_GUIDE_LEVEL);
+				}
 			}
 			uint16_t m = held_in_zone;
 			while (m) {
