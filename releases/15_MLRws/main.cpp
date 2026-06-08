@@ -1203,6 +1203,35 @@ private:
 		return (internal_col * max_grid_col + ((MLR_GRID_COLS - 1) / 2)) / (MLR_GRID_COLS - 1);
 	}
 
+	static constexpr uint8_t KEY_GUIDE_LEVEL = 2;
+	static constexpr uint8_t KEY_OCTAVE_LEVEL = 6;
+	static constexpr uint8_t KEY_HELD_LEVEL = 12;
+
+	int keyboard_local_row(int row) const
+	{
+		return row & 7;
+	}
+
+	int keyboard_midi_from_internal(int internal_col, int row) const
+	{
+		if (internal_col < 0) internal_col = 0;
+		if (internal_col >= MLR_GRID_COLS) internal_col = MLR_GRID_COLS - 1;
+		int midi = 60 + (internal_col - 8) + 5 * (4 - keyboard_local_row(row));
+		if (midi < 0) midi = 0;
+		if (midi > 127) midi = 127;
+		return midi;
+	}
+
+	bool keyboard_is_white_key(int internal_col, int row) const
+	{
+		return ((0xAB5u >> (keyboard_midi_from_internal(internal_col, row) % 12)) & 1u) != 0;
+	}
+
+	bool keyboard_is_c(int internal_col, int row) const
+	{
+		return (keyboard_midi_from_internal(internal_col, row) % 12) == 0;
+	}
+
 	bool track_outputs_enabled(int track) const
 	{
 		if (track < 0 || track >= MLR_NUM_TRACKS) return false;
@@ -1228,6 +1257,58 @@ private:
 			}
 		}
 		return false;
+	}
+
+	void draw_empty_track_keyboard_overlay()
+	{
+		uint64_t now64 = time_us_64();
+		uint32_t now32 = time_us_32();
+		int cs = cut_col_start();
+		int ce = cut_col_end();
+		uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
+		bool show = false;
+
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			if (mlr_tracks[t].has_content) continue;
+			uint16_t held = (uint16_t)(grid.heldRowMask((uint8_t)(t + 1)) & zone_mask);
+			if (held) {
+				empty_keyboard_linger_until_us_[t] = now64 + EMPTY_KEYBOARD_LINGER_US;
+				empty_keyboard_linger_col_[t] = (uint8_t)cut_grid_to_internal(__builtin_ctz(held));
+			}
+
+			bool pattern_keyboard_active = pattern_playing_empty_track_pitch(t);
+			if (empty_pattern_key_active_[t] && empty_pattern_key_until_us_[t] != 0 &&
+				(int32_t)(now32 - empty_pattern_key_until_us_[t]) >= 0)
+				empty_pattern_key_active_[t] = false;
+			if (empty_pattern_key_active_[t] && empty_pattern_key_until_us_[t] == 0 && !pattern_keyboard_active)
+				empty_pattern_key_active_[t] = false;
+
+			if (now64 < empty_keyboard_linger_until_us_[t])
+				show = true;
+			if (empty_pattern_key_active_[t])
+				show = true;
+		}
+
+		if (!show) return;
+
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			if (mlr_tracks[t].has_content) continue;
+			int row = t + 1;
+			for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
+				if (keyboard_is_c(internal, row))
+					grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_OCTAVE_LEVEL);
+				else if (keyboard_is_white_key(internal, row))
+					grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_GUIDE_LEVEL);
+			}
+			uint16_t held = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
+			while (held) {
+				int c = __builtin_ctz(held);
+				grid_frame_led_max(c, row, KEY_HELD_LEVEL);
+				held &= (uint16_t)(held - 1);
+			}
+			if (empty_pattern_key_active_[t])
+				grid_frame_led_max(cut_internal_to_grid(empty_pattern_key_col_[t]), row, KEY_HELD_LEVEL);
+		}
 	}
 
 	/** Map 8x8 REC speed column (2-6) to speed_shift. */
@@ -1997,11 +2078,9 @@ public:
 
 		bool cv_outputs_enabled = track_outputs_enabled(track);
 		if (cv_outputs_enabled) {
-			/* CV1 sample-and-hold: map the cut grid column directly to
-			 * chromatic semitones, root = C3 (MIDI 48). */
-			int midi = CV_NOTE_BASE_MIDI + col;
-			if (midi < 0)   midi = 0;
-			if (midi > 127) midi = 127;
+			/* CV1 sample-and-hold: row-aware keyboard pitch, with middle C
+			 * at (8,4) and the same map repeated on the bottom half. */
+			int midi = keyboard_midi_from_internal(col, track + 1);
 			cv_step_base_midi_ = (int8_t)midi;
 
 			trigger_cv2_envelope();
@@ -2233,9 +2312,7 @@ private:
 		extra_keyboard_linger_until_us_[idx] = time_us_64() + EMPTY_KEYBOARD_LINGER_US;
 		extra_keyboard_linger_col_[idx] = (uint8_t)internal;
 
-		int midi = CV_NOTE_BASE_MIDI + internal;
-		if (midi < 0)   midi = 0;
-		if (midi > 127) midi = 127;
+		int midi = keyboard_midi_from_internal(internal, y);
 		cv_step_base_midi_ = (int8_t)midi;
 		trigger_cv2_envelope();
 		cv_pulse1_remaining_ = CUT_PULSE_TRIG_SAMPLES;
@@ -3107,10 +3184,8 @@ private:
 	}
 
 	/* Bottom-half "extra" rows on a tall grid (rows 8..grid.rows()-1).
-	 * Mirrors the empty-track keyboard overlay on top-half track rows:
-	 * held keys light at full brightness, and while a row's linger is
-	 * active the white-key positions are shown dim. No-op on grids with
-	 * 8 or fewer rows. */
+	 * A permanent free keyboard layer on 16-row grids. The pitch map repeats
+	 * the top half, so middle C is at both (8,4) and (8,12). */
 	void __not_in_flash("draw_extra_rows") draw_extra_rows()
 	{
 		if (!grid.ready() || grid.rows() <= 8) return;
@@ -3120,31 +3195,26 @@ private:
 		int ce = cut_col_end();
 		uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
 		uint64_t now = time_us_64();
-		static const bool kWhiteKey[12] = {
-			true, false, true, false, true, true,
-			false, true, false, true, false, true
-		};
 		for (int row = 8; row < rmax; row++) {
 			int idx = row - 8;
 			uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
 			if (held_in_zone) {
 				/* Re-arm linger every frame while keys are held so the
-				 * overlay fades out 1 s after the last release. */
+				 * octave helper fades out 1 s after the last release. */
 				extra_keyboard_linger_until_us_[idx] = now + EMPTY_KEYBOARD_LINGER_US;
 				extra_keyboard_linger_col_[idx] =
 					(uint8_t)cut_grid_to_internal(__builtin_ctz(held_in_zone));
 			}
-			bool show = (now < extra_keyboard_linger_until_us_[idx]);
-			if (show) {
-				for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
-					if (kWhiteKey[(internal + 4) % 12])
-						grid_frame_led_max(cut_internal_to_grid(internal), row, 2);
-				}
+			for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
+				if (keyboard_is_c(internal, row))
+					grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_OCTAVE_LEVEL);
+				else if (keyboard_is_white_key(internal, row))
+					grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_GUIDE_LEVEL);
 			}
 			uint16_t m = held_in_zone;
 			while (m) {
 				int c = __builtin_ctz(m);
-				grid_frame_led_max(c, row, 12);
+				grid_frame_led_max(c, row, KEY_HELD_LEVEL);
 				m &= (uint16_t)(m - 1);
 			}
 		}
@@ -3325,6 +3395,7 @@ private:
 			return;
 		}
 		if (phase > MLR_NUM_TRACKS) {
+			draw_empty_track_keyboard_overlay();
 			draw_bottom_vu_row();
 			draw_extra_rows();
 			grid.submitFrame();
@@ -3365,42 +3436,6 @@ private:
 			}
 
 			if (!has) {
-				/* Empty track: no playhead to show, but the row is still
-				 * playable for CV/pulse output. Highlight held cut keys;
-				 * while held, dimly show white-key positions. */
-				int ce = cut_col_end();
-				uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
-				uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
-				if (held_in_zone) {
-					empty_keyboard_linger_until_us_[t] = time_us_64() + EMPTY_KEYBOARD_LINGER_US;
-					empty_keyboard_linger_col_[t] = (uint8_t)cut_grid_to_internal(__builtin_ctz(held_in_zone));
-				}
-				bool pattern_keyboard_active = pattern_playing_empty_track_pitch(t);
-				uint32_t now32 = time_us_32();
-				if (empty_pattern_key_active_[t] && empty_pattern_key_until_us_[t] != 0 &&
-					(int32_t)(now32 - empty_pattern_key_until_us_[t]) >= 0)
-					empty_pattern_key_active_[t] = false;
-				if (empty_pattern_key_active_[t] && empty_pattern_key_until_us_[t] == 0 && !pattern_keyboard_active)
-					empty_pattern_key_active_[t] = false;
-				bool show_empty_keyboard = pattern_keyboard_active ||
-					(time_us_64() < empty_keyboard_linger_until_us_[t]);
-				if (show_empty_keyboard) {
-					for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
-						static const bool kWhiteKey[12] = {
-							true, false, true, false, true, true,
-							false, true, false, true, false, true
-						};
-						if (kWhiteKey[(internal + 4) % 12])
-							grid_frame_led_max(cut_internal_to_grid(internal), row, 2);
-					}
-				}
-				while (held_in_zone) {
-					int c = __builtin_ctz(held_in_zone);
-					grid_frame_led_max(c, row, 12);
-					held_in_zone &= (uint16_t)~(1u << c);
-				}
-				if (empty_pattern_key_active_[t])
-					grid_frame_led_max(cut_internal_to_grid(empty_pattern_key_col_[t]), row, 12);
 				return;
 			}
 

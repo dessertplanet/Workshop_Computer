@@ -22,7 +22,7 @@ In grid mode the interface on the Computer itself is intentionally minimal. Trac
 
 **CV and pulse outputs are driven by output-enabled cut/gate activity** (manual taps on the CUT page, pattern playback that replays cut press/release timing, and recall playback that replays cuts):
 
-- **CV Out 1** — chromatic note (sample-and-hold). The cut column maps directly to semitones. **Knob X** adds a continuous ±24-semitone (~±2 V) offset on top of the held note.
+- **CV Out 1** — chromatic note (sample-and-hold). Output-enabled CUT keys map to pitch chromatically left-to-right, with adjacent rows tuned a perfect fourth apart; on 16-row grids the bottom half repeats the same pitch map as the top half. **Knob X** adds a continuous ±24-semitone (~±2 V) offset on top of the held note.
 - **CV Out 2** — ASR envelope that attacks from its current value to roughly +5 V when an output-enabled CUT key is pressed, sustains while the key/gate is held, and releases back toward the resting −1 V floor when the gate drops. **Knob Y** sets the release time when the gate releases (10 ms at fully left, ~3 s at fully right). Hold the front-panel switch Down with no track armed or recording, then move **Knob Y** to set attack time (instant to ~1 s).
 - **Pulse Out 1** — 20 ms trigger fired by output-enabled CUT-page track-row keys, including taps on empty track rows
 - **Pulse Out 2** — gate. High while any output-enabled CUT-page track-row key is held, including held keys on empty track rows, or while an output-enabled gate-mode track is playing
@@ -112,7 +112,7 @@ The CUT page is the performance heart of MLR. Each track row is a scrub bar that
   cuts to that position.
 - **Delete + any cut key on a row**: if the track is playing, stop it (the loop, if any, is left in place so a second Delete + key clears it). If the track is already stopped and has a loop, that press clears the loop instead.
 
-Each cut event can update CV1 pitch, gate the CV2 ASR envelope, and fire a 20 ms pulse on Pulse Out 1 when CV output is enabled for that row. Holding an output-enabled cut key on a track row keeps Pulse Out 2 high as a gate and sustains CV2 until release. Empty track rows are always output-enabled: CUT-page grid interactions on them update CV1, gate CV2, trigger Pulse Out 1, and hold Pulse Out 2 high while a key is held. They also act like chromatic CV keyboards; while a key is held, and briefly after release, the row shows a dim white-key guide with C aligned to column 8 on a 16-wide grid.
+Each cut event can update CV1 pitch, gate the CV2 ASR envelope, and fire a 20 ms pulse on Pulse Out 1 when CV output is enabled for that row. Holding an output-enabled cut key on a track row keeps Pulse Out 2 high as a gate and sustains CV2 until release. Empty track rows are always output-enabled: CUT-page grid interactions on them update CV1, gate CV2, trigger Pulse Out 1, and hold Pulse Out 2 high while a key is held. They also act like chromatic CV keyboards. Pitch runs left-to-right by semitone, with adjacent rows a perfect fourth apart, and middle C at `(8,4)` in the top section and `(8,12)` in the repeated bottom section of a 16-row grid. Empty rows show a dim white-key guide while active or lingering, with C notes lit a little brighter.
 
 
 ![CUT page](images/cut.jpg)
