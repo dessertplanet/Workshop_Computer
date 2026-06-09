@@ -137,7 +137,7 @@ More details in [Recording](#recording)
 
 ### Mixer
 
-Five discrete level slots. The left side is the loudest (about +3 dB), the right side is silent, and the second column from the left (the default, shown below) is unity gain.
+Five discrete level slots. From left to right they are about +3 dB, unity (the default), -6 dB, -12 dB, and silent.
 
 While a track is **actively recording**, the mixer area turns into a record-progress
 bar instead of a mixer, indicating how much recording time remains at the current recording speed.

@@ -1416,8 +1416,8 @@ private:
 		static const uint16_t kSlotFrac[MLR_NUM_VOL_SLOTS] = {
 			362,  /* slot 0: +3 dB */
 			256,  /* slot 1: unity */
-			181,  /* slot 2: -3 dB */
-			128,  /* slot 3: -6 dB */
+			128,  /* slot 2: -6 dB */
+			64,   /* slot 3: -12 dB */
 			0,    /* slot 4: silent */
 		};
 

@@ -419,8 +419,8 @@ static inline uint16_t volume_slot_to_frac(uint8_t slot)
 	static uint16_t kVolFrac[MLR_NUM_VOL_SLOTS] = {
 		362,  /* 0: +3 dB  (boost) — grid col 2  */
 		256,  /* 1: unity  (0 dB)  — grid col 3  */
-		181,  /* 2:        (-3 dB) — grid col 4  */
-		128,  /* 3:        (-6 dB) — grid col 5  */
+		128,  /* 2:        (-6 dB) — grid col 4  */
+		64,   /* 3:       (-12 dB) — grid col 5  */
 		0,    /* 4: silent         — grid col 6  */
 	};
 	if (slot >= MLR_NUM_VOL_SLOTS) slot = MLR_NUM_VOL_SLOTS - 1;
