@@ -1214,14 +1214,15 @@ private:
 	{
 		if (internal_col < 0) internal_col = 0;
 		if (internal_col >= MLR_GRID_COLS) internal_col = MLR_GRID_COLS - 1;
-		return 60 + (internal_col - 8) + 5 * (4 - keyboard_local_row(row));
+		int local_row = keyboard_local_row(row);
+		return 60 + (internal_col - 8) + 5 * (4 - local_row) + ((local_row + 5) >> 3) - 3;
 	}
 
 	uint8_t keyboard_guide_level(int internal_col, int row) const
 	{
 		int pitch_class = keyboard_midi_from_internal(internal_col, row) % 12;
-		if (pitch_class == 0) return KEY_OCTAVE_LEVEL;
-		return ((0xAB5u >> pitch_class) & 1u) ? KEY_GUIDE_LEVEL : 0;
+		if (pitch_class == 4) return KEY_OCTAVE_LEVEL;
+		return ((0xB5Au >> pitch_class) & 1u) ? KEY_GUIDE_LEVEL : 0;
 	}
 
 	bool extra_keyboard_guide_enabled() const
@@ -3197,7 +3198,7 @@ private:
 		bool show_guide = extra_keyboard_guide_enabled();
 		for (int row = 8; row < rmax; row++) {
 			uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
-			if (show_guide) {
+			if (show_guide && row > 8 && row < 15) {
 				for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
 					uint8_t level = keyboard_guide_level(internal, row);
 					if (level)
