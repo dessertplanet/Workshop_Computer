@@ -2306,7 +2306,7 @@ private:
 			extra_keyboard_state_ ^= EXTRA_GUIDE_ENABLED;
 			return;
 		}
-		if (y < 8 || y >= grid.rows()) return;
+		if (y <= 8 || y >= grid.rows() || y >= 15) return;
 		int cs = cut_col_start();
 		int ce = cut_col_end();
 		if (col < cs || col > ce) return;
@@ -2329,7 +2329,7 @@ private:
 		int cs = cut_col_start();
 		int ce = cut_col_end();
 		uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
-		for (int row = 8; row < rmax; row++) {
+		for (int row = 9; row < rmax && row < 15; row++) {
 			if (grid.heldRowMask((uint8_t)row) & zone_mask)
 				return true;
 		}
@@ -3196,9 +3196,9 @@ private:
 		int ce = cut_col_end();
 		uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
 		bool show_guide = extra_keyboard_guide_enabled();
-		for (int row = 8; row < rmax; row++) {
+		for (int row = 9; row < rmax && row < 15; row++) {
 			uint16_t held_in_zone = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
-			if (show_guide && row > 8 && row < 15) {
+			if (show_guide) {
 				for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
 					uint8_t level = keyboard_guide_level(internal, row);
 					if (level)
