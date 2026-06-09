@@ -66,6 +66,8 @@ free-running loop.
 
 CUT-page key releases are recorded too, so output-enabled pattern playback
 recreates both the Pulse Out 2 gate length and the CV2 ASR envelope sustain.
+On 16-row grids, the bottom-half keyboard layer is recorded into patterns as
+CV/pulse gestures as well, without affecting audio track playback.
 
 You interact with patterns using the group of 4 dim LEDs to the right of page selection in the top row. A dim pattern slot indicates an empty one. press an empty pattern slot to arm the looper. Your next grid gesture starts the recording and recording continues until you press the recording pattern button again, at which point loop playback starts immediately.
 
@@ -112,7 +114,7 @@ The CUT page is the performance heart of MLR. Each track row is a scrub bar that
   cuts to that position.
 - **Delete + any cut key on a row**: if the track is playing, stop it (the loop, if any, is left in place so a second Delete + key clears it). If the track is already stopped and has a loop, that press clears the loop instead.
 
-Each cut event can update CV1 pitch, gate the CV2 ASR envelope, and fire a 20 ms pulse on Pulse Out 1 when CV output is enabled for that row. Holding an output-enabled cut key on a track row keeps Pulse Out 2 high as a gate and sustains CV2 until release. Empty track rows are always output-enabled: CUT-page grid interactions on them update CV1, gate CV2, trigger Pulse Out 1, and hold Pulse Out 2 high while a key is held. They also act like chromatic CV keyboards. Pitch runs left-to-right by semitone, with adjacent rows a perfect fourth apart, and middle C at `(8,4)` in the top section and `(8,12)` in the repeated bottom section of a 16-row grid. Empty top-half rows show a dim white-key guide only while that row is active or lingering. On 16-row grids, the always-visible lower-half guide includes brighter C notes; touching `(0,15)` and `(15,15)` together toggles that lower-half guide on or off.
+Each cut event can update CV1 pitch, gate the CV2 ASR envelope, and fire a 20 ms pulse on Pulse Out 1 when CV output is enabled for that row. Holding an output-enabled cut key on a track row keeps Pulse Out 2 high as a gate and sustains CV2 until release. Empty track rows are always output-enabled: CUT-page grid interactions on them update CV1, gate CV2, trigger Pulse Out 1, and hold Pulse Out 2 high while a key is held. They also act like chromatic CV keyboards. Pitch runs left-to-right by semitone, with adjacent rows a perfect fourth apart, and middle C at `(8,4)` in the top section and `(8,12)` in the repeated bottom section of a 16-row grid. When any empty top-half row is active or lingering, every empty top-half row shows a dim white-key guide with brighter C notes; populated rows never show the keyboard guide. On 16-row grids, touching `(0,15)` and `(15,15)` together toggles the always-visible lower-half guide on or off.
 
 
 ![CUT page](images/cut.jpg)
