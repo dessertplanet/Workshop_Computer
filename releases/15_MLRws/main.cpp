@@ -1268,7 +1268,6 @@ private:
 		int cs = cut_col_start();
 		int ce = cut_col_end();
 		uint16_t zone_mask = (uint16_t)(((1u << (ce - cs + 1)) - 1u) << cs);
-		bool show = false;
 
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 			if (mlr_tracks[t].has_content) continue;
@@ -1284,23 +1283,17 @@ private:
 				empty_pattern_key_active_[t] = false;
 			if (empty_pattern_key_active_[t] && empty_pattern_key_until_us_[t] == 0 && !pattern_keyboard_active)
 				empty_pattern_key_active_[t] = false;
-
-			if (now64 < empty_keyboard_linger_until_us_[t])
-				show = true;
-			if (empty_pattern_key_active_[t])
-				show = true;
 		}
-
-		if (!show) return;
 
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 			if (mlr_tracks[t].has_content) continue;
 			int row = t + 1;
-			for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
-				if (keyboard_is_c(internal, row))
-					grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_OCTAVE_LEVEL);
-				else if (keyboard_is_white_key(internal, row))
-					grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_GUIDE_LEVEL);
+			bool show = (now64 < empty_keyboard_linger_until_us_[t]) || empty_pattern_key_active_[t];
+			if (show) {
+				for (int internal = 0; internal < MLR_GRID_COLS; internal++) {
+					if (keyboard_is_white_key(internal, row))
+						grid_frame_led_max(cut_internal_to_grid(internal), row, KEY_GUIDE_LEVEL);
+				}
 			}
 			uint16_t held = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
 			while (held) {
