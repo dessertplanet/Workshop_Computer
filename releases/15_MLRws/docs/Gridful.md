@@ -68,6 +68,8 @@ CUT-page key releases are recorded too, so output-enabled pattern playback
 recreates both the Pulse Out 2 gate length and the CV2 ASR envelope sustain.
 On 16-row grids, the bottom-half keyboard layer is recorded into patterns as
 CV/pulse gestures as well, without affecting audio track playback.
+Overlapping keys are treated monophonically per row/layer: a newer press
+replaces the previous held key without dropping the gate.
 
 You interact with patterns using the group of 4 dim LEDs to the right of page selection in the top row. A dim pattern slot indicates an empty one. press an empty pattern slot to arm the looper. Your next grid gesture starts the recording and recording continues until you press the recording pattern button again, at which point loop playback starts immediately.
 

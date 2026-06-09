@@ -84,6 +84,7 @@ extern "C" {
 #define DELETE_RESET_FLASH_SAMPLES (DELETE_RESET_FLASH_PERIOD_SAMPLES * 6u)  /* three quick flashes */
 #define EXTRA_GUIDE_ENABLED 0x80u
 #define EXTRA_PATTERN_KEY_MASK 0x7Fu
+#define EXTRA_PATTERN_KEY_NONE 0x70u
 
 /* Monitor fade step per sample (Q8). 256/4 = 64 samples ≈ 1.3 ms fade. */
 #define MLR_MON_FADE_STEP 4
@@ -1060,7 +1061,7 @@ private:
 	uint32_t   empty_pattern_key_until_us_[MLR_NUM_TRACKS] = {};
 	/* Bottom-half rows on a 16-row grid: free-running keyboard overlay,
 	 * without any associated track, audio playback, or pattern recording. */
-	uint8_t    extra_keyboard_state_ = EXTRA_GUIDE_ENABLED;
+	uint8_t    extra_keyboard_state_ = (EXTRA_GUIDE_ENABLED | EXTRA_PATTERN_KEY_NONE);
 	/* Cut-event-driven CV / pulse outputs (fire on manual cuts and on
 	 * pattern/recall playback via mlr_event_playback_hook). */
 	uint32_t   cv_pulse1_remaining_ = 0;   /* PulseOut1 trigger countdown (samples) */
@@ -1269,10 +1270,8 @@ private:
 		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 			if (mlr_tracks[t].has_content) continue;
 			uint16_t held = (uint16_t)(grid.heldRowMask((uint8_t)(t + 1)) & zone_mask);
-			if (held) {
+			if (held)
 				empty_keyboard_linger_until_us_[t] = now64 + EMPTY_KEYBOARD_LINGER_US;
-				empty_keyboard_linger_col_[t] = (uint8_t)cut_grid_to_internal(__builtin_ctz(held));
-			}
 
 			bool pattern_keyboard_active = pattern_playing_empty_track_pitch(t);
 			if (empty_pattern_key_active_[t] && empty_pattern_key_until_us_[t] != 0 &&
@@ -1295,12 +1294,9 @@ private:
 						grid_frame_led_max(cut_internal_to_grid(internal), row, level);
 				}
 			}
-			uint16_t held = (uint16_t)(grid.heldRowMask((uint8_t)row) & zone_mask);
-			while (held) {
-				int c = __builtin_ctz(held);
-				grid_frame_led_max(c, row, KEY_HELD_LEVEL);
-				held &= (uint16_t)(held - 1);
-			}
+			int held_col = cut_internal_to_grid(empty_keyboard_linger_col_[t] & 0x0F);
+			if (grid.held((uint8_t)held_col, (uint8_t)row))
+				grid_frame_led_max(held_col, row, KEY_HELD_LEVEL);
 			if (empty_pattern_key_active_[t])
 				grid_frame_led_max(cut_internal_to_grid(empty_pattern_key_col_[t]), row, KEY_HELD_LEVEL);
 		}
@@ -2068,7 +2064,7 @@ public:
 		 * as a playable mini-keyboard even before audio is recorded. */
 		if (!mlr_tracks[track].has_content) {
 			empty_keyboard_linger_until_us_[track] = time_us_64() + EMPTY_KEYBOARD_LINGER_US;
-			empty_keyboard_linger_col_[track] = (uint8_t)col;
+			empty_keyboard_linger_col_[track] = (uint8_t)((empty_keyboard_linger_col_[track] & 0x80u) | (uint8_t)col);
 		}
 
 		bool cv_outputs_enabled = track_outputs_enabled(track);
@@ -2312,11 +2308,19 @@ private:
 		if (col < cs || col > ce) return;
 
 		int internal = cut_grid_to_internal(col);
+		uint8_t key = (uint8_t)(((y - 8) << 4) | (internal & 0x0F));
 		if (grid.keyUp()) {
-			dispatch_event(MLR_EVT_CUT_RELEASE, (uint8_t)y, 0, 0);
+			if ((extra_keyboard_state_ & EXTRA_PATTERN_KEY_MASK) == key) {
+				extra_keyboard_state_ = (uint8_t)((extra_keyboard_state_ & EXTRA_GUIDE_ENABLED) | EXTRA_PATTERN_KEY_NONE);
+				dispatch_event(MLR_EVT_CUT_RELEASE, (uint8_t)y, 0, 0);
+			}
 			return;
 		}
 
+		uint8_t prev = (uint8_t)(extra_keyboard_state_ & EXTRA_PATTERN_KEY_MASK);
+		if (prev != EXTRA_PATTERN_KEY_NONE)
+			dispatch_event(MLR_EVT_CUT_RELEASE, (uint8_t)((prev >> 4) + 8), 0, 0);
+		extra_keyboard_state_ = (uint8_t)((extra_keyboard_state_ & EXTRA_GUIDE_ENABLED) | key);
 		dispatch_event(MLR_EVT_CUT, (uint8_t)y, (int8_t)internal, 0);
 	}
 
@@ -3006,10 +3010,16 @@ private:
 		if (grid.keyUp() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
 			int track = grid.lastY() - 1;
 			int column = grid.lastX();
-			if (column >= cs && column <= ce && track_outputs_enabled(track))
-				dispatch_event(MLR_EVT_CUT_RELEASE, (uint8_t)track, 0, 0);
-			if (column >= cs && column <= ce && !mlr_tracks[track].has_content)
-				dispatch_event(MLR_EVT_STOP, (uint8_t)track, 0, 0);
+			if (column >= cs && column <= ce && track_outputs_enabled(track)) {
+				int cut_col = cut_grid_to_internal(column);
+				if ((empty_keyboard_linger_col_[track] & 0x80u) &&
+				    (empty_keyboard_linger_col_[track] & 0x0Fu) == (uint8_t)cut_col) {
+					empty_keyboard_linger_col_[track] = (uint8_t)cut_col;
+					dispatch_event(MLR_EVT_CUT_RELEASE, (uint8_t)track, 0, 0);
+					if (!mlr_tracks[track].has_content)
+						dispatch_event(MLR_EVT_STOP, (uint8_t)track, 0, 0);
+				}
+			}
 		}
 
 		/* Gate-mode CUT playback remains momentary: cuts start on key-down,
@@ -3059,6 +3069,11 @@ private:
 
 			/* Remap grid col to internal col (0–15) */
 			int cut_col = cut_grid_to_internal(column);
+			if (track_outputs_enabled(track)) {
+				if (empty_keyboard_linger_col_[track] & 0x80u)
+					dispatch_event(MLR_EVT_CUT_RELEASE, (uint8_t)track, 0, 0);
+				empty_keyboard_linger_col_[track] = (uint8_t)(0x80u | (uint8_t)cut_col);
+			}
 
 			if (rec_armed_track == track) {
 				rec_armed_track = -1;
@@ -3205,15 +3220,12 @@ private:
 						grid_frame_led_max(cut_internal_to_grid(internal), row, level);
 				}
 			}
-			uint16_t m = held_in_zone;
-			while (m) {
-				int c = __builtin_ctz(m);
-				grid_frame_led_max(c, row, KEY_HELD_LEVEL);
-				m &= (uint16_t)(m - 1);
-			}
 			uint8_t pat_key = (uint8_t)(extra_keyboard_state_ & EXTRA_PATTERN_KEY_MASK);
-			if ((replay_gate_mask_ & (1u << 6)) && (int)(pat_key >> 4) == row - 8)
-				grid_frame_led_max(cut_internal_to_grid(pat_key & 0x0F), row, KEY_HELD_LEVEL);
+			if ((int)(pat_key >> 4) == row - 8) {
+				int col = cut_internal_to_grid(pat_key & 0x0F);
+				if ((replay_gate_mask_ & (1u << 6)) || grid.held((uint8_t)col, (uint8_t)row))
+					grid_frame_led_max(col, row, KEY_HELD_LEVEL);
+			}
 		}
 	}
 
