@@ -26,12 +26,12 @@ Samples are stored in flash as 48 kHz mono signed 8-bit PCM. The loader can read
 
 | Control | Function |
 | --- | --- |
-| Main knob | Position knob for jumps; sample selector when using Toggle Up |
+| Main knob | Timestretch amount |
 | X knob | Tempo when not externally clocked |
-| Y knob | Timestretch amount |
-| Toggle Down | Jump playback to the Main knob position; fire Pulse Out 1 |
-| Toggle Up | Select sample from the Main knob position; fire Pulse Out 2 |
-| CV In 1 | Adds bipolar modulation to Y timestretch when plugged in |
+| Y knob | Position knob for jumps; sample selector when using Toggle Up |
+| Toggle Down | Jump playback to the Y knob position; fire Pulse Out 1 |
+| Toggle Up | Select sample from the Y knob position; fire Pulse Out 2 |
+| CV In 1 | Adds bipolar modulation to Main knob timestretch when plugged in |
 | CV In 2 | Position source for Pulse In 2 jumps |
 | Pulse In 1 | External clock / BPM input |
 | Pulse In 2 | Jump trigger: jumps to CV In 2 position, or start if CV In 2 is unplugged |
