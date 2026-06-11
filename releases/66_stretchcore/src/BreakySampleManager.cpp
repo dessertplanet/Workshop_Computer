@@ -93,7 +93,8 @@ bool validate_header(const BreakyBankHeader& header, uint32_t total_len) {
       header.sample_rate != BREAKY_BANK_SAMPLE_RATE ||
       header.sample_count > BREAKY_BANK_MAX_SAMPLES ||
       header.audio_bytes != audio_bytes ||
-      header.audio_bytes > BREAKY_AUDIO_CAPACITY_BYTES) {
+      header.audio_bytes > breaky_audio_capacity_bytes() ||
+      header.capacity_bytes > breaky_audio_capacity_bytes()) {
     return false;
   }
 
@@ -109,37 +110,17 @@ bool validate_header(const BreakyBankHeader& header, uint32_t total_len) {
 }
 
 void handle_info() {
-  char info[2048];
+  char info[256];
   uint32_t used = 0;
   int n = snprintf(info + used, sizeof(info) - used,
-                   "STRETCHCORE1 FW 1.0 RESERVE %lu CAPACITY %lu USED %lu RATE %lu COUNT %lu\n",
-                   static_cast<unsigned long>(BREAKY_AUDIO_FLASH_OFFSET),
-                   static_cast<unsigned long>(BREAKY_AUDIO_CAPACITY_BYTES),
+                   "STRETCHCORE1 FW 2.0 F %lu R %lu A %lu C %lu U %lu SR %lu N %lu\nEND\n",
+                   static_cast<unsigned long>(breaky_flash_total_bytes()),
+                   static_cast<unsigned long>(BREAKY_FIRMWARE_RESERVE),
+                   static_cast<unsigned long>(breaky_audio_flash_offset()),
+                   static_cast<unsigned long>(breaky_audio_capacity_bytes()),
                    static_cast<unsigned long>(breaky_audio_audio_bytes()),
                    static_cast<unsigned long>(BREAKY_BANK_SAMPLE_RATE),
                    static_cast<unsigned long>(breaky_audio_sample_count()));
-  if (n < 0 || static_cast<uint32_t>(n) >= sizeof(info) - used) {
-    return;
-  }
-  used += static_cast<uint32_t>(n);
-
-  for (uint32_t i = 0; i < breaky_audio_sample_count(); ++i) {
-    const BreakyAudioSample& sample = breaky_audio_sample(i);
-    n = snprintf(info + used, sizeof(info) - used,
-                 "S%lu %lu %lu %u %u %s\n",
-                 static_cast<unsigned long>(i),
-                 static_cast<unsigned long>(sample.offset),
-                 static_cast<unsigned long>(sample.frame_count),
-                 static_cast<unsigned>(sample.source_bpm),
-                 static_cast<unsigned>(sample.peak),
-                 sample.name);
-    if (n < 0 || static_cast<uint32_t>(n) >= sizeof(info) - used) {
-      return;
-    }
-    used += static_cast<uint32_t>(n);
-  }
-
-  n = snprintf(info + used, sizeof(info) - used, "END\n");
   if (n < 0 || static_cast<uint32_t>(n) >= sizeof(info) - used) {
     return;
   }
@@ -210,7 +191,7 @@ void handle_write() {
   memcpy(&total_len, len_buf, sizeof(total_len));
 
   if (total_len < BREAKY_BANK_HEADER_SIZE ||
-      total_len > BREAKY_BANK_HEADER_SIZE + BREAKY_AUDIO_CAPACITY_BYTES) {
+      total_len > BREAKY_BANK_HEADER_SIZE + breaky_audio_capacity_bytes()) {
     write_str("ERR\n");
     flush_serial();
     drain_rejected_write(total_len);

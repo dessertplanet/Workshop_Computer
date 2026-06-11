@@ -20,7 +20,7 @@ Get UF2 + instructions + sample manager at https://infinitedigits.co/stretchcore
 
 Audio is loaded from the web app in `web/` over Web Serial (public instance at [infinitedigits.co/stretchcore/](https://infinitedigits.co/stretchcore/)). The firmware only needs to be flashed once with loader support; after that, sample banks can be replaced from the browser without reflashing firmware.
 
-Samples are stored in flash as 48 kHz mono signed 8-bit PCM. The loader can read the device bank back, show capacity, preview samples, crop waveforms, and upload the full bank.
+Samples are stored in flash as 48 kHz mono signed 8-bit PCM. The loader can read the device bank back, detect device flash capacity, show transfer progress with ETA, preview samples, crop waveforms, and upload banks with up to 64 samples.
 
 ## Controls
 

@@ -36,6 +36,9 @@ target_link_options(stretchcore PRIVATE
 target_compile_definitions(stretchcore PRIVATE
     PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64
     BREAKY_FIRMWARE_RESERVE=163840u
+    USBD_PID=0x4011
+    USBD_MANUFACTURER="infinitedigits"
+    USBD_PRODUCT="stretchcore"
 )
 
 target_link_libraries(stretchcore
