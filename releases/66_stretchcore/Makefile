@@ -15,6 +15,9 @@ NODE_BIN := $(dir $(NPM))
 build: $(PICO_SDK_STAMP) $(BUILD_DIR)/Makefile
 	cmake --build $(BUILD_DIR) --parallel $(NPROCS)
 	test -f $(BUILD_DIR)/$(PROJECT).uf2
+	mkdir -p UF2 web/public
+	cp $(BUILD_DIR)/$(PROJECT).uf2 UF2/$(PROJECT).uf2
+	cp $(BUILD_DIR)/$(PROJECT).uf2 web/public/$(PROJECT).uf2
 
 upload: build
 	./scripts/upload_uf2.sh "$(BUILD_DIR)/$(PROJECT).uf2" "$(PORT)"

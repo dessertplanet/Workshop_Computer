@@ -1,6 +1,8 @@
 export interface DeviceInfo {
   firmware: string;
+  flashBytes: number;
   reserveBytes: number;
+  audioOffset: number;
   capacityBytes: number;
   usedBytes: number;
   sampleRate: number;
@@ -10,11 +12,16 @@ export interface DeviceInfo {
 
 const READ_CHUNK_SIZE = 1024;
 const READ_CHUNK_ACK = 0x41;
-const METADATA_TIMEOUT_MS = 20000;
-const METADATA_GRACE_MS = 5000;
+const TRANSFER_ABORT = 0x51;
+const STRETCHCORE_USB_VENDOR_ID = 0x2e8a;
+const STRETCHCORE_USB_PRODUCT_ID = 0x4011;
+const SYNC_RESPONSE_TIMEOUT_MS = 5000;
+const METADATA_TIMEOUT_MS = 10000;
+const METADATA_GRACE_MS = 2000;
 const COMMAND_TIMEOUT_MS = 8000;
 const READ_TIMEOUT_MS = 15000;
-const LINE_TIMEOUT_MS = 5000;
+const LINE_TIMEOUT_MS = 15000;
+const READ_DONE_TIMEOUT_MS = 30000;
 const WRITE_READY_TIMEOUT_MS = 5000;
 const WRITE_DONE_TIMEOUT_MS = 60000;
 const ERASE_TIMEOUT_MS = 10000;
@@ -27,6 +34,7 @@ export class StretchcoreSerial {
   private waiters: Array<() => void> = [];
   private closing = false;
   private logger: ((message: string) => void) | null = null;
+  private suppressRxLog = false;
 
   setLogger(logger: ((message: string) => void) | null): void {
     this.logger = logger;
@@ -41,17 +49,18 @@ export class StretchcoreSerial {
       throw new Error('Web Serial is not available in this browser');
     }
     this.port = await navigator.serial.requestPort({
-      filters: [{ usbVendorId: 0x2e8a, usbProductId: 0x000a }],
+      filters: [{ usbVendorId: STRETCHCORE_USB_VENDOR_ID, usbProductId: STRETCHCORE_USB_PRODUCT_ID }],
     });
     const info = this.port.getInfo?.();
     this.log(`selected VID=${hex(info?.usbVendorId)} PID=${hex(info?.usbProductId)}`);
     await this.port.open({ baudRate: 115200, bufferSize: 4096 });
     this.log('port opened');
-    await delay(350);
     if (!this.port.readable || !this.port.writable) throw new Error('Serial port did not open');
     this.reader = this.port.readable.getReader();
     this.writer = this.port.writable.getWriter();
     this.readLoop(this.reader);
+    await this.port.setSignals?.({ dataTerminalReady: false, requestToSend: false });
+    await delay(50);
     await this.port.setSignals?.({ dataTerminalReady: true, requestToSend: true });
     this.log('DTR/RTS asserted');
     await delay(250);
@@ -67,6 +76,9 @@ export class StretchcoreSerial {
     this.port = null;
     this.readBuffer = new Uint8Array(0);
     this.notify();
+    try {
+      await writer?.write(new Uint8Array([TRANSFER_ABORT]));
+    } catch (_) {}
     try {
       await reader?.cancel();
     } catch (_) {}
@@ -87,8 +99,10 @@ export class StretchcoreSerial {
     for (let attempt = 0; attempt < 4; attempt++) {
       this.readBuffer = new Uint8Array(0);
       this.log(`sync attempt ${attempt + 1}: write X`);
+      await this.write(new Uint8Array([TRANSFER_ABORT]));
+      await delay(20);
       await this.writeString('X');
-      const deadline = Date.now() + 2000;
+      const deadline = Date.now() + SYNC_RESPONSE_TIMEOUT_MS;
       while (Date.now() < deadline) {
         const index = findSequence(this.readBuffer, marker);
         if (index >= 0) {
@@ -101,6 +115,14 @@ export class StretchcoreSerial {
         try {
           await this.waitForData(Math.max(1, deadline - Date.now()));
         } catch (_) {
+          const lateIndex = findSequence(this.readBuffer, marker);
+          if (lateIndex >= 0) {
+            this.readBuffer = this.readBuffer.slice(lateIndex + marker.length);
+            await delay(30);
+            this.readBuffer = new Uint8Array(0);
+            this.log(`sync attempt ${attempt + 1}: got SYNC`);
+            return;
+          }
           break;
         }
       }
@@ -112,11 +134,7 @@ export class StretchcoreSerial {
   async info(skipSync = false): Promise<DeviceInfo> {
     if (!skipSync) await this.sync();
     await this.writeString('I');
-    const lenBytes = await this.waitForBytes(4, METADATA_TIMEOUT_MS, METADATA_GRACE_MS);
-    const len = new DataView(lenBytes.buffer, lenBytes.byteOffset, 4).getUint32(0, true);
-    if (len === 0 || len > 4096) throw new Error(`Invalid metadata length ${len}`);
-    const payload = await this.waitForBytes(len, METADATA_TIMEOUT_MS, METADATA_GRACE_MS);
-    return parseInfo(new TextDecoder().decode(payload));
+    return this.readInfoPayload();
   }
 
   async readBank(progress?: (ratio: number) => void): Promise<Uint8Array | null> {
@@ -128,20 +146,26 @@ export class StretchcoreSerial {
     const data = new Uint8Array(totalLen);
     let received = 0;
     let nextAck = Math.min(READ_CHUNK_SIZE, totalLen);
-    while (received < totalLen) {
-      if (this.readBuffer.length === 0) await this.waitForData(READ_TIMEOUT_MS);
-      const chunk = Math.min(this.readBuffer.length, totalLen - received);
-      data.set(this.readBuffer.slice(0, chunk), received);
-      this.readBuffer = this.readBuffer.slice(chunk);
-      received += chunk;
-      while (received >= nextAck) {
-        await this.write(new Uint8Array([READ_CHUNK_ACK]));
-        if (nextAck >= totalLen) break;
-        nextAck = Math.min(nextAck + READ_CHUNK_SIZE, totalLen);
+    this.suppressRxLog = true;
+    try {
+      while (received < totalLen) {
+        if (this.readBuffer.length === 0) await this.waitForData(READ_TIMEOUT_MS);
+        const chunk = Math.min(this.readBuffer.length, totalLen - received);
+        data.set(this.readBuffer.slice(0, chunk), received);
+        this.readBuffer = this.readBuffer.slice(chunk);
+        received += chunk;
+        while (received >= nextAck) {
+          await this.write(new Uint8Array([READ_CHUNK_ACK]));
+          if (nextAck >= totalLen) break;
+          nextAck = Math.min(nextAck + READ_CHUNK_SIZE, totalLen);
+        }
+        progress?.(received / totalLen);
       }
-      progress?.(received / totalLen);
+    } finally {
+      this.suppressRxLog = false;
     }
-    const done = await this.waitForLine(LINE_TIMEOUT_MS);
+    progress?.(1);
+    const done = await this.waitForLine(READ_DONE_TIMEOUT_MS);
     if (done !== 'DONE') throw new Error(`Unexpected read terminator: ${done}`);
     return data;
   }
@@ -176,8 +200,8 @@ export class StretchcoreSerial {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-      if (!value) continue;
-        this.log(`rx ${value.length} bytes: ${previewBytes(value)}`);
+        if (!value) continue;
+        if (!this.suppressRxLog) this.log(`rx ${value.length} bytes: ${previewBytes(value)}`);
         const next = new Uint8Array(this.readBuffer.length + value.length);
         next.set(this.readBuffer);
         next.set(value, this.readBuffer.length);
@@ -206,6 +230,23 @@ export class StretchcoreSerial {
   }
 
   private async waitForData(timeoutMs: number): Promise<void> {
+    if (this.readBuffer.length > 0) return;
+    await new Promise<void>((resolve, reject) => {
+      const waiter = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = window.setTimeout(() => {
+        this.waiters = this.waiters.filter((entry) => entry !== waiter);
+        this.log(`waitForData timeout after ${timeoutMs} ms`);
+        reject(new Error('Timed out waiting for serial data'));
+      }, timeoutMs);
+      this.waiters.push(waiter);
+    });
+  }
+
+  private async waitForNewData(previousLength: number, timeoutMs: number): Promise<void> {
+    if (this.readBuffer.length > previousLength) return;
     await new Promise<void>((resolve, reject) => {
       const waiter = () => {
         clearTimeout(timer);
@@ -221,8 +262,8 @@ export class StretchcoreSerial {
   }
 
   private async waitForBytes(length: number, timeoutMs: number, graceMs = 0): Promise<Uint8Array> {
-    const deadline = Date.now() + timeoutMs;
-    const finalDeadline = deadline + graceMs;
+    let deadline = Date.now() + timeoutMs;
+    let finalDeadline = deadline + graceMs;
     let inGrace = false;
     while (this.readBuffer.length < length) {
       const now = Date.now();
@@ -232,12 +273,18 @@ export class StretchcoreSerial {
         this.log(`serial byte wait entered ${graceMs} ms grace window`);
       }
       const waitUntil = now < deadline ? deadline : finalDeadline;
+      const previousLength = this.readBuffer.length;
       try {
-        await this.waitForData(Math.max(1, waitUntil - now));
+        await this.waitForNewData(previousLength, Math.max(1, waitUntil - now));
       } catch (_) {
         if (this.readBuffer.length >= length) break;
         if (Date.now() < finalDeadline) continue;
         throw new Error('Timed out waiting for serial bytes');
+      }
+      if (this.readBuffer.length > previousLength) {
+        deadline = Date.now() + timeoutMs;
+        finalDeadline = deadline + graceMs;
+        inGrace = false;
       }
     }
     const result = this.readBuffer.slice(0, length);
@@ -246,7 +293,7 @@ export class StretchcoreSerial {
   }
 
   private async waitForLine(timeoutMs: number): Promise<string> {
-    const deadline = Date.now() + timeoutMs;
+    let deadline = Date.now() + timeoutMs;
     while (true) {
       const index = this.readBuffer.indexOf(10);
       if (index >= 0) {
@@ -256,8 +303,20 @@ export class StretchcoreSerial {
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error('Timed out waiting for serial line');
-      await this.waitForData(remaining);
+      const previousLength = this.readBuffer.length;
+      await this.waitForNewData(previousLength, remaining);
+      if (this.readBuffer.length > previousLength) {
+        deadline = Date.now() + timeoutMs;
+      }
     }
+  }
+
+  private async readInfoPayload(): Promise<DeviceInfo> {
+    const lenBytes = await this.waitForBytes(4, METADATA_TIMEOUT_MS, METADATA_GRACE_MS);
+    const len = new DataView(lenBytes.buffer, lenBytes.byteOffset, 4).getUint32(0, true);
+    if (len === 0 || len > 4096) throw new Error(`Invalid metadata length ${len}`);
+    const payload = await this.waitForBytes(len, METADATA_TIMEOUT_MS, METADATA_GRACE_MS);
+    return parseInfo(new TextDecoder().decode(payload));
   }
 
   private log(message: string): void {
@@ -283,17 +342,23 @@ function parseInfo(text: string): DeviceInfo {
   const first = text.trim().split('\n')[0] ?? '';
   const parts = first.split(/\s+/);
   if (parts[0] !== 'STRETCHCORE1' && parts[0] !== 'BRKY1') throw new Error(`Bad metadata: ${first}`);
-  const token = (name: string, fallback: string) => {
-    const index = parts.indexOf(name);
-    return index >= 0 && parts[index + 1] ? parts[index + 1] : fallback;
+  const token = (names: string | string[], fallback: string) => {
+    const candidates = Array.isArray(names) ? names : [names];
+    for (const name of candidates) {
+      const index = parts.indexOf(name);
+      if (index >= 0 && parts[index + 1]) return parts[index + 1];
+    }
+    return fallback;
   };
   return {
     firmware: token('FW', '--'),
-    reserveBytes: Number(token('RESERVE', '163840')),
-    capacityBytes: Number(token('CAPACITY', '0')),
-    usedBytes: Number(token('USED', '0')),
-    sampleRate: Number(token('RATE', '48000')),
-    sampleCount: Number(token('COUNT', '0')),
+    flashBytes: Number(token(['FLASH', 'F'], '0')),
+    reserveBytes: Number(token(['RESERVE', 'R'], '0')),
+    audioOffset: Number(token(['AUDIO_OFFSET', 'A'], '0')),
+    capacityBytes: Number(token(['CAPACITY', 'C'], '0')),
+    usedBytes: Number(token(['USED', 'U'], '0')),
+    sampleRate: Number(token(['RATE', 'SR'], '48000')),
+    sampleCount: Number(token(['COUNT', 'N'], '0')),
     raw: text,
   };
 }
