@@ -32,9 +32,9 @@ Samples are stored in flash as 48 kHz mono signed 8-bit PCM. The loader can read
 | Toggle Down | Jump playback to the Y knob position; fire Pulse Out 1 |
 | Toggle Up | Select sample from the Y knob position; fire Pulse Out 2 |
 | CV In 1 | Adds bipolar modulation to Main knob timestretch when plugged in |
-| CV In 2 | Position source for Pulse In 2 jumps |
+| CV In 2 | Bipolar offset for Pulse In 2 jumps |
 | Pulse In 1 | External clock / BPM input |
-| Pulse In 2 | Jump trigger: jumps to CV In 2 position, or start if CV In 2 is unplugged |
+| Pulse In 2 | Jump trigger: jumps to Y knob position plus CV In 2, or Y knob position if CV In 2 is unplugged |
 | CV Out 1 | Smooth random slow bipolar LFO |
 | CV Out 2 | Smooth random slow bipolar LFO |
 | Pulse Out 1 | 20 ms trigger from Toggle Down |
