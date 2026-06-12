@@ -477,14 +477,17 @@ class Breaky : public ComputerCard {
     }
 
     if (Connected(Input::CV2)) {
-      jump_to_cv_position(clamp_cv(CVIn2()));
+      jump_to_knob_position(clamp_knob(KnobVal(Y) + CVIn2()));
     } else {
-      jump_to_start();
+      jump_to_y_knob_position();
     }
   }
 
   void jump_to_y_knob_position() {
-    const uint32_t knob = static_cast<uint32_t>(KnobVal(Y));
+    jump_to_knob_position(static_cast<uint32_t>(KnobVal(Y)));
+  }
+
+  void jump_to_knob_position(uint32_t knob) {
     const uint32_t frame_count = current_sample().frame_count;
     const uint32_t frame = static_cast<uint32_t>(
         (static_cast<uint64_t>(knob) * (frame_count - 1u)) / kKnobMax);
@@ -495,16 +498,6 @@ class Breaky : public ComputerCard {
 
   void jump_to_start() {
     phase_q32_ = 0;
-    invalidate_timestretch_grains();
-    update_leds(true);
-  }
-
-  void jump_to_cv_position(int16_t cv) {
-    const uint32_t normalized_cv = static_cast<uint32_t>(cv - kCvMin);
-    const uint32_t frame_count = current_sample().frame_count;
-    const uint32_t frame = static_cast<uint32_t>(
-        (static_cast<uint64_t>(normalized_cv) * (frame_count - 1u)) / kKnobMax);
-    phase_q32_ = static_cast<uint64_t>(frame) << 32u;
     invalidate_timestretch_grains();
     update_leds(true);
   }
