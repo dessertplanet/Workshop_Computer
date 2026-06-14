@@ -20,6 +20,7 @@ export function normalizeInfo(raw, fallbackTitle) {
     creator: out.creator || '',
     version: out.version || '',
     status: out.status || '',
+    license: String(out.license || '').trim(),
     editor: out.editor || '',
     date: out.date || out.releasedate || '',
     audiosample: String(out.audiosample || '').trim(),

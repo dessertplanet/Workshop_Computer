@@ -4,6 +4,7 @@ Language: C++ (ComputerCard / Pico SDK)
 Creator: Moses Hoyt
 Version: 1.2.0
 Status: Functional but WIP
+License: MIT
 Editor: https://mohoyt.com/drumdrum.html
 
 tags:

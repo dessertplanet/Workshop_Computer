@@ -4,6 +4,7 @@ Language: C++ (RP2040 Pico SDK)
 Creator: Andy Jenkinson (uglifruit)
 Version: 1.4.0
 Status: Released
+License: MIT
 Repository: https://github.com/uglifruit/Workshop_Computer/tree/main/Demonstrations%2BHelloWorlds/PicoSDK/ComputerCard/examples/glitch
 
 tags:

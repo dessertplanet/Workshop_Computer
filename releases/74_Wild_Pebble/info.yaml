@@ -4,6 +4,7 @@ Language: C++
 Creator: Adrian Vos with Vibecode support
 Version: 1.0
 Status: Beta. USB MIDI clock input and sequencer note output tested
+License: GPL-3.0
 
 manual: |
   Generative rhythm/melody organism with coupled trigger streams, quantized melody CV,

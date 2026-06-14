@@ -4,6 +4,7 @@ Language: C++ (Pico SDK)
 Creator: Joep Vermaat
 Version: 1.0
 Status: Released
+License: MIT
 Repository: https://codeberg.org/johantv/motorik
 
 manual: |

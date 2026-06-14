@@ -4,6 +4,7 @@ Language: C++
 Creator: Phil Miller
 Version: 0.1.0
 Status: Released
+License: GPL-3.0-or-later
 contact:
   website: https://github.com/philmillman
   social:

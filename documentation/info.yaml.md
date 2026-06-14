@@ -13,6 +13,7 @@ Language: C++ (Pico SDK)
 Creator: Your Name
 Version: 1.0
 Status: Released
+License: MIT
 ```
 
 ## Core fields
@@ -25,6 +26,7 @@ Status: Released
 | `Creator` | yes | string | Author or maintainer name. |
 | `Version` | yes | string | Semantic or project version string. |
 | `Status` | yes | string | Release state (e.g. `Released`, `Beta`, `WIP`). Shown with version on the index. |
+| `License` | no | string | SPDX identifier or short license name (e.g. `MIT`, `GPL-3.0`, `GPLv3 or later`). Use the license stated in the card's `README.md` or `LICENSE` file. Not rendered on detail pages yet; parsed for tooling and future site UI. |
 | `date` | no | string | Last-update date (`YYYY-MM-DD`). If omitted, sitegen uses the last git commit date for the card folder. |
 
 ## Contact
@@ -121,7 +123,7 @@ controls:
   knobs: ...
 ```
 
-**Preserve** existing `Description`, `Language`, `Creator`, `Version`, `Status`, `Editor`, and `Repository` values unless deployment rules require a change.
+**Preserve** existing `Description`, `Language`, `Creator`, `Version`, `Status`, `License`, `Editor`, and `Repository` values unless deployment rules require a change.
 
 Every card must include **`Name`** — the site index and detail page title come from this field (not `Description`). Legacy `Title` is still read as a fallback if `Name` is absent.
 
