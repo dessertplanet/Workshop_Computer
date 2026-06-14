@@ -1,4 +1,5 @@
-Description: Turing Machine with tap tempo clock, 2 x pulse outputs, 4 x CV outputs  
+Name: Turing Machine
+Description: Turing Machine with tap tempo clock, 2 x pulse outputs, 4 x CV outputs
 Language: C++ (ComputerCard)
 Creator: Tom Whitwell
 Version: 1.5.3

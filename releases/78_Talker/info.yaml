@@ -1,4 +1,5 @@
-Description: Proof of concept speech synthesizer, based on TalkiePCM, inspired by 1970s LPC speech synths. 
+Name: Talker
+Description: Proof of concept speech synthesizer, based on TalkiePCM, inspired by 1970s LPC speech synths.
 Language: C++ (ComputerCard)
 Creator: Chris Johnson
 Version: 0.1

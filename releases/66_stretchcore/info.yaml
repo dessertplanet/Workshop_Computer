@@ -1,4 +1,4 @@
-Name: stretchcore
+Name: Stretchcore
 Description: A card for playing and manipulating samples with tempo control, timestretch with browser-based audio loading (infinitedigits.com/stretchcore/)
 Language: C++ (Pico SDK)
 Creator: Infinite Digits

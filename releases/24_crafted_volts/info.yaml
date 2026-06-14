@@ -1,3 +1,4 @@
+Name: Crafted Volts
 Description: Manually set control voltages (CV) with the input knobs and switch. It also attenuverts (attenuates and inverts) incoming voltages.
 Language: Rust (Embassy framework)
 Creator: Brian Dorsey

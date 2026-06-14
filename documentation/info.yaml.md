@@ -7,6 +7,7 @@ Keys are case-insensitive. Hyphens and spaces in key names are equivalent (`audi
 ## Minimal example
 
 ```yaml
+Name: Card Display Name
 Description: One-line summary of what the card does
 Language: C++ (Pico SDK)
 Creator: Your Name
@@ -18,6 +19,7 @@ Status: Released
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
+| `Name` | yes | string | Display title on the site index and detail page (see sitegen). |
 | `Description` | yes | string | Short blurb shown on the index and detail aside. |
 | `Language` | yes | string | Implementation language or stack (e.g. `C++ (Pico SDK)`, `Lua / Blackbird`). |
 | `Creator` | yes | string | Author or maintainer name. |
@@ -100,6 +102,8 @@ controls:
 ```
 
 **Preserve** existing `Description`, `Language`, `Creator`, `Version`, `Status`, `Editor`, and `Repository` values unless deployment rules require a change.
+
+Every card must include **`Name`** — the site index and detail page title come from this field (not `Description`). Legacy `Title` is still read as a fallback if `Name` is absent.
 
 ## Automation
 

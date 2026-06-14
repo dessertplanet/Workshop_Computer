@@ -1,9 +1,10 @@
+Name: DivCom
 Description: Comparator and VC clock divider, inspired by Serge NCOM
 Language: C++ (RPi Pico SDK) compat. cmake.
 Creator: divmod
 Version: 0.1
 Status: Released
-repository: https://github.com/divmod-audio/divcom
+Repository: https://github.com/divmod-audio/divcom
 
 tags:
   - comparator

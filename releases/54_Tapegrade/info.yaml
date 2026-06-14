@@ -2,7 +2,7 @@ Name: Tapegrade
 Description: Mono-input stereo cassette warble processor with wow, flutter, hiss, crackle, and tape wear morphing.
 Language: C++ (RP2040 Pico SDK)
 Creator: Adrian Vos
-Version: "0.8.0"
+Version: 0.8.0
 Status: WIP (functional)
 
 tags:
