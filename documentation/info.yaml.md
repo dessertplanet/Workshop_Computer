@@ -70,6 +70,37 @@ These blocks document I/O, controls, and host connectivity. Author them in `info
 
 See [`releases/82_Computer_Grids/info.yaml`](../releases/82_Computer_Grids/info.yaml) for a full structured example.
 
+## Authoring guidance
+
+When filling in structured metadata for a release folder:
+
+**Source priority (do not invent behavior):**
+
+1. `README.md` in the release folder (operator intent)
+2. In-repo source (`.cpp`, `.c`, `.lua`, etc.) — ground truth for jack wiring when README is thin or wrong
+3. External repo linked from `Repository` or README
+4. Music Thing program card pages (for legacy cards with minimal local README)
+
+**`id` vs `name`:**
+
+- **`id`** — exact ComputerCard API identifier (`PulseIn1`, `CVOut1`, `AudioIn1`, …). See `Demonstrations+HelloWorlds/PicoSDK/ComputerCard/ComputerCard.h`.
+- **`name`** — functional role on this card (e.g. `External Clock`, not `Pulse In 1`; `Beat Tick`, not `LED 0`).
+- **`description`** — longer behavior note; may reference the API id in prose.
+
+Only list jacks the firmware actually uses. Repurposed jacks (e.g. CV on `AudioOut1`) still use the real API id.
+
+**Placeholder folders** (`77_Placeholder`, `88_Blank`, `02_comingsoon`): core fields only — do not fabricate `panel` / `controls`.
+
+**Low certainty:** when a block is inferred from code but not stated in README, add a YAML comment above it:
+
+```yaml
+# certainty: low — knob roles inferred from main.cpp; not documented in README
+controls:
+  knobs: ...
+```
+
+**Preserve** existing `Description`, `Language`, `Creator`, `Version`, `Status`, `Editor`, and `Repository` values unless deployment rules require a change.
+
 ## Automation
 
 - **`pages.yml`** — runs `tools/sitegen`, deploys `site/` (including copied `web/` folders).

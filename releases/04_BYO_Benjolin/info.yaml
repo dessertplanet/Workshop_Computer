@@ -3,3 +3,98 @@ Language: Pico SDK
 Creator: Dune Desormeaux
 Version: 1.0
 Status: Released
+
+tags:
+  - chaos
+  - rungler
+  - oscillator
+  - turing-machine
+  - quantizer
+
+manual: |
+  Chaotic Benjolin-inspired program combining rungler-style modulation, quantized CV, and pulse generation.
+  Forward/back clocks can be driven from Pulse In 1 and Pulse In 2.
+  The card blends internal randomness with external modulation for probability, offset, and amplitude.
+
+# certainty: low — all panel mappings inferred from main.cpp because this release folder has no README
+panel:
+  inputs:
+    - id: PulseIn1
+      name: Forward Clock
+      description: Rising edge advances the shift register in the forward direction
+      type: pulse
+    - id: PulseIn2
+      name: Reverse Clock
+      description: Rising edge advances the shift register in the reverse direction
+      type: pulse
+    - id: AudioIn1
+      name: External Data Source
+      description: External signal source for shift-register data in middle switch mode
+      type: audio
+    - id: AudioIn2
+      name: Probability Modulation
+      description: Modulates Turing probability alongside the Main knob
+      type: cv
+    - id: CVIn1
+      name: Offset Modulation
+      description: Modulates X/offset path used in rungler processing
+      type: cv
+    - id: CVIn2
+      name: VCA Modulation
+      description: Modulates Y/VCA depth for LED/output scaling
+      type: cv
+  outputs:
+    - id: AudioOut1
+      name: Rungler Audio A
+      description: Audio-rate rungler output channel A
+      type: audio
+    - id: AudioOut2
+      name: Rungler Audio B
+      description: Audio-rate rungler output channel B
+      type: audio
+    - id: CVOut1
+      name: Quantized CV A
+      description: Quantized MIDI-note CV derived from channel A rungler state
+      type: cv
+    - id: CVOut2
+      name: Quantized CV B
+      description: Quantized MIDI-note CV derived from channel B rungler state
+      type: cv
+    - id: PulseOut1
+      name: Bit Pulse A
+      description: Pulse output from shift-register bit state (channel A)
+      type: pulse
+    - id: PulseOut2
+      name: Bit Pulse B
+      description: Pulse output from shift-register bit state (channel B)
+      type: pulse
+
+# certainty: low — controls inferred from switch/knob logic in main.cpp; no user-facing control documentation found in folder
+controls:
+  knobs:
+    - when: { z: middle }
+      main:
+        name: Turing Probability
+        description: Sets probability/lock behavior for shift-register updates
+      x:
+        name: Offset
+        description: Sets offset amount (or scale for CV In 1 modulation)
+      y:
+        name: VCA Depth
+        description: Sets output/LED amplitude scaling (or scale for CV In 2 modulation)
+  leds:
+    - when: { z: middle }
+      display: list
+      items:
+        - id: LED0
+          name: Shift Register Cell 1
+        - id: LED1
+          name: Shift Register Cell 4
+        - id: LED2
+          name: Shift Register Cell 2
+        - id: LED3
+          name: Shift Register Cell 5
+        - id: LED4
+          name: Shift Register Cell 3
+        - id: LED5
+          name: Shift Register Cell 6

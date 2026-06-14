@@ -3,3 +3,79 @@ Language: Pico SDK
 Creator: Dune Desormeaux
 Version: 1.0
 Status: Ready
+
+tags:
+  - delay
+  - looper
+  - cv
+  - glitch
+
+# certainty: low — manual inferred from main.cpp; no README.md found in release folder
+manual: |
+  Goldfish is a multi-mode delay/looper with synchronized pulse/CV outputs. Switch selects record,
+  delay, and play behaviors; Pulse inputs provide clock/reset; and CV/audio inputs modulate delay time,
+  playback position, and generated CV/pitch material.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Audio Input
+      description: Primary audio input for delay/record/play processing
+    - id: AudioIn2
+      name: Main Parameter Modulation
+      description: Modulates Main control behavior in multiple modes
+    - id: CVIn1
+      name: X Modulation
+      description: Modulates X-dependent CV mix and playback position
+    - id: CVIn2
+      name: Y Modulation
+      description: Modulates Y-dependent CV mix and playback position
+    - id: PulseIn1
+      name: Clock / Step Trigger
+      description: Advances divider and timing events
+    - id: PulseIn2
+      name: Reset Trigger
+      description: Requests playback/reset actions on rising edge
+  outputs:
+    - id: AudioOut1
+      name: Left Audio Output
+      description: Main processed audio channel
+    - id: AudioOut2
+      name: Right Audio Output
+      description: Secondary processed audio channel
+    - id: CVOut1
+      name: CV Mix Output
+      description: Mixed CV/noise output derived from X/Y/CV inputs
+    - id: CVOut2
+      name: Quantized CV Output
+      description: MIDI-note quantized version of CV material
+    - id: PulseOut1
+      name: Pulse A
+      description: Timed pulse output tied to clock/divider events
+    - id: PulseOut2
+      name: Pulse B
+      description: Secondary timed pulse output tied to divider events
+
+controls:
+  knobs:
+    - main:
+        name: Time / Rate Macro
+        description: Mode-dependent delay/playback macro, modulated by AudioIn2 when connected
+      x:
+        name: X Parameter
+        description: Controls internal clock rate and CV/playback mapping
+      y:
+        name: Y Parameter
+        description: Controls divider amount and CV/playback mapping
+    - when: { z: down }
+      main:
+        name: Record Mode
+        description: Enter record behavior
+    - when: { z: middle }
+      main:
+        name: Play Mode
+        description: Enter loop playback behavior
+    - when: { z: up }
+      main:
+        name: Delay Mode
+        description: Enter delay behavior
