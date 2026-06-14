@@ -30,6 +30,7 @@
 | 32_vink | Dual delay loops with sigmoid saturation for Jaap Vink / Roland Kayn style feedback patching | 1.1<br>Functional | C++(ComputerCard) | Ben Regnier |
 | 33_drumdrum | DFAM-style 8-step sequencer<br>[Web editor](https://mohoyt.com/drumdrum.html) | 1.2.0<br>Functional but WIP | C++ (ComputerCard) | Moses Hoyt |
 | 34_dual_quant | Dual quantised granular pitch shifter with calibrated 1V/oct CV outputs | 1.0<br>Beta | C++ | Adrian Vos - with Vibe code support |
+| 35_FreqShift | Dual Input Frequency Shifter for Feedback Experimentation | 1.1<br>Functional | C++(ComputerCard) | Ben Regnier |
 | 37_compulidean | Generative Euclidean drum + sample player. | (see source repo)<br>Functional, but WIP | C++/Arduino, with vscode+platformio. | Tristan Rowley |
 | 38_od | Loopable chaotic Lorenz attractor trajectories and zero-crossings as CV and pulses, with sensitivity to initial conditions. | 1.0<br>Released | MicroPython | M. John Mills |
 | 39_knots | Six-engine oscillator firmware for the Music Thing Workshop System | 0.2<br>Released | C++ (RPi Pico SDK / ComputerCard) | Jeff Fletcher |
