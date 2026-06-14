@@ -4,6 +4,10 @@ Language: C++
 Creator: Phil Miller
 Version: 0.1.0
 Status: Released
+contact:
+  website: https://github.com/philmillman
+  social:
+    instagram: https://www.instagram.com/nauticalartifacts/
 
 tags:
   - sequencer

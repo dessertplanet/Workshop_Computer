@@ -7,7 +7,7 @@ import { discoverDocs } from './docs.js';
 import { discoverDownloads } from './downloads.js';
 import { getLastCommitDate } from '../utils/git.js';
 import { resolveWebConfig } from './webEditor.js';
-import { normalizeTags, normalizeRepository, resolveAudioSample } from './infoFields.js';
+import { normalizeTags, normalizeRepository, normalizeContact, resolveAudioSample } from './infoFields.js';
 import { parseYoutubeId, youtubeEmbedHtml } from '../utils/youtube.js';
 
 export function normalizeInfo(raw, fallbackTitle) {
@@ -26,6 +26,7 @@ export function normalizeInfo(raw, fallbackTitle) {
     audiosampleurl: '',
     tags: normalizeTags(out.tags),
     repository: normalizeRepository(out.repository),
+    contact: normalizeContact(out.contact),
   };
 }
 

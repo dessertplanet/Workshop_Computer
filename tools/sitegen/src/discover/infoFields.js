@@ -23,6 +23,33 @@ export function normalizeRepository(raw) {
   return String(raw || '').trim();
 }
 
+/** Normalize optional contact block (email, website, social platform links). */
+export function normalizeContact(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+
+  const email = String(raw.email || '').trim();
+  const website = String(raw.website || '').trim();
+
+  let social = null;
+  const socialRaw = raw.social;
+  if (socialRaw && typeof socialRaw === 'object' && !Array.isArray(socialRaw)) {
+    const links = {};
+    for (const [platform, url] of Object.entries(socialRaw)) {
+      const key = String(platform || '').trim().toLowerCase().replace(/[\s-]+/g, '');
+      const href = String(url || '').trim();
+      if (key && href) links[key] = href;
+    }
+    if (Object.keys(links).length) social = links;
+  }
+
+  if (!email && !website && !social) return null;
+  return {
+    ...(email ? { email } : {}),
+    ...(website ? { website } : {}),
+    ...(social ? { social } : {}),
+  };
+}
+
 /**
  * Resolve audio-sample to a fetchable URL.
  * External http(s) URLs pass through; relative paths resolve via makeRawUrl under the card folder.

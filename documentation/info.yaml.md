@@ -27,6 +27,26 @@ Status: Released
 | `Status` | yes | string | Release state (e.g. `Released`, `Beta`, `WIP`). Shown with version on the index. |
 | `date` | no | string | Last-update date (`YYYY-MM-DD`). If omitted, sitegen uses the last git commit date for the card folder. |
 
+## Contact
+
+Optional creator/maintainer contact details. Not rendered on detail pages yet; parsed for tooling and future site UI.
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `contact.email` | no | string | Contact email address. |
+| `contact.website` | no | string (URL) | Personal or project website. |
+| `contact.social` | no | object | Map of platform name → profile URL (keys normalized to lowercase, no spaces). |
+
+```yaml
+contact:
+  email: you@example.com
+  website: https://example.com
+  social:
+    instagram: https://instagram.com/username
+    github: https://github.com/username
+    mastodon: https://mastodon.social/@username
+```
+
 ## Web editor
 
 | Field | Required | Type | Description |
