@@ -1,4 +1,4 @@
-Description: DFAM-style 8-step percussion sequencer with dual pitch outputs, velocity CV, and multi-surface editing.
+Description: DFAM-style 8-step sequencer
 Language: C++ (ComputerCard / Pico SDK)
 Creator: Moses Hoyt
 Version: 1.2.0

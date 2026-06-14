@@ -1,4 +1,4 @@
-Description: Granular sampler/live processor with freeze, sample slots, and optional tape-style playback mode.
+Description: Granular Sampler and Effect
 Language: C++ (RP2040 Pico SDK)
 Creator: Vincent Maurer
 Version: "1.0"

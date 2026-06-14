@@ -1,4 +1,4 @@
-Description: CircuitPython wavetable oscillator with selectable WAV banks, LFO wavetable modulation, and optional pitch quantization.
+Description: Wavetable oscillator that using wavetables from Plaits, Braids, and Microwave,
 Language: CircuitPython
 Creator: Tod Kurt (@todbot)
 Version: 0.1

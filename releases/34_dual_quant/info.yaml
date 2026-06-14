@@ -1,4 +1,4 @@
-Description: Dual-output granular pitch shifter with optional chromatic quantization and pitch CV outputs.
+Description: Dual quantised granular pitch shifter with calibrated 1V/oct CV outputs
 Language: C++ (ComputerCard / Pico SDK)
 Creator: Adrian Vos
 Version: 1.0

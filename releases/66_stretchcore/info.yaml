@@ -1,5 +1,5 @@
 Name: stretchcore
-Description: Workshop Computer card for playing uploaded mono sample loops with tempo control, timestretch, position jumps, and browser-based audio loading.
+Description: A card for playing and manipulating samples with tempo control, timestretch with browser-based audio loading (infinitedigits.com/stretchcore/)
 Language: C++ (Pico SDK)
 Creator: Infinite Digits
 Version: 1.0

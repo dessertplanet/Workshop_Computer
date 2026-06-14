@@ -1,4 +1,4 @@
-Description: Dual delay loops with sigmoid saturation and split/mono routing for feedback patching.
+Description: Dual delay loops with sigmoid saturation for Jaap Vink / Roland Kayn style feedback patching
 Language: C++ (ComputerCard)
 Creator: Ben Regnier
 Version: 1.1

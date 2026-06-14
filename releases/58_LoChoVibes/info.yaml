@@ -1,5 +1,5 @@
 Name: LoCho Vibes
-Description: Stereo lo-fi chorus and vibrato effect for the Workshop Computer.
+Description: Stereo chorus and vibrato effect featuring triangle, sine, and slow drift LFO modes, modulation-based delay movement, and tape-style saturation.
 Language: C++
 Creator: Adrian Vos
 Version: 0.1.0

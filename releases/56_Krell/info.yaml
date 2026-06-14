@@ -1,4 +1,4 @@
-Description: Dual-channel generative Krell patch with random pitch plus looping AD envelopes and end-of-cycle pulses.
+Description: Krell
 Language: Blackbird Lua
 Creator: Benjamin Reily
 Version: "1.0"

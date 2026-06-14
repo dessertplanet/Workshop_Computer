@@ -1,4 +1,4 @@
-Description: Multi-algorithm drone oscillator with six switchable oscillator banks and stereo output.
+Description: Multi-algorithm drone oscillator. Inspired by the Forge TME Vhikk X.
 Language: C++ (ComputerCard / Pico SDK)
 Creator: Moses Hoyt
 Version: 0.2

@@ -1,4 +1,4 @@
-Description: Multi-engine effects/synth/utility card with sample playback, MIDI control, and configurable CV/pulse tools.
+Description: Effects, Synthesizer and Utility
 Language: C++ (RP2040 Pico SDK)
 Creator: Vincent Maurer
 Version: "1.0"

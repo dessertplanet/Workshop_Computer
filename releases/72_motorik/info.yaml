@@ -1,5 +1,5 @@
 Name: Motorik
-Description: Generative drum and bassline machine inspired by motorik Krautrock rhythms.
+Description: "Motorik drum machine — kick/snare/hihat with bass and melody CV, classic Krautrock grooves"
 Language: C++ (Pico SDK)
 Creator: Joep Vermaat
 Version: "1.0"
