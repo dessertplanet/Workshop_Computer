@@ -2,10 +2,9 @@ export const BANK_MAGIC = 0x594b5242;
 export const BANK_VERSION = 1;
 export const BANK_HEADER_SIZE = 4096;
 export const BANK_SAMPLE_RATE = 48000;
-export const BANK_MAX_SAMPLES = 32;
+export const BANK_MAX_SAMPLES = 64;
 export const BANK_SAMPLE_RECORD_SIZE = 60;
 export const BANK_SAMPLE_NAME_BYTES = 48;
-export const DEFAULT_CAPACITY_BYTES = 2 * 1024 * 1024 - 163840 - BANK_HEADER_SIZE;
 
 export interface BankSample {
   id: string;

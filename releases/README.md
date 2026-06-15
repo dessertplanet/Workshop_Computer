@@ -15,7 +15,7 @@
 | 12_am_coupler | AM radio transmitter / coupler | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 13_noisebox |  |  |  |  |
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
-| 15_MLRws | A remix of monome's classic MLR sample cutting platform (grid controller encouraged but optional)<br>[Web editor](https://dessertplanet.github.io/MLRws-web/) | 1.1.3<br>Released | Pico SDK | Dune Desormeaux |
+| 15_MLRws | A remix of monome's classic MLR sample cutting platform (grid controller encouraged but optional)<br>[Web editor](https://dessertplanet.github.io/MLRws-web/) | 1.1.4<br>Released | Pico SDK | Dune Desormeaux |
 | 18_chord_organ | Chord Organ-ish - 16 chords, 8 voices, 1V/oct root. Inspired by Music Thing Chord Organ. | 0.1<br>Working | Pico SDK (C++), ComputerCard | jkeyworth |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface.<br>[Web editor](https://www.musicthing.co.uk/web_config/reverb.html) | 1.5<br>Released | C (RPi Pico SDK) | Chris Johnson |
 | 21_resonator | Karplus-Strong based sympathetic resonator. Can be used for resonant droning as well as plucking sounds.<br>[Web editor](https://johaneklund.io/resonator) | 1.1.1<br>Released | C++ (ComputerCard) | Johan Eklund |
@@ -30,6 +30,7 @@
 | 32_vink | Dual delay loops with sigmoid saturation for Jaap Vink / Roland Kayn style feedback patching | 1.1<br>Functional | C++(ComputerCard) | Ben Regnier |
 | 33_drumdrum | DFAM-style 8-step sequencer<br>[Web editor](https://mohoyt.com/drumdrum.html) | 1.2.0<br>Functional but WIP | C++ (ComputerCard) | Moses Hoyt |
 | 34_dual_quant | Dual quantised granular pitch shifter with calibrated 1V/oct CV outputs | 1.0<br>Beta | C++ | Adrian Vos - with Vibe code support |
+| 35_FreqShift | Dual Input Frequency Shifter for Feedback Experimentation | 1.1<br>Functional | C++(ComputerCard) | Ben Regnier |
 | 37_compulidean | Generative Euclidean drum + sample player. | (see source repo)<br>Functional, but WIP | C++/Arduino, with vscode+platformio. | Tristan Rowley |
 | 38_od | Loopable chaotic Lorenz attractor trajectories and zero-crossings as CV and pulses, with sensitivity to initial conditions. | 1.0<br>Released | MicroPython | M. John Mills |
 | 39_knots | Six-engine oscillator firmware for the Music Thing Workshop System | 0.2<br>Released | C++ (RPi Pico SDK / ComputerCard) | Jeff Fletcher |
@@ -47,7 +48,7 @@
 | 58_LoChoVibes | Stereo chorus and vibrato effect featuring triangle, sine, and slow drift LFO modes, modulation-based delay movement, and tape-style saturation. |  |  |  |
 | 59_BitPhase | experimental phaser/tremolo with bit destruction | 0.1.0<br>beta | C++/Computercard | Adrian Vos |
 | 60_markov | Dual generative Markov chain module — evolving melody (MarkoV) left side, rhythmic percussion patterns (MarkovPerc) right side, with internal synth voice | 1.0.0<br>Released | C++ (Pico SDK) | Andy Jenkinson (uglifruit) |
-| 64_voices_of_sid | Dual MOS 6581 SID emulation (reSID engine) with CV/gate control, stereo output, waveform selection, and randomize | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
+| 64_voices_of_sid | Dual MOS 6581 SID emulation (reSID engine) with CV/gate control, stereo output, waveform selection, and randomize | 1.1<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 66_stretchcore | A card for playing and manipulating samples with tempo control, timestretch with browser-based audio loading (infinitedigits.com/stretchcore/) | 1.0<br>Ready% | Pico SDK | Infinite Digits |
 | 69_trace | Oscillograph stereo oscillator | 0.1<br>Functional but WIP | C++ (ComputerCard) | Ruiyang Wang |
 | 71_degenerator | Degenerator — Disintegrating Looper. Capture audio loops and apply irreversible degradation with 6 algorithms (Saturation, Filter Drift, Tape Hiss, Oxide Shedding, Bit Crush, Bit Rot) via preview/apply workflow. Inspired by William Basinski's The Disintegration Loops.<br>[Web editor](https://degenerator-web.netlify.app/) | 1.3<br>Released | C++ (Pico SDK) | Joep Vermaat |

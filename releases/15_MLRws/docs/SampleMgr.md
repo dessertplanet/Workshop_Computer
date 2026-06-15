@@ -32,7 +32,7 @@ For each of the six tracks the app shows:
 
 - A **Speed** dropdown — see [Record speed and length](#record-speed-and-length).
 - A **CV output** toggle for tracks that already contain audio. Empty tracks
-  always send CV1 pitch, trigger CV2, and drive pulse outputs from CUT-page grid interactions on their row;
+  always send CV1 pitch, gate CV2, and drive pulse outputs from CUT-page grid interactions on their row;
   populated tracks default to off until enabled here. The toggle is disabled
   while the web app is disconnected.
 - A **waveform** view with the current crop selection drawn in blue.
@@ -99,7 +99,7 @@ you anything useful for a pre-prepared sample.
 
 MLRws stores one mono ADPCM stream per track. In the sample manager, each track has a Channel 1/2 selector; that selector chooses the stored output routing and, for multi-channel source files, which source channel is encoded. Channel 1 uses source channel 1, Channel 2 uses source channel 2 when present, and single-channel files can be assigned to either output channel.
 
-Each populated track also has a **CV output** toggle. When it is enabled, touching CUT keys on that track row updates the CV1 pitch sample-and-hold, triggers the CV2 envelope, fires Pulse Out 1, and can hold Pulse Out 2 high as a gate. When it is disabled, the track still cuts and can be played normally, but it leaves the CV and pulse outputs unchanged. Empty tracks always update CV1 pitch, trigger CV2, fire Pulse Out 1, gate Pulse Out 2 while held, and show the keyboard guide; once a track has audio, CV output defaults to off until enabled in the web app.
+Each populated track also has a **CV output** toggle. When it is enabled, touching CUT keys on that track row updates the CV1 pitch sample-and-hold, gates the CV2 ASR envelope, fires Pulse Out 1, and can hold Pulse Out 2 high as a gate. When it is disabled, the track still cuts and can be played normally, but it leaves the CV and pulse outputs unchanged. Empty tracks always update CV1 pitch, gate CV2, fire Pulse Out 1, gate Pulse Out 2 while held, and show the E-major keyboard guide; the pitch map runs left-to-right by semitone with guitar-like row tuning, and repeats on the bottom half of a 16-row grid. Once a track has audio, CV output defaults to off until enabled in the web app.
 
 Uploading always writes only the selected track. For stereo source files, use the Channel selector to choose whether source channel 1 or source channel 2 is encoded and which output channel the stored track uses.
 

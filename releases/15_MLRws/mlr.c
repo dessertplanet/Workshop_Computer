@@ -419,8 +419,8 @@ static inline uint16_t volume_slot_to_frac(uint8_t slot)
 	static uint16_t kVolFrac[MLR_NUM_VOL_SLOTS] = {
 		362,  /* 0: +3 dB  (boost) — grid col 2  */
 		256,  /* 1: unity  (0 dB)  — grid col 3  */
-		181,  /* 2:        (-3 dB) — grid col 4  */
-		128,  /* 3:        (-6 dB) — grid col 5  */
+		128,  /* 2:        (-6 dB) — grid col 4  */
+		64,   /* 3:       (-12 dB) — grid col 5  */
 		0,    /* 4: silent         — grid col 6  */
 	};
 	if (slot >= MLR_NUM_VOL_SLOTS) slot = MLR_NUM_VOL_SLOTS - 1;
@@ -1869,6 +1869,8 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 	case MLR_EVT_START:
 		mlr_choke_group_resume(e->track, e->param_a);  /* start without CV cut trigger */
 		break;
+	case MLR_EVT_CUT_RELEASE:
+		break;  /* CV/pulse-only event handled by mlr_event_playback_hook */
 	case MLR_EVT_SPEED:
 		mlr_set_speed(e->track, e->param_a);
 		break;

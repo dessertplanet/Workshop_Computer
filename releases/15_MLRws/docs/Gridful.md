@@ -20,14 +20,14 @@ In grid mode the interface on the Computer itself is intentionally minimal. Trac
 
 **Pulse In 1 / Pulse In 2** act as transport-style triggers (see [Pulse inputs](#pulse-inputs) below).
 
-**CV and pulse outputs are driven by output-enabled cut/gate activity** (manual taps on the CUT page, and pattern/recall playback that replays those cuts):
+**CV and pulse outputs are driven by output-enabled cut/gate activity** (manual taps on the CUT page, pattern playback that replays cut press/release timing, and recall playback that replays cuts):
 
-- **CV Out 1** — chromatic note (sample-and-hold). The cut column maps directly to semitones. **Knob X** adds a continuous ±24-semitone (~±2 V) offset on top of the held note.
-- **CV Out 2** — attack/decay envelope that rises to roughly +5 V on each CUT-page key-press and decays back toward the resting −1 V floor (so chosen to fully close the Workshop System filters). **Knob Y** sets the decay time at trigger time (10 ms at fully left, ~3 s at fully right). Hold the front-panel switch Down with no track armed or recording, then move **Knob Y** to set attack time (instant to ~1 s).
+- **CV Out 1** — chromatic note (sample-and-hold). Output-enabled CUT keys map to pitch chromatically left-to-right, with adjacent rows tuned like guitar strings: mostly perfect fourths, with a major-third break between track rows 3 and 2. On 16-row grids the bottom half repeats the same pitch map as the top half. **Knob X** adds a continuous ±24-semitone (~±2 V) offset on top of the held note.
+- **CV Out 2** — ASR envelope that attacks from its current value to roughly +5 V when an output-enabled CUT key is pressed, sustains while the key/gate is held, and releases back toward the resting −1 V floor when the gate drops. **Knob Y** sets the release time when the gate releases (10 ms at fully left, ~3 s at fully right). Hold the front-panel switch Down with no track armed or recording, then move **Knob Y** to set attack time (instant to ~1 s).
 - **Pulse Out 1** — 20 ms trigger fired by output-enabled CUT-page track-row keys, including taps on empty track rows
 - **Pulse Out 2** — gate. High while any output-enabled CUT-page track-row key is held, including held keys on empty track rows, or while an output-enabled gate-mode track is playing
 
-For populated tracks, CV1 pitch updates, CV2 envelope triggers, Pulse Out 1 triggers, and Pulse Out 2 gates are disabled by default and can be enabled per track with the sample-manager web app's **CV output** toggle. Empty tracks always drive CV/pulse outputs so they can be used as pitch/envelope/gate rows before audio is loaded.
+For populated tracks, CV1 pitch updates, CV2 envelope gates, Pulse Out 1 triggers, and Pulse Out 2 gates are disabled by default and can be enabled per track with the sample-manager web app's **CV output** toggle. Empty tracks always drive CV/pulse outputs so they can be used as pitch/envelope/gate rows before audio is loaded.
 
 ![grid computer](images/MLR_grid_ws.jpg)
 
@@ -63,6 +63,13 @@ Patterns are **timed motion recorders**. They capture every grid-based event you
 generate (cuts, loops, speed changes, reverse toggles, volume changes,
 master moves, even other patterns/recalls firing) and play them back in a
 free-running loop.
+
+CUT-page key releases are recorded too, so output-enabled pattern playback
+recreates both the Pulse Out 2 gate length and the CV2 ASR envelope sustain.
+On 16-row grids, the bottom-half keyboard layer is recorded into patterns as
+CV/pulse gestures as well, without affecting audio track playback.
+Overlapping keys are treated monophonically per row/layer: a newer press
+replaces the previous held key without dropping the gate.
 
 You interact with patterns using the group of 4 dim LEDs to the right of page selection in the top row. A dim pattern slot indicates an empty one. press an empty pattern slot to arm the looper. Your next grid gesture starts the recording and recording continues until you press the recording pattern button again, at which point loop playback starts immediately.
 
@@ -109,7 +116,7 @@ The CUT page is the performance heart of MLR. Each track row is a scrub bar that
   cuts to that position.
 - **Delete + any cut key on a row**: if the track is playing, stop it (the loop, if any, is left in place so a second Delete + key clears it). If the track is already stopped and has a loop, that press clears the loop instead.
 
-Each cut event can update CV1 pitch, trigger the CV2 attack/decay envelope, and fire a 20 ms pulse on Pulse Out 1 when CV output is enabled for that row. Holding an output-enabled cut key on a track row keeps Pulse Out 2 high as a gate. Empty track rows are always output-enabled: CUT-page grid interactions on them update CV1, trigger CV2 and Pulse Out 1, and hold Pulse Out 2 high while a key is held. They also act like chromatic CV keyboards; while a key is held, and briefly after release, the row shows a dim white-key guide with C aligned to column 8 on a 16-wide grid.
+Output-enabled CUT keys update CV1, gate the CV2 ASR envelope, trigger Pulse Out 1, and hold Pulse Out 2 high while held. Empty track rows are always output-enabled and act as chromatic CV keyboards. Pitch runs left-to-right by semitone with guitar-like row tuning. Empty top-half rows show a dim major scale guide with brighter root notes while active or lingering; populated rows never show the guide. On 16-row grids, lower-half rows 9-14 provide the same CV/pulse keyboard and always-visible guide; the bottom corner keys, pressed simultaneously, toggles that guide.
 
 
 ![CUT page](images/cut.jpg)
@@ -132,7 +139,7 @@ More details in [Recording](#recording)
 
 ### Mixer
 
-Five discrete level slots. The left side is the loudest (about +3 dB), the right side is silent, and the second column from the left (the default, shown below) is unity gain.
+Five discrete level slots. From left to right they are about +3 dB, unity (the default), -6 dB, -12 dB, and silent.
 
 While a track is **actively recording**, the mixer area turns into a record-progress
 bar instead of a mixer, indicating how much recording time remains at the current recording speed.

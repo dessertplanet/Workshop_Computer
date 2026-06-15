@@ -299,12 +299,12 @@ class Breaky : public ComputerCard {
     }
     stretch_update_divider_ = 0;
 
-    int32_t y = KnobVal(Y);
+    int32_t stretch_control = KnobVal(Main);
     if (Connected(Input::CV1)) {
-      y += CVIn1();
+      stretch_control += CVIn1();
     }
     const bool was_active = timestretch_active_;
-    const uint32_t target_stretch_q8 = stretch_from_y_knob_q8(clamp_knob(y));
+    const uint32_t target_stretch_q8 = stretch_from_knob_q8(clamp_knob(stretch_control));
     if (target_stretch_q8 < kStretchQ8Bypass) {
       timestretch_active_ = false;
       stretch_q8_ = kStretchQ8One;
@@ -323,7 +323,7 @@ class Breaky : public ComputerCard {
     }
   }
 
-  static uint32_t stretch_from_y_knob_q8(uint32_t knob) {
+  static uint32_t stretch_from_knob_q8(uint32_t knob) {
     const uint64_t eased_knob = static_cast<uint64_t>(knob) * knob * knob;
     const uint64_t eased_max = static_cast<uint64_t>(kKnobMax) * kKnobMax * kKnobMax;
     const uint64_t range = kStretchQ8Max - kStretchQ8One;
@@ -425,7 +425,7 @@ class Breaky : public ComputerCard {
     } else if (switch_jump_armed_) {
       trigger_switch_pulse1();
       if (has_audio) {
-        jump_to_main_knob_position();
+        jump_to_y_knob_position();
       }
       switch_jump_armed_ = false;
     }
@@ -438,7 +438,7 @@ class Breaky : public ComputerCard {
     } else if (switch_change_armed_) {
       trigger_switch_pulse2();
       if (has_audio) {
-        change_sample_from_main_knob_position();
+        change_sample_from_y_knob_position();
       }
       switch_change_armed_ = false;
     }
@@ -477,14 +477,17 @@ class Breaky : public ComputerCard {
     }
 
     if (Connected(Input::CV2)) {
-      jump_to_cv_position(clamp_cv(CVIn2()));
+      jump_to_knob_position(clamp_knob(KnobVal(Y) + CVIn2()));
     } else {
-      jump_to_start();
+      jump_to_y_knob_position();
     }
   }
 
-  void jump_to_main_knob_position() {
-    const uint32_t knob = static_cast<uint32_t>(KnobVal(Main));
+  void jump_to_y_knob_position() {
+    jump_to_knob_position(static_cast<uint32_t>(KnobVal(Y)));
+  }
+
+  void jump_to_knob_position(uint32_t knob) {
     const uint32_t frame_count = current_sample().frame_count;
     const uint32_t frame = static_cast<uint32_t>(
         (static_cast<uint64_t>(knob) * (frame_count - 1u)) / kKnobMax);
@@ -499,18 +502,8 @@ class Breaky : public ComputerCard {
     update_leds(true);
   }
 
-  void jump_to_cv_position(int16_t cv) {
-    const uint32_t normalized_cv = static_cast<uint32_t>(cv - kCvMin);
-    const uint32_t frame_count = current_sample().frame_count;
-    const uint32_t frame = static_cast<uint32_t>(
-        (static_cast<uint64_t>(normalized_cv) * (frame_count - 1u)) / kKnobMax);
-    phase_q32_ = static_cast<uint64_t>(frame) << 32u;
-    invalidate_timestretch_grains();
-    update_leds(true);
-  }
-
-  uint8_t sample_from_main_knob_position() {
-    const uint32_t knob = static_cast<uint32_t>(KnobVal(Main));
+  uint8_t sample_from_y_knob_position() {
+    const uint32_t knob = static_cast<uint32_t>(KnobVal(Y));
     const uint32_t count = breaky_audio_sample_count();
     if (count == 0) {
       return 0;
@@ -520,8 +513,8 @@ class Breaky : public ComputerCard {
     return static_cast<uint8_t>(scaled);
   }
 
-  void change_sample_from_main_knob_position() {
-    const uint8_t next_sample = sample_from_main_knob_position();
+  void change_sample_from_y_knob_position() {
+    const uint8_t next_sample = sample_from_y_knob_position();
     if (next_sample == active_sample_) {
       return;
     }
