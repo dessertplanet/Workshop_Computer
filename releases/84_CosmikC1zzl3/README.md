@@ -1,4 +1,4 @@
-# C1ZZL3
+# CosmikC1ZZL3
 
 Dual phase-distortion synthesiser, Web MIDI custom-envelope editor, USB MIDI
 instrument, and probabilistic Turing machine program card for the Music Thing

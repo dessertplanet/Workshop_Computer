@@ -30,6 +30,7 @@ pico_sdk_init()
 
 add_executable(WildPebble
     WildPebble.cpp
+    usb_descriptors.c
 )
 
 # ============================================================
@@ -44,9 +45,28 @@ target_include_directories(WildPebble PRIVATE
 # Libraries
 # ============================================================
 
+target_compile_options(WildPebble PRIVATE
+    -Wdouble-promotion
+    -Wfloat-conversion
+    -Wall
+    -Wextra
+)
+
+target_compile_definitions(WildPebble PRIVATE
+    PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64
+)
+
+target_link_options(WildPebble PRIVATE
+    -Wl,--print-memory-usage
+)
+
 target_link_libraries(WildPebble
     pico_stdlib
     pico_unique_id
+    pico_multicore
+
+    tinyusb_device
+    tinyusb_board
     
     hardware_adc
     hardware_pwm
@@ -63,4 +83,7 @@ target_link_libraries(WildPebble
 # Create UF2/BIN/etc
 # ============================================================
 
+pico_enable_stdio_usb(WildPebble 0)
+pico_enable_stdio_uart(WildPebble 0)
+pico_set_binary_type(WildPebble copy_to_ram)
 pico_add_extra_outputs(WildPebble)

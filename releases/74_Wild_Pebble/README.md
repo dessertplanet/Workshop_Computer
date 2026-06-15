@@ -1,22 +1,49 @@
-# README.md
-
 # Wild Pebble
 
-Still very much in Beta testing
+MIDI-enabled Wild Pebble for the Music Thing Modular Workshop Computer.
 
-A generative rhythm and melody organism for the
-Music Thing Modular Workshop Computer.
-
-Inspired by the spirit of Jonah Senzel's Pet Rock.
-
-Wild Pebble creates evolving rhythmic structures, quantised melodic patterns, drum voices, and modulation voltages that slowly transform over time while remaining musically connected.
+Wild Pebble is a generative rhythm and melody organism inspired by the spirit of Jonah Senzel's Pet Rock. It creates evolving rhythmic structures, quantised melodic patterns, drum voices, and modulation voltages that slowly transform while staying musically connected.
 
 The goal is not precise repeatability, but constrained musical evolution.
 
 ---
 
+# MIDI Additions
+
+Wild Pebble includes USB MIDI device support.
+
+It does not use USB MIDI host mode.
+
+## MIDI Clock Input
+
+Wild Pebble listens for USB MIDI realtime clock messages.
+
+* MIDI Clock `0xF8` drives the sequencer when MIDI transport is running.
+* MIDI Start `0xFA` resets the sequence to the beginning and starts clock following.
+* MIDI Continue `0xFB` resumes MIDI clock following without resetting the step.
+* MIDI Stop `0xFC` stops MIDI clock following and releases any active MIDI note.
+
+MIDI clock is 24 PPQN. Wild Pebble advances one sequencer step every 6 MIDI clock ticks, so each step behaves as a 16th note.
+
+When MIDI clock is active it overrides the internal clock, in the same spirit as the pulse clock input. If no MIDI or pulse clock is active, the Main knob controls the internal clock speed.
+
+## MIDI Note Output
+
+The generated melody is sent over USB MIDI as note events.
+
+* MIDI channel: 1
+* Note source: the current generated `currentMIDINote`
+* Gate source: Pulse Output 1
+* Velocity: derived from the current internal energy value
+
+Each Pulse Output 1 gate produces a MIDI note on, followed by a note off when the gate ends. The analogue CV and pulse outputs continue to work as in the original card.
+
+---
+
 # Features
 
+* USB MIDI device clock input
+* USB MIDI sequencer note output
 * Dual probabilistic trigger streams
 * Quantised melodic CV generation
 * Internal kick and snare percussion voices
@@ -24,8 +51,8 @@ The goal is not precise repeatability, but constrained musical evolution.
 * Phrase replication and variation
 * Slowly evolving scale randomisation
 * Internal tension modulation
-* External or internal clocking
-* Swing timing modes
+* External pulse, MIDI, or internal clocking
+* Swing timing modes for the internal clock
 * Low CPU usage
 
 ---
@@ -40,8 +67,7 @@ Used internally to drive:
 
 * melodic progression
 * kick drum voice
-
----
+* USB MIDI note gate
 
 ## Pulse Output 2
 
@@ -52,17 +78,11 @@ Used internally to:
 * trigger the snare voice
 * create correlated rhythmic variation
 
----
-
 ## CV Output 1
 
 Quantised melodic pitch output.
 
-Generated from evolving scale-constrained note sequences.
-
-Wild Pebble slowly changes between related scales over time depending on mutation amount and switch mode, creating harmonic drift without fully losing musical coherence. The internal "tension" makes octave jumps more likely as it increases.
-
----
+Generated from evolving scale-constrained note sequences. Wild Pebble slowly changes between related scales over time depending on mutation amount and switch mode, creating harmonic drift without fully losing musical coherence.
 
 ## CV Output 2
 
@@ -74,21 +94,13 @@ A smoothed evolving modulation source derived from:
 * accent
 * internal tension state
 
----
-
 ## Audio Output 1
 
 Kick drum voice driven from the primary trigger stream.
 
-Produces deep evolving bass drum patterns with long decaying tails and pitch movement tied to sequence accents.
-
----
-
 ## Audio Output 2
 
 Snare and percussion voice driven from the companion trigger stream.
-
-Combines tonal percussion with noise elements for shifting rhythmic textures ranging from soft clicks to noisy snare bursts.
 
 ---
 
@@ -98,33 +110,13 @@ Combines tonal percussion with noise elements for shifting rhythmic textures ran
 
 Controls internal clock speed.
 
-Ignored when external clock is present.
-
----
-
-## Clock Range
-
-Wild Pebble’s internal clock ranges from approximately:
-
-* **~90 BPM** at the slowest setting
-* to fast audio-rate adjacent rhythmic speeds at the highest setting
-
-The clock is designed to move smoothly from slow generative sequencing into dense evolving percussion patterns.
-
-Swing amount varies depending on switch mode and affects every second step of the internal clock.
-
----
+Ignored when pulse clock or MIDI clock is active.
 
 ## X Knob
 
 Controls rhythmic density.
 
-Higher values increase trigger probability.
-The range of probability of a trigger is from 5% to almost 100% chance. I recommend starting with the knob at 12 o'clock
-
-CV Input 1 modulates density.
-
----
+Higher values increase trigger probability. CV Input 1 modulates density.
 
 ## Y Knob
 
@@ -139,31 +131,19 @@ Higher values increase:
 
 CV Input 2 modulates mutation amount.
 
----
-
 ## Switch Modes
 
 ### Up
 
-* stable melodic motion
-* restrained mutation
-* slower harmonic movement
-* tighter rhythms
+Stable melodic motion, restrained mutation, slower harmonic movement, and tighter rhythms.
 
 ### Middle
 
-* balanced mutation
-* moderate swing
-* evolving melodic variation
-* gradual harmonic drift
+Balanced mutation, moderate swing, evolving melodic variation, and gradual harmonic drift.
 
 ### Down
 
-* aggressive mutation
-* strongest swing
-* wider melodic jumps
-* more active scale changes
-* denser companion rhythms
+Aggressive mutation, strongest swing, wider melodic jumps, more active scale changes, and denser companion rhythms.
 
 ---
 
@@ -171,11 +151,9 @@ CV Input 2 modulates mutation amount.
 
 ## Pulse Input 1
 
-External clock input.
+External pulse clock input.
 
 Automatically overrides the internal clock while active.
-
----
 
 ## Pulse Input 2
 
@@ -192,31 +170,14 @@ Clocking and playback continue normally.
 
 # LED Behaviour
 
-Wild Pebble uses the Workshop Computer’s 6 LEDs as a live visualisation of rhythm, density, mutation, and system state.
-
 | LED   | Function     | Behaviour                                           |
 | ----- | ------------ | --------------------------------------------------- |
 | LED 1 | Main Trigger | Flashes when `PulseOut1` fires                      |
 | LED 2 | Density      | Brightness follows Density control (`Knob X + CV1`) |
 | LED 3 | Mutation     | Brightness follows Mutation amount (`Knob Y + CV2`) |
 | LED 4 | Energy       | Displays smoothed internal energy/modulation level  |
-| LED 5 | Clock Source | Fully lit when external clock is active             |
-| LED 6 | Tension      | Displays evolving internal tension state             |
-
----
-
-# Sequencing Behaviour
-
-Wild Pebble continuously evolves using:
-
-* probabilistic trigger generation
-* constrained mutation resistance
-* phrase copying
-* harmonic rotation
-* evolving scale selection
-* tension cycling
-
-The interaction between rhythm mutation, melodic drift, repeating phrases, and gradual scale movement creates patterns that evolve organically while remaining playable and musically usable.
+| LED 5 | Clock Source | Fully lit when pulse or MIDI clock is active        |
+| LED 6 | Tension      | Displays evolving internal tension state            |
 
 ---
 
@@ -225,9 +186,10 @@ The interaction between rhythm mutation, melodic drift, repeating phrases, and g
 Requires:
 
 * Raspberry Pi Pico SDK
-* Workshop Computer framework
+* Workshop Computer `ComputerCard.h`
+* TinyUSB from the Pico SDK
 
-Typical build flow:
+Build from this folder:
 
 ```bash
 mkdir build
@@ -236,51 +198,21 @@ cmake ..
 make
 ```
 
+The build links `pico_multicore`, `tinyusb_device`, and `tinyusb_board`. USB stdio and UART stdio are disabled.
+
+The firmware runs the Workshop Computer audio/card engine on core 1 and the USB MIDI device task on core 0. This keeps TinyUSB calls out of the 48 kHz `ProcessSample()` path.
+
 ---
 
-# Philosophy
+# Notes
 
-Wild Pebble is intended to feel less like a fixed sequencer and more like a small autonomous musical system.
+This is an AI-assisted card.
 
-The interaction between:
+The MIDI implementation is intentionally small:
 
-* mutation
-* repetition
-* probability
-* tension
-* harmonic drift
-* evolving drum voices
-* slow scale randomisation
+* no SysEx editor
+* no USB host mode
+* no MIDI note input
+* no configurable MIDI channel yet
 
-creates continuously shifting patterns that remain musically coherent and performance-friendly.
-Tension evolves slowly over time with one full cycle taking 1440 sequencer steps. 
-
-Wild Pebble contains an internal evolving energy system.
-
-Each step in the sequence carries its own energy state which slowly changes over time through mutation, repetition, and interaction with the global tension cycle.
-
-Energy influences:
-
-* modulation movement
-* rhythmic intensity
-* dynamic behaviour
-
-Some parts of the sequence gradually become:
-
-* more active
-* more unstable
-* more forceful
-
-while others become:
-
-* restrained
-* sparse
-* quieter
-
-This creates long-term phrasing and shifting musical behaviour even when rhythmic structures repeat.
-
-The smoothed Energy CV output exposes this evolving internal state to the outside patch, allowing Wild Pebble to animate filters, VCAs, LPGs, reverbs, FM depth, and other modulation destinations with continuously changing expressive movement.
-
-Together with the slow tension cycle, the energy system helps Wild Pebble behave less like a traditional sequencer and more like a small autonomous musical organism.
-
-LED 4 and 6 now display their respective states more clearly
+The analogue behavior remains the same unless MIDI clock is connected and running.

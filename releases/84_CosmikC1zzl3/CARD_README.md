@@ -1,4 +1,4 @@
-# C1ZZL3 Card Guide
+# CosmikC1ZZL3 Card Guide
 
 C1ZZL3 is a phase-distortion synth card for the Music Thing Modular Workshop
 Computer. It combines a playable CZ-style oscillator, a second detuned oscillator
