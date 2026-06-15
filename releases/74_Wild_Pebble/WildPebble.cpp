@@ -29,8 +29,52 @@
 
 #include "ComputerCard.h"
 #include "hardware/clocks.h"
+#include "bsp/board.h"
+#include "pico/multicore.h"
+#include "tusb.h"
 #include <stdint.h>
 #include "pico/unique_id.h"
+
+static constexpr uint8_t kMidiClock = 0xF8;
+static constexpr uint8_t kMidiStart = 0xFA;
+static constexpr uint8_t kMidiContinue = 0xFB;
+static constexpr uint8_t kMidiStop = 0xFC;
+static constexpr uint8_t kMidiNoteOff = 0x80;
+static constexpr uint8_t kMidiNoteOn = 0x90;
+static constexpr uint8_t kMidiChannel = 0;
+static constexpr uint8_t kMidiClocksPerStep = 6;
+
+volatile uint8_t gMidiClockTicksPending = 0;
+volatile uint8_t gMidiStartPending = 0;
+volatile uint8_t gMidiContinuePending = 0;
+volatile uint8_t gMidiStopPending = 0;
+
+struct MidiMessage
+{
+    uint8_t status;
+    uint8_t data1;
+    uint8_t data2;
+};
+
+static constexpr uint8_t kMidiQueueSize = 32;
+volatile MidiMessage gMidiOutputQueue[kMidiQueueSize];
+volatile uint8_t gMidiQueueWrite = 0;
+volatile uint8_t gMidiQueueRead = 0;
+
+void QueueMidiMessage(uint8_t status, uint8_t data1, uint8_t data2)
+{
+    uint8_t nextWrite = (uint8_t)((gMidiQueueWrite + 1) & (kMidiQueueSize - 1));
+
+    if(nextWrite == gMidiQueueRead)
+    {
+        return;
+    }
+
+    gMidiOutputQueue[gMidiQueueWrite].status = status;
+    gMidiOutputQueue[gMidiQueueWrite].data1 = data1;
+    gMidiOutputQueue[gMidiQueueWrite].data2 = data2;
+    gMidiQueueWrite = nextWrite;
+}
 
 class WildPebble : public ComputerCard
 {
@@ -80,6 +124,10 @@ public:
 
     bool externalClockActive = false;
     uint32_t externalClockTimeout = 0;
+    bool midiClockRunning = false;
+    uint8_t midiClockDivider = 0;
+    bool midiNoteGateActive = false;
+    uint8_t midiLastNote = 48;
 
     int32_t tension = 64;
     bool tensionRising = true;
@@ -467,6 +515,96 @@ public:
         }
     }
 
+    bool ConsumeMidiClock()
+    {
+        bool clockEvent = false;
+
+        if(gMidiStartPending > 0)
+        {
+            gMidiStartPending--;
+            midiClockRunning = true;
+            midiClockDivider = 0;
+            currentStep = -1;
+            clockCounter = 0;
+            externalClockActive = true;
+            externalClockTimeout = 48000;
+        }
+
+        if(gMidiContinuePending > 0)
+        {
+            gMidiContinuePending--;
+            midiClockRunning = true;
+            externalClockActive = true;
+            externalClockTimeout = 48000;
+        }
+
+        if(gMidiStopPending > 0)
+        {
+            gMidiStopPending--;
+            midiClockRunning = false;
+            midiClockDivider = 0;
+            externalClockActive = false;
+            externalClockTimeout = 0;
+
+            if(midiNoteGateActive)
+            {
+                QueueMidiMessage(kMidiNoteOff | kMidiChannel,
+                                 midiLastNote,
+                                 0);
+                midiNoteGateActive = false;
+            }
+        }
+
+        while(gMidiClockTicksPending > 0)
+        {
+            gMidiClockTicksPending--;
+
+            if(!midiClockRunning)
+            {
+                continue;
+            }
+
+            externalClockActive = true;
+            externalClockTimeout = 48000;
+
+            midiClockDivider++;
+
+            if(midiClockDivider >= kMidiClocksPerStep)
+            {
+                midiClockDivider = 0;
+                clockEvent = true;
+                break;
+            }
+        }
+
+        return clockEvent;
+    }
+
+    void UpdateMidiNoteOutput()
+    {
+        if(pulse1 && !midiNoteGateActive)
+        {
+            midiLastNote = (uint8_t)currentMIDINote;
+
+            uint8_t velocity =
+                (uint8_t)(40 + ((currentEnergy * 87) >> 8));
+
+            QueueMidiMessage(kMidiNoteOn | kMidiChannel,
+                             midiLastNote,
+                             velocity);
+
+            midiNoteGateActive = true;
+        }
+        else if(!pulse1 && midiNoteGateActive)
+        {
+            QueueMidiMessage(kMidiNoteOff | kMidiChannel,
+                             midiLastNote,
+                             0);
+
+            midiNoteGateActive = false;
+        }
+    }
+
     virtual void ProcessSample()
     {
         sampleCounter++;
@@ -495,7 +633,7 @@ public:
 
         bool freeze = PulseIn2();
 
-        bool clockEvent = false;
+        bool clockEvent = ConsumeMidiClock();
 
         if(PulseIn1RisingEdge())
         {
@@ -622,6 +760,7 @@ public:
 
         PulseOut1(pulse1);
         PulseOut2(pulse2);
+        UpdateMidiNoteOutput();
 
         CVOut1MIDINote(currentMIDINote);
 
@@ -804,11 +943,89 @@ public:
     }
 };
 
+WildPebble card;
+
+void AudioCore()
+{
+    card.Run();
+}
+
+void HandleMidiInputByte(uint8_t byte)
+{
+    if(byte == kMidiClock)
+    {
+        if(gMidiClockTicksPending < 255)
+        {
+            gMidiClockTicksPending++;
+        }
+    }
+    else if(byte == kMidiStart)
+    {
+        gMidiStartPending++;
+    }
+    else if(byte == kMidiContinue)
+    {
+        gMidiContinuePending++;
+    }
+    else if(byte == kMidiStop)
+    {
+        gMidiStopPending++;
+    }
+}
+
+void MidiDeviceTask()
+{
+    uint8_t packet[64];
+
+    while(tud_midi_available())
+    {
+        uint32_t bytesRead =
+            tud_midi_stream_read(packet, sizeof(packet));
+
+        for(uint32_t i = 0; i < bytesRead; ++i)
+        {
+            HandleMidiInputByte(packet[i]);
+        }
+    }
+
+    while(gMidiQueueRead != gMidiQueueWrite)
+    {
+        MidiMessage message;
+        message.status = gMidiOutputQueue[gMidiQueueRead].status;
+        message.data1 = gMidiOutputQueue[gMidiQueueRead].data1;
+        message.data2 = gMidiOutputQueue[gMidiQueueRead].data2;
+
+        uint8_t out[3] =
+        {
+            message.status,
+            message.data1,
+            message.data2
+        };
+
+        uint32_t written = tud_midi_stream_write(0, out, sizeof(out));
+
+        if(written == 0)
+        {
+            break;
+        }
+
+        gMidiQueueRead =
+            (uint8_t)((gMidiQueueRead + 1) & (kMidiQueueSize - 1));
+    }
+}
+
 int main()
 {
     set_sys_clock_khz(144000, true);
 
-    WildPebble card;
+    board_init();
+    tusb_init();
 
-    card.Run();
+    multicore_launch_core1(AudioCore);
+
+    while(true)
+    {
+        tud_task();
+        MidiDeviceTask();
+    }
 }

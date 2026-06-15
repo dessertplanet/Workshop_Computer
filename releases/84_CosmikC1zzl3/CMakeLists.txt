@@ -4,7 +4,6 @@ cmake_minimum_required(VERSION 3.13)
 # Raspberry Pi Pico SDK
 # ============================================================
 
-# Set this to your local pico-sdk path
 set(PICO_SDK_PATH "/Users/adrianvos/pico-sdk")
 
 include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
@@ -13,7 +12,7 @@ include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 # Project
 # ============================================================
 
-project(WildPebble C CXX ASM)
+project(C1ZZL3 C CXX ASM)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
@@ -28,62 +27,73 @@ pico_sdk_init()
 # Executable
 # ============================================================
 
-add_executable(WildPebble
-    WildPebble.cpp
+add_executable(C1ZZL3
+    C1ZZL3.cpp
+    C1ZZL3_LUT.cpp
     usb_descriptors.c
+    usb_midi_host.c
+    usb_midi_host_app_driver.c
 )
 
 # ============================================================
 # Include paths
 # ============================================================
 
-target_include_directories(WildPebble PRIVATE
+target_include_directories(C1ZZL3 PRIVATE
     .
 )
 
 # ============================================================
-# Libraries
+# Libraries required by ComputerCard
 # ============================================================
 
-target_compile_options(WildPebble PRIVATE
-    -Wdouble-promotion
-    -Wfloat-conversion
-    -Wall
-    -Wextra
-)
-
-target_compile_definitions(WildPebble PRIVATE
-    PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64
-)
-
-target_link_options(WildPebble PRIVATE
-    -Wl,--print-memory-usage
-)
-
-target_link_libraries(WildPebble
+target_link_libraries(C1ZZL3
     pico_stdlib
     pico_unique_id
     pico_multicore
-
     tinyusb_device
+    tinyusb_host
     tinyusb_board
-    
+
     hardware_adc
     hardware_pwm
     hardware_dma
-    hardware_interp
     hardware_spi
-    hardware_pio
     hardware_clocks
     hardware_flash
     hardware_i2c
 )
 
 # ============================================================
+# Workshop Computer hardware settings
+# ============================================================
+
+target_compile_definitions(C1ZZL3 PRIVATE
+    PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64
+)
+
+pico_enable_stdio_usb(C1ZZL3 0)
+pico_set_binary_type(C1ZZL3 copy_to_ram)
+
+# ============================================================
+# Optimisation
+# ============================================================
+
+target_compile_options(C1ZZL3 PRIVATE
+    -O3
+    -ffast-math
+    -Wdouble-promotion
+    -Wfloat-conversion
+    -Wall
+    -Wextra
+)
+
+target_link_options(C1ZZL3 PRIVATE
+    -Wl,--print-memory-usage
+)
+
+# ============================================================
 # Create UF2/BIN/etc
 # ============================================================
 
-pico_enable_stdio_usb(WildPebble 0)
-pico_enable_stdio_uart(WildPebble 0)
-pico_set_binary_type(WildPebble copy_to_ram)
-pico_add_extra_outputs(WildPebble)
+pico_add_extra_outputs(C1ZZL3)
