@@ -53,6 +53,8 @@ When you leave Turing mode, the CV and pulse outputs hold their last values.
 The Turing clock does not keep running in synth mode; this is intentional for
 stability on the RP2040 card format.
 
+Tap tempo has been removed. Y is the internal Turing clock-speed control.
+
 ## Web MIDI Editor
 
 The editor is in:
@@ -80,7 +82,7 @@ http://localhost:5173
 ```
 
 Use Chrome or another browser with Web MIDI and SysEx support. Press `MIDI`,
-choose the C1ZZL3 output, then use `Load`, `Save`, or `Set`.
+choose the C1ZZL3 output, then use `Load`, `Save`, `Delete`, or `Set`.
 
 ## Envelope Presets
 
@@ -124,7 +126,7 @@ In startup envelope selection:
 
 ## Stability Note
 
-This firmware is a hardware-tested production candidate, but it is also close to
+This firmware is a hardware-tested production build, but it is also close to
 the practical processing limit of this RP2040 card format. Turing MIDI output
 and background Turing clocking in synth mode are intentionally left out because
 testing showed they could cause lockups at maximum settings.

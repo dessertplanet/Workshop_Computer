@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/CMakeFiles/picotoolBuild"
+		},
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/CMakeFiles/picotoolBuild.rule"
+		},
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/CMakeFiles/picotoolBuild-complete.rule"
+		},
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/picotool/src/picotoolBuild-stamp/picotoolBuild-build.rule"
+		},
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/picotool/src/picotoolBuild-stamp/picotoolBuild-configure.rule"
+		},
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/picotool/src/picotoolBuild-stamp/picotoolBuild-download.rule"
+		},
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/picotool/src/picotoolBuild-stamp/picotoolBuild-install.rule"
+		},
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/picotool/src/picotoolBuild-stamp/picotoolBuild-mkdir.rule"
+		},
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/picotool/src/picotoolBuild-stamp/picotoolBuild-patch.rule"
+		},
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/picotool/src/picotoolBuild-stamp/picotoolBuild-test.rule"
+		},
+		{
+			"file" : "/Users/adrianvos/Documents/GitHub/Cizzle/experimental/web-midi/firmware/build/picotool/src/picotoolBuild-stamp/picotoolBuild-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"picotoolBuild"
+		],
+		"name" : "picotoolBuild"
+	}
+}

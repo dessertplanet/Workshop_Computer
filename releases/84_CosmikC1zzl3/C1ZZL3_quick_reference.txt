@@ -3,6 +3,7 @@ C1ZZL3 Quick Reference
 
 Production candidate: Web MIDI build promoted 2026-06-13
 UF2: uf2/C1ZZL3.uf2
+Tap-tempo rollback UF2: uf2/C1ZZL3_with_tap_tempo_rollback_20260615.uf2
 
 Stability boundary
 ------------------
@@ -36,6 +37,7 @@ Main: mutation
 X: sequence length, 2-16 steps
 Y: clock speed
 Pulse In 1: external clock
+Tap tempo: removed
 CV Out 1: stepped Turing CV
 CV Out 2: smoothed Turing CV
 Pulse Out 1: main Turing pulse

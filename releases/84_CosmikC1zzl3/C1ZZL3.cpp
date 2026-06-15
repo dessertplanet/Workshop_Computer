@@ -12,8 +12,10 @@ static constexpr uint8_t WebMidiCommandPreview = 0x01u;
 static constexpr uint8_t WebMidiCommandSaveEnvelope = 0x02u;
 static constexpr uint8_t WebMidiCommandSettings = 0x03u;
 static constexpr uint8_t WebMidiCommandSaveSettings = 0x04u;
+static constexpr uint8_t WebMidiCommandDeleteEnvelope = 0x05u;
 static constexpr uint32_t WebMidiSettingsPayloadLength = 5u;
 static constexpr uint32_t WebMidiEnvelopePayloadLength = 97u;
+static constexpr uint32_t WebMidiDeleteEnvelopePayloadLength = 1u;
 static constexpr uint32_t WebMidiMaxSysexLength = 112u;
 
 class C1ZZL3 : public ComputerCard
@@ -642,7 +644,13 @@ private:
 
         if (command == WebMidiCommandPreview ||
             command == WebMidiCommandSaveEnvelope)
+        {
             handleWebMidiEnvelope(command == WebMidiCommandSaveEnvelope);
+            return;
+        }
+
+        if (command == WebMidiCommandDeleteEnvelope)
+            handleWebMidiDeleteEnvelope();
     }
 
     bool webMidiHeaderMatches()
@@ -717,6 +725,24 @@ private:
 
         if (persist)
             saveCustomEnvelopeState();
+    }
+
+    void handleWebMidiDeleteEnvelope()
+    {
+        if (sysexLength != WebMidiDeleteEnvelopePayloadLength + 6u)
+            return;
+
+        uint8_t slot = sysexBuffer[6] & 0x07u;
+        customEnvelopes[slot] = {};
+        customEnvelopeLoaded[slot] = false;
+
+        if (envelopePreset == CustomEnvelopePreset + slot)
+        {
+            envelopePreset = (uint8_t)EnvelopePreset::Off;
+            envelopeActive = false;
+        }
+
+        saveCustomEnvelopeState();
     }
 
     int32_t decodeWebMidiUint14(uint32_t& offset)

@@ -2,7 +2,7 @@ id: 84_CosmikC1zzl3
 title: Cosmik C1ZZL3
 release: 84 / 0.6
 summary: Phase-distortion synth, Web MIDI custom envelopes, USB MIDI, and Turing machine
-description: Production-candidate Web MIDI phase-distortion synthesiser and Turing machine firmware for the Music Thing Modular Workshop Computer.
+description: Production Web MIDI phase-distortion synthesiser and Turing machine firmware for the Music Thing Modular Workshop Computer.
 panel:
   controls:
     main:
@@ -40,7 +40,7 @@ panel:
       label: |-
         Audio/CV
         2
-      description: Unused in this production candidate.
+      description: Unused in this production build.
       source: curated
     cv_1:
       label: |-
@@ -115,7 +115,7 @@ notes:
   - "Hosted Web MIDI editor: https://soveda.github.io/CozmikC1zzl3/web-midi/editor/"
   - "Pulse In 1 is the external Turing clock in switch-up mode. Pulse In 2 triggers the selected envelope and oscillator sync in synth mode when an active preset is selected."
   - "Factory envelope presets are never overwritten. The card stores custom envelope shapes; names are stored in the browser."
-  - "This production candidate is close to the practical RP2040 processing limit for this card format. Turing MIDI output and synth-mode Turing clock persistence are intentionally absent because testing showed those additions could cause lockups at maximum settings."
+  - "This production build is close to the practical RP2040 processing limit for this card format. Turing MIDI output and synth-mode Turing clock persistence are intentionally absent because testing showed those additions could cause lockups at maximum settings."
 source:
   - C1ZZL3.cpp
   - C1ZZL3_LUT.cpp
@@ -153,5 +153,5 @@ metadata:
   creator: Adrian Vos
   language: Pico SDK
   version: '0.6'
-  status: Released but still Beta testing
-  editor: https://soveda.github.io/CozmikC1zzl3/web-midi/editor/
+  status: Released
+  editor_url: https://soveda.github.io/CozmikC1zzl3/web-midi/editor/

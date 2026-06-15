@@ -4,7 +4,7 @@ Dual phase-distortion synthesiser, Web MIDI custom-envelope editor, USB MIDI
 instrument, and probabilistic Turing machine program card for the Music Thing
 Modular Workshop Computer.
 
-Status: production candidate promoted from the hardware-tested Web MIDI build  
+Status: production build promoted from the hardware-tested Web MIDI build  
 Language: C++ / Pico SDK  
 Framework: ComputerCard  
 Creator: Adrian Vos
@@ -26,30 +26,42 @@ uf2/C1ZZL3.uf2
 Checksum:
 
 ```text
-83cef031d0d17bb7e34408a298dc200b93fb4ef9cb0fdcfa66fa1356a13d2b4c
+22aaf7673e8169bb6f34d0fc2450f0ecccf82857278e0c428083162e854415dd
 ```
 
-The exact experimental production-candidate UF2 is also retained:
+The exact tested production UF2 with custom-slot deletion is also retained:
 
 ```text
-uf2/C1ZZL3_web_midi_production_candidate_20260613.uf2
+uf2/C1ZZL3_web_midi_delete_slots_production_20260615.uf2
+```
+
+Rollback build with Turing tap tempo still present:
+
+```text
+uf2/archive/previous-versions-20260615/C1ZZL3_with_tap_tempo_rollback_20260615.uf2
+```
+
+Matching source for that rollback is archived in:
+
+```text
+archive/previous-working-folders/backups/rollback_with_tap_tempo_20260615/
 ```
 
 The previous main build was archived before promotion:
 
 ```text
-backups/main_before_web_midi_production_20260613_2136/
+archive/previous-working-folders/backups/main_before_web_midi_production_20260613_2136/
 ```
 
 The non-MIDI v0.4 fallback remains available:
 
 ```text
-uf2/C1ZZL3v04working.uf2
+uf2/archive/previous-versions-20260615/C1ZZL3v04working.uf2
 ```
 
 ## Stability Boundary
 
-This production candidate appears to be at the practical limit of what is stable
+This production build appears to be at the practical limit of what is stable
 on this RP2040 card format while keeping the current oscillator, envelopes, Web
 MIDI custom slots, USB MIDI device/host support, ring/noise, detune, Turing
 mode, CV outputs, and LED feedback.
@@ -69,6 +81,8 @@ The stable production behaviour is therefore:
 - When switching back to synth mode, the last Turing CV and pulse values are
   held.
 - The Turing clock does not continue running in synth mode.
+- Turing tap tempo has been removed; Y is the only internal clock-speed
+  control.
 - Turing MIDI output is intentionally absent.
 
 Avoid adding background work to the audio callback unless another feature is
@@ -132,6 +146,7 @@ The Web MIDI editor can:
 - add and remove up to eight custom presets
 - load a custom envelope into RAM
 - save a custom envelope to card flash
+- delete a saved custom envelope slot from card flash
 - set ring, noise, and MIDI input channel
 - audition envelopes in the browser
 - copy SysEx or C++ envelope data for inspection
@@ -167,8 +182,8 @@ python3 -m http.server 5174 --directory web-midi/editor
 ```
 
 Use Chrome or another browser with Web MIDI and SysEx support. Press `MIDI`,
-then choose the C1ZZL3 output explicitly before pressing `Load`, `Save`, or
-`Set`.
+then choose the C1ZZL3 output explicitly before pressing `Load`, `Save`,
+`Delete`, or `Set`.
 
 ## Envelope Presets
 
@@ -214,7 +229,7 @@ In startup envelope selection:
 
 ## Hardware Test Coverage
 
-This production candidate passed:
+This production build passed:
 
 - maximum physical controls
 - maximum Web MIDI ring/noise settings
@@ -235,7 +250,7 @@ cmake -S . -B build
 cmake --build build
 ```
 
-The promoted production-candidate build reported:
+The promoted production build reported:
 
 ```text
 FLASH: 62 KB

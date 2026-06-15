@@ -1,0 +1,251 @@
+Description: Stable reference is the pre-MIDI v0.4 dual phase-distortion synthesiser and Turing machine build. MIDI/Web MIDI work is experimental and currently unstable.
+Name: C1ZZL3
+Language: C++ (Pico SDK)
+Creator: Adrian Vos
+Instagram: https://instagram.com/professeur_whom
+Version: 0.4 stable reference
+Status: Only the non-MIDI v0.4 UF2 is confirmed stable; MIDI/Web MIDI builds are experimental
+
+tags:
+  - synthesiser
+  - phase-distortion
+  - oscillator
+  - turing-machine
+  - sequencer
+  - envelope
+  - 1v-oct
+
+manual: |
+  Stability note: the only currently confirmed stable firmware is the pre-MIDI v0.4 build,
+  uf2/C1ZZL3v04working.uf2. MIDI/Web MIDI builds are retained for development but should
+  not be treated as stable production firmware yet.
+
+  C1ZZL3 is a CZ-inspired phase-distortion oscillator card with a second mirrored oscillator for
+  detune, ring modulation, and CZ-style noise/grit. Audio/CV in 1 tracks at a hardware-tested
+  1V/oct scale. Audio/CV In 2 modulates phase-distortion amount and CV In 1 modulates waveform
+  morph in synth mode.
+
+  Switch middle is the main PD synth voice. Hold the switch down from middle to edit the latched
+  second oscillator, ring modulation, and grit controls using soft pickup. Hold down for 8 seconds
+  to save those latched settings to flash. There is no autosave. Main, X, and Y use pickup when
+  moving between synth and Turing modes, so stored values do not jump until each physical knob is
+  swept back through its stored value.
+
+  Switch up opens the Turing machine. It outputs stepped and smoothed Turing CV, two Turing pulse
+  streams, and a self-playing stepped oscillator voice using the last PD synth sound. The Turing
+  CV and pulse outputs hold their last Turing values in synth mode. If an envelope
+  preset is active, the main Turing pulse self-triggers the envelope without oscillator sync.
+
+  Hold the switch down during startup to enter envelope preset select. Release the startup hold,
+  use Main to choose preset 0-8, short-press down to exit, or long-hold down to save the preset.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Audio/CV In 1
+      description: 1V/oct pitch modulation in PD synth mode
+    - id: AudioIn2
+      name: Audio/CV In 2
+      description: Phase-distortion amount modulation in PD synth mode
+    - id: CVIn1
+      name: CV In 1
+      description: Waveform morph modulation in PD synth mode
+    - id: CVIn2
+      name: CV In 2
+      description: Positive voltages add ring modulation while held down; negative voltages add noise/grit while held down
+    - id: PulseIn1
+      name: Pulse In 1
+      description: External Turing clock in switch-up mode
+    - id: PulseIn2
+      name: Pulse In 2
+      description: Triggers the selected envelope preset and oscillator sync in PD synth mode when preset 1-8 is active; preset 0 ignores Pulse In 2
+  outputs:
+    - id: AudioOut1
+      name: Audio Out 1
+      description: Oscillator 1 in PD synth mode; self-playing stepped oscillator 1 in Turing mode
+    - id: AudioOut2
+      name: Audio Out 2
+      description: Oscillator 2 in PD synth mode; self-playing stepped oscillator 2 in Turing mode
+    - id: CVOut1
+      name: CV Out 1
+      description: Scaled stepped Turing CV
+    - id: CVOut2
+      name: CV Out 2
+      description: Smoothed scaled Turing CV
+    - id: PulseOut1
+      name: Pulse Out 1
+      description: Main Turing pulse
+    - id: PulseOut2
+      name: Pulse Out 2
+      description: Alternate Turing bit pulse
+
+controls:
+  knobs:
+    - when: { z: middle }
+      main:
+        name: Main
+        description: Oscillator pitch over octave-based range; uses pickup when returning from Turing mode
+      x:
+        name: X
+        description: Phase-distortion amount; Audio/CV In 2 modulates the same parameter; uses pickup when returning from Turing mode
+      y:
+        name: Y
+        description: Waveform morph across saw, square, pulse, double sine, saw-pulse curve, and three CZ-style resonance-window waveforms; CV In 1 modulates the same parameter; uses pickup when returning from Turing mode
+
+    - when: { z: down, gesture: hold }
+      main:
+        name: Main
+        description: Latched oscillator 2 detune from centre; distance from centre also raises oscillator 2 level
+      x:
+        name: X
+        description: Latched ring modulation amount; uses soft pickup
+      y:
+        name: Y
+        description: Latched CZ-style noise/grit amount; uses soft pickup
+
+    - when: { z: up }
+      main:
+        name: Main
+        description: Turing mutation/lock amount; centre is most random and extremes are more locked; uses pickup when returning from synth mode
+      x:
+        name: X
+        description: Turing sequence length, 2 to 16 steps; uses pickup when returning from synth mode
+      y:
+        name: Y
+        description: Internal Turing clock speed; uses pickup when returning from synth mode
+
+    - when: { z: up, gesture: flick-down }
+      main:
+        name: Switch Down
+        description: Tap internal Turing clock tempo
+
+    - when: { startup: switch-down }
+      main:
+        name: Main
+        description: Select envelope preset 0-8
+      switch:
+        name: Switch Down
+        description: Short press exits preset select; long hold saves selected preset to flash
+
+  leds:
+    - when: { z: middle }
+      display: list
+      items:
+        - id: LED0
+          name: LED 0
+          description: Phase-distortion amount
+        - id: LED1
+          name: LED 1
+          description: Waveform morph position
+        - id: LED2
+          name: LED 2
+          description: Oscillator 2 level
+        - id: LED3
+          name: LED 3
+          description: Ring modulation amount
+        - id: LED4
+          name: LED 4
+          description: Noise/grit amount
+        - id: LED5
+          name: LED 5
+          description: Lights while switch is held down
+
+    - when: { z: up }
+      display: list
+      items:
+        - id: LED0
+          name: LED 0
+          description: Low bit 0 of Turing pattern
+        - id: LED1
+          name: LED 1
+          description: Low bit 1 of Turing pattern
+        - id: LED2
+          name: LED 2
+          description: Low bit 2 of Turing pattern
+        - id: LED3
+          name: LED 3
+          description: Pulse In 1 state
+        - id: LED4
+          name: LED 4
+          description: Turing sequence length
+        - id: LED5
+          name: LED 5
+          description: Flashes on every Turing clock step
+
+    - when: { startup: envelope-select }
+      display: binary
+      items:
+        - id: LED0
+          name: LED 0
+          description: Envelope preset binary bit 0
+        - id: LED1
+          name: LED 1
+          description: Envelope preset binary bit 1
+        - id: LED2
+          name: LED 2
+          description: Envelope preset binary bit 2
+        - id: LED3
+          name: LED 3
+          description: Envelope preset binary bit 3
+        - id: LED4
+          name: LED 4
+          description: Envelope preset binary bit 4
+        - id: LED5
+          name: LED 5
+          description: Envelope preset binary bit 5
+
+presets:
+  waveforms:
+    - id: 1
+      name: Saw
+      description: Saw-tooth phase-distortion target
+    - id: 2
+      name: Square
+      description: Square phase-distortion target
+    - id: 3
+      name: Needle pulse
+      description: Narrow pulse phase-distortion target
+    - id: 4
+      name: Double sine
+      description: Double-sine phase-distortion target
+    - id: 5
+      name: Saw-pulse curve
+      description: Curved saw-pulse phase-distortion target
+    - id: 6
+      name: Resonance I, saw window
+      description: Saw-windowed resonant waveform
+    - id: 7
+      name: Resonance II, triangle window
+      description: Triangle-windowed resonant waveform
+    - id: 8
+      name: Resonance III, trapezoid window
+      description: Trapezoid-windowed resonant waveform
+
+  envelopes:
+    - id: 0
+      name: Off
+      description: Free-running oscillator; Pulse In 2 is ignored
+    - id: 1
+      name: Pluck
+      description: Fast plucked envelope
+    - id: 2
+      name: Double pluck
+      description: Two plucked attacks in one envelope
+    - id: 3
+      name: Bounce
+      description: Multi-stage bouncing drop-and-rise envelope
+    - id: 4
+      name: Bell
+      description: Bright bell-like envelope
+    - id: 5
+      name: Brass
+      description: Slower brass-style envelope
+    - id: 6
+      name: Strings
+      description: Multi-stage strings-style envelope
+    - id: 7
+      name: Reverse swell
+      description: Reverse swell with late peak
+    - id: 8
+      name: Evolving digital
+      description: Multi-stage amp and phase-distortion movement
