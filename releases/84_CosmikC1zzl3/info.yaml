@@ -1,4 +1,4 @@
-Description: Production-candidate Web MIDI phase-distortion synthesiser and Turing machine firmware for Music Thing Modular Workshop Computer.
+# Description: Production-candidate Web MIDI phase-distortion synthesiser and Turing machine firmware for Music Thing Modular Workshop Computer.
 Name: C1ZZL3
 Language: C++ (Pico SDK)
 Creator: Adrian Vos
