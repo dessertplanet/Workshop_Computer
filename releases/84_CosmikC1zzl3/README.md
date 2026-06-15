@@ -15,49 +15,6 @@ For a simpler user-facing description of the card, see:
 CARD_README.md
 ```
 
-## Production Build
-
-Current promoted UF2:
-
-```text
-uf2/C1ZZL3.uf2
-```
-
-Checksum:
-
-```text
-22aaf7673e8169bb6f34d0fc2450f0ecccf82857278e0c428083162e854415dd
-```
-
-The exact tested production UF2 with custom-slot deletion is also retained:
-
-```text
-uf2/C1ZZL3_web_midi_delete_slots_production_20260615.uf2
-```
-
-Rollback build with Turing tap tempo still present:
-
-```text
-uf2/archive/previous-versions-20260615/C1ZZL3_with_tap_tempo_rollback_20260615.uf2
-```
-
-Matching source for that rollback is archived in:
-
-```text
-archive/previous-working-folders/backups/rollback_with_tap_tempo_20260615/
-```
-
-The previous main build was archived before promotion:
-
-```text
-archive/previous-working-folders/backups/main_before_web_midi_production_20260613_2136/
-```
-
-The non-MIDI v0.4 fallback remains available:
-
-```text
-uf2/archive/previous-versions-20260615/C1ZZL3v04working.uf2
-```
 
 ## Stability Boundary
 
