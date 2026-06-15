@@ -1,0 +1,231 @@
+Description: Production-candidate Web MIDI phase-distortion synthesiser and Turing machine firmware for Music Thing Modular Workshop Computer.
+Name: C1ZZL3
+Language: C++ (Pico SDK)
+Creator: Adrian Vos
+Instagram: https://instagram.com/professeur_whom
+Version: 0.6
+Status: Released but still Beta testing
+Editor: https://soveda.github.io/CozmikC1zzl3/web-midi/editor/
+tags:
+  - synthesiser
+  - phase-distortion
+  - oscillator
+  - turing-machine
+  - sequencer
+  - envelope
+  - web-midi
+  - usb-midi
+  - 1v-oct
+
+manual: |
+  C1ZZL3 is a CZ-inspired phase-distortion oscillator card with a second mirrored
+  oscillator for detune, ring modulation, and CZ-style noise/grit. It includes
+  USB MIDI note input, USB MIDI host mode for class-compliant controllers on
+  2025 Workshop Computer hardware, and a browser Web MIDI editor for custom
+  envelope slots.
+
+  This production candidate appears to be at the practical processing limit for
+  the RP2040 card format with the current oscillator, envelopes, Web MIDI custom
+  slots, USB MIDI device/host support, ring/noise, detune, Turing mode, CV
+  outputs, and LED feedback. Turing MIDI output and synth-mode Turing clock
+  persistence are intentionally absent because hardware testing showed those
+  additions could cause lockups at maximum settings.
+
+  Switch middle is the main PD synth voice. Main controls pitch, X controls
+  phase-distortion amount, and Y controls waveform morph. Audio/CV In 1 adds
+  1V/oct pitch. CV In 1 adds phase-distortion amount, CV In 2 adds wave control,
+  and Audio In 2 is unused.
+
+  Hold the switch down from middle to edit performance settings: Main controls
+  oscillator 2 detune, X edits ring modulation, and Y edits noise/grit. Ring and
+  noise start neutral after reset. If the card starts with the switch down,
+  ring/noise editing is locked until the switch has first left down.
+
+  Switch up opens the Turing machine. Main controls mutation, X controls length,
+  and Y controls clock speed. Pulse In 1 is external clock. CV Out 1 carries
+  stepped Turing CV, CV Out 2 carries smoothed Turing CV, Pulse Out 1 carries
+  the main Turing pulse, and Pulse Out 2 carries an alternate bit pulse. CV In 1
+  and CV In 2 add clamped phase-distortion and wave modulation in Turing mode.
+
+  When leaving Turing mode, the last Turing CV and pulse values are held. The
+  Turing clock does not continue running in synth mode.
+
+  Hold the switch down during startup to enter envelope preset select. Factory
+  presets are followed by any saved custom Web MIDI slots. LED 6 marks the
+  custom bank and LEDs 1-3 show the custom slot number.
+
+  The Web MIDI editor can load and save up to eight custom envelopes, set ring,
+  noise, and MIDI input channel, and audition envelopes in the browser. Factory
+  presets are never overwritten by SysEx. Custom names are stored by the browser;
+  the card stores custom envelope shapes.
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Audio/CV In 1
+      description: 1V/oct pitch modulation in PD synth mode
+    - id: AudioIn2
+      name: Audio/CV In 2
+      description: Unused in this production candidate
+    - id: CVIn1
+      name: CV In 1
+      description: Adds phase-distortion amount in synth and Turing modes
+    - id: CVIn2
+      name: CV In 2
+      description: Adds wave control in synth and Turing modes
+    - id: PulseIn1
+      name: Pulse In 1
+      description: External Turing clock in switch-up mode
+    - id: PulseIn2
+      name: Pulse In 2
+      description: Triggers the selected envelope and oscillator sync in synth mode when an active preset is selected
+  outputs:
+    - id: AudioOut1
+      name: Audio Out 1
+      description: Oscillator 1 in synth mode; self-playing stepped oscillator 1 in Turing mode
+    - id: AudioOut2
+      name: Audio Out 2
+      description: Oscillator 2 in synth mode; self-playing stepped oscillator 2 in Turing mode
+    - id: CVOut1
+      name: CV Out 1
+      description: Scaled stepped Turing CV; held at last value outside Turing mode
+    - id: CVOut2
+      name: CV Out 2
+      description: Smoothed Turing CV; held at last value outside Turing mode
+    - id: PulseOut1
+      name: Pulse Out 1
+      description: Main Turing pulse; held at last value outside Turing mode
+    - id: PulseOut2
+      name: Pulse Out 2
+      description: Alternate Turing bit pulse; held at last value outside Turing mode
+
+controls:
+  knobs:
+    - when: { z: middle }
+      main:
+        name: Main
+        description: Oscillator pitch over octave-based range; uses pickup when returning from Turing mode
+      x:
+        name: X
+        description: Phase-distortion amount; CV In 1 adds modulation; uses pickup when returning from Turing mode
+      y:
+        name: Y
+        description: Waveform morph; CV In 2 adds modulation; uses pickup when returning from Turing mode
+
+    - when: { z: down, gesture: hold }
+      main:
+        name: Main
+        description: Oscillator 2 detune
+      x:
+        name: X
+        description: Ring modulation amount with soft pickup
+      y:
+        name: Y
+        description: Noise/grit amount with soft pickup
+
+    - when: { z: up }
+      main:
+        name: Main
+        description: Turing mutation/lock amount; centre is most random and extremes are more locked
+      x:
+        name: X
+        description: Turing sequence length, 2 to 16 steps; briefly displays length as binary on LEDs
+      y:
+        name: Y
+        description: Internal Turing clock speed
+
+    - when: { startup: switch-down }
+      main:
+        name: Main
+        description: Select factory or saved custom envelope preset
+      switch:
+        name: Switch Down
+        description: Short press exits preset select; long hold saves selected preset to flash
+
+  leds:
+    - when: { z: middle }
+      display: list
+      items:
+        - id: LED0
+          name: LED 1
+          description: Phase-distortion amount
+        - id: LED1
+          name: LED 2
+          description: Waveform morph position
+        - id: LED2
+          name: LED 3
+          description: Oscillator 2 level
+        - id: LED3
+          name: LED 4
+          description: Ring modulation amount
+        - id: LED4
+          name: LED 5
+          description: Noise/grit amount
+        - id: LED5
+          name: LED 6
+          description: Lights while switch is held down
+
+    - when: { z: up }
+      display: list
+      items:
+        - id: LED0
+          name: LED 1
+          description: Low bit 0 of Turing pattern
+        - id: LED1
+          name: LED 2
+          description: Low bit 1 of Turing pattern
+        - id: LED2
+          name: LED 3
+          description: Low bit 2 of Turing pattern
+        - id: LED3
+          name: LED 4
+          description: Pulse In 1 state
+        - id: LED4
+          name: LED 5
+          description: Turing sequence length
+        - id: LED5
+          name: LED 6
+          description: Flashes on every Turing clock step
+
+    - when: { startup: envelope-select }
+      display: binary
+      items:
+        - id: LED0
+          name: LED 1
+          description: Factory preset bit 0 or custom slot bit 0
+        - id: LED1
+          name: LED 2
+          description: Factory preset bit 1 or custom slot bit 1
+        - id: LED2
+          name: LED 3
+          description: Factory preset bit 2 or custom slot bit 2
+        - id: LED3
+          name: LED 4
+          description: Factory preset bit 3
+        - id: LED4
+          name: LED 5
+          description: Factory preset bit 4
+        - id: LED5
+          name: LED 6
+          description: Custom bank marker for saved custom slots
+
+presets:
+  envelopes:
+    - id: 0
+      name: Off
+    - id: 1
+      name: Pluck
+    - id: 2
+      name: Double pluck
+    - id: 3
+      name: Bounce
+    - id: 4
+      name: Bell
+    - id: 5
+      name: Brass
+    - id: 6
+      name: Strings
+    - id: 7
+      name: Reverse swell
+    - id: 8
+      name: Evolving digital
