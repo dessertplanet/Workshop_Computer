@@ -4,68 +4,97 @@ release: 54 / 0.8.0
 summary: Cassette-style mono-to-stereo warble, saturation, hiss, crackle, and tape wear
 description: Cassette-style warble and degradation effect that turns a mono input into a wide stereo tape texture using wow, flutter, saturation, hiss, and crackle.
 panel:
+  controls:
+    main:
+      label: Wet / Dry
+      description: Sets the blend between dry signal and cassette-processed signal.
+      source: curated
+    x:
+      label: Tape Depth
+      description: Sets wow, pitch movement, and CV Out 1 attenuation.
+      source: curated
+    'y':
+      label: Instability
+      description: Sets flutter, transport agitation, and CV Out 2 attenuation.
+      source: curated
+    z:
+      label: Clean / Old / Damaged
+      description: Up is Clean, middle is Old, and down is Damaged.
+      source: curated
   inputs:
     audio_l:
       label: |-
         Audio
         1
       description: Main mono audio input.
-      source: README
+      source: curated
     audio_r:
       label: |-
         Audio
         2
       description: Tape-condition modulation input for morphing between clean, old, and damaged tape.
-      source: README
+      source: curated
     cv_1:
       label: |-
         CV
         1
       description: Modulates tape depth and wow/pitch movement; also routed to CV Out 1 through the X knob attenuator.
-      source: README
+      source: curated
     cv_2:
       label: |-
         CV
         2
       description: Modulates instability, flutter speed, and transport agitation; also routed to CV Out 2 through the Y knob attenuator.
-      source: README
+      source: curated
+    pulse_1:
+      label: |-
+        Damage
+        Burst
+      description: Tape damage burst trigger; each rising edge briefly forces a heavily degraded state.
+      source: curated
+    pulse_2:
+      label: |-
+        Crackle
+        Gate
+      description: While high, forces strong crackle generation regardless of tape condition.
+      source: curated
   outputs:
     audio_out_l:
       label: |-
         Audio
         1
       description: Left cassette-processed output.
-      source: README
+      source: curated
     audio_out_r:
       label: |-
         Audio
         2
       description: Right cassette-processed output.
-      source: README
+      source: curated
     cv_out_1:
       label: |-
         CV
         1
       description: CV In 1 passthrough output scaled by the X knob.
-      source: README
+      source: curated
     cv_out_2:
       label: |-
         CV
         2
       description: CV In 2 passthrough output scaled by the Y knob.
-      source: README
+      source: curated
     pulse_out_1:
       label: |-
         Pulse
         1
       description: Pulse output.
-      source: README
+      source: curated
     pulse_out_2:
       label: |-
         Pulse
         2
       description: Pulse output.
-      source: README
+      source: curated
 switch_modes:
   up: Clean. Bright and stable cassette response.
   middle: Old. Darker tone with moderate hiss and instability.

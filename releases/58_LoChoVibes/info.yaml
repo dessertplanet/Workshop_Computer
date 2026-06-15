@@ -4,68 +4,97 @@ release: 58 / 0.1.0
 summary: Stereo lo-fi chorus and vibrato with LFO shapes, saturation, compression, and clocking
 description: Stereo lo-fi chorus and vibrato effect for the Music Thing Modular Workshop Computer, inspired by unstable pitch movement, stereo widening, saturation, compression-style coloration, and degraded cassette-style modulation.
 panel:
+  controls:
+    main:
+      label: Rate
+      description: Controls chorus/vibrato modulation rate.
+      source: curated
+    x:
+      label: Depth
+      description: Controls modulation depth, stereo width, chorus movement, and vibrato depth.
+      source: curated
+    'y':
+      label: Character
+      description: Moves between degraded lo-fi texture, neutral response, and compressed/saturated modulation.
+      source: curated
+    z:
+      label: Vibrato / Chorus / Shape
+      description: Up selects vibrato, middle selects chorus, and momentary down cycles LFO shape.
+      source: curated
   inputs:
     audio_l:
       label: |-
         Audio
         1
       description: Mono summed audio input with Audio In 2.
-      source: README
+      source: curated
     audio_r:
       label: |-
         Audio
         2
       description: Mono summed audio input with Audio In 1.
-      source: README
+      source: curated
     cv_1:
       label: |-
         CV
         1
       description: Modulates modulation depth, including stereo width, chorus movement, and vibrato depth.
-      source: README
+      source: curated
     cv_2:
       label: |-
         CV
         2
       description: Modulates Character between degraded cassette texture, neutral response, and compressed/saturated modulation.
-      source: README
+      source: curated
+    pulse_1:
+      label: |-
+        LFO
+        Clock
+      description: External LFO clock input; falls back to internal clock if pulses stop.
+      source: curated
+    pulse_2:
+      label: |-
+        Pulse
+        2
+      description: Secondary pulse input.
+      source: curated
   outputs:
     audio_out_l:
       label: |-
         Audio
         1
       description: Left audio output.
-      source: README
+      source: curated
     audio_out_r:
       label: |-
         Audio
         2
       description: Right audio output.
-      source: README
+      source: curated
     cv_out_1:
       label: |-
         CV
         1
       description: Main LFO modulation output.
-      source: README
+      source: curated
     cv_out_2:
       label: |-
         CV
         2
       description: Inverted LFO modulation output.
-      source: README
+      source: curated
     pulse_out_1:
       label: |-
         Pulse
         1
       description: Pulse output.
-      source: README
+      source: curated
     pulse_out_2:
       label: |-
         Pulse
         2
       description: Pulse output.
-      source: README
+      source: curated
 switch_modes:
   up: Vibrato mode. Fully wet pitch modulation for unstable tape transport and warped cassette movement.
   middle: Chorus mode. Dry signal remains blended with the delay line for stereo widening and animated movement.

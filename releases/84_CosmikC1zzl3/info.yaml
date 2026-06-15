@@ -4,68 +4,105 @@ release: 84 / 0.6
 summary: Phase-distortion synth, Web MIDI custom envelopes, USB MIDI, and Turing machine
 description: Production-candidate Web MIDI phase-distortion synthesiser and Turing machine firmware for the Music Thing Modular Workshop Computer.
 panel:
+  controls:
+    main:
+      label: Pitch / Mutation
+      description: >-
+        In synth mode sets oscillator pitch. In Turing mode sets mutation/lock
+        behaviour; centre is most random and the extremes are more locked.
+      source: curated
+    x:
+      label: PD / Length
+      description: >-
+        In synth mode sets phase-distortion amount. In Turing mode chooses loop
+        length from 2 to 16 steps.
+      source: curated
+    'y':
+      label: Wave / Clock
+      description: >-
+        In synth mode morphs the waveform. In Turing mode sets the internal
+        clock speed.
+      source: curated
+    z:
+      label: Synth / Turing / Edit
+      description: >-
+        Up selects Turing machine, middle selects PD synth, and holding down
+        from middle edits detune, ring modulation, and noise.
+      source: curated
   inputs:
     audio_l:
       label: |-
         Audio/CV
         1
       description: 1V/oct pitch modulation in PD synth mode.
-      source: README
+      source: curated
     audio_r:
       label: |-
         Audio/CV
         2
       description: Unused in this production candidate.
-      source: README
+      source: curated
     cv_1:
       label: |-
         CV
         1
       description: Adds phase-distortion amount in synth and Turing modes.
-      source: README
+      source: curated
     cv_2:
       label: |-
         CV
         2
       description: Adds wave control in synth and Turing modes.
-      source: README
+      source: curated
+    pulse_1:
+      label: |-
+        Clock
+        1
+      description: External Turing clock in switch-up mode.
+      source: curated
+    pulse_2:
+      label: |-
+        Env
+        Trig
+      description: Triggers the selected envelope and oscillator sync in synth mode when an active preset is selected.
+      source: curated
   outputs:
     audio_out_l:
       label: |-
         Audio
         1
       description: Oscillator 1 in synth mode; self-playing stepped oscillator 1 in Turing mode.
-      source: README
+      source: curated
     audio_out_r:
       label: |-
         Audio
         2
       description: Oscillator 2 in synth mode; self-playing stepped oscillator 2 in Turing mode.
-      source: README
+      source: curated
     cv_out_1:
       label: |-
         CV
         1
       description: Scaled stepped Turing CV; held at the last value outside Turing mode.
-      source: README
+      source: curated
     cv_out_2:
       label: |-
         CV
         2
       description: Smoothed Turing CV; held at the last value outside Turing mode.
-      source: README
+      source: curated
     pulse_out_1:
       label: |-
         Pulse
         1
       description: Main Turing pulse; held at the last value outside Turing mode.
-      source: README
+      source: curated
     pulse_out_2:
       label: |-
         Pulse
         2
       description: Alternate Turing bit pulse; held at the last value outside Turing mode.
-      source: README
+      source: curated
 switch_modes:
   up: Turing machine. Main controls mutation, X controls length, and Y controls clock speed.
   middle: PD synth. Main controls pitch, X controls phase-distortion amount, and Y controls waveform morph.
