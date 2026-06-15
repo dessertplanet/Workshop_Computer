@@ -1,4 +1,4 @@
-# Description: Production-candidate Web MIDI phase-distortion synthesiser and Turing machine firmware for Music Thing Modular Workshop Computer.
+Description: Production-candidate Web MIDI phase-distortion synthesiser and Turing machine firmware for Music Thing Modular Workshop Computer.
 Name: C1ZZL3
 Language: C++ (Pico SDK)
 Creator: Adrian Vos
@@ -48,7 +48,8 @@ manual: |
   and CV In 2 add clamped phase-distortion and wave modulation in Turing mode.
 
   When leaving Turing mode, the last Turing CV and pulse values are held. The
-  Turing clock does not continue running in synth mode.
+  Turing clock does not continue running in synth mode. Tap tempo has been
+  removed; Y is the only internal Turing clock-speed control.
 
   Hold the switch down during startup to enter envelope preset select. Factory
   presets are followed by any saved custom Web MIDI slots. LED 6 marks the
