@@ -105,12 +105,26 @@
             MIDI in ch
             <input id="midiInChannel" type="number" min="1" max="16" value="1">
           </label>
+          <label>
+            Turing range
+            <input id="turingRange" type="number" min="1" max="8" value="2">
+          </label>
+          <label>
+            Turing MIDI out
+            <input id="turingMidiOut" type="checkbox" checked>
+          </label>
+          <label>
+            Turing MIDI ch
+            <input id="turingMidiChannel" type="number" min="1" max="16" value="1">
+          </label>
         </section>
         <div class="output-actions">
           <button id="copyCpp" type="button">Copy C++</button>
           <button id="copySysex" type="button">SysEx</button>
           <button id="sendSysex" type="button" title="Load this envelope until reset">Load</button>
           <button id="flashSysex" type="button" title="Save this envelope after reset">Save</button>
+          <button id="deleteSlot" type="button" title="Delete the selected custom slot from card flash">Delete</button>
+          <button id="requestSettings" type="button" title="Load current card settings into the editor">Read</button>
           <button id="sendSettings" type="button">Set</button>
           <button id="downloadJson" type="button">JSON</button>
           <button id="resetPreset" type="button">Reset</button>

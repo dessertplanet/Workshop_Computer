@@ -35,9 +35,11 @@ F0 7D 43 31 5A 33 cc payload... F7
 | --- | --- |
 | `01` | Load custom envelope into RAM |
 | `02` | Save custom envelope to flash |
-| `03` | Apply ring/noise/MIDI channel settings |
-| `04` | Reserved settings-save command; currently applies settings like `03` |
+| `03` | Apply ring/noise/MIDI channel/Turing settings in RAM |
+| `04` | Save ring/noise/MIDI channel/Turing settings to flash |
 | `05` | Delete saved custom envelope slot from flash |
+| `06` | Request current performance settings from the card |
+| `07` | Performance settings response from the card |
 
 ## Envelope Payload
 
@@ -109,10 +111,20 @@ slot is currently selected on the card, the active envelope preset is changed to
 
 ## Performance Settings Payload
 
-Settings commands `03` and `04` use a 5-byte payload:
+Settings commands `03` and `04` use an 8-byte payload. Firmware also accepts
+the older 5-byte payload and leaves Turing range/MIDI-out settings unchanged;
+it also accepts the previous 6-byte payload and leaves the MIDI-out settings
+unchanged.
+
+The web editor `Set` button sends command `04`, so the settings are applied
+immediately and reloaded after reset.
+
+The web editor `Read` button sends command `06`. The card replies with command
+`07` and the same 8-byte payload format, allowing the editor to load the current
+card settings without writing flash.
 
 ```text
-rr rr nn nn ic
+rr rr nn nn ic tr tm tc
 ```
 
 | Bytes | Meaning |
@@ -120,16 +132,36 @@ rr rr nn nn ic
 | `rr rr` | ring modulation amount, 14-bit packed, `0..4095` |
 | `nn nn` | noise amount, 14-bit packed, `0..4095` |
 | `ic` | MIDI input channel encoded as `0..15` for channels `1..16` |
+| `tr` | Turing CV output range in octaves, `1..8`; default is `2` |
+| `tm` | Turing MIDI output enable, `0` off or `1` on |
+| `tc` | Turing MIDI output channel encoded as `0..15` for channels `1..16` |
 
 There is no MIDI acknowledgement frame.
 
+The following MIDI CC controls are handled live on the selected MIDI input
+channel:
+
+- CC1: phase-distortion amount, mapped across `0..4095`.
+- CC20: oscillator 2 detune, mapped across the same bipolar range as the
+  physical detune control.
+- CC21: ring modulation amount, mapped across `0..4095`.
+- CC22: noise amount, mapped across `0..4095`.
+- CC23: waveform amount, mapped across `0..4095`.
+- CC24: Turing CV range, value `0` maps to 1 octave and `127` maps to 8 octaves.
+
+Turing MIDI output enable and output channel are set by the Web MIDI settings
+payload, not by MIDI CC. CC changes are live and update the same control values
+as the physical knobs; use the web editor `Set` button or the physical save
+gesture to persist them.
+
 ## Current Limitations
 
-- No SysEx readback.
+- SysEx readback is limited to performance settings; custom envelope readback is
+  not implemented.
 - Custom slot names are kept by the browser editor, not by the card firmware.
 - Silent custom envelopes are not accepted.
 - USB role is selected only at boot/reset.
 - Web MIDI SysEx editing is only available in USB MIDI device mode.
-- Turing MIDI output is intentionally absent for stability.
-- The Turing clock does not continue running in synth mode; CV and pulse outputs
-  hold the last Turing values.
+- Turing MIDI output can be disabled from the web editor.
+- The Turing clock can continue running in synth mode while the Turing audio
+  voice remains absent.
