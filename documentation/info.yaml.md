@@ -7,6 +7,7 @@ Keys are case-insensitive. Hyphens and spaces in key names are equivalent (`audi
 ## Minimal example
 
 ```yaml
+draft: true
 Name: Card Display Name
 Description: One-line summary of what the card does
 Language: C++ (Pico SDK)
@@ -20,6 +21,7 @@ License: MIT
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
+| `draft` | no | boolean | When `true`, structured metadata in this file is still under author review. Set to `false` when `Name`, `contact`, `License`, `panel`, and related fields are confirmed. Not rendered on detail pages yet; parsed for tooling and future site UI. |
 | `Name` | yes | string | Display title on the site index and detail page (see sitegen). |
 | `Description` | yes | string | Short blurb shown on the index and detail aside. |
 | `Language` | yes | string | Implementation language or stack (e.g. `C++ (Pico SDK)`, `Lua / Blackbird`). |

@@ -1,3 +1,4 @@
+draft: true
 Name: CVMod
 Description: Quad CV delay inspired by Make Noise Multimod
 Language: C++ (ComputerCard)

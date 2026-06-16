@@ -1,3 +1,4 @@
+draft: true
 Name: Talker
 Description: Proof of concept speech synthesizer, based on TalkiePCM, inspired by 1970s LPC speech synths.
 Language: C++ (ComputerCard)

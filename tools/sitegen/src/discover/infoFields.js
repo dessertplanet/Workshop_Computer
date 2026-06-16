@@ -23,6 +23,16 @@ export function normalizeRepository(raw) {
   return String(raw || '').trim();
 }
 
+/** Card metadata still under author review; defaults to false when omitted. */
+export function normalizeDraft(raw) {
+  if (raw === true || raw === 1) return true;
+  if (raw === false || raw === 0) return false;
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (s === 'true' || s === 'yes' || s === '1') return true;
+  if (s === 'false' || s === 'no' || s === '0' || s === '') return false;
+  return Boolean(raw);
+}
+
 /** Normalize optional contact block (email, website, social platform links). */
 export function normalizeContact(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;

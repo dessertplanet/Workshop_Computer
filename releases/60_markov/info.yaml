@@ -1,3 +1,4 @@
+draft: true
 Name: Markov
 Description: Dual generative Markov chain module — evolving melody (MarkoV) left side, rhythmic percussion patterns (MarkovPerc) right side, with internal synth voice
 Language: C++ (Pico SDK)

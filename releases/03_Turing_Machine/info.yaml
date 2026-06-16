@@ -1,3 +1,4 @@
+draft: true
 Name: Turing Machine
 Description: Turing Machine with tap tempo clock, 2 x pulse outputs, 4 x CV outputs
 Language: C++ (ComputerCard)

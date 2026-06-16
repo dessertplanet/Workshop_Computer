@@ -1,3 +1,4 @@
+draft: true
 Name: DivCom
 Description: Comparator and VC clock divider, inspired by Serge NCOM
 Language: C++ (RPi Pico SDK) compat. cmake.

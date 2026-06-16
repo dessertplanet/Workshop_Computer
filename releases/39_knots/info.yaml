@@ -1,3 +1,4 @@
+draft: true
 Name: Knots
 Description: Six-engine oscillator firmware for the Music Thing Workshop System
 Language: C++ (RPi Pico SDK / ComputerCard)

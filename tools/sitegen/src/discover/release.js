@@ -7,13 +7,14 @@ import { discoverDocs } from './docs.js';
 import { discoverDownloads } from './downloads.js';
 import { getLastCommitDate } from '../utils/git.js';
 import { resolveWebConfig } from './webEditor.js';
-import { normalizeTags, normalizeRepository, normalizeContact, resolveAudioSample } from './infoFields.js';
+import { normalizeTags, normalizeRepository, normalizeContact, normalizeDraft, resolveAudioSample } from './infoFields.js';
 import { parseYoutubeId, youtubeEmbedHtml } from '../utils/youtube.js';
 
 export function normalizeInfo(raw, fallbackTitle) {
   const out = {};
   for (const [k, v] of Object.entries(raw || {})) out[normalizeYamlKey(k)] = v;
   return {
+    draft: normalizeDraft(out.draft),
     title: out.title || out.name || fallbackTitle,
     description: out.description || '',
     language: out.language || '',

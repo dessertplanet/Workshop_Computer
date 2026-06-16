@@ -1,3 +1,4 @@
+draft: true
 Name: Noisebox
 Description: 13-algorithm noise synth with CV modulation, sample-and-hold, and crusher mode
 Language: C++ (ComputerCard)

@@ -1,3 +1,4 @@
+draft: true
 Name: drumdrum
 Description: DFAM-style 8-step sequencer
 Language: C++ (ComputerCard / Pico SDK)

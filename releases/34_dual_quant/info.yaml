@@ -1,3 +1,4 @@
+draft: true
 Name: DualQuant
 Description: Dual quantised granular pitch shifter with calibrated 1V/oct CV outputs
 Language: C++ (ComputerCard / Pico SDK)

@@ -1,3 +1,4 @@
+draft: true
 Name: Duo MIDI
 Description: A duophonic midi device/host interface
 Language: Lua / Blackbird

@@ -1,3 +1,4 @@
+draft: true
 Name: Simple MIDI
 Description: Takes USB midi, sends it to pulse and CV outputs, also sends knob positions and CV inputs back to the computer as CC values.
 Language: Arduino-Pico

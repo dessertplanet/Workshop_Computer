@@ -1,3 +1,4 @@
+draft: true
 Name: Wild Pebble
 Description: MIDI-clockable generative rhythm and melody organism inspired by Pet Rock
 Language: C++

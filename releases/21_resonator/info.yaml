@@ -1,3 +1,4 @@
+draft: true
 Name: Resonator
 Description: Karplus-Strong based sympathetic resonator. Can be used for resonant droning as well as plucking sounds.
 Language: C++ (ComputerCard)
