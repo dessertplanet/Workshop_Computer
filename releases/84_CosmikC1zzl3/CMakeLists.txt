@@ -70,6 +70,7 @@ target_link_libraries(C1ZZL3
 
 target_compile_definitions(C1ZZL3 PRIVATE
     PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64
+    C1ZZL3_OVERCLOCK_KHZ=192000
 )
 
 pico_enable_stdio_usb(C1ZZL3 0)

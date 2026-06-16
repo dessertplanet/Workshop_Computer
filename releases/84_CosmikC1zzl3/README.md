@@ -1,117 +1,84 @@
-# CosmikC1ZZL3
+# C1ZZL3 Card Guide
 
-Dual phase-distortion synthesiser, Web MIDI custom-envelope editor, USB MIDI
-instrument, and probabilistic Turing machine program card for the Music Thing
-Modular Workshop Computer.
+C1ZZL3 is a phase-distortion synth card for the Music Thing Modular Workshop
+Computer. It combines a playable digital synth voice, a Turing machine, USB
+MIDI, and a browser editor for custom envelopes.
 
-Status: production build promoted from the hardware-tested Web MIDI build  
-Language: C++ / Pico SDK  
-Framework: ComputerCard  
-Creator: Adrian Vos
+## What It Does
 
-For a simpler user-facing description of the card, see:
+- Plays as a phase-distortion synth voice.
+- Responds to USB MIDI notes from a DAW or class-compliant controller.
+- Lets you design and save custom envelopes from a browser.
+- Runs a Turing machine mode with stepped CV, smoothed CV, two pulse outputs,
+  and optional MIDI note output.
+- Keeps factory envelope presets safe; custom envelopes use separate slots.
 
-```text
-CARD_README.md
-```
+## Main Synth Mode
 
+Put the switch in the middle.
 
-## Stability Boundary
+- Main sets pitch.
+- X sets phase distortion.
+- Y selects or morphs the waveform.
+- `Audio/CV In 1` adds pitch at 1V/oct.
+- `CV In 1` adds phase distortion.
+- `CV In 2` adds wave control.
+- `Pulse In 2` triggers the selected envelope and oscillator sync.
 
-This production build appears to be at the practical limit of what is stable
-on this RP2040 card format while keeping the current oscillator, envelopes, Web
-MIDI custom slots, USB MIDI device/host support, ring/noise, detune, Turing
-mode, CV outputs, and LED feedback.
+The Turing CV and pulse outputs continue running in synth mode, so they can be
+used while playing the synth.
 
-The failed experiments are part of the design decision:
+## Performance Edit
 
-- Keeping the Turing clock running in synth mode caused lockups at maximum
-  settings.
-- Reducing noise depth did not make that clock-persistence branch reliable.
-- Limiting Web MIDI ring/noise settings did not make that branch reliable.
-- Turing MIDI output has not been added because it would increase complexity
-  and processing load for little benefit on this card.
+Hold the switch down from the middle position.
 
-The stable production behaviour is therefore:
+- Main sets oscillator 2 detune.
+- X sets ring modulation.
+- Y sets noise/grit.
 
-- Turing CV and pulse outputs are generated while in Turing mode.
-- When switching back to synth mode, the last Turing CV and pulse values are
-  held.
-- The Turing clock does not continue running in synth mode.
-- Turing tap tempo has been removed; Y is the only internal clock-speed
-  control.
-- Turing MIDI output is intentionally absent.
+Ring and noise start neutral after reset. If the card powers up with the switch
+already down, ring/noise editing waits until the switch has first left down.
 
-Avoid adding background work to the audio callback unless another feature is
-removed or simplified.
+Hold the switch down from the middle position to save the current performance
+settings.
 
-## Modes
+## Turing Mode
 
-### Switch Middle: PD Synth
+Put the switch up.
 
-- Main controls pitch.
-- Audio/CV in 1 adds pitch at the hardware-tested 1V/oct scale.
-- X controls phase-distortion amount.
-- Y morphs across the waveform families.
-- `CVIn1` adds phase-distortion amount.
-- `CVIn2` adds wave control.
-- `AudioIn2` is unused.
-- Pulse in 2 triggers the selected envelope and oscillator sync.
-- CV out 1/2 and Pulse out 1/2 hold the last Turing values.
+- Main controls mutation.
+- X controls sequence length.
+- Y controls clock speed.
+- `Pulse In 1` can clock the Turing machine externally.
+- `CV Out 1` outputs stepped Turing CV.
+- `CV Out 2` outputs smoothed Turing CV.
+- `Pulse Out 1` and `Pulse Out 2` output Turing pulses.
+- Audio outputs carry the self-playing Turing oscillator voice.
 
-### Hold Switch Down: Performance Edit
+Tap tempo has been removed. Y is the internal Turing clock-speed control.
 
-- Main controls oscillator 2 detune.
-- X edits ring modulation.
-- Y edits noise/grit modulation.
-- Ring and noise start neutral after reset.
-- If the card starts with the switch down, ring/noise editing is locked until
-  the switch has first left down.
-- Holding switch down from middle for the save gesture keeps the original manual
-  save behaviour for supported performance settings.
+## USB MIDI
 
-### Switch Up: Turing Machine
+The card chooses its USB role at boot.
 
-- Main controls mutation/lock behaviour.
-- X controls sequence length from 2 to 16 steps.
-- Y controls internal clock speed.
-- Pulse in 1 acts as an external clock.
-- CV out 1 carries scaled stepped Turing CV.
-- CV out 2 carries smoothed Turing CV.
-- Pulse out 1 carries the main Turing pulse.
-- Pulse out 2 carries an alternate Turing bit pulse.
-- Audio out 1/2 carry the self-playing stepped oscillator voice.
-- `CVIn1` adds clamped phase-distortion amount.
-- `CVIn2` adds clamped wave control.
+- Connected to a computer, it appears as a USB MIDI device for DAW and browser
+  use.
+- Connected to a class-compliant USB MIDI controller, it can run in USB MIDI
+  host mode.
 
-Main, X, and Y use pickup when changing between synth and Turing modes, so
-stored values do not jump until each physical knob is swept through its held
-value.
+MIDI CC controls on the selected input channel:
 
-## Web MIDI And USB MIDI
+- `CC1`: phase distortion
+- `CC20`: oscillator 2 detune
+- `CC21`: ring modulation
+- `CC22`: noise amount
+- `CC23`: waveform
+- `CC24`: Turing CV octave range, from 1 to 8 octaves
 
-The card uses boot-time USB role selection on 2025 Workshop Computer hardware:
+Physical knobs use pickup after MIDI changes, so values do not jump until the
+knob is swept through the current setting.
 
-- connected to a computer, it appears as a USB MIDI device for DAW/browser use
-- connected downstream to a class-compliant USB MIDI controller, it can run in
-  USB MIDI host mode
-
-The Web MIDI editor can:
-
-- edit amplitude and phase-distortion envelopes
-- drag envelope nodes vertically for level and sideways for stage time
-- add and remove up to eight custom presets
-- load a custom envelope into RAM
-- save a custom envelope to card flash
-- delete a saved custom envelope slot from card flash
-- set ring, noise, and MIDI input channel
-- audition envelopes in the browser
-- copy SysEx or C++ envelope data for inspection
-
-Factory presets are never overwritten. The card stores custom envelope shapes;
-custom names are kept in browser local storage.
-
-## Running The Web Editor
+## Web MIDI Editor
 
 Hosted editor:
 
@@ -119,28 +86,17 @@ Hosted editor:
 https://soveda.github.io/CozmikC1zzl3/web-midi/editor/
 ```
 
-Use the hosted editor for normal Web MIDI editing. To run the same editor
-locally from the repository root:
-
-```sh
-python3 -m http.server 5173 --directory web-midi/editor
-```
-
-Open:
-
-```text
-http://localhost:5173
-```
-
-If port `5173` is already in use, choose another port:
-
-```sh
-python3 -m http.server 5174 --directory web-midi/editor
-```
-
 Use Chrome or another browser with Web MIDI and SysEx support. Press `MIDI`,
-then choose the C1ZZL3 output explicitly before pressing `Load`, `Save`,
-`Delete`, or `Set`.
+choose the C1ZZL3 output, then use:
+
+- `Load` to send a custom envelope until reset.
+- `Save` to write a custom envelope to the card.
+- `Delete` to clear a custom envelope slot.
+- `Read` to load the current card settings into the editor.
+- `Set` to save performance settings to the card.
+
+The editor can save up to eight custom envelopes. Factory presets are not
+overwritten.
 
 ## Envelope Presets
 
@@ -156,9 +112,8 @@ Factory presets:
 7. Reverse swell
 8. Evolving digital
 
-Eight custom slots can be loaded from the Web editor and selected after the
-factory presets during startup envelope selection. LED 6 marks the custom bank,
-and LEDs 1-3 show the custom slot number.
+Saved custom envelopes appear after the factory presets during startup envelope
+selection. Custom slots light LED 6 and use LEDs 1-3 for the slot number.
 
 ## LED Feedback
 
@@ -174,53 +129,27 @@ In synth mode:
 In Turing mode:
 
 - LEDs 1-3 show low bits of the Turing pattern.
-- LED 4 follows Pulse in 1.
+- LED 4 follows Pulse In 1.
 - LED 5 shows sequence length.
 - LED 6 flashes on each Turing clock step.
 - Turning X briefly displays sequence length as binary on the LEDs.
 
 In startup envelope selection:
 
-- Factory presets use the existing binary LED display.
+- Factory presets use the binary LED display.
 - Custom slots light LED 6 and use LEDs 1-3 for the custom slot number.
 
-## Hardware Test Coverage
+## Build UF2
 
-This production build passed:
-
-- maximum physical controls
-- maximum Web MIDI ring/noise settings
-- factory and custom envelope stress
-- repeated Pulse 2 and MIDI note triggering
-- switch/mode changes
-- USB MIDI device mode from DAW/browser
-- USB MIDI host mode from class-compliant controllers
-- custom envelope save and startup selection
-
-If an overload occurs while testing future changes, reset the card before
-judging the next test.
-
-## Building
+From the repository root:
 
 ```sh
 cmake -S . -B build
 cmake --build build
 ```
 
-The promoted production build reported:
+The built firmware will be at:
 
 ```text
-FLASH: 62 KB
-RAM: 71788 B
+build/C1ZZL3.uf2
 ```
-
-## Development Notes
-
-The experimental history remains in:
-
-```text
-experimental/web-midi/
-```
-
-The failed synth-mode Turing clock persistence builds are archived there and
-should not be used as future baselines.

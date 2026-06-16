@@ -1,4 +1,4 @@
-CozmikC1ZZL3 Quick Reference
+C1ZZL3 Quick Reference
 ======================
 
 Production candidate: Web MIDI build promoted 2026-06-13
