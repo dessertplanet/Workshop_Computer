@@ -43,7 +43,7 @@ Note that MLRws does NOT use [iii](https://monome.org/docs/iii), and any grid de
 
 [Detailed grid docs are here](docs/Gridful.md)
 
-The primary mode of MLRws is USB host with a grid device connected. This mode will be on you power-on the Workshop Computer (and/or system) with a grid plugged directly into the Computer via the USB-C port. Depending on your grid version you may need a specialized cable for this- older FTDI grids with USB Mini ports were tested using [this cable]() from amazon.
+The primary mode of MLRws is USB host with a grid device connected. This mode will be on you power-on the Workshop Computer (and/or system) with a grid plugged directly into the Computer via the USB-C port. Depending on your grid version you may need a specialized cable for this- older FTDI grids with USB Mini ports were tested using [this cable](https://www.amazon.com/dp/B00UUBS0SS?ref=ppx_pop_mob_ap_share) from amazon.
 
 Note that the Workshop Computer determines whether it is in USB Host or USB Device mode when the module powers-on. so you may need to power-cycle your system to get into USB Host mode so that Computer can communicate with your grid.
 
