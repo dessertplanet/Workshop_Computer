@@ -59,6 +59,7 @@
 | 82_Computer_Grids | Grids-inspired trigger sequencer with Web MIDI SysEx configuration.<br>[Web editor](https://computergrids.webmidi.cc/) | 0.1.0<br>Released | C++ | Phil Miller |
 | 84_CosmikC1zzl3 |  |  |  |  |
 | 86_tesserae | Tesserae — Variable-voice (2-8) arpeggiated chord generator with 5 patterns, 10 scales, tap tempo, CV/audio transpose inputs, and dual CV + audio pitch outputs. Inspired by Laurie Spiegel's Music Mouse and Patchwork. | 1.0<br>released | C++ (Pico SDK) | Joep Vermaat |
+| 87_fr330hfr33 |  |  |  |  |
 | 88_Blank | Reserved for blank 88 cards | 0<br>None | None | Tom Whitwell |
 | 98_duo_midi | A duophonic midi device/host interface | 0.1<br>Released | Lua / Blackbird | Dune Desormeaux |
 | 99_toolbox | Mixer, VCA, noise, S&H, clock generator, etc. | 0.1.1<br>Released | C++ (ComputerCard) | divmod |
