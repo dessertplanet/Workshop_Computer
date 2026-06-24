@@ -5,6 +5,7 @@ Language: C++
 Creator: Adrian Vos
 Version: 0.1.0
 Status: released
+License: MIT
 
 manual: |
   Stereo lo-fi chorus/vibrato with clockable LFO and character shaping.
