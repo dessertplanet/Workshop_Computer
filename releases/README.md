@@ -49,7 +49,7 @@
 | 59_BitPhase |  |  |  |  |
 | 60_markov | Dual generative Markov chain module — evolving melody (MarkoV) left side, rhythmic percussion patterns (MarkovPerc) right side, with internal synth voice | 1.0.0<br>Released | C++ (Pico SDK) | Andy Jenkinson (uglifruit) |
 | 64_voices_of_sid | Dual MOS 6581 SID emulation (reSID engine) with CV/gate control, stereo output, waveform selection, and randomize | 1.1<br>Released | C++ (Pico SDK) | Joep Vermaat |
-| 66_stretchcore | A card for playing and manipulating samples with tempo control, timestretch with browser-based audio loading (infinitedigits.com/stretchcore/) | 1.0<br>Ready% | Pico SDK | Infinite Digits |
+| 66_stretchcore | A card for playing and manipulating samples with tempo control, timestretch with browser-based audio loading (infinitedigits.com/stretchcore/)<br>[Web editor](https://infinitedigits.co/stretchcore/) | 1.0<br>Ready% | Pico SDK | Infinite Digits |
 | 69_trace | Oscillograph stereo oscillator | 0.1<br>Functional but WIP | C++ (ComputerCard) | Ruiyang Wang |
 | 71_degenerator | Degenerator — Disintegrating Looper. Capture audio loops and apply irreversible degradation with 6 algorithms (Saturation, Filter Drift, Tape Hiss, Oxide Shedding, Bit Crush, Bit Rot) via preview/apply workflow. Inspired by William Basinski's The Disintegration Loops.<br>[Web editor](https://degenerator-web.netlify.app/) | 1.3<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 72_motorik | Motorik drum machine — kick/snare/hihat with bass and melody CV, classic Krautrock grooves<br>[Web editor]() | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
@@ -59,6 +59,8 @@
 | 82_Computer_Grids | Grids-inspired trigger sequencer with Web MIDI SysEx configuration.<br>[Web editor](https://computergrids.webmidi.cc/) | 0.1.0<br>Released | C++ | Phil Miller |
 | 84_CosmikC1zzl3 |  |  |  |  |
 | 86_tesserae | Tesserae — Variable-voice (2-8) arpeggiated chord generator with 5 patterns, 10 scales, tap tempo, CV/audio transpose inputs, and dual CV + audio pitch outputs. Inspired by Laurie Spiegel's Music Mouse and Patchwork. | 1.0<br>released | C++ (Pico SDK) | Joep Vermaat |
+| 87_fr330hfr33 |  |  |  |  |
 | 88_Blank | Reserved for blank 88 cards | 0<br>None | None | Tom Whitwell |
+| 91_chorgan | Chorgan — 6-voice chord synthesizer with morphing timbre, chord extension presets, and built-in chord sequencer. Two modes: normal (detune/chorus) and slew (portamento chord changes). Inspired by the Music Thing Modular Chord Organ. | 1.0.0<br>released | C++ (Pico SDK / ComputerCard) | Andy Jenkinson (uglifruit) |
 | 98_duo_midi | A duophonic midi device/host interface | 0.1<br>Released | Lua / Blackbird | Dune Desormeaux |
 | 99_toolbox | Mixer, VCA, noise, S&H, clock generator, etc. | 0.1.1<br>Released | C++ (ComputerCard) | divmod |
