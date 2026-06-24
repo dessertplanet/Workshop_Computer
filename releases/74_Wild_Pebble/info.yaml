@@ -1,13 +1,105 @@
-#
-#  info.yaml
-#  
-#
-#  Created by Adrian Vos on 16/05/2026.
-#
-
-
+draft: true
+Name: Wild Pebble
 Description: MIDI-clockable generative rhythm and melody organism inspired by Pet Rock
 Language: C++
 Creator: Adrian Vos with Vibecode support
 Version: 1.0
 Status: Beta. USB MIDI clock input and sequencer note output tested
+License: GPL-3.0
+
+manual: |
+  Generative rhythm/melody organism with coupled trigger streams, quantized melody CV,
+  internal kick/snare voices, and evolving energy/tension modulation. Main controls
+  internal tempo when no external clock is present, X controls rhythmic density, and Y
+  controls mutation amount. Switch up/middle/down sets increasingly active mutation and
+  swing behavior. Pulse In 1 is external clock and Pulse In 2 freezes mutation while high.
+
+panel:
+  inputs:
+    - id: PulseIn1
+      name: External Clock
+      description: External clock input; when active it overrides internal tempo clock
+    - id: PulseIn2
+      name: Freeze Gate
+      description: While held high, mutation updates are disabled and structure is preserved
+    - id: CVIn1
+      name: Density Modulation
+      description: Modulates X density control
+    - id: CVIn2
+      name: Mutation Modulation
+      description: Modulates Y mutation control
+  outputs:
+    - id: PulseOut1
+      name: Primary Trigger Stream
+      description: Main rhythm trigger stream used for melodic progression and kick events
+    - id: PulseOut2
+      name: Companion Trigger Stream
+      description: Derived companion trigger stream used for snare/percussion events
+    - id: CVOut1
+      name: Quantized Melody CV
+      description: Quantized pitch CV from evolving scale-constrained sequence
+    - id: CVOut2
+      name: Energy/Tension CV
+      description: Smoothed evolving modulation output from internal energy and tension state
+    - id: AudioOut1
+      name: Kick Voice
+      description: Internal kick/percussion synthesis output driven by primary trigger stream
+    - id: AudioOut2
+      name: Snare Voice
+      description: Internal snare/percussion synthesis output driven by companion trigger stream
+
+controls:
+  knobs:
+    - when: { z: up }
+      main:
+        name: Internal Tempo
+        description: Internal clock speed when no external clock is present
+      x:
+        name: Density
+        description: Trigger probability density control (modulated by CVIn1)
+      y:
+        name: Mutation
+        description: Mutation intensity control (modulated by CVIn2)
+    - when: { z: middle }
+      main:
+        name: Internal Tempo
+        description: Internal clock speed with moderate swing profile when internally clocked
+      x:
+        name: Density
+        description: Trigger probability density control (modulated by CVIn1)
+      y:
+        name: Mutation
+        description: Mutation intensity control (modulated by CVIn2)
+    - when: { z: down }
+      main:
+        name: Internal Tempo
+        description: Internal clock speed with strongest swing profile when internally clocked
+      x:
+        name: Density
+        description: Trigger probability density control with more active companion-rhythm behavior
+      y:
+        name: Mutation
+        description: Aggressive mutation behavior and faster harmonic movement
+
+  leds:
+    - when: { z: any }
+      display: list
+      items:
+        - id: LED0
+          name: Primary Trigger
+          description: Flashes when PulseOut1 fires
+        - id: LED1
+          name: Density Amount
+          description: Brightness follows density control value
+        - id: LED2
+          name: Mutation Amount
+          description: Brightness follows mutation control value
+        - id: LED3
+          name: Energy State
+          description: Displays smoothed internal energy/modulation state
+        - id: LED4
+          name: Clock Source
+          description: Lit when external clock is active
+        - id: LED5
+          name: Tension State
+          description: Displays evolving internal tension state
