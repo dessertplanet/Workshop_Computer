@@ -555,14 +555,19 @@ private:
         if (envelopePreset == (uint8_t)EnvelopePreset::Off)
             return;
 
+        // Retrigger from the current envelope levels so repeated pulses do not
+        // hard-step to zero and click.
+        int32_t ampStartLevel = envelopeActive ? ampEnvelopeLevel : 0;
+        int32_t pdStartLevel = envelopeActive ? pdEnvelopeLevel : 0;
+
         ampEnvelopeStage = 0;
         ampEnvelopeSample = 0;
-        ampEnvelopeLevel = 0;
-        ampEnvelopeStartLevel = 0;
+        ampEnvelopeStartLevel = ampStartLevel;
+        ampEnvelopeLevel = ampStartLevel;
         pdEnvelopeStage = 0;
         pdEnvelopeSample = 0;
-        pdEnvelopeLevel = 0;
-        pdEnvelopeStartLevel = 0;
+        pdEnvelopeStartLevel = pdStartLevel;
+        pdEnvelopeLevel = pdStartLevel;
         envelopeActive = true;
     }
 
