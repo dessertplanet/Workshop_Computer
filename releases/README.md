@@ -36,6 +36,7 @@
 | 39_knots | Six-engine oscillator firmware for the Music Thing Workshop System | 0.2<br>Released | C++ (RPi Pico SDK / ComputerCard) | Jeff Fletcher |
 | 41_blackbird | A scriptable, live-codable, USB-serial-to-CV device implementing monome crow's protocol<br>[Web editor](https://dessertplanet.github.io/web-druid/) | 1.1<br>Released | Pico SDK + Lua | Dune Desormeaux |
 | 42_backyard_rain | Nature soundscape audio. A cozy rain ambience mix for background listening. You control the intensity. This card plays rain ambience which was recorded in my backyard. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
+| 43_Castle_Process | Fort Processor-inspired harsh noise processor with chopped external audio and bass pulse voice | 1.0<br>Release Candidate | C++ | OpenAI + User |
 | 44_Birds | Two birds sing to each other controlled by a Turing-style shift register sequencer with clock in and CV/pulse out. | 0.5.0<br>Beta | C++ (Pico SDK / ComputerCard) | Tom Whitwell |
 | 47_NZT | Grain Noise and Noise Tools | 1.0.0<br>Released | C++ (ComputerCard) | @kjnilsson |
 | 50_flux | Effects, Synthesizer and Utility<br>[Web editor](https://vincentmaurer.de/flux/flux_manager.html) | 1.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
@@ -59,7 +60,7 @@
 | 82_Computer_Grids | Grids-inspired trigger sequencer with Web MIDI SysEx configuration.<br>[Web editor](https://tomwhitwell.github.io/Workshop_Computer/programs/82-computer-grids/web/index.html) | 0.1.0<br>Released | C++ | Phil Miller |
 | 84_CosmikC1zzl3 | Stable phase-distortion synthesiser and Turing machine firmware with Web MIDI custom envelopes, USB MIDI device/host operation, MIDI CC control, and optional Turing MIDI output.<br>[Web editor](https://soveda.github.io/CozmikC1zzl3/web-midi/editor/) | 1.0<br>Released | C++ (Pico SDK) | Adrian Vos |
 | 86_tesserae | Tesserae — Variable-voice (2-8) arpeggiated chord generator with 5 patterns, 10 scales, tap tempo, CV/audio transpose inputs, and dual CV + audio pitch outputs. Inspired by Laurie Spiegel's Music Mouse and Patchwork. | 1.0<br>released | C++ (Pico SDK) | Joep Vermaat |
-| 87_fr330hfr33 | Hardware-tested acid bass synthesiser with saw or square oscillator, diode-style filtering, accent, glide, distortion, USB MIDI, and a persistent editable sequencer. | 0.9.1<br>Stable | C++ (Pico SDK) | Adrian Vos |
+| 87_fr330hfr33 |  |  |  |  |
 | 88_Blank | Reserved for blank 88 cards | 0<br>None | None | Tom Whitwell |
 | 91_chorgan | Chorgan — 6-voice chord synthesizer with morphing timbre, chord extension presets, and built-in chord sequencer. Two modes: normal (detune/chorus) and slew (portamento chord changes). Inspired by the Music Thing Modular Chord Organ. | 1.1.0<br>released | C++ (Pico SDK / ComputerCard) | Andy Jenkinson (uglifruit) |
 | 98_duo_midi | A duophonic midi device/host interface | 0.1<br>Released | Lua / Blackbird | Dune Desormeaux |
