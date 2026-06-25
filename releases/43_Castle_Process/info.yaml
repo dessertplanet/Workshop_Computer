@@ -1,9 +1,12 @@
-id: CastleProcess
-title: Castle Process
 draft: false
-release: 43 / 1.0
-summary: Fort Processor-inspired harsh noise processor with chopped external audio and a bass pulse voice
-description: Fort Processor-inspired harsh noise processor with chopped external audio, crude internal squarewave energy, aggressive source switching, and a separate bass pulse layer.
+Name: Castle Process
+Description: Fort Processor-inspired harsh noise processor with chopped external audio and a bass pulse voice
+Language: C++
+Creator: OpenAI + User
+Version: 1.0
+Status: Release Candidate
+License: MIT
+date: 2026-06-26
 
 panel:
   controls:
@@ -92,8 +95,12 @@ switch_modes:
   down: Momentary bend / chaos gesture while held for live performance accents.
 
 leds:
-  - "Default: LED 0 follows input presence, LED 1 follows drive, LED 2 follows chopping, LED 3 follows tuning, LED 4 reflects output level, and LED 5 shows switch state."
-  - "Switch down drives LED 5 fully bright."
+  - "LED 0 follows input presence."
+  - "LED 1 follows drive."
+  - "LED 2 follows chopping."
+  - "LED 3 follows tuning."
+  - "LED 4 reflects output level."
+  - "LED 5 shows switch state, with switch down driving it fully bright."
 
 source:
   - releases/43_Castle_Process/CastleProcess.cpp
