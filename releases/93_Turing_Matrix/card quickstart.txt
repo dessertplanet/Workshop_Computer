@@ -1,0 +1,17 @@
+Turing Matrix Card Quickstart
+
+1. Power up the card.
+2. Use Z middle for the Turing layer.
+3. Use Z up for the mixer layer.
+4. Use Z down for tap tempo.
+5. Patch Pulse In 1 for external clock if needed.
+6. Patch Audio In 1 and Audio In 2 for mixer mode.
+7. Open the web editor in Chrome if you want to change saved settings.
+
+Web editor:
+https://soveda.github.io/Turing_Matrix_Editor/web
+
+Notes:
+- Z middle: Random / Write, Loop Length, Div / Mult
+- Z up: Mixer Lag, Mix Depth 1, Mix Depth 2
+- Pickup is active when switching between layers.
