@@ -42,14 +42,41 @@ private:
     int outputPulseMod1 = 0; // NB must be signed
     int outputPulseMod2 = 0;
 
-    uint8_t lastDivideStep = 0;
+    uint8_t lastDivideStep = 5;
     uint8_t numDivideSteps = 9;
     uint8_t QuantiseToStep(uint32_t knobVal, uint8_t steps, uint32_t range);
 
     uint8_t lastLength = 0;
     uint8_t const numLengthSteps = 8;
     uint8_t const lengths[8] = {2, 3, 4, 5, 6, 8, 12, 16};
-    uint16_t lastSlew = 0;
-    uint16_t lastDepth1 = 0;
-    uint16_t lastDepth2 = 0;
+
+    struct KnobPickup
+    {
+        uint16_t entry = 0;
+        bool pickedUp = false;
+    };
+
+    KnobPickup middleMain;
+    KnobPickup middleX;
+    KnobPickup middleY;
+    KnobPickup upperMain;
+    KnobPickup upperX;
+    KnobPickup upperY;
+
+    bool pickupInitialised = false;
+    bool pickupArmed = false;
+    bool lastLayerUpper = false;
+    uint16_t pickupDeadband = 48;
+    uint16_t pickupMoveThreshold = 64;
+    uint16_t pickupCatchThreshold = 96;
+    uint16_t currentMiddleMainValue = 2048;
+    uint16_t currentMiddleXValue = 2925;
+    uint16_t currentMiddleYValue = 2559;
+    uint16_t currentUpperMainValue = 256;
+    uint16_t currentUpperXValue = 4095;
+    uint16_t currentUpperYValue = 4095;
+
+    void ResetPickup(KnobPickup &pickup, uint16_t raw);
+    bool ApplyPickup(KnobPickup &pickup, uint16_t raw, uint16_t target);
+    uint16_t StepToKnobValue(uint8_t step, uint8_t steps, uint32_t range);
 };

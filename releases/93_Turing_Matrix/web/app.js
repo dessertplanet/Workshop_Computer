@@ -1,10 +1,11 @@
 const SYSEX_START = 0xf0;
 const SYSEX_END = 0xf7;
 const MANUFACTURER = 0x7d;
-const DEVICE = 0x93;
+const DEVICE = 93;
 const CMD_GET = 0x01;
 const CMD_GET_RESPONSE = 0x02;
 const CMD_SET = 0x03;
+const CMD_LIVE_STATUS = 0x10;
 const CONFIG_SIZE = 32;
 
 const DEFAULT_CONFIG = {
@@ -47,6 +48,11 @@ const state = {
   input: null,
   output: null,
   config: structuredClone(DEFAULT_CONFIG),
+  sysexBuffer: [],
+  lastTxAt: null,
+  lastRxAt: null,
+  transportLog: ["No SysEx traffic yet."],
+  ignoredShortCount: 0,
 };
 
 function byId(id) {
@@ -55,6 +61,53 @@ function byId(id) {
 
 function setStatus(text) {
   byId("status").textContent = text;
+}
+
+function setTransport(text) {
+  const stamp = new Date().toLocaleTimeString();
+  if (state.transportLog.length === 1 && state.transportLog[0] === "No SysEx traffic yet.") {
+    state.transportLog = [];
+  }
+  state.transportLog.push(`[${stamp}] ${text}`);
+  state.transportLog = state.transportLog.slice(-16);
+  const logEl = byId("transportLog");
+  logEl.textContent = state.transportLog.join("\n");
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function clearTransportLog() {
+  state.transportLog = ["No SysEx traffic yet."];
+  state.ignoredShortCount = 0;
+  byId("transportLog").textContent = state.transportLog[0];
+}
+
+function setPortsText() {
+  const inputName = state.input?.name || "none";
+  const outputName = state.output?.name || "none";
+  byId("ports").textContent = `Input: ${inputName} | Output: ${outputName}`;
+}
+
+function formatBytes(data) {
+  return [...data].map((value) => value.toString(16).padStart(2, "0")).join(" ");
+}
+
+function scorePort(port) {
+  const text = `${port?.name || ""} ${port?.manufacturer || ""}`.toLowerCase();
+  let score = 0;
+  if (text.includes("mtmcomputer")) score += 100;
+  if (text.includes("music thing")) score += 50;
+  if (text.includes("workshop")) score += 25;
+  return score;
+}
+
+function selectPreferredPort(ports, previousId) {
+  if (previousId) {
+    const exact = ports.find((port) => port.id === previousId);
+    if (exact) {
+      return exact;
+    }
+  }
+  return [...ports].sort((a, b) => scorePort(b) - scorePort(a))[0] || null;
 }
 
 function bindRangePair(rangeId, numberId) {
@@ -69,12 +122,6 @@ function bindRangePair(rangeId, numberId) {
 }
 
 function syncFormFromConfig(cfg) {
-  byId("bpm").value = cfg.bpm;
-  byId("bpm_num").value = cfg.bpm;
-  byId("divide").value = cfg.divide;
-  byId("divide_num").value = cfg.divide;
-  byId("global_cv_range").value = cfg.cvRange;
-
   const p = cfg.preset0;
   byId("scale").value = p.scale;
   byId("range").value = p.range;
@@ -102,9 +149,8 @@ function syncFormFromConfig(cfg) {
 
 function readFormIntoConfig() {
   const cfg = structuredClone(state.config);
-  cfg.bpm = Number(byId("bpm_num").value);
-  cfg.divide = Number(byId("divide_num").value);
-  cfg.cvRange = Number(byId("global_cv_range").value);
+  cfg.divide = 5;
+  cfg.cvRange = cfg.preset0.cvRange;
   cfg.preset0.scale = Number(byId("scale").value);
   cfg.preset0.range = Number(byId("range").value);
   cfg.preset0.length = Number(byId("length").value);
@@ -112,6 +158,7 @@ function readFormIntoConfig() {
   cfg.preset0.pulseMode1 = Number(byId("pulseMode1").value);
   cfg.preset0.pulseMode2 = Number(byId("pulseMode2").value);
   cfg.preset0.cvRange = Number(byId("preset_cvRange").value);
+  cfg.cvRange = cfg.preset0.cvRange;
   cfg.vactrol.law = Number(byId("vactrol_law").value);
   cfg.vactrol.relation = Number(byId("vactrol_relation").value);
   cfg.vactrol.rise = Number(byId("vactrol_rise_num").value);
@@ -252,34 +299,94 @@ function sendSysEx(command, payload = []) {
   message.set(payload, 4);
   message[message.length - 1] = SYSEX_END;
   state.output.send(message);
+  state.lastTxAt = Date.now();
+  setTransport(`TX cmd 0x${command.toString(16)} (${message.length} bytes): ${formatBytes(message)}`);
+}
+
+function handleLiveStatus(payload) {
+  if (payload.length < 11) {
+    setTransport(`RX live status too short (${payload.length} bytes).`);
+    return;
+  }
+  const lane1 = ((payload[0] & 0x01) << 7) | payload[1];
+  const lane2 = ((payload[2] & 0x01) << 7) | payload[3];
+  const pwm1 = ((payload[4] & 0x01) << 7) | payload[5];
+  const pwm2 = ((payload[6] & 0x01) << 7) | payload[7];
+  const randomness = payload[8];
+  const layer = payload[9] ? "Vactrol" : "Turing";
+  const length = payload[10];
+  setTransport(
+    `RX live status: layer=${layer}, len=${length}, rand=${randomness}, dac1=${lane1}, dac2=${lane2}, pwm1=${pwm1}, pwm2=${pwm2}`
+  );
 }
 
 function handleMIDIMessage(event) {
-  const data = [...event.data];
-  if (data.length < 5 || data[0] !== SYSEX_START || data.at(-1) !== SYSEX_END) {
-    return;
-  }
-  if (data[1] !== MANUFACTURER || data[2] !== DEVICE) {
-    return;
-  }
-  if (data[3] !== CMD_GET_RESPONSE) {
-    return;
-  }
+  for (const byte of event.data) {
+    if (byte === SYSEX_START) {
+      state.sysexBuffer = [byte];
+      continue;
+    }
 
-  const payload = data.slice(7, -1);
-  const raw = decode7Bit(payload);
-  if (raw.length < CONFIG_SIZE) {
-    setStatus(`Config reply was too short (${raw.length} bytes).`);
-    return;
+    if (state.sysexBuffer.length === 0) {
+      continue;
+    }
+
+    state.sysexBuffer.push(byte);
+
+    if (byte !== SYSEX_END) {
+      continue;
+    }
+
+    const data = state.sysexBuffer;
+    state.sysexBuffer = [];
+    state.lastRxAt = Date.now();
+
+    if (data.length === 3 && data[0] === SYSEX_START && data[1] === MANUFACTURER && data[2] === SYSEX_END) {
+      state.ignoredShortCount += 1;
+      if (state.ignoredShortCount === 1 || state.ignoredShortCount % 25 === 0) {
+        setTransport(`Ignored ${state.ignoredShortCount} short MIDI noise packets (f0 7d f7).`);
+      }
+      continue;
+    }
+
+    setTransport(`RX event (${data.length} bytes): ${formatBytes(data)}`);
+
+    if (data.length < 5) {
+      setTransport(`RX short message (${data.length} bytes): ${formatBytes(data)}`);
+      continue;
+    }
+    if (data[1] !== MANUFACTURER || data[2] !== DEVICE) {
+      setTransport(`RX ignored for other device: ${formatBytes(data)}`);
+      continue;
+    }
+    if (data[3] === CMD_LIVE_STATUS) {
+      handleLiveStatus(data.slice(4, -1));
+      continue;
+    }
+    if (data[3] !== CMD_GET_RESPONSE) {
+      setTransport(`RX unknown cmd 0x${data[3].toString(16)}: ${formatBytes(data)}`);
+      continue;
+    }
+
+    const payload = data.slice(7, -1);
+    const raw = decode7Bit(payload);
+    if (raw.length < CONFIG_SIZE) {
+      setStatus(`Config reply was too short (${raw.length} bytes).`);
+      setTransport(`RX config too short (${raw.length} bytes raw): ${formatBytes(data)}`);
+      continue;
+    }
+    state.config = decodeConfig(raw);
+    syncFormFromConfig(state.config);
+    setStatus(`Config received from card (${raw.length} bytes).`);
+    setTransport(`RX config ok (${raw.length} raw bytes).`);
   }
-  state.config = decodeConfig(raw);
-  syncFormFromConfig(state.config);
-  setStatus(`Config received from card (${raw.length} bytes).`);
 }
 
 function updatePorts() {
   const midiIn = byId("midiIn");
   const midiOut = byId("midiOut");
+  const previousInputId = state.input?.id || "";
+  const previousOutputId = state.output?.id || "";
   midiIn.innerHTML = "";
   midiOut.innerHTML = "";
 
@@ -300,14 +407,15 @@ function updatePorts() {
     midiOut.appendChild(option);
   }
 
-  state.input = inputs[0] || null;
-  state.output = outputs[0] || null;
+  state.input = selectPreferredPort(inputs, previousInputId);
+  state.output = selectPreferredPort(outputs, previousOutputId);
   midiIn.value = state.input?.id || "";
   midiOut.value = state.output?.id || "";
 
   if (state.input) {
     state.input.onmidimessage = handleMIDIMessage;
   }
+  setPortsText();
 }
 
 async function connectMIDI() {
@@ -320,14 +428,13 @@ async function connectMIDI() {
     state.midiAccess.onstatechange = updatePorts;
     updatePorts();
     setStatus("Web MIDI connected.");
+    setTransport("Connected. Press Read From Card to test SysEx.");
   } catch (error) {
     setStatus(`Web MIDI connection failed: ${error.message}`);
   }
 }
 
 function init() {
-  bindRangePair("bpm", "bpm_num");
-  bindRangePair("divide", "divide_num");
   bindRangePair("vactrol_rise", "vactrol_rise_num");
   bindRangePair("vactrol_fall", "vactrol_fall_num");
   bindRangePair("vactrol_min1", "vactrol_min1_num");
@@ -346,9 +453,11 @@ function init() {
     if (state.input) {
       state.input.onmidimessage = handleMIDIMessage;
     }
+    setPortsText();
   });
   byId("midiOut").addEventListener("change", (event) => {
     state.output = state.midiAccess?.outputs.get(event.target.value) || null;
+    setPortsText();
   });
 
   byId("readBtn").addEventListener("click", () => {
@@ -369,6 +478,9 @@ function init() {
     syncFormFromConfig(state.config);
     setStatus("Loaded editor defaults locally.");
   });
+  byId("clearLogBtn").addEventListener("click", clearTransportLog);
+
+  setPortsText();
 }
 
 init();

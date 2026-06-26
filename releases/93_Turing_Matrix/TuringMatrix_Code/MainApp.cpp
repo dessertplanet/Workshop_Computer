@@ -6,7 +6,7 @@
 #include "tusb.h"
 
 // Config variables in HEX
-const int CARD_NUMBER = 0x93;
+const int CARD_NUMBER = 93;
 const int MAJOR_VERSION = 0x01;
 const int MINOR_VERSION = 0x05;
 const int POINT_VERSION = 0x00;
@@ -88,6 +88,8 @@ void MainApp::LoadSettings(bool reset)
     settings = &cfg.get();
     CurrentBPM10 = settings->bpm; // load bpm from settings file NB bpm always 10x i.e 1200 = 120.0 bpm.
     clk.setBPM10(CurrentBPM10);
+    settings->divide = 5;
+    clk.UpdateDivide(5);
 
     UpdateNotePools();
     UpdatePulseLengths();
@@ -140,13 +142,7 @@ void __not_in_flash_func(MainApp::ProcessSample)()
 void MainApp::Housekeeping()
 {
 
-    static uint8_t packet[128];
-
-    while (tud_midi_available())
-    {
-        size_t len = tud_midi_stream_read(packet, sizeof(packet));
-        handleSysExMessage(packet, len);
-    }
+    pollSysEx();
 
     // LedOn(2, pendingSave);
     uint64_t nowUs = time_us_64();
@@ -171,16 +167,12 @@ void MainApp::Housekeeping()
     // Has 2 seconds passed since last change, and save is pending?
     if (pendingSave && (nowUs - lastChangeTimeUs >= 2000000))
     {
+        settings->divide = 5;
         cfg.save();
         pendingSave = false;
     }
 
     // blink(0, 250); // show that Core 0 is alive
-
-    if (!VactrolLayerActive())
-    {
-        turingRandomness = KnobVal(Main);
-    }
 
     ui.SlowUI(); // call knob checking etc
 
@@ -213,10 +205,49 @@ void MainApp::Housekeeping()
         midiOffset = 0;
     }
 
-    if (sendViz && tud_midi_n_mounted(0))
+    sendViz = false;
+}
+
+void MainApp::pollSysEx()
+{
+    uint8_t packet[64];
+
+    while (tud_midi_available())
     {
-        SendLiveStatus();
-        sendViz = false;
+        size_t len = tud_midi_stream_read(packet, sizeof(packet));
+        for (size_t i = 0; i < len; ++i)
+        {
+            const uint8_t byte = packet[i];
+
+            if (!sysexActive)
+            {
+                if (byte == 0xF0)
+                {
+                    sysexActive = true;
+                    sysexLength = 0;
+                    sysexBuffer[sysexLength++] = byte;
+                }
+                continue;
+            }
+
+            if (sysexLength < kSysExBufferSize)
+            {
+                sysexBuffer[sysexLength++] = byte;
+            }
+            else
+            {
+                sysexActive = false;
+                sysexLength = 0;
+                continue;
+            }
+
+            if (byte == 0xF7)
+            {
+                handleSysExMessage(sysexBuffer, sysexLength);
+                sysexActive = false;
+                sysexLength = 0;
+            }
+        }
     }
 }
 
@@ -246,7 +277,6 @@ bool MainApp::PulseOutput1(bool requested)
     }
 
     PulseOut1(emit);
-    sendViz = true;
     return emit;
 }
 
@@ -265,8 +295,6 @@ bool MainApp::PulseOutput2(bool requested)
     }
 
     PulseOut2(emit);
-    sendViz = true; // for testing
-
     return emit;
 }
 
@@ -361,6 +389,11 @@ bool MainApp::switchChanged()
     return result;
 }
 
+void MainApp::SetTuringRandomness(uint16_t value)
+{
+    turingRandomness = value;
+}
+
 void MainApp::divideKnobChanged(uint8_t step)
 {
     clk.UpdateDivide(step);
@@ -412,12 +445,7 @@ void MainApp::updateMainTuring()
 
     // Scaled CV out on CV/Audio 1
     uint8_t dac8 = turingDAC1.DAC_8();
-    uint16_t dac = cv_map_u8(dac8);
     vactrolTargetBase1 = int32_t(dac8) << 4;
-    if (!VactrolLayerActive())
-    {
-        AudioOut1(dac);
-    }
 
     int midi_note = turingPWM1.MidiNote() + midiOffset;
     CVOut1MIDINote(midi_note);
@@ -431,12 +459,7 @@ void MainApp::updateDivTuring()
 
     // Scaled CV out on CV/Audio 2
     uint8_t dac8 = turingDAC2.DAC_8();
-    uint16_t dac = cv_map_u8(dac8);
     vactrolTargetBase2 = int32_t(dac8) << 4;
-    if (!VactrolLayerActive())
-    {
-        AudioOut2(dac);
-    }
 
     int midi_note = turingPWM2.MidiNote() + midiOffset;
     CVOut2MIDINote(midi_note);
@@ -643,12 +666,10 @@ void MainApp::handleSysExMessage(const uint8_t *data, size_t len)
 
         if (out == sizeof(Config::Data))
         {
-
             memcpy(settings, decoded, sizeof(Config::Data));
-
-            // Before saving incoming config, overwrite BPM with corrrect local value
-
+            // BPM and divide stay under panel/live control rather than web config ownership.
             settings->bpm = CurrentBPM10;
+            settings->divide = 5;
 
             cfg.save();
             LoadSettings(0);
@@ -881,6 +902,8 @@ void MainApp::ProcessVactrolMix()
 {
     if (!VactrolLayerActive())
     {
+        AudioOut1(AudioIn1());
+        AudioOut2(AudioIn2());
         return;
     }
 

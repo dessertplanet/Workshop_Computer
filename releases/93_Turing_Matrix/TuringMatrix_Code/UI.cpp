@@ -11,6 +11,55 @@ void UI::init(MainApp *a, Clock *c)
     clk = c;
 }
 
+void UI::ResetPickup(KnobPickup &pickup, uint16_t raw)
+{
+    pickup.entry = raw;
+    pickup.pickedUp = false;
+}
+
+bool UI::ApplyPickup(KnobPickup &pickup, uint16_t raw, uint16_t target)
+{
+    if (pickup.pickedUp)
+    {
+        return true;
+    }
+
+    int32_t moved = int32_t(raw) - int32_t(pickup.entry);
+    if (moved < 0)
+        moved = -moved;
+
+    int32_t distance = int32_t(raw) - int32_t(target);
+    if (distance < 0)
+        distance = -distance;
+
+    if (moved >= int32_t(pickupMoveThreshold) && distance <= int32_t(pickupCatchThreshold))
+    {
+        pickup.pickedUp = true;
+        return true;
+    }
+
+    return false;
+}
+
+uint16_t UI::StepToKnobValue(uint8_t step, uint8_t steps, uint32_t range)
+{
+    if (steps <= 1)
+        return 0;
+
+    if (step >= steps)
+        step = steps - 1;
+
+    uint32_t stepSize = range / steps;
+    if (stepSize == 0)
+        return 0;
+
+    uint32_t centre = (uint32_t(step) * stepSize) + (stepSize / 2);
+    if (step == steps - 1 || centre > range)
+        centre = range;
+
+    return static_cast<uint16_t>(centre);
+}
+
 void UI::Tick()
 {
 
@@ -77,19 +126,55 @@ void UI::Tick()
 
 void UI::SlowUI()
 {
-    if (app->VactrolLayerActive())
+    const bool upper = app->VactrolLayerActive();
+    if (!pickupInitialised)
+    {
+        ResetPickup(middleMain, app->KnobMain());
+        ResetPickup(middleX, app->KnobX());
+        ResetPickup(middleY, app->KnobY());
+        ResetPickup(upperMain, app->KnobMain());
+        ResetPickup(upperX, app->KnobX());
+        ResetPickup(upperY, app->KnobY());
+        lastLayerUpper = upper;
+        pickupInitialised = true;
+        pickupArmed = false;
+    }
+    else if (upper != lastLayerUpper)
+    {
+        ResetPickup(middleMain, app->KnobMain());
+        ResetPickup(middleX, app->KnobX());
+        ResetPickup(middleY, app->KnobY());
+        ResetPickup(upperMain, app->KnobMain());
+        ResetPickup(upperX, app->KnobX());
+        ResetPickup(upperY, app->KnobY());
+        lastLayerUpper = upper;
+        pickupArmed = true;
+    }
+
+    if (upper)
     {
         uint16_t slew = app->KnobMain();
         uint16_t depth1 = app->KnobX();
         uint16_t depth2 = app->KnobY();
 
-        if (slew != lastSlew || depth1 != lastDepth1 || depth2 != lastDepth2)
+        if (pickupArmed)
         {
-            app->SetVactrolControls(slew, depth1, depth2);
-            lastSlew = slew;
-            lastDepth1 = depth1;
-            lastDepth2 = depth2;
+            slew = currentUpperMainValue;
+            depth1 = currentUpperXValue;
+            depth2 = currentUpperYValue;
+
+            if (ApplyPickup(upperMain, app->KnobMain(), currentUpperMainValue))
+                slew = app->KnobMain();
+            if (ApplyPickup(upperX, app->KnobX(), currentUpperXValue))
+                depth1 = app->KnobX();
+            if (ApplyPickup(upperY, app->KnobY(), currentUpperYValue))
+                depth2 = app->KnobY();
         }
+
+        currentUpperMainValue = slew;
+        currentUpperXValue = depth1;
+        currentUpperYValue = depth2;
+        app->SetVactrolControls(slew, depth1, depth2);
         return;
     }
 
@@ -98,6 +183,12 @@ void UI::SlowUI()
 
     // Check for divide knob changes
     uint16_t knobTemp = app->KnobY();
+    if (pickupArmed)
+    {
+        knobTemp = currentMiddleYValue;
+        if (ApplyPickup(middleY, app->KnobY(), currentMiddleYValue))
+            knobTemp = app->KnobY();
+    }
 
     // Add knob value
     int16_t inputTemp = app->readInputIfConnected(ComputerCard::CV1); // returns zero if nothing connected 
@@ -112,9 +203,16 @@ void UI::SlowUI()
         app->divideKnobChanged(step);
         lastDivideStep = step;
     }
+    currentMiddleYValue = StepToKnobValue(lastDivideStep, numDivideSteps, 4095);
 
     // Check for Length knob changes
     knobTemp = app->KnobX();
+    if (pickupArmed)
+    {
+        knobTemp = currentMiddleXValue;
+        if (ApplyPickup(middleX, app->KnobX(), currentMiddleXValue))
+            knobTemp = app->KnobX();
+    }
     step = QuantiseToStep(knobTemp, numLengthSteps, 4095);
 
     int newlen = lengths[step];
@@ -125,8 +223,18 @@ void UI::SlowUI()
 
         lastLength = newlen;
     }
+    currentMiddleXValue = StepToKnobValue(step, numLengthSteps, 4095);
 
     app->switchChanged();
+    uint16_t mainValue = app->KnobMain();
+    if (pickupArmed)
+    {
+        mainValue = currentMiddleMainValue;
+        if (ApplyPickup(middleMain, app->KnobMain(), currentMiddleMainValue))
+            mainValue = app->KnobMain();
+    }
+    currentMiddleMainValue = mainValue;
+    app->SetTuringRandomness(mainValue);
 }
 
 // uint8_t UI::QuantiseToStep(uint32_t knobVal, uint8_t steps, uint32_t range)

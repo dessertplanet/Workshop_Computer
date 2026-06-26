@@ -37,35 +37,19 @@
         <button id="defaultsBtn" type="button">Load Defaults</button>
       </div>
       <p id="status">Not connected.</p>
+      <div class="notes">
+        <p id="ports">No MIDI ports selected.</p>
+        <div class="transport-log-wrap">
+          <div class="transport-log-header">
+            <span>Transport Log</span>
+            <button id="clearLogBtn" type="button">Clear Log</button>
+          </div>
+          <pre id="transportLog" class="transport-log">No SysEx traffic yet.</pre>
+        </div>
+      </div>
     </section>
 
     <section class="layout">
-      <section class="panel">
-        <h2>Shared Engine</h2>
-        <div class="grid">
-          <label>BPM x10
-            <div class="pair">
-              <input id="bpm" type="range" min="400" max="2600" value="1605" />
-              <input id="bpm_num" type="number" min="400" max="2600" value="1605" />
-            </div>
-          </label>
-          <label>Divide
-            <div class="pair">
-              <input id="divide" type="range" min="0" max="8" value="5" />
-              <input id="divide_num" type="number" min="0" max="8" value="5" />
-            </div>
-          </label>
-          <label>DAC/CV Output Range
-            <select id="global_cv_range">
-              <option value="0">+-6 V</option>
-              <option value="1">+-3 V</option>
-              <option value="2">0 to +6 V</option>
-              <option value="3">0 to +3 V</option>
-            </select>
-          </label>
-        </div>
-      </section>
-
       <section class="panel">
         <h2>Turing Layer Settings</h2>
         <div class="grid">
@@ -117,7 +101,7 @@
               <option value="1">Turing Bit</option>
             </select>
           </label>
-          <label>DAC/CV Output Range
+          <label>CV Output Range
             <select id="preset_cvRange">
               <option value="0">+-6 V</option>
               <option value="1">+-3 V</option>
@@ -127,7 +111,6 @@
           </label>
         </div>
       </section>
-<<<<<<< Updated upstream
     </section>
 
     <section class="panel">
@@ -193,9 +176,7 @@
         <p>Main sets lag, X sets audio/CV crossfade depth 1, Y sets audio/CV crossfade depth 2.</p>
         <p>Audio In 1/2 are the audio pair. CV In 1/2 are the mirrored CV pair. These controls are not stored in flash.</p>
       </div>
-=======
-      <section class="panel">
-        <h2>Mixer Layer Settings</h2>
+    </section>
         <div class="grid">
           <label>Crossfade Law
             <select id="vactrol_law">
@@ -254,7 +235,10 @@
           <p>Audio In 1/2 are the audio pair. CV In 1/2 are the mirrored CV pair. These controls are not stored in flash.</p>
         </div>
       </section>
+<<<<<<< HEAD
 >>>>>>> Stashed changes
+=======
+>>>>>>> f2253689 (various bug fixes)
     </section>
   </main>
   <script src="./app.js"></script>

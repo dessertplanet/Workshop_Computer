@@ -57,6 +57,7 @@ public:
     void UpdatePulseLengths();
     bool switchChanged();
     void IdleLeds();
+    void SetTuringRandomness(uint16_t value);
     void UpdateCh2Lengths();
     void UpdateCVRange();
     void SetVactrolControls(uint16_t slew, uint16_t depth1, uint16_t depth2);
@@ -99,6 +100,7 @@ private:
 
     void sysexRespond();
     void handleSysExMessage(const uint8_t *data, size_t len);
+    void pollSysEx();
 
     void SendLiveStatus();
     uint8_t midiHi(uint8_t input);
@@ -129,4 +131,9 @@ private:
     int32_t vactrolTargetBase2 = 2048;
     int32_t vactrolRiseStep = 8;
     int32_t vactrolFallStep = 6;
+
+    static constexpr size_t kSysExBufferSize = 512;
+    uint8_t sysexBuffer[kSysExBufferSize] = {};
+    size_t sysexLength = 0;
+    bool sysexActive = false;
 };

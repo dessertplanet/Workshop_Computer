@@ -26,6 +26,7 @@ void Config::load(bool forceReset)
         save();
     }
 
+    config.divide = 5;
     if (config.vactrol.law > 2)
         config.vactrol.law = 0;
     if (config.vactrol.relation > 2)
