@@ -15,7 +15,7 @@
       <h1>Turing Matrix</h1>
       <p class="lede">
         Shared Turing engine editor for the Workshop Computer. The browser configures the persistent
-        sequencer settings; the Vactrol Mix layer remains mostly on the front panel.
+        sequencer settings; the mixer layer remains mostly on the front panel.
       </p>
     </header>
 
@@ -127,6 +127,7 @@
           </label>
         </div>
       </section>
+<<<<<<< Updated upstream
     </section>
 
     <section class="panel">
@@ -192,6 +193,68 @@
         <p>Main sets lag, X sets audio/CV crossfade depth 1, Y sets audio/CV crossfade depth 2.</p>
         <p>Audio In 1/2 are the audio pair. CV In 1/2 are the mirrored CV pair. These controls are not stored in flash.</p>
       </div>
+=======
+      <section class="panel">
+        <h2>Mixer Layer Settings</h2>
+        <div class="grid">
+          <label>Crossfade Law
+            <select id="vactrol_law">
+              <option value="0">Linear</option>
+              <option value="1">Smoothstep</option>
+              <option value="2">Steep</option>
+            </select>
+          </label>
+          <label>Lane Relation
+            <select id="vactrol_relation">
+              <option value="0">Independent</option>
+              <option value="1">Mirrored</option>
+              <option value="2">Inverted</option>
+            </select>
+          </label>
+          <label>Rise Time
+            <div class="pair">
+              <input id="vactrol_rise" type="range" min="0" max="127" value="48" />
+              <input id="vactrol_rise_num" type="number" min="0" max="127" value="48" />
+            </div>
+          </label>
+          <label>Fall Time
+            <div class="pair">
+              <input id="vactrol_fall" type="range" min="0" max="127" value="56" />
+              <input id="vactrol_fall_num" type="number" min="0" max="127" value="56" />
+            </div>
+          </label>
+          <label>Lane 1 Min
+            <div class="pair">
+              <input id="vactrol_min1" type="range" min="0" max="255" value="0" />
+              <input id="vactrol_min1_num" type="number" min="0" max="255" value="0" />
+            </div>
+          </label>
+          <label>Lane 1 Max
+            <div class="pair">
+              <input id="vactrol_max1" type="range" min="0" max="255" value="255" />
+              <input id="vactrol_max1_num" type="number" min="0" max="255" value="255" />
+            </div>
+          </label>
+          <label>Lane 2 Min
+            <div class="pair">
+              <input id="vactrol_min2" type="range" min="0" max="255" value="0" />
+              <input id="vactrol_min2_num" type="number" min="0" max="255" value="0" />
+            </div>
+          </label>
+          <label>Lane 2 Max
+            <div class="pair">
+              <input id="vactrol_max2" type="range" min="0" max="255" value="255" />
+              <input id="vactrol_max2_num" type="number" min="0" max="255" value="255" />
+            </div>
+          </label>
+        </div>
+        <div class="notes">
+          <p><strong>Z up</strong> uses the same background Turing engine but changes the panel role.</p>
+          <p>Main sets lag, X sets audio/CV crossfade depth 1, Y sets audio/CV crossfade depth 2.</p>
+          <p>Audio In 1/2 are the audio pair. CV In 1/2 are the mirrored CV pair. These controls are not stored in flash.</p>
+        </div>
+      </section>
+>>>>>>> Stashed changes
     </section>
   </main>
   <script src="./app.js"></script>
