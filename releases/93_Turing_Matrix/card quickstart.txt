@@ -15,3 +15,19 @@ Notes:
 - Z middle: Random / Write, Loop Length, Div / Mult
 - Z up: Mixer Lag, Mix Depth 1, Mix Depth 2
 - Pickup is active when switching between layers.
+
+Inputs:
+- Pulse In 1: external clock for the main Turing channel
+- Pulse In 2: independent clock for channel 2
+- CV In 1: divide/multiply modulation in Z middle, mix input 1 in Z up
+- CV In 2: pitch offset in Z middle, mix input 2 in Z up
+- Audio In 1: mixer input 1 in Z up, direct pass-through in Z middle
+- Audio In 2: mixer input 2 in Z up, direct pass-through in Z middle
+
+Outputs:
+- Pulse Out 1: channel 1 pulse
+- Pulse Out 2: channel 2 pulse
+- CV Out 1: channel 1 quantized CV in Z middle, crossfaded CV output 1 in Z up
+- CV Out 2: channel 2 quantized CV in Z middle, crossfaded CV output 2 in Z up
+- Audio Out 1: direct pass-through in Z middle, mixed audio output 1 in Z up
+- Audio Out 2: direct pass-through in Z middle, mixed audio output 2 in Z up
