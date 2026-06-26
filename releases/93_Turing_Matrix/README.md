@@ -4,6 +4,10 @@ This is a beta Workshop Computer card built from the official
 **03_Turing_Machine** firmware, reshaped into two switch-selected layers inspired by the
 Music Thing Modular **Turing Machine + Vactrol Mix Expander** combination.
 
+The card builds on ideas and code originally developed by Tom Whitwell and Chris Johnson.
+Their work on the Turing Machine family and mixer concepts is the foundation this beta card is
+based on.
+
 The original Vactrol Mix Expander is a four-input, two-output vactrol matrix mixer
 for the hardware Turing Machine. On the Workshop Computer we have two audio inputs,
 two CV inputs, two audio/CV outputs, two CV outputs, and two pulse outputs, so this
@@ -55,8 +59,8 @@ card treats the idea as a two-input, two-output random matrix/mixer.
 - **Pulse Out 2**: matrix gate 2.
 - **CV Out 1**: channel 1 quantized pitch CV in `Z middle`, crossfaded CV output 1 in `Z up`.
 - **CV Out 2**: channel 2 quantized pitch CV in `Z middle`, crossfaded CV output 2 in `Z up`.
-- **Audio Out 1**: direct pass-through of Audio In 1 in `Z middle`, mixed audio output 1 in `Z up`.
-- **Audio Out 2**: direct pass-through of Audio In 2 in `Z middle`, mixed audio output 2 in `Z up`.
+- **Audio Out 1**: direct audio pass-through in `Z middle`, mixed audio output 1 in `Z up`.
+- **Audio Out 2**: direct audio pass-through in `Z middle`, mixed audio output 2 in `Z up`.
 
 ## Mixer behavior
 
