@@ -87,3 +87,7 @@ This card now needs its own editor model because the switch no longer selects tw
 The local `web/` editor handles the Turing settings plus the mixer-layer settings: timing,
 scale/range, pulse behavior, mix curve, lane link, rise/fall timing, and per-lane minimum/maximum
 windows. The panel still handles the live lag and mix depth gestures in `Z up`.
+
+The hosted editor is here:
+
+`https://soveda.github.io/Turing_Matrix_Editor/web`
