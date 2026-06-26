@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Turing Matrix Web Config</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <main>
+    <header class="hero">
+      <p class="eyebrow">Program Card 93</p>
+      <h1>Turing Matrix</h1>
+      <p class="lede">
+        Shared Turing engine editor for the Workshop Computer. The browser configures the persistent
+        sequencer settings; the Vactrol Mix layer remains mostly on the front panel.
+      </p>
+    </header>
+
+    <section class="panel">
+      <div class="toolbar">
+        <button id="connectBtn" type="button">Connect Web MIDI</button>
+        <label>
+          Input
+          <select id="midiIn"></select>
+        </label>
+        <label>
+          Output
+          <select id="midiOut"></select>
+        </label>
+      </div>
+      <div class="toolbar toolbar--actions">
+        <button id="readBtn" type="button">Read From Card</button>
+        <button id="sendBtn" type="button">Send To Card</button>
+        <button id="defaultsBtn" type="button">Load Defaults</button>
+      </div>
+      <p id="status">Not connected.</p>
+    </section>
+
+    <section class="layout">
+      <section class="panel">
+        <h2>Shared Engine</h2>
+        <div class="grid">
+          <label>BPM x10
+            <div class="pair">
+              <input id="bpm" type="range" min="400" max="2600" value="1605" />
+              <input id="bpm_num" type="number" min="400" max="2600" value="1605" />
+            </div>
+          </label>
+          <label>Divide
+            <div class="pair">
+              <input id="divide" type="range" min="0" max="8" value="5" />
+              <input id="divide_num" type="number" min="0" max="8" value="5" />
+            </div>
+          </label>
+          <label>DAC/CV Output Range
+            <select id="global_cv_range">
+              <option value="0">+-6 V</option>
+              <option value="1">+-3 V</option>
+              <option value="2">0 to +6 V</option>
+              <option value="3">0 to +3 V</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Turing Layer Settings</h2>
+        <div class="grid">
+          <label>Scale
+            <select id="scale">
+              <option value="0">Chromatic</option>
+              <option value="1">Major</option>
+              <option value="2">Minor</option>
+              <option value="3">Minor Pentatonic</option>
+              <option value="4">Dorian</option>
+              <option value="5">Pelog</option>
+              <option value="6">Whole Tone</option>
+            </select>
+          </label>
+          <label>Octave Range
+            <select id="range">
+              <option value="0">1 octave</option>
+              <option value="1">2 octaves</option>
+              <option value="2">3 octaves</option>
+              <option value="3">4 octaves</option>
+            </select>
+          </label>
+          <label>Pulse Length Mode
+            <select id="length">
+              <option value="0">Blip</option>
+              <option value="1">Short</option>
+              <option value="2">Medium</option>
+              <option value="3">Long</option>
+              <option value="4">Gate</option>
+              <option value="5">Variable Short</option>
+              <option value="6">Variable Long</option>
+            </select>
+          </label>
+          <label>Channel 2 Loop Offset
+            <select id="looplen">
+              <option value="1">Same length</option>
+              <option value="0">One step shorter</option>
+            </select>
+          </label>
+          <label>Pulse Out 1
+            <select id="pulseMode1">
+              <option value="0">Clock</option>
+              <option value="1">Turing Bit</option>
+            </select>
+          </label>
+          <label>Pulse Out 2
+            <select id="pulseMode2">
+              <option value="0">Clock</option>
+              <option value="1">Turing Bit</option>
+            </select>
+          </label>
+          <label>DAC/CV Output Range
+            <select id="preset_cvRange">
+              <option value="0">+-6 V</option>
+              <option value="1">+-3 V</option>
+              <option value="2">0 to +6 V</option>
+              <option value="3">0 to +3 V</option>
+            </select>
+          </label>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel">
+      <h2>Vactrol Layer Settings</h2>
+      <div class="grid">
+        <label>Crossfade Law
+          <select id="vactrol_law">
+            <option value="0">Linear</option>
+            <option value="1">Smoothstep</option>
+            <option value="2">Steep</option>
+          </select>
+        </label>
+        <label>Lane Relation
+          <select id="vactrol_relation">
+            <option value="0">Independent</option>
+            <option value="1">Mirrored</option>
+            <option value="2">Inverted</option>
+          </select>
+        </label>
+        <label>Rise Time
+          <div class="pair">
+            <input id="vactrol_rise" type="range" min="0" max="127" value="48" />
+            <input id="vactrol_rise_num" type="number" min="0" max="127" value="48" />
+          </div>
+        </label>
+        <label>Fall Time
+          <div class="pair">
+            <input id="vactrol_fall" type="range" min="0" max="127" value="56" />
+            <input id="vactrol_fall_num" type="number" min="0" max="127" value="56" />
+          </div>
+        </label>
+        <label>Lane 1 Min
+          <div class="pair">
+            <input id="vactrol_min1" type="range" min="0" max="255" value="0" />
+            <input id="vactrol_min1_num" type="number" min="0" max="255" value="0" />
+          </div>
+        </label>
+        <label>Lane 1 Max
+          <div class="pair">
+            <input id="vactrol_max1" type="range" min="0" max="255" value="255" />
+            <input id="vactrol_max1_num" type="number" min="0" max="255" value="255" />
+          </div>
+        </label>
+        <label>Lane 2 Min
+          <div class="pair">
+            <input id="vactrol_min2" type="range" min="0" max="255" value="0" />
+            <input id="vactrol_min2_num" type="number" min="0" max="255" value="0" />
+          </div>
+        </label>
+        <label>Lane 2 Max
+          <div class="pair">
+            <input id="vactrol_max2" type="range" min="0" max="255" value="255" />
+            <input id="vactrol_max2_num" type="number" min="0" max="255" value="255" />
+          </div>
+        </label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Vactrol Layer</h2>
+      <div class="notes">
+        <p><strong>Z up</strong> uses the same background Turing engine but changes the panel role.</p>
+        <p>Main sets lag, X sets audio/CV crossfade depth 1, Y sets audio/CV crossfade depth 2.</p>
+        <p>Audio In 1/2 are the audio pair. CV In 1/2 are the mirrored CV pair. These controls are not stored in flash.</p>
+      </div>
+    </section>
+  </main>
+  <script src="./app.js"></script>
+</body>
+
+</html>
