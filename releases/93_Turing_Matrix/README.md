@@ -34,6 +34,13 @@ card treats the idea as a two-input, two-output random matrix/mixer.
 - Y knob: crossfade depth for Audio Out 2.
 - Audio/CV In 1 and 2 become the two audio inputs to the mixer.
 
+## LED feedback
+
+- **Z middle** keeps the inherited Turing-style LED view:
+  DAC lane 1, DAC lane 2, PWM lane 1, PWM lane 2, then pulse activity on LEDs 5 and 6.
+- **Z up** switches the four brightness LEDs to mixer feedback:
+  mix position 1, mix position 2, depth 1, depth 2, with pulse activity still shown on LEDs 5 and 6.
+
 - **Z down**
 - Tap tempo when no external clock is patched.
 
