@@ -890,12 +890,12 @@ void MainApp::SetVactrolControls(uint16_t slew, uint16_t depth1, uint16_t depth2
 
 void MainApp::UpdateVactrolTiming()
 {
-    const int32_t riseTime = 1 + settings->vactrol.rise;
-    const int32_t fallTime = 1 + settings->vactrol.fall;
-    const int32_t knobLag = 8 + ((vactrolSlew * 120) >> 12);
+    const int32_t riseTime = 32 + (int32_t(settings->vactrol.rise) * 24);
+    const int32_t fallTime = 32 + (int32_t(settings->vactrol.fall) * 24);
+    const int32_t knobLag = 64 + (int32_t(vactrolSlew) >> 1);
 
-    vactrolRiseStep = 1 + (8192 / (riseTime + knobLag));
-    vactrolFallStep = 1 + (8192 / (fallTime + knobLag));
+    vactrolRiseStep = 1 + (4096 / (riseTime + knobLag));
+    vactrolFallStep = 1 + (4096 / (fallTime + knobLag));
 }
 
 void MainApp::ProcessVactrolMix()
@@ -941,10 +941,6 @@ void MainApp::ProcessVactrolMix()
     switch (settings->vactrol.law)
     {
     case 1:
-        shaped1 = (shaped1 * shaped1 * (12288 - (shaped1 << 1))) >> 24;
-        shaped2 = (shaped2 * shaped2 * (12288 - (shaped2 << 1))) >> 24;
-        break;
-    case 2:
         shaped1 = (shaped1 * shaped1) >> 12;
         shaped2 = (shaped2 * shaped2) >> 12;
         break;
