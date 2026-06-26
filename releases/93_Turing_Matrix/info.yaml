@@ -1,10 +1,10 @@
-draft: true
+draft: false
 Name: Turing Matrix
-Description: Turing Machine sequencer plus a switchable Vactrol Mix-inspired audio layer driven by the same background Turing engine.
+Description: Turing Machine sequencer plus a switchable mixer layer inspired by the Music Thing Modular Turing Machine and Vactrol Mix combination.
 Language: C++ (ComputerCard)
 Creator: Tom Whitwell / Music Thing Modular
-Version: 0.1.0
-Status: Draft concept
+Version: 0.1.0-beta
+Status: Beta release candidate
 License: MIT
 Editor: web
 Repository: https://github.com/TomWhitwell/Workshop_Computer
@@ -19,19 +19,16 @@ tags:
   - cv
 
 manual: |
-  Turing Matrix uses one shared background Turing engine with two front-panel layers.
+  Turing Matrix uses two switch-selected front-panel layers.
 
   Z middle is the Turing control layer: the card behaves like the original Turing Machine card for
   clock, randomness, loop length, divide/multiply, pulse outputs, quantized CV, and DAC/CV outputs.
-  Audio In 1 and Audio In 2 are unused in this layer.
 
-  Z up is the Vactrol Mix layer: the same background Turing engine keeps running, but Audio In 1 and
-  Audio In 2 become the two audio mixer inputs and Audio Out 1 and Audio Out 2 become the stereo
-  mixer outputs. CV In 1 and CV In 2 are crossfaded in parallel to CV Out 1 and CV Out 2 using the
-  same Turing-driven control signals. The Turing DAC lanes are used as smoothed crossfade controls,
-  while Pulse Out 1 and Pulse Out 2 continue to follow the same shared clock behavior as the
-  Turing layer. Web editor settings define crossfade law, lane relation, rise/fall timing, and
-  minimum/maximum depth windows for each lane.
+  Z up is the mixer layer: Audio In 1 and Audio In 2 become the mixer inputs and Audio Out 1 and
+  Audio Out 2 become the mixer outputs. CV In 1 and CV In 2 are crossfaded in parallel to CV Out 1
+  and CV Out 2 using the same control path. The front-panel knobs set mixer lag and mix depth, and
+  the web editor stores the persistent mixer behavior settings: mix curve, lane link, rise/fall
+  timing, and per-lane minimum/maximum windows.
 
   Z down remains tap tempo when no external clock is patched.
 
@@ -47,19 +44,19 @@ panel:
       type: pulse
     - id: CVIn1
       name: CV Mix Input 1
-      description: Divide/multiply modulation in the Turing layer; CV mix input 1 in the Vactrol Mix layer
+      description: Divide/multiply modulation in the Turing layer; mix input 1 in the mixer layer
       type: cv
     - id: CVIn2
       name: CV Mix Input 2
-      description: Pitch offset in the Turing layer; CV mix input 2 in the Vactrol Mix layer
+      description: Pitch offset in the Turing layer; mix input 2 in the mixer layer
       type: cv
     - id: AudioIn1
       name: Mixer Input 1
-      description: Audio input for the Vactrol Mix layer; unused in the Turing control layer
+      description: Mixer input 1 in the mixer layer; unused in the Turing control layer
       type: audio
     - id: AudioIn2
       name: Mixer Input 2
-      description: Audio input for the Vactrol Mix layer; unused in the Turing control layer
+      description: Mixer input 2 in the mixer layer; unused in the Turing control layer
       type: audio
   outputs:
     - id: PulseOut1
@@ -72,22 +69,22 @@ panel:
       type: pulse
     - id: CVOut1
       name: Channel 1 Quantized CV / CV Mix Out 1
-      description: Quantized pitch CV in the Turing layer; crossfaded CV output 1 in the Vactrol Mix layer
+      description: Quantized pitch CV in the Turing layer; crossfaded CV output 1 in the mixer layer
       type: cv
     - id: CVOut2
       name: Channel 2 Quantized CV / CV Mix Out 2
-      description: Quantized pitch CV in the Turing layer; crossfaded CV output 2 in the Vactrol Mix layer
+      description: Quantized pitch CV in the Turing layer; crossfaded CV output 2 in the mixer layer
       type: cv
     - id: AudioOut1
       name: Mixer Output 1 / DAC CV 1
-      description: DAC CV output in the Turing layer; mixed audio output 1 in the Vactrol Mix layer
+      description: DAC CV output in the Turing layer; mixed audio output 1 in the mixer layer
       type: audio
     - id: AudioOut2
       name: Mixer Output 2 / DAC CV 2
-      description: DAC CV output in the Turing layer; mixed audio output 2 in the Vactrol Mix layer
+      description: DAC CV output in the Turing layer; mixed audio output 2 in the mixer layer
       type: audio
 
-# certainty: medium — built from 03_Turing_Machine current source with a new switch-up Vactrol Mix layer
+# certainty: high — beta card built from 03_Turing_Machine current source with a new switch-up mixer layer
 controls:
   knobs:
     - when: { z: middle }
@@ -102,14 +99,14 @@ controls:
         description: Sets channel 2 clock relationship exactly as on the Turing Machine card
     - when: { z: up }
       main:
-        name: Vactrol Lag
+        name: Mixer Lag
         description: Sets how quickly the Turing-controlled mix opens and closes
       x:
-        name: Crossfade Depth 1
-        description: Sets how strongly Turing lane 1 crossfades Audio In 1 and Audio In 2 into Audio Out 1
+        name: Mix Depth 1
+        description: Sets how strongly lane 1 crossfades Audio In 1 and Audio In 2 into Audio Out 1
       y:
-        name: Crossfade Depth 2
-        description: Sets how strongly Turing lane 2 crossfades Audio In 2 and Audio In 1 into Audio Out 2
+        name: Mix Depth 2
+        description: Sets how strongly lane 2 crossfades Audio In 2 and Audio In 1 into Audio Out 2
     - when: { z: down, gesture: momentary }
       main:
         name: Tap Tempo
@@ -119,9 +116,9 @@ controls:
       display: list
       items:
         - id: LED0
-          name: Channel 1 DAC / Mix Level
+          name: Channel 1 DAC / Mix
         - id: LED1
-          name: Channel 2 DAC / Mix Level
+          name: Channel 2 DAC / Mix
         - id: LED2
           name: Channel 1 Turing Level
         - id: LED3
@@ -135,11 +132,11 @@ host:
   usb:
     - name: Web MIDI editor
       role: editor
-      description: Browser app in `web/` reads and writes shared Turing engine settings over USB MIDI SysEx; Chrome recommended
+      description: Browser app in `web/` reads and writes Turing and mixer settings over USB MIDI SysEx; Chrome recommended
   notes: |
-    The Web MIDI editor configures the shared Turing engine and timing behavior. The Vactrol Mix
-    layer has its own stored settings for crossfade law, lane relation, rise/fall timing, and
-    lane depth windows, while the panel still controls live lag and depth performance.
+    The Web MIDI editor configures the persistent Turing and mixer behavior. The mixer layer has
+    stored settings for mix curve, lane link, rise/fall timing, and lane depth windows, while the
+    panel still controls live lag and depth performance.
 
 source:
   - releases/03_Turing_Machine/info.yaml
