@@ -1,9 +1,8 @@
-draft: true
 Name: Chorgan
 Description: "Chorgan — 6-voice chord synthesizer with morphing timbre, chord extension presets, and built-in chord sequencer. Two modes: normal (detune/chorus) and slew (portamento chord changes). Inspired by the Music Thing Modular Chord Organ."
 Language: C++ (Pico SDK / ComputerCard)
 Creator: Andy Jenkinson (uglifruit)
-Version: 1.0.0
+Version: 1.1.0
 Status: released
 
 tags:
@@ -17,6 +16,7 @@ manual: |
   Six-voice morphing chord synthesizer with built-in chord sequencer.
   Knob X and CV In 1 set root pitch; Knob Y selects interval above root (0–12 semitones).
   Main knob morphs all six voices through sine, triangle, saw, and narrow pulse; CV In 2 offsets timbre.
+  Audio In 1 controls slew speed (0V=instant, +5V=approx 1 min glide). Audio In 2 shifts chord voicing through octave inversions (bipolar, +/-6 steps).
   Tap Switch Down to cycle chord extension presets; hold one second to store a chord in the sequencer.
   Pulse In 1 advances preset; Pulse In 2 recalls the next stored chord on rising edges.
   Boot with Switch Down held for slew mode (portamento chord changes instead of detune).
@@ -29,6 +29,12 @@ panel:
     - id: CVIn2
       name: Timbre Offset CV
       description: Bipolar offset to Main knob timbre position
+    - id: AudioIn1
+      name: Slew Speed CV
+      description: 0V=instant, +5V=approx 1 min glide; negative shortens slew in slew mode
+    - id: AudioIn2
+      name: Chord Inversion CV
+      description: Bipolar +/-6 octave inversion steps; shifts lowest/highest voice up or down
     - id: PulseIn1
       name: Preset Advance
       description: Rising edge advances chord extension preset
@@ -113,7 +119,3 @@ host:
   notes: |
     Slew mode boots when Switch Down is held at power-on until LEDs flash.
     Up to eight chords can be stored; storing more than eight overwrites from the beginning.
-Language: "C++ (Pico SDK / ComputerCard)"
-Creator: "Andy Jenkinson (uglifruit)"
-Version: "1.1.0"
-Status: "released"
