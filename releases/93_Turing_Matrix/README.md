@@ -62,6 +62,20 @@ card treats the idea as a two-input, two-output random matrix/mixer.
 - **Audio Out 1**: direct audio pass-through in `Z middle`, mixed audio output 1 in `Z up`.
 - **Audio Out 2**: direct audio pass-through in `Z middle`, mixed audio output 2 in `Z up`.
 
+## Quickstart
+
+Try this as a first patch:
+
+1. Tune oscillator 1 and oscillator 2 to a fifth interval.
+2. Patch the two oscillators into `Audio In 1` and `Audio In 2`.
+3. Patch `Audio Out 1` and `Audio Out 2` to two mixer channels and pan them hard left and right.
+4. Switch to `Z up`.
+5. Turn `X` and `Y` to maximum.
+6. Listen first without any CV patched so you can hear the basic stereo mix movement.
+7. Patch Slopes output to `CV In 1` and `CV In 2` and set Slopes to a slow loop.
+8. Patch `CV Out 1` and `CV Out 2` to the pitch inputs of oscillator 1 and oscillator 2.
+9. Listen on headphones and adjust the Slopes speed to hear the changes more clearly.
+
 ## Mixer behavior
 
 In the mixer layer, the card uses the Turing-style control signal as a crossfade driver. Audio Out

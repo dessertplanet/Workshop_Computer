@@ -2,19 +2,19 @@
 
 Standalone Web MIDI editor for the **Turing Matrix** Workshop Computer card.
 
-This editor configures the card's saved settings in the browser. It does not replace the
+This browser app changes the card's saved settings over USB MIDI. It does not replace the
 front-panel controls.
 
 ## What it edits
 
-- Turing layer settings
+- Turing layer
   - scale
   - octave range
   - pulse length mode
   - channel 2 loop offset
   - pulse output mode
   - CV output range
-- Mixer layer settings
+- Mixer layer
   - mix curve
   - lane link
   - rise
@@ -24,7 +24,7 @@ front-panel controls.
 
 ## Using it
 
-1. Open the editor in a browser with Web MIDI support.
+1. Open the editor in Chrome or another Web MIDI browser.
 2. Connect the card.
 3. Read the current settings from the card.
 4. Change the settings in the form.
@@ -33,14 +33,13 @@ front-panel controls.
 ## Notes
 
 - Chrome is recommended.
-- `Z middle` is the Turing layer.
-- `Z up` is the mixer layer.
+- `Z middle` is Turing mode.
+- `Z up` is mixer mode.
 - `Z down` remains tap tempo.
 
 ## Attribution
 
-The Turing Matrix editor and card build on ideas and code from **Tom Whitwell** and
-**Chris Johnson**.
+The Turing Matrix editor and card build on ideas and code from **Tom Whitwell** and **Chris Johnson**.
 
 ## Hosting
 
