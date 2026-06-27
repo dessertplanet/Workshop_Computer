@@ -57,6 +57,7 @@
 | 74_Wild_Pebble | MIDI-clockable generative rhythm and melody organism inspired by Pet Rock | 1.0<br>Beta. USB MIDI clock input and sequencer note output tested | C++ | Adrian Vos with Vibecode support |
 | 77_Placeholder | Reserved for secret project | 0.0<br>None | None | None |
 | 78_Talker | Proof of concept speech synthesizer, based on TalkiePCM, inspired by 1970s LPC speech synths. | 0.1<br>Proof of concept | C++ (ComputerCard) | Chris Johnson |
+| 81_West_Coast_LPG | Dual vactrol-emulating low-pass gate (combined VCA + low-pass filter) with fast-attack/slow-decay 'plong', self-pinging percussion, and per-channel VCA/VCF/LPG modes. | 0.1<br>Working | C++ (ComputerCard) | Jason Moore |
 | 82_Computer_Grids | Grids-inspired trigger sequencer with Web MIDI SysEx configuration.<br>[Web editor](https://tomwhitwell.github.io/Workshop_Computer/programs/82-computer-grids/web/index.html) | 0.1.0<br>Released | C++ | Phil Miller |
 | 84_CosmikC1zzl3 | Stable phase-distortion synthesiser and Turing machine firmware with Web MIDI custom envelopes, USB MIDI device/host operation, MIDI CC control, and optional Turing MIDI output.<br>[Web editor](https://soveda.github.io/CozmikC1zzl3/web-midi/editor/) | 1.0<br>Released | C++ (Pico SDK) | Adrian Vos |
 | 86_tesserae | Tesserae — Variable-voice (2-8) arpeggiated chord generator with 5 patterns, 10 scales, tap tempo, CV/audio transpose inputs, and dual CV + audio pitch outputs. Inspired by Laurie Spiegel's Music Mouse and Patchwork. | 1.0<br>released | C++ (Pico SDK) | Joep Vermaat |
