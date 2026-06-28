@@ -30,6 +30,14 @@ public:
 
 	virtual void ProcessSample()
 	{
+		// Play a brief "random" twinkle animation on the LEDs at power-up,
+		// before the normal rungler logic takes over.
+		if (!startupAnimDone)
+		{
+			StartupAnimation();
+			return;
+		}
+
 		//the outputs are empty integers that we will fill with binary values
 		int16_t runglerOut1 = 0;
 		int16_t runglerOut2 = 0;
@@ -216,6 +224,42 @@ private:
 	int16_t vca = 0;
 	int8_t ledMap[SHIFT_REG_SIZE] = {0, 2, 4, 1, 3, 5};
 	int16_t offset = 0;
+
+	// Startup LED animation state
+	bool startupAnimDone = false;
+	uint32_t animCounter = 0;
+	uint16_t animLed[SHIFT_REG_SIZE] = {0};
+	static const uint32_t kStartupAnimFrames = 48000 * 2; // ~2 seconds at 48kHz
+
+	// Random twinkle: each visible frame, fade all LEDs and randomly re-spark some.
+	void StartupAnimation()
+	{
+		// Update visuals every 1024 samples (~47Hz) so the animation is visible.
+		if ((animCounter & 0x3FF) == 0)
+		{
+			for (int i = 0; i < SHIFT_REG_SIZE; i++)
+			{
+				animLed[i] = (animLed[i] * 13) >> 4; // decay to ~81%
+				if (rnd12() < 512)                   // ~12.5% chance to spark
+				{
+					animLed[i] = 4095;
+				}
+			}
+			for (int i = 0; i < SHIFT_REG_SIZE; i++)
+			{
+				LedBrightness(ledMap[i], animLed[i]);
+			}
+		}
+
+		if (++animCounter >= kStartupAnimFrames)
+		{
+			startupAnimDone = true;
+			for (int i = 0; i < SHIFT_REG_SIZE; i++)
+			{
+				LedBrightness(ledMap[i], 0);
+			}
+		}
+	}
 
 	void rotate(int16_t *array, bool direction)
 	{

@@ -41,9 +41,10 @@ set(BYOB_VERSION "1.1")
 pico_set_program_name(byo_benjolin "BYO Benjolin")
 pico_set_program_version(byo_benjolin "${BYOB_VERSION}")
 
-# Also emit a version-stamped UF2 alongside the default one, e.g. byo_benjolin.1.1.uf2
+# Emit a single, version-stamped UF2 (e.g. byo_benjolin.1.1.uf2) by renaming the
+# default output, so we don't also ship an unversioned artifact.
 add_custom_command(TARGET byo_benjolin POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy
+    COMMAND ${CMAKE_COMMAND} -E rename
         "$<TARGET_FILE_DIR:byo_benjolin>/byo_benjolin.uf2"
         "$<TARGET_FILE_DIR:byo_benjolin>/byo_benjolin.${BYOB_VERSION}.uf2"
     COMMENT "Creating version-stamped UF2: byo_benjolin.${BYOB_VERSION}.uf2"
