@@ -47,7 +47,9 @@ public:
 		if (Connected(Input::Audio2))
 		{
 			// If AudioIn2 is connected, use it to control the Turing Probability
-			turingP = AudioIn2() + KnobVal(Knob::Main);
+			// ComputerCard v0.3.0 inverts the audio input to correct the hardware
+			// op-amp polarity; negate to preserve the original BYOB behaviour.
+			turingP = KnobVal(Knob::Main) - AudioIn2();
 		}
 		else
 		{
@@ -87,7 +89,7 @@ public:
 			{
 				if (Connected(Input::Audio1))
 				{
-					data = AudioIn1() + 2048; // Convert to 0-4095
+					data = 2048 - AudioIn1(); // Convert to 0-4095 (audio input negated, see note above)
 				}
 				else
 				{
@@ -120,7 +122,7 @@ public:
 			{
 				if (Connected(Input::Audio1))
 				{
-					data = AudioIn1() + 2048; // Convert to 0-4095
+					data = 2048 - AudioIn1(); // Convert to 0-4095 (audio input negated, see note above)
 				}
 				else
 				{
@@ -169,8 +171,9 @@ public:
 		runglerOut2 -= 2048; // Convert to -2048 to 2047
 		int16_t quantizedRunglerOut1 = runglerOut1; // save values for quantization
 		int16_t quantizedRunglerOut2 = runglerOut2;
-		runglerOut1 *= -1; // Invert the signal
-		runglerOut2 *= -1; // Invert the signal
+		// ComputerCard v0.3.0 inverts the audio output to correct the hardware
+		// op-amp polarity, so the explicit "* -1" inversion is no longer needed
+		// here to keep the original output polarity.
 		//make sure the output values are in the correct range for the DAC
 		clip(runglerOut1, -2048, 2047);
 		clip(runglerOut2, -2048, 2047);

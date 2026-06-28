@@ -33,3 +33,18 @@ macro (add_card _name)
   endmacro()
   
 add_card(byo_benjolin)
+
+# Single source of truth for the firmware version (keep in sync with info.yaml).
+set(BYOB_VERSION "1.1")
+
+# Embed program metadata into the built artifact (readable via `picotool info`).
+pico_set_program_name(byo_benjolin "BYO Benjolin")
+pico_set_program_version(byo_benjolin "${BYOB_VERSION}")
+
+# Also emit a version-stamped UF2 alongside the default one, e.g. byo_benjolin.1.1.uf2
+add_custom_command(TARGET byo_benjolin POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "$<TARGET_FILE_DIR:byo_benjolin>/byo_benjolin.uf2"
+        "$<TARGET_FILE_DIR:byo_benjolin>/byo_benjolin.${BYOB_VERSION}.uf2"
+    COMMENT "Creating version-stamped UF2: byo_benjolin.${BYOB_VERSION}.uf2"
+    VERBATIM)
