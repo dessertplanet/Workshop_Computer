@@ -24,6 +24,7 @@
 | 23_SlowMod | Chaotic quad-LFO with VCAs | 0.1<br>Released | C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE. | divmod |
 | 24_crafted_volts | Manually set control voltages (CV) with the input knobs and switch. It also attenuverts (attenuates and inverts) incoming voltages. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
 | 25_utility_pair | 25 small utilities, which can be combined in pairs | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
+| 26_clockwork | <br>[Web editor](https://vincentmaurer.de/clockwork/index.html) |  |  | Vincent Maurer |
 | 27_Siren | Multi-algorithm drone oscillator. Inspired by the Forge TME Vhikk X. | 0.2<br>Functional but WIP | C++ (ComputerCard / Pico SDK) | Moses Hoyt |
 | 28_eighties_bass | Bass-oriented complete monosynth voice consisting of five detuned saw wave oscillators with mixable white noise and adjustable resonant filter. | 0.1<br>Functional but WIP | Arduino (arduino-pico) with Mozzi 2 | Tod Kurt (@todbot) |
 | 30_cirpy_wavetable | Wavetable oscillator that using wavetables from Plaits, Braids, and Microwave, | 0.1<br>Functional but WIP | CircuitPython | Tod Kurt (@todbot) |
