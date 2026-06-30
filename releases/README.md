@@ -24,6 +24,7 @@
 | 23_SlowMod | Chaotic quad-LFO with VCAs | 0.1<br>Released | C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE. | divmod |
 | 24_crafted_volts | Manually set control voltages (CV) with the input knobs and switch. It also attenuverts (attenuates and inverts) incoming voltages. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
 | 25_utility_pair | 25 small utilities, which can be combined in pairs | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
+| 26_clockwork | <br>[Web editor](https://vincentmaurer.de/clockwork/index.html) |  |  | Vincent Maurer |
 | 27_Siren | Multi-algorithm drone oscillator. Inspired by the Forge TME Vhikk X. | 0.2<br>Functional but WIP | C++ (ComputerCard / Pico SDK) | Moses Hoyt |
 | 28_eighties_bass | Bass-oriented complete monosynth voice consisting of five detuned saw wave oscillators with mixable white noise and adjustable resonant filter. | 0.1<br>Functional but WIP | Arduino (arduino-pico) with Mozzi 2 | Tod Kurt (@todbot) |
 | 30_cirpy_wavetable | Wavetable oscillator that using wavetables from Plaits, Braids, and Microwave, | 0.1<br>Functional but WIP | CircuitPython | Tod Kurt (@todbot) |
@@ -66,6 +67,7 @@
 | 87_fr330hfr33 |  |  |  |  |
 | 88_Blank | Reserved for blank 88 cards | 0<br>None | None | Tom Whitwell |
 | 91_chorgan | Chorgan — 6-voice chord synthesizer with morphing timbre, chord extension presets, and built-in chord sequencer. Two modes: normal (detune/chorus) and slew (portamento chord changes). Inspired by the Music Thing Modular Chord Organ. | 1.1.0<br>released | C++ (Pico SDK / ComputerCard) | Andy Jenkinson (uglifruit) |
+| 93_Turing_Matrix | <br>[Web editor](https://tomwhitwell.github.io/Workshop_Computer/programs/93-turing-matrix/web/index.html) |  |  |  |
 | 95_offair2 | OffAir — AM/Shortwave/Longwave radio simulator. Tune between two Stations and interference with authentic heterodyne whistles, SSB pitch-shift detuning, AM envelope detection, swelling per-band static, and triggerable Insta-ference one-shots. Baked recordings or live audio inputs become the Stations. | 1.0.0<br>released | C++ (Pico SDK / ComputerCard) | Andy Jenkinson (uglifruit) |
 | 98_duo_midi | A duophonic midi device/host interface | 0.1<br>Released | Lua / Blackbird | Dune Desormeaux |
 | 99_toolbox | Mixer, VCA, noise, S&H, clock generator, etc. | 0.1.1<br>Released | C++ (ComputerCard) | divmod |
