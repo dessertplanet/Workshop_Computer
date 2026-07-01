@@ -6,7 +6,7 @@ A bellringing methods sequencer by James Saunders
 
 The Bells is a sequencer that provides 12 bell ringing methods with tempo and jitter controls, quantised to six different scales.
 
-It sends a v/oct pitch sequence and synchronised pulse to control the oscillators or other inputs that could respond to permutation patterns.
+It sends a v/oct pitch sequence and synchronised pulse to control the oscillators or other inputs that could respond to permutation patterns, and optionally plays the methods using bell samples.
 
 Its parameters are controllable during playback and in a setup mode, accessible by holding Z down while turning a knob. Z switches between play, stop and edit modes. 
 
@@ -30,12 +30,13 @@ For questions or support, email [jamessaundersalloneword@gmail.com](mailto:james
 | Y | Turns covering tenor off (CCW-12) or on (12-CW) |  | Select scale |  |
 |   **LEDs**  |  |  |  |  |
 
-![Main: method](./images/leds_method.svg)
-![X: clock divide](./images/leds_clock.svg)
-![Y: scale](./images/leds_scale.svg)
-
+<img src="https://github.com/TomWhitwell/Workshop_Computer/blob/main/releases/16_the_bells/images/leds.svg" width="600">
 
 **UPDATES**
+
+v1.1 (30.06.26)
+- First main update adds sampled bells from my local tower, recorded last night wiht thanks to Will Rogers. Patch audio out 1 and 2 to the mixer (either channels 1 and 2 pr use a stackable to send them to the same channel), or via processing. Select the method in the normal way and click Z up to play the chosen methd with sampled bells. The tempo, jitter and covering tenor settings all work, but the scale has no effect (samples, not CV). Note it only currently works with six bells as our twoer is only a ring of six - I'll record a ring of eight when I get a moment so all the methods will work.
+- Corrected some errors in the methods.
 
 Some sound recordings are now on discord here: https://discord.com/channels/1210238368898879569/1520571591711391754
 
