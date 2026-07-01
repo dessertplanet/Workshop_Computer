@@ -182,37 +182,46 @@ Framebuffer (360×256, 1bpp) ─► PAL word stream ─► PIO/DMA ─► Pu1+Pu
 7. Hold **Switch DOWN** for the performance effect; tap it repeatedly to cycle effects. While holding DOWN, twist Knob X or Y to open the **config menu**.
 8. Gate **Pulse In 1** / **Pulse In 2** to fire their configured effects (set them in the config menu; e.g. PU1 = CLS to clear).
 
-**Alt boot — screensaver / play modes:** hold Switch DOWN while powering on to start in alt-boot mode, a small menu of screen modes that also keep a CRT from burning in.
+## Alt boot — screensaver / performance modes
 
-- **Switch UP** shows the **selector**: a list of modes. Turn the **Main knob** to choose.
-- **Switch MIDDLE or DOWN** runs the selected mode.
+Hold **Switch DOWN while powering on** to start in **alt-boot** mode: a set of screensaver / performance-tool hybrids that also keep a CRT from burning in.
 
-| Mode | Type |
-|------|------|
-| **PATCHTEROIDS** | Interactive — a playable, patch-controlled game (see below) |
-| **COMET** | Passive — a bouncing block with phosphor trails (a plain screensaver, included to show the selector working) |
+- **Switch UP** shows the **selector** — the current mode name, a position counter, and its input/output help. Turn the **Main knob** to scroll through the modes.
+- **Switch MIDDLE or DOWN** runs the shown mode.
+
+Boot straight into MID/DOWN (without visiting the selector) and you get **COMET**, the default.
+
+| # | Mode | What it is |
+|---|------|-----------|
+| 1 | **COMET** | A round comet with a phosphor tail, bouncing around. Main / CV1 = speed, Knob Y / CV2 = tail length. |
+| 2 | **PATCHTEROIDS** | Patch-controlled Asteroids (see below). |
+| 3 | **BOING** | Amiga-style rotating checkered ball (see below). |
+| 4 | **STARFIELD** | Fly through a 3D starfield. Main = speed; Knob X / CV1 = horizontal turn, Knob Y / CV2 = vertical turn. |
+| 5 | **RADAR** | A radar scope (see below). |
+| 6 | **LUNAR** | Lunar Lander (see below). |
+| 7 | **3DMAZE** | First-person wireframe maze with a monster (see below). |
+
+Each mode shows its own control map on the selector page, so you don't need to memorise them. Highlights of the interactive ones:
 
 ### Patchteroids
 
-A tiny Asteroids-style game played through the modular. A ship cruises forward and wraps around the screen; you steer, fire, and shoot the drifting comets. It is both a screensaver and a simple performance/sequencing source — every hit raises a pitch CV and fires a gate.
+A tiny Asteroids game, and a simple melodic sequencer. A ship cruises forward and wraps around; **Main knob (+ CV In 1) steers**, **PU1 / Switch DOWN fires**. Shooting a big comet splits it in two; the count grows the longer you survive. **CV Out 1 = pitch** (rises one semitone per hit, arpeggiates down on a crash while the HITS score shows); **CV Out 2 = gate** on each hit. Patch CV Out 1 → osc v/oct and CV Out 2 → envelope to play it as a sequence.
 
-**Controls**
+### Boing
 
-| Control | Action |
-|---------|--------|
-| Main knob | Steering — centre = straight ahead; turn CW/CCW to curve (hard over = tight turn) |
-| CV In 1 | Added to the Main knob — patch an LFO/CV to modulate or automate steering |
-| Pulse In 1 | Fire |
-| Switch DOWN (momentary) | Fire (alternative to PU1) |
+A checkered ball spins and bounces under gravity. **Knob X / CV In 1 = spin + kick impulse**, **Main / CV In 2 = bounce efficiency** (centre = bounces forever, CW gains height, CCW decays to rest), **Knob Y = horizontal speed**, **PU1 / Switch DOWN = kick** (launch strength set by the spin control). **CV Out 1 = ball height**, **CV Out 2 = a trigger on each floor bounce** — with the ball decaying it makes a shortening bounce-ball rhythm (Peaks-style). 
 
-**Outputs**
+### Radar
 
-| Jack | Action |
-|------|--------|
-| CV Out 1 | Pitch (1V/oct). Rises **one semitone per comet hit**; on a crash it arpeggiates **down to the base note** while the score is shown |
-| CV Out 2 | Gate — a short pulse on **every hit** (and on every step of the crash arpeggio) |
+A radar scope with a sweeping hand and a rotating turet. **Main knob aims** the turret; **PU1 / Switch DOWN fires** a ballistic missile (hold = launch power → range); **PU2 IN places** fading target blocks on the sweep line, with **CV In 1 setting their radius** from centre. **CV Out 2 pulses on a hit.**
 
-Shooting a large comet splits it into two smaller ones (shoot those to destroy them); the comet count grows the longer you survive. Crash into one and the screen shows **HITS** with your score while the pitch descends. Patch CV Out 1 into an oscillator's v/oct and CV Out 2 into an envelope/gate to play the game as a melodic sequence.
+### Lunar
+
+Classic Lunar Lander. **Main / CV In 1 rotate** the craft; **PU1 / Switch DOWN thrust** (against constant gravity). Land gently and upright on the flat pad (which narrows each stage) while avoiding drifting UFOs; land → next stage, crash → back to stage 1. Fuel is limited (empty = no thrust). **CV Out 1 = altitude**, **CV Out 2 = a pulse on land/crash**.
+
+### 3D Maze
+
+A chunky first-person **wireframe maze** (ZX81 3D Monster Maze style) with a roaming monster. **Main knob turns** (smoothly), **PU1 / Switch DOWN walks** forward; movement is rail-locked to corridor centres. Turn **Knob X up (or patch CV In 1)** for a hands-free **auto-run** that drives itself through the maze, turning only where it must. **Hold Pulse In 2** to invert the screen (white-on-black) — a momentary performative accent. If the monster reaches you the screen flashes and a new maze is generated. **CV Out 2 pulses when you're caught.**
 
 ---
 
@@ -237,5 +246,24 @@ Shooting a large comet splits it into two smaller ones (shoot those to destroy t
 - **Greyscale:** half-resolution grey buffer (180×128, `GREY_SCALE`-configurable), **5 brightness levels** per cell, expanded each frame into the 1-bit framebuffer via a 2×2 spatial dither whose 4 orientations cycle every 2 frames (averages out the fixed pattern). Scan-out reads the 1-bit framebuffer unchanged. Dilation is **level-aware** — brighter levels are held on longer so the brightness ramp survives the DAC's slow rise (a lone dim pixel isn't flattened to white).
 - **Phosphor fade:** grey cells decrement toward true black. In scope mode the fade is locked to the sweep (a column blackens just as the sweep returns); in etch mode the main knob sets the rate (~0.15–2 s).
 - **White dilation (analog workaround):** a lone white pixel can't slew to full white through the resistor DAC in one ~143 ns pixel, so it reads grey. After expansion each white pixel is dilated `WHITE_DILATE` pixels to the right, guaranteeing white features are wide enough to render at full brightness. Etch dots are also drawn ≥2 cells wide for the same reason. This trades a little horizontal sharpness for white fidelity — the practical compromise of 1-bit composite.
-- **RAM usage:** ~44% of the RP2040's 256 KB: the two double-buffered PAL word streams (~70 KB), the grey buffer (~23 KB) and the framebuffer (~11 KB).
+- **RAM usage:** ~77% of the RP2040's 256 KB (v1.1): the two double-buffered PAL word streams (~70 KB), the grey buffer (~23 KB), the framebuffer (~11 KB), plus the alt-boot modes' state (the Boing sphere lookup, maze grid + face list, etc). FLASH ~4%.
 - **Pixels are taller than wide** (portrait) given 360 columns over the ~52µs active line and 256 rows; greyscale cells are 2×2 of these.
+
+---
+
+## Changelog
+
+### v1.1.0
+- **Alt boot is now a selector of seven screensaver / performance modes** (was one screensaver). Switch UP scrolls with the Main knob and shows per-mode I/O help; MID/DOWN plays.
+  - New modes: **STARFIELD** (fly/steer through space), **RADAR** (aim + ballistic missile, PU2 places targets), **LUNAR** (Lunar Lander with stages, UFOs and fuel), **3DMAZE** (first-person wireframe maze with a roaming monster + hands-free auto-run).
+  - **COMET** reworked into a round comet with speed (Main/CV1) and tail-length (Y/CV2) control; it is now the default mode.
+  - **BOING** gained CV1-out (height), a kick input (PU1/DOWN) with spin-set impulse, CV2-modulated bounce efficiency, and a Peaks-style shortening bounce-trigger on CV Out 2.
+  - **Patchteroids** unchanged in play; the CV bridge is now hybrid-aware so each mode drives the CV outs appropriately.
+- **CV outputs in alt boot**: CV Out 1 / CV Out 2 are now mode-dependent (pitch/height/altitude/sweep and hit/bounce/crash/caught pulses).
+- Removed the **CV FX** config-menu behaviour (little-used); effect list now includes **ROLL**.
+- Font polish (M/N/W legibility), a **slash** glyph, and text rendered with reduced dilation for crisp menus.
+- **3DMAZE**: smooth rail-locked auto-run (no cell-hopping) and **Pulse In 2 = invert** accent.
+- Panel overlay image added.
+
+### v1.0.0
+- Initial release: PAL composite video synth — oscilloscope + etch-a-sketch, 5-level greyscale via dithering, three independent configurable performance triggers with an on-screen config menu, and a single alt-boot screensaver (Patchteroids).

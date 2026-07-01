@@ -138,6 +138,8 @@ struct SharedState {
     volatile int32_t  scope_audio_scale; // Y knob in scope: 0..512 (256 = 1×, max 2×) audio gain
     volatile int32_t  scope_baseline;    // X knob in scope: 0..GREY_H-1 centre-line row
     volatile int32_t  knob_main;     // KnobVal(Main): 0..4095 (far-CCW=etch, else scope speed)
+    volatile int32_t  knob_x;        // KnobVal(X): 0..4095 raw (alt-mode hybrids read this)
+    volatile int32_t  knob_y;        // KnobVal(Y): 0..4095 raw (alt-mode hybrids read this)
     volatile uint8_t  sw_position;   // 0=UP(fade) 1=MID(static) 2=DOWN(effect / menu)
     // Trigger sources (Core 0 latches edges; Core 1 reads, clears the *_rising latches).
     // Three independent: switch-DOWN→cfg_sw, PU1→cfg_pu1, PU2→cfg_pu2.
@@ -158,6 +160,12 @@ struct SharedState {
     volatile int32_t  ast_note;      // current pitch, semitones above base (Core 1 writes)
     volatile uint32_t ast_gate_seq;  // bumped by Core 1 on each hit/arp-step → Core 0 gates
     volatile bool     ast_fire;      // PU1 fire latch: Core 0 sets, Core 1 reads-and-clears
+    // Which alt-boot hybrid is selected (published by Core 1). Core 0 uses this to decide
+    // how the alt-mode CV bridge behaves (only Patchteroids steers via CV1 / outputs pitch).
+    volatile int32_t  alt_hybrid;    // selected alt-boot mode index (see ALT_NAMES order)
+    // Generic CV1-out value for non-Patchteroids hybrids (Core 1 writes, Core 0 → CVOut1).
+    // Boing uses it for ball height. Range -2048..2047.
+    volatile int32_t  alt_cv1;
 };
 static SharedState shared;
 
@@ -431,6 +439,11 @@ static bool text_mode = false;
 // crosses byte boundaries for any N up to 7.
 #define WHITE_DILATE 4   // measured on hardware: an isolated white px needs ~5px (1+4) to reach true white
 
+// Per-frame cap on white-dilation (default = full WHITE_DILATE). Screens that draw solid
+// filled shapes (e.g. the Boing ball) lower this so white areas don't bloom together and
+// wash the whole shape white. Reset each frame at the top of update_framebuffer().
+static int dilate_cap = WHITE_DILATE;
+
 // Per-level rightward dilation in PIXELS, indexed by grey level 0..4. Higher levels
 // are held on longer (→ brighter); low/fading levels get little/no dilation so dim
 // pixels actually look dim. This makes dilation LEVEL-AWARE so it no longer flattens
@@ -482,7 +495,7 @@ static void __not_in_flash_func(expand_grey_to_fb)() {
                 fb[b] = byte;
             }
 #if WHITE_DILATE
-            dilate_white_leveled(fb, grow, WHITE_DILATE);   // text uses the wider gap below
+            dilate_white_leveled(fb, grow, dilate_cap);   // per-frame cap (text/Boing lower it)
 #endif
         }
     }
@@ -570,6 +583,7 @@ static const uint8_t font5x7[][7] = {
     {0x08,0x04,0x02,0x01,0x02,0x04,0x08}, // >
     {0x0E,0x08,0x08,0x08,0x08,0x08,0x0E}, // [
     {0x0E,0x02,0x02,0x02,0x02,0x02,0x0E}, // ]
+    {0x01,0x02,0x02,0x04,0x08,0x08,0x10}, // /  (slash)
 };
 
 static int font_index(char c) {
@@ -577,7 +591,8 @@ static int font_index(char c) {
     if (c >= 'a' && c <= 'z') return c - 'a';        // fold lowercase to uppercase
     if (c >= '0' && c <= '9') return 26 + (c - '0');
     switch (c) { case ' ': return 36; case ':': return 37; case '.': return 38;
-                 case '>': return 39; case '[': return 40; case ']': return 41; }
+                 case '>': return 39; case '[': return 40; case ']': return 41;
+                 case '/': return 42; }
     return 36;  // unknown → space
 }
 
@@ -739,16 +754,39 @@ static void __not_in_flash_func(draw_menu)() {
     draw_text(6, 100, BHV_NAMES[shared.cfg_pu2], GREY_LEVELS - 1);
 }
 
-// Parked screensaver: a bouncing block leaving phosphor trails (kept; selectable later).
+// COMET: a round comet bouncing around, leaving a phosphor tail. Main knob / CV In 1 set
+// travel speed; CV In 2 sets tail length (how slowly the trail fades). Position is 8.8.
+#define COMET_R 3            // comet radius in cells (round blob)
 [[maybe_unused]] static void __not_in_flash_func(screensaver_bounce)() {
-    static int sx = GREY_W/2, sy = GREY_H/2, vx = 1, vy = 1;
-    fade_step();                                 // trails
-    sx += vx; sy += vy;
-    if (sx <= 0 || sx >= GREY_W - 4) vx = -vx;
-    if (sy <= 0 || sy >= GREY_H - 4) vy = -vy;
-    for (int dy = 0; dy < 4; dy++)
-        for (int dx = 0; dx < 4; dx++)
-            GREY_SET(grey_buffer, sy + dy, sx + dx, GREY_LEVELS - 1);
+    static int32_t sx = (GREY_W/2)<<8, sy = (GREY_H/2)<<8;   // 8.8 position
+    static int dirx = 1, diry = 1;                            // travel direction
+    static int fade_ctr = 0;
+    shared.alt_cv1 = 0;                          // passive: no CVOut1
+
+    // Speed = Main knob + CV In 1 (with a small base so it always drifts). ~3x faster.
+    int32_t speed = 72 + (shared.knob_main + shared.cv_x) / 8;    // 8.8 cell/frame
+    if (speed < 24) speed = 24;
+    // Tail length = Knob Y + CV In 2: fade every N frames (bigger N = longer tail).
+    int tailc = shared.knob_y + (shared.cv_y + 2048);            // 0..~6143
+    int fade_every = 1 + tailc / 700;                            // 1..~9 frames per fade step
+    if (++fade_ctr >= fade_every) { fade_ctr = 0; fade_step(); }  // trail decay
+
+    // Move (8.8) and bounce off the edges, keeping inside by the radius.
+    sx += dirx * speed; sy += diry * speed;
+    int32_t lo = COMET_R << 8, hix = (GREY_W-1-COMET_R)<<8, hiy = (GREY_H-1-COMET_R)<<8;
+    if (sx <= lo)  { sx = lo;  dirx = 1; }
+    if (sx >= hix) { sx = hix; dirx = -1; }
+    if (sy <= lo)  { sy = lo;  diry = 1; }
+    if (sy >= hiy) { sy = hiy; diry = -1; }
+
+    // Draw a round filled blob at full white.
+    int cx = sx>>8, cy = sy>>8;
+    for (int dy = -COMET_R; dy <= COMET_R; dy++)
+        for (int dx = -COMET_R; dx <= COMET_R; dx++) {
+            if (dx*dx + dy*dy > COMET_R*COMET_R) continue;
+            int gx = cx+dx, gy = cy+dy;
+            if (gx>=0&&gx<GREY_W&&gy>=0&&gy<GREY_H) GREY_SET(grey_buffer, gy, gx, GREY_LEVELS-1);
+        }
 }
 
 // ─── Asteroids screensaver ────────────────────────────────────────────────────
@@ -958,33 +996,1065 @@ static void __not_in_flash_func(screensaver_asteroids)() {
     line(nx,ny,lx,ly); line(nx,ny,rx,ry); line(lx,ly,rx,ry);
 }
 
+// ── BOING: Amiga-style rotating checkered ball ──────────────────────────────────────
+// A large red/white checkered sphere spins and bounces around under gravity. The ball is
+// generated PROCEDURALLY: at init we build a per-cell lookup for the fixed radius mapping
+// each disc cell → (latitude band, longitude angle, shade). Per frame the hot loop is
+// just a table read + add spin_phase + parity → GREY_SET, so it's cheap enough for 50fps
+// alongside the video loop. Controls (read raw on Core 1): Knob X / CV In 1 = spin speed,
+// Knob Y / CV In 2 = horizontal speed, Main = bounce efficiency (centre = no height lost,
+// CW = lose, CCW = gain). A floor bounce bumps ast_gate_seq so Core 0 emits a trigger on
+// CV Out 2. Positions are 8.8 fixed point.
+#define BOING_R      44      // ball radius in grey cells (~88 across; fills the 128 height)
+#define BOING_D      (2*BOING_R + 1)
+#define BOING_NLON   10      // longitude checker bands (around the vertical axis)
+#define BOING_NLAT   7       // latitude checker bands (pole to pole)
+#define BOING_TILT   240     // pole-axis tilt (0..255 = full turn; 240 = -16 ≈ -22.5° lean)
+#define BOING_WHITE  (GREY_LEVELS - 1)   // 4 (dilation off for the ball, so no washout)
+#define BOING_RED    0       // "red" square → fully black (no dither = no strobing)
+// Scene: a checkerboard wall (light squares = white/black stipple + black squares) with a
+// BLACK drop shadow. The stipple uses only levels 0 and 4 (never dither) so it can't flash.
+#define BOING_GRIDSP 18      // wall checker square size in cells
+#define BOING_SHOFF  10      // shadow offset (cells) down + right from the ball centre
+
+// Integer sqrt (floor). Small values only (≤ R²), so a simple loop is fine at init.
+static uint32_t isqrt_u(uint32_t v) {
+    uint32_t r = 0, b = 1u << 30;
+    while (b > v) b >>= 2;
+    while (b) { if (v >= r + b) { v -= r + b; r = (r >> 1) + b; } else r >>= 1; b >>= 2; }
+    return r;
+}
+// Integer atan2 → 0..255 (256 = full turn), no libm. Uses the octant + a rational approx.
+static uint8_t atan2_u8(int y, int x) {
+    if (x == 0 && y == 0) return 0;
+    int ax = x < 0 ? -x : x, ay = y < 0 ? -y : y;
+    int a;   // angle within [0,64] scaled to the first octant-pair
+    if (ax >= ay) {
+        int r = ay * 64 / (ax ? ax : 1);       // 0..64 (approx atan(ay/ax)*128/pi)
+        a = (r * 32) / 64;                      // ~0..32 (0..45°)
+    } else {
+        int r = ax * 64 / (ay ? ay : 1);
+        a = 64 - (r * 32) / 64;                 // 32..64 (45..90°)
+    }
+    int ang;                                    // map by quadrant into 0..255
+    if      (x >= 0 && y >= 0) ang = a;             // Q1  0..64
+    else if (x <  0 && y >= 0) ang = 128 - a;       // Q2  64..128
+    else if (x <  0 && y <  0) ang = 128 + a;       // Q3  128..192
+    else                       ang = 256 - a;       // Q4  192..256
+    return (uint8_t)ang;
+}
+
+static void __not_in_flash_func(screensaver_boing)() {
+    struct Cell { uint8_t on; uint8_t lat; uint8_t lon; uint8_t shade; };
+    static Cell     tab[BOING_D * BOING_D];   // ~8KB: per-cell sphere lookup (built once)
+    static bool     init = false;
+    static int32_t  x, y, vx, vy;             // ball centre, 8.8 fixed
+    static uint8_t  spin_phase = 0;           // longitude rotation offset
+    static int      spin_dir = 1;             // flips on wall bounce (classic Boing)
+    static bool     prev_down = false;        // switch-DOWN edge detect (DOWN = kick too)
+
+    if (!init) {
+        init = true;
+        // Build the sphere lookup for the fixed radius. The pole axis is TILTED (classic
+        // Boing look) by rotating the in-screen (dx,dy) by BOING_TILT before deriving
+        // latitude (from the rotated dy') and longitude (from rotated dx' and depth nz).
+        const int ct = cos_a(BOING_TILT), st = sin_a(BOING_TILT);   // 8.8 (±256)
+        for (int dy = -BOING_R; dy <= BOING_R; dy++) {
+            for (int dx = -BOING_R; dx <= BOING_R; dx++) {
+                Cell &c = tab[(dy + BOING_R) * BOING_D + (dx + BOING_R)];
+                int r2 = dx*dx + dy*dy;
+                if (r2 > BOING_R*BOING_R) { c.on = 0; continue; }
+                c.on = 1;
+                int nz = (int)isqrt_u((uint32_t)(BOING_R*BOING_R - r2));  // 0..R (depth)
+                // Tilt: rotate (dx,dy) in the screen plane by BOING_TILT.
+                int rx = (dx * ct - dy * st) >> 8;
+                int ry = (dx * st + dy * ct) >> 8;
+                // Latitude: rotated ry over R → band 0..NLAT-1 (pole to pole).
+                int lat = ((ry + BOING_R) * BOING_NLAT) / (BOING_D);
+                if (lat < 0) lat = 0;
+                if (lat >= BOING_NLAT) lat = BOING_NLAT - 1;
+                c.lat = (uint8_t)lat;
+                // Longitude: angle around the (tilted) vertical axis from (rx, nz) → 0..255.
+                c.lon = atan2_u8(rx, nz);
+                // Shade: front (large nz) brighter. 0..3, subtle so checkers stay legible.
+                c.shade = (uint8_t)((nz * 4) / (BOING_R + 1));   // 0..3
+            }
+        }
+        x = (GREY_W / 2) << 8;
+        y = (BOING_R + 4) << 8;
+        vx = 130;                              // gentle base drift
+        vy = 0;
+    }
+
+    // ── Controls ──────────────────────────────────────────────────────────────
+    // Spin momentum = Knob X + CV In 1: sets spin rate AND the kick launch strength, so it
+    //   doubles as the "energy" control for a tunable bouncing-ball delay.
+    // Bounce efficiency = Main knob + bipolar CV In 2: centre = perfect (bounces forever),
+    //   CW = GAIN height, CCW = decays to rest. Horizontal travel = Knob Y.
+    int32_t spinc = (shared.knob_x - 2048) + shared.cv_x;   // ±~4095 (0 = centre)
+    int32_t spin  = spinc / 192;                            // signed spin rate, ±~21
+    int32_t hspd  = (shared.knob_y * 3) / 8;                // horizontal: 0 (stopped) → fast (~3x)
+    int32_t effc  = (shared.knob_main - 2048) + shared.cv_y; // Main + bipolar CV2, ±~4095
+    int32_t eff   = 256 + effc / 16;                         // ~128..384 (256 = perfect)
+    if (eff < 32)  eff = 32;                                 // guard extremes
+    if (eff > 480) eff = 480;
+    // Kick launch velocity centred on the spin control: CENTRE = 1100 (≈2/3 screen height);
+    //   spinning one way gives progressively less, the other way progressively more.
+    int32_t kickv = 1100 + spinc / 6;                       // ~420..1780 across the range
+    if (kickv < 200)  kickv = 200;
+    if (kickv > 2000) kickv = 2000;
+
+    // ── Physics (constant gravity + floor/wall bounce), 8.8 fixed ──
+    const int32_t GRAV = 26;                   // fixed gravity
+    // Kick UPWARD from PU1 (ast_fire, set by Core 0) OR a momentary switch-DOWN edge.
+    //   Applied BEFORE integrating so it lifts off the floor this frame. Launch strength =
+    //   kickv (from the spin-momentum control) → tunes how high / how many bounces follow.
+    bool down = (shared.sw_position == 2);
+    bool kick = false;
+    if (shared.ast_fire) { shared.ast_fire = false; kick = true; }
+    if (down && !prev_down) kick = true;
+    prev_down = down;
+    if (kick) vy = -kickv;
+
+    vy += GRAV;
+    y  += vy;
+    // horizontal: keep current direction, set magnitude from the control speed
+    vx = (vx >= 0 ? hspd : -hspd);
+    x += vx;
+
+    // Floor / ceiling
+    int32_t floor_y = (GREY_H - 1 - BOING_R) << 8;
+    int32_t ceil_y  = (BOING_R) << 8;
+    if (y >= floor_y && vy >= 0) {             // at/below floor AND not moving up
+        y = floor_y;
+        if (vy > 0) {                          // a real downward impact → bounce
+            vy = -((vy * eff) >> 8);           // reflect, scaled by bounce efficiency
+            if (vy < -6000) vy = -6000;        // clamp gained energy (CW) — no runaway
+            // Low rest cutoff → the ball keeps making smaller, faster bounces (an
+            // accelerating "shortening" ratchet, à la Peaks) before finally settling.
+            if (vy > -40) vy = 0;              // below ~0.16 cell/frame → rest on the floor
+            else shared.ast_gate_seq = shared.ast_gate_seq + 1;  // bounce → CV Out 2 trigger
+        } else {
+            vy = 0;                            // resting on the floor
+        }
+    }
+    if (y <= ceil_y) { y = ceil_y; if (vy < 0) vy = -vy; }
+
+    // Walls
+    int32_t left_x  = (BOING_R) << 8;
+    int32_t right_x = (GREY_W - 1 - BOING_R) << 8;
+    if (x <= left_x)  { x = left_x;  vx =  (vx < 0 ? -vx : vx); spin_dir = -spin_dir; }
+    if (x >= right_x) { x = right_x; vx = -(vx < 0 ? -vx : vx); spin_dir = -spin_dir; }
+
+    // ── Spin: advance the longitude offset ──
+    spin_phase = (uint8_t)(spin_phase + spin * spin_dir);
+
+    // ── CV1 out = ball height: map y (ceil..floor) → +2047 (top) .. -2048 (floor) ──
+    {
+        int32_t span = floor_y - ceil_y;                       // total vertical travel
+        int32_t up   = floor_y - y;                            // 0 at floor .. span at top
+        shared.alt_cv1 = (span > 0) ? ((up * 4095) / span - 2048) : 0;
+    }
+
+    // ── Render: checkerboard wall, black drop shadow, then the ball. No white-dilation
+    //    this screen (ball is solid; keeps the wall stipple crisp). ──
+    dilate_cap = 0;
+    int cx = x >> 8, cy = y >> 8;
+
+    // 1) Background wall: a checkerboard of "light" and black squares, BOING_GRIDSP cells
+    //    per square. The light squares are a HAND STIPPLE — a per-cell checker of white(4)
+    //    and black(0) cells. Levels 0 and 4 never dither, so it's rock-steady (a level-2
+    //    fill would flash: its dither orientation rotates every 2 frames). Reads as grey.
+    for (int gy = 0; gy < GREY_H; gy++) {
+        int wy = gy / BOING_GRIDSP;
+        for (int gx = 0; gx < GREY_W; gx++) {
+            int wx = gx / BOING_GRIDSP;
+            int lvl = 0;
+            // Light squares: 2-on/1-off diagonal stipple (2 white : 1 black) → brighter
+            // grey, still only levels 0/4 so it never dithers/flashes.
+            if ((wx + wy) & 1) lvl = (((gx + gy) % 3) == 0) ? 0 : BOING_WHITE;
+            GREY_SET(grey_buffer, gy, gx, lvl);
+        }
+    }
+
+    // 2) Drop shadow: a BLACK ellipse offset down+right — reads as the ball's shadow on the
+    //    wall (blacks out the grey squares it covers). Squashed ~0.8× vertically.
+    int shx = cx + BOING_SHOFF, shy = cy + BOING_SHOFF;
+    for (int dy = -BOING_R; dy <= BOING_R; dy++) {
+        int gy = shy + dy; if (gy < 0 || gy >= GREY_H) continue;
+        for (int dx = -BOING_R; dx <= BOING_R; dx++) {
+            if (dx*dx*64 + dy*dy*100 > BOING_R*BOING_R*64) continue;   // ellipse
+            int gx = shx + dx; if (gx < 0 || gx >= GREY_W) continue;
+            GREY_SET(grey_buffer, gy, gx, 0);
+        }
+    }
+
+    // 3) The ball on top (fully opaque: white checkers = white, black checkers = black).
+    for (int dy = 0; dy < BOING_D; dy++) {
+        int gy = cy - BOING_R + dy;
+        if (gy < 0 || gy >= GREY_H) continue;
+        const Cell *row = &tab[dy * BOING_D];
+        for (int dx = 0; dx < BOING_D; dx++) {
+            const Cell &c = row[dx];
+            if (!c.on) continue;
+            int gx = cx - BOING_R + dx;
+            if (gx < 0 || gx >= GREY_W) continue;
+            uint8_t ang = (uint8_t)(c.lon + spin_phase);          // wrap to 0..255
+            int lon_band = (ang * BOING_NLON) / 256;              // 0..NLON-1
+            int checker = (c.lat + lon_band) & 1;
+            int level = checker ? BOING_WHITE : BOING_RED;
+            // subtle spherical shading: darken the rim a touch (shade 0..3)
+            if (c.shade == 0 && level > 0) level--;
+            GREY_SET(grey_buffer, gy, gx, level);
+        }
+    }
+}
+
+// ── STARFIELD: classic fly-through-space screensaver ────────────────────────────────
+// Stars stream outward from screen centre toward the viewer. Each star has a fixed (sx,sy)
+// direction and a depth z; every frame z decreases (star approaches) so its screen radius
+// grows and it brightens; when it passes the viewer or leaves the screen it respawns far
+// away with a new random direction. Speed (how fast z decreases) = Main knob + CV In 1.
+#define STAR_N   96          // number of stars
+#define STAR_ZMAX 4096       // far plane (z at spawn)
+static void __not_in_flash_func(screensaver_starfield)() {
+    struct Star { int32_t sx, sy, z; };   // sx,sy = direction (±), z = depth (1..ZMAX)
+    static Star stars[STAR_N];
+    static bool init = false;
+    auto rnd = [](){ return (int)(lcg_rand() & 0x7fffffff); };
+    auto respawn = [&](Star &s){
+        s.sx = (rnd() % (GREY_W)) - GREY_W/2;   // direction spread
+        s.sy = (rnd() % (GREY_H)) - GREY_H/2;
+        if (s.sx == 0 && s.sy == 0) s.sx = 1;
+        s.z  = STAR_ZMAX - (rnd() % 256);       // spawn near the far plane
+    };
+    if (!init) { init = true; for (auto &s : stars) { respawn(s); s.z = 1 + rnd() % STAR_ZMAX; } }
+
+    // Speed = Main knob (0..4095), clamped to a lively range.
+    int32_t speed = shared.knob_main / 20;   // ~0..204
+    if (speed < 4)   speed = 4;                               // always drifting a little
+    if (speed > 300) speed = 300;
+    // Turn: Knob X + CV In 1 = horizontal, Knob Y + CV In 2 = vertical. Bipolar. Nearer
+    // stars are pushed further opposite the turn → parallax = flying/banking through space.
+    int32_t turnx = (shared.knob_x - 2048) + shared.cv_x;    // ±~4095
+    int32_t turny = (shared.knob_y - 2048) + shared.cv_y;    // ±~4095
+
+    dilate_cap = 2;                        // let near stars bloom to solid white
+    shared.alt_cv1 = 0;                    // starfield doesn't drive CVOut1
+    memset(grey_buffer, 0, GREY_SIZE);
+    const int ccx = GREY_W / 2, ccy = GREY_H / 2;
+    for (auto &s : stars) {
+        s.z -= speed;
+        if (s.z <= 1) { respawn(s); continue; }
+        // Nearness 0..255 (0 = far plane, 255 = right at the viewer).
+        int near = ((STAR_ZMAX - s.z) * 255) / STAR_ZMAX;
+        if (near < 0) near = 0;
+        if (near > 255) near = 255;
+        // Project: screen = centre + dir·(scale/z) − turn·nearness (parallax turn).
+        int px = ccx + (s.sx * 256) / s.z - (turnx * near) / 8192;
+        int py = ccy + (s.sy * 256) / s.z - (turny * near) / 8192;
+        if (px < 0 || px >= GREY_W || py < 0 || py >= GREY_H) { respawn(s); continue; }
+
+        if (near < 96) {
+            // FAR: single dim/mid pixel (level 1..3 with nearness).
+            GREY_SET(grey_buffer, py, px, 1 + near / 40);
+        } else if (near < 176) {
+            // MID: a small ~2-line blob, 3/1 grey stipple (levels 3 & 1) → soft grey clump.
+            for (int dy = 0; dy <= 1; dy++)
+                for (int dx = 0; dx <= 1; dx++) {
+                    int gx = px + dx, gy = py + dy;
+                    if (gx < 0 || gx >= GREY_W || gy < 0 || gy >= GREY_H) continue;
+                    GREY_SET(grey_buffer, gy, gx, (((gx + gy) & 1) ? 3 : 1));  // 3/1 stipple
+                }
+        } else {
+            // NEAR: a ~5px round-ish SOLID WHITE blob (dilation pushes it past full white).
+            int rad = 1 + (near - 176) / 32;             // radius 1..3 cells → ~3..7px wide
+            for (int dy = -rad; dy <= rad; dy++)
+                for (int dx = -rad; dx <= rad; dx++) {
+                    if (dx*dx + dy*dy > rad*rad) continue;   // round
+                    int gx = px + dx, gy = py + dy;
+                    if (gx < 0 || gx >= GREY_W || gy < 0 || gy >= GREY_H) continue;
+                    GREY_SET(grey_buffer, gy, gx, GREY_LEVELS - 1);
+                }
+        }
+    }
+}
+
+// ── RADAR: radar-scope shooter ──────────────────────────────────────────────────────
+// A sweeping hand rotates leaving a decaying phosphor wedge over a dim ring+spoke scope.
+// Up to 4 slow blips drift. A turret at centre aims a bearing (Main knob, 7→5 o'clock).
+// Hold PU1/DOWN to charge launch power; release to lob a missile out along the bearing —
+// it travels ballistically in RANGE (longer hold = detonates further out, capped at the
+// rim), path traced, then explodes; any target within the blast radius is destroyed and
+// respawns later. CV Out 2 triggers on each detonation; CV Out 1 ramps with the sweep.
+#define RAD_RMAX   60        // scope radius in cells
+#define RAD_NTGT   4         // max targets
+#define RAD_BLAST  8         // detonation kill radius (cells)
+static void __not_in_flash_func(screensaver_radar)() {
+    struct Tgt { uint8_t active; int32_t x, y, vx, vy; int respawn; int ping; }; // ping = brightness timer
+    static bool init = false;
+    static uint8_t sweep = 0;
+    static Tgt tgt[RAD_NTGT];
+    static bool prev_hold = false;
+    static int  power = 0;                 // charge accumulator while held
+    static struct { uint8_t active; uint8_t ang; int32_t r, vr; int expl; int hit; } msl = {0,0,0,0,0,0};
+    // Player-placed static "enemies" (PU2 IN): sit on the sweep line where placed, don't
+    // move, fade over time. Distinct diamond shape vs the round drifting blips.
+    #define RAD_NENEMY 12
+    static struct { uint8_t active; int ex, ey; int life; } enemy[RAD_NENEMY] = {};
+
+    const int cx = GREY_W/2, cy = GREY_H/2;
+    auto rnd = [](){ return (int)(lcg_rand() & 0x7fffffff); };
+    auto spawn_tgt = [&](Tgt &t){
+        int a = rnd() & 255, rr = (RAD_RMAX/3) + rnd() % (RAD_RMAX/2);
+        t.x = (cx + (cos_a(a)*rr>>8)) << 8;
+        t.y = (cy + (sin_a(a)*rr>>8)) << 8;
+        t.vx = ((rnd()%64) - 32) * 2;      // slow drift
+        t.vy = ((rnd()%64) - 32) * 2;
+        if (t.vx==0 && t.vy==0) t.vx = 32;
+        t.active = 1; t.respawn = 0; t.ping = 0;
+    };
+    if (!init) { init = true; for (auto &t : tgt) spawn_tgt(t); }
+
+    // Fade the whole scope each frame → phosphor decay of wedge/blips/trace.
+    fade_step();
+    dilate_cap = 1;
+
+    // Dim static scope: concentric rings + spokes (level 1). Midpoint circle per ring.
+    for (int ring = 1; ring <= 3; ring++) {
+        int R = RAD_RMAX * ring / 3;
+        int px = R, py = 0, err = 1 - R;
+        while (px >= py) {
+            const int o[8][2] = {{px,py},{py,px},{-py,px},{-px,py},{-px,-py},{-py,-px},{py,-px},{px,-py}};
+            for (auto &d : o) { int gx=cx+d[0], gy=cy+d[1];
+                if (gx>=0&&gx<GREY_W&&gy>=0&&gy<GREY_H) GREY_SET(grey_buffer,gy,gx,1); }
+            py++; if (err < 0) err += 2*py + 1; else { px--; err += 2*(py-px) + 1; }
+        }
+    }
+    for (int s = 0; s < 8; s++) {              // 8 spokes
+        uint8_t a = (uint8_t)(s * 32);
+        draw_line(cx, cy, cx + (cos_a(a)*RAD_RMAX>>8), cy + (sin_a(a)*RAD_RMAX>>8), 1);
+    }
+
+    // Sweep hand (bright), leaves the decaying wedge behind it via fade_step.
+    uint8_t prev_sweep = sweep;
+    sweep = (uint8_t)(sweep + 2);
+    draw_line(cx, cy, cx + (cos_a(sweep)*RAD_RMAX>>8), cy + (sin_a(sweep)*RAD_RMAX>>8), GREY_LEVELS-1);
+    shared.alt_cv1 = (sweep * 16) - 2048;     // CV Out 1 = sweep ramp
+
+    // PU2 IN → place a static enemy on the current sweep line. CV In 1 sets WHERE along the
+    // sweep it lands: bipolar from centre (−2048 = at centre, 0V = mid, +2047 = at the rim).
+    if (shared.pu2_rising) {
+        shared.pu2_rising = false;
+        for (int i = 0; i < RAD_NENEMY; i++) if (!enemy[i].active) {
+            int rr = ((shared.cv_x + 2048) * RAD_RMAX) / 4096;   // 0..RMAX from CV In 1
+            if (rr < 0) rr = 0;
+            if (rr > RAD_RMAX) rr = RAD_RMAX;
+            enemy[i].ex = cx + (cos_a(sweep)*rr>>8);
+            enemy[i].ey = cy + (sin_a(sweep)*rr>>8);
+            enemy[i].life = 255; enemy[i].active = 1;
+            break;
+        }
+    }
+    // Draw + fade the placed enemies: a solid SQUARE block — clearly distinct from the round
+    // blips. Brightness by remaining life.
+    for (int i = 0; i < RAD_NENEMY; i++) {
+        if (!enemy[i].active) continue;
+        enemy[i].life -= 3;                                       // fade out over ~85 frames
+        if (enemy[i].life <= 0) { enemy[i].active = 0; continue; }
+        int lvl = 1 + enemy[i].life / 64;                        // 1..4
+        int ex = enemy[i].ex, ey = enemy[i].ey;
+        for (int dy = -2; dy <= 1; dy++)                          // 4 tall
+            for (int dx = -2; dx <= 2; dx++) {                    // 5 wide
+                int gx = ex+dx, gy = ey+dy;
+                if (gx>=0&&gx<GREY_W && gy>=0&&gy<GREY_H) GREY_SET(grey_buffer,gy,gx,lvl);
+            }
+    }
+
+    // Targets: drift, reflect at the rim. Each is INVISIBLE until the sweep passes its
+    // bearing — then it "pings" bright+large and fades over the 5 levels, gone before the
+    // sweep comes round again (ping 255→0 at −2/frame ≈ 128 frames = one revolution).
+    for (auto &t : tgt) {
+        if (!t.active) { if (--t.respawn <= 0) spawn_tgt(t); continue; }
+        t.x += t.vx; t.y += t.vy;
+        int tx = t.x>>8, ty = t.y>>8, dx = tx-cx, dy = ty-cy;
+        if (dx*dx + dy*dy > RAD_RMAX*RAD_RMAX) { t.vx = -t.vx; t.vy = -t.vy;   // bounce in
+            t.x += 2*t.vx; t.y += 2*t.vy; tx = t.x>>8; ty = t.y>>8; }
+        // Did the sweep cross this target's bearing this frame? → ping.
+        uint8_t tb = atan2_u8(ty - cy, tx - cx);   // (y, x) order — matches cos/sin sweep
+        if ((uint8_t)(tb - prev_sweep) < (uint8_t)(sweep - prev_sweep) || tb == sweep) t.ping = 255;
+        if (t.ping > 0) {
+            t.ping -= 2; if (t.ping < 0) t.ping = 0;
+            int lvl = 1 + t.ping / 64;                 // 1..4 by freshness
+            int rad = t.ping / 90;                     // 0..2 cells: bigger when fresh
+            for (int ddy = -rad; ddy <= rad; ddy++)
+                for (int ddx = -rad; ddx <= rad; ddx++) {
+                    if (ddx*ddx + ddy*ddy > rad*rad) continue;
+                    int gx = tx+ddx, gy = ty+ddy;
+                    if (gx>=0&&gx<GREY_W&&gy>=0&&gy<GREY_H) GREY_SET(grey_buffer,gy,gx,lvl);
+                }
+        }
+    }
+
+    // Turret aim: Main knob → bearing over the 7→5 o'clock arc (skip the bottom 60°).
+    // Base rotated -64 (90° the correct way) so the knob's 6 o'clock aligns with 6 o'clock.
+    uint8_t aim = (uint8_t)(149 - 64 + (shared.knob_main * 213) / 4095);
+    { int tx = cx + (cos_a(aim)*10>>8), ty = cy + (sin_a(aim)*10>>8);
+      draw_line(cx, cy, tx, ty, GREY_LEVELS-1); }   // short turret stub
+
+    // Fire: hold PU1 or switch-DOWN to charge power; release to launch.
+    bool hold = shared.pu1_held || (shared.sw_position == 2);
+    if (hold) { power += 12; if (power > 900) power = 900; }
+    if (!hold && prev_hold && !msl.active) {         // release → launch
+        msl.active = 1; msl.ang = aim; msl.r = 0;
+        msl.vr = 200 + power;                         // launch velocity (range/frame, 8.8)
+        msl.expl = 0;
+    }
+    prev_hold = hold;
+    if (hold) {                                       // charge gauge: a growing radial tick
+        int g = (power * RAD_RMAX) / 900;
+        draw_line(cx, cy, cx + (cos_a(aim)*g>>8), cy + (sin_a(aim)*g>>8), GREY_LEVELS-2);
+    } else if (!msl.active) power = 0;
+
+    // Missile: ballistic in RANGE — decelerates ("range gravity"), detonates at apex or rim.
+    if (msl.active) {
+        if (msl.expl == 0) {
+            msl.vr -= 26;                             // range "gravity"
+            msl.r  += msl.vr;
+            int rr = msl.r >> 8;
+            int mx = cx + (cos_a(msl.ang)*rr>>8), my = cy + (sin_a(msl.ang)*rr>>8);
+            if (msl.vr <= 0 || rr >= RAD_RMAX) {      // apex or edge → detonate
+                msl.expl = 1; msl.hit = 0;
+                shared.ast_gate_seq = shared.ast_gate_seq + 1;   // CV Out 2 = shot trigger
+                for (auto &t : tgt) if (t.active) {   // blast check (targets always solid,
+                    int ddx = (t.x>>8)-mx, ddy = (t.y>>8)-my;    //   even if faded to zero)
+                    if (ddx*ddx + ddy*ddy <= RAD_BLAST*RAD_BLAST) {
+                        t.active = 0; t.respawn = 90 + (rnd()%120); msl.hit = 1;
+                    }
+                }
+            } else if (mx>=0&&mx<GREY_W&&my>=0&&my<GREY_H) {
+                GREY_SET(grey_buffer,my,mx,GREY_LEVELS-1);   // trace
+            }
+        } else {
+            int rr = msl.r >> 8;
+            int mx = cx + (cos_a(msl.ang)*rr>>8), my = cy + (sin_a(msl.ang)*rr>>8);
+            if (msl.hit) {
+                // HIT: a big solid bright blast + "HIT" label — unmistakable.
+                int er = msl.expl; if (er > 10) er = 10;
+                for (int dy = -er; dy <= er; dy++)
+                    for (int dx = -er; dx <= er; dx++) {
+                        if (dx*dx + dy*dy > er*er) continue;
+                        int ex = mx+dx, ey = my+dy;
+                        if (ex>=0&&ex<GREY_W&&ey>=0&&ey<GREY_H) GREY_SET(grey_buffer,ey,ex,GREY_LEVELS-1);
+                    }
+                text_mode = true;
+                draw_text(cx - 13, 4, "HIT", GREY_LEVELS-1);
+            } else {
+                // MISS: subtle small expanding ring (the original quiet detonation).
+                int er = msl.expl;
+                for (int a = 0; a < 256; a += 24) {
+                    int ex = mx + (cos_a((uint8_t)a)*er>>8), ey = my + (sin_a((uint8_t)a)*er>>8);
+                    if (ex>=0&&ex<GREY_W&&ey>=0&&ey<GREY_H) GREY_SET(grey_buffer,ey,ex,GREY_LEVELS-1);
+                }
+            }
+            if (++msl.expl > (msl.hit ? 16 : RAD_BLAST)) { msl.active = 0; power = 0; }
+        }
+    }
+}
+
+// ── LUNAR: side-view Lunar Lander ───────────────────────────────────────────────────
+// Ship rotates (Main knob + CV In 1), thruster (PU1 or held switch-DOWN) pushes along the
+// nose against constant gravity. Random jagged terrain with one flat landing pad. Land on
+// the pad slowly & upright → next stage (+1 drifting UFO, new terrain, refuel). Crash on
+// terrain / a UFO / too fast / too tilted → explosion, restart at stage 1. Fuel is limited;
+// empty = no thrust. CV Out 1 = altitude; CV Out 2 = pulse on each land/crash event.
+#define LUN_MAXUFO 6
+#define LUN_GRAV   6         // downward accel per frame (8.8)
+#define LUN_THR    14        // thruster accel per frame (8.8)
+#define LUN_VLAND  220       // max landing speed (8.8) for a safe touchdown
+static void __not_in_flash_func(screensaver_lunar)() {
+    static bool init = false;
+    static int  stage = 1, fuel = 0, phase = 0, timer = 0;   // phase 0=FLY 1=LANDED 2=CRASH
+    static int32_t sx, sy, svx, svy;                          // ship pos/vel 8.8
+    static uint8_t sang;                                      // heading (0 = upright/up)
+    static uint8_t ground[GREY_W];                            // terrain height (row) per col
+    static int  padx0, padx1;                                 // landing pad span (cells)
+    static struct { uint8_t active; int32_t x, y, vx; } ufo[LUN_MAXUFO];
+    static int  expl = 0;
+
+    auto rnd = [](){ return (int)(lcg_rand() & 0x7fffffff); };
+    auto regen = [&](){
+        // Gently rolling terrain: a random walk with SLOPE momentum (real hills, not noise),
+        // over a modest vertical band. Slope changes slowly and is capped shallow so it's
+        // not too spiky. Also only nudge the slope every few columns → longer, smoother hills.
+        const int HI = GREY_H - 40, LO = GREY_H - 6;   // highest peak .. lowest valley
+        int h = (GREY_H - 24) - (rnd() % 12);
+        int slope = 0;
+        for (int i = 0; i < GREY_W; i++) {
+            if ((i & 3) == 0) slope += (rnd() % 3) - 1; // curve slope every 4 cols (smoother)
+            if (slope > 2)  slope = 2;                  // shallow max steepness
+            if (slope < -2) slope = -2;
+            h += slope;
+            if (h < HI) { h = HI; slope = 1; }          // bounce off the bands
+            if (h > LO) { h = LO; slope = -1; }
+            ground[i] = (uint8_t)h;
+        }
+        // Carve a flat pad. Width NARROWS with the stage (harder each time), down to a
+        // tight minimum. Sit it low-ish in a clear notch so it reads as a platform.
+        int pw = 24 - (stage - 1) * 3;                  // stage 1 = 24 wide, shrinking
+        if (pw < 8) pw = 8;                             // minimum landable width
+        padx0 = 16 + rnd() % (GREY_W - 32 - pw);
+        padx1 = padx0 + pw;
+        int py = ground[(padx0 + padx1) / 2];
+        if (py < GREY_H - 14) py = GREY_H - 14;         // keep the pad low-ish (reachable)
+        for (int i = padx0; i <= padx1 && i < GREY_W; i++) ground[i] = (uint8_t)py;
+        // UFOs = stage count (capped).
+        int n = stage; if (n > LUN_MAXUFO) n = LUN_MAXUFO;
+        for (int i = 0; i < LUN_MAXUFO; i++) {
+            if (i < n) { ufo[i].active = 1; ufo[i].x = (rnd()%GREY_W)<<8;
+                         // spawn across the WHOLE playfield height (they pass through hills)
+                         ufo[i].y = (20 + rnd()%(GREY_H-30))<<8;
+                         // direction from a HIGH bit (LCG low bits are correlated → all same
+                         // way); speed independent → some go L→R, others R→L, varied speeds.
+                         int spd = 48 + rnd()%208;
+                         ufo[i].vx = ((rnd() & 0x400) ? spd : -spd); }
+            else ufo[i].active = 0;
+        }
+    };
+    auto reset_ship = [&](){ sx = (GREY_W/2)<<8; sy = 8<<8; svx = 0; svy = 0; sang = 0; };
+
+    if (!init) { init = true; stage = 1; fuel = 600; regen(); reset_ship(); phase = 0; }
+
+    dilate_cap = 2;                              // thicker/brighter lines than the default
+    memset(grey_buffer, 0, GREY_SIZE);
+
+    // Draw terrain as a SOLID filled ground (from the surface down a few rows) so it reads
+    // boldly; the surface row is brightest. Pad marked full-white with little end posts.
+    // Body fill (solid ground below the surface) — thin (~1/3 of the old depth).
+    for (int i = 0; i < GREY_W; i++) {
+        int g = ground[i];
+        for (int d = 0; d <= 2 && g+d < GREY_H; d++) GREY_SET(grey_buffer, g+d, i, 3);
+    }
+    // Bright surface as a CONNECTED polyline between adjacent tops (closes diagonal gaps on
+    // slopes → the crest reads as a continuous thick line left-to-right), drawn 2 rows deep.
+    for (int i = 0; i < GREY_W - 1; i++) {
+        draw_line(i, ground[i],   i+1, ground[i+1],   GREY_LEVELS-1);
+        draw_line(i, ground[i]-1, i+1, ground[i+1]-1, GREY_LEVELS-1);
+    }
+    // Landing pad: an unmistakable bright platform. Solid deck (2 rows), tall end posts
+    // with little flag tops, so it clearly stands out from the surrounding hills.
+    int pady = ground[padx0];
+    for (int i = padx0; i <= padx1 && i < GREY_W; i++) {
+        GREY_SET(grey_buffer, pady, i, GREY_LEVELS-1);                 // deck top
+        if (pady+1 < GREY_H) GREY_SET(grey_buffer, pady+1, i, GREY_LEVELS-1);  // deck underside
+    }
+    for (int e = 0; e < 2; e++) {
+        int px = e ? padx1 : padx0;
+        if (px < 0 || px >= GREY_W) continue;
+        for (int d = 1; d <= 8; d++)                                   // tall post
+            if (pady-d >= 0) GREY_SET(grey_buffer, pady-d, px, GREY_LEVELS-1);
+        // little flag arm at the top of each post, pointing inward
+        int fdir = e ? -1 : 1, ftop = pady - 8;
+        for (int d = 1; d <= 3; d++) {
+            int fx = px + fdir*d;
+            if (ftop >= 0 && fx>=0 && fx<GREY_W) GREY_SET(grey_buffer, ftop, fx, GREY_LEVELS-1);
+        }
+    }
+
+    // Draw UFOs (drift + wrap) and check collisions. Larger saucers: a wide hull + dome.
+    for (int i = 0; i < LUN_MAXUFO; i++) {
+        if (!ufo[i].active) continue;
+        if (phase == 0) { ufo[i].x += ufo[i].vx; ufo[i].x = (ufo[i].x + (GREY_W<<8)) % (GREY_W<<8); }
+        int ux = ufo[i].x>>8, uy = ufo[i].y>>8;
+        for (int dx = -4; dx <= 4; dx++) {          // hull: wide bar, 2 rows
+            int gx = ux+dx;
+            if (gx>=0&&gx<GREY_W) {
+                if (uy>=0&&uy<GREY_H)     GREY_SET(grey_buffer,uy,gx,GREY_LEVELS-1);
+                if (uy+1>=0&&uy+1<GREY_H) GREY_SET(grey_buffer,uy+1,gx,GREY_LEVELS-1);
+            }
+        }
+        for (int dx = -2; dx <= 2; dx++) {          // dome on top
+            int gx = ux+dx, gy = uy-1;
+            if (gx>=0&&gx<GREY_W&&gy>=0&&gy<GREY_H) GREY_SET(grey_buffer,gy,gx,GREY_LEVELS-1);
+        }
+    }
+
+    // ── FLYING physics ──
+    if (phase == 0) {
+        // Rotation: Main knob + CV In 1 → heading. Centre = upright (0). ±~64 = ±90°.
+        int32_t rot = (shared.knob_main - 2048) + shared.cv_x;   // ±~4095
+        sang = (uint8_t)((rot * 64) / 4095);                     // -64..+64 (wraps as uint8)
+
+        // Thrust along the nose (nose points "up" rotated by sang). Up vector = (sin, -cos).
+        bool thrust = (shared.pu1_held || shared.sw_position == 2) && fuel > 0;
+        if (thrust) {
+            svx += (sin_a(sang) * LUN_THR) >> 8;
+            svy += (-cos_a(sang) * LUN_THR) >> 8;
+            fuel--;
+        }
+        svy += LUN_GRAV;                            // gravity
+        sx += svx; sy += svy;
+        if (sx < 0)          sx += GREY_W<<8;       // wrap X
+        if (sx >= GREY_W<<8) sx -= GREY_W<<8;
+        if (sy < 0) { sy = 0; if (svy < 0) svy = 0; }
+
+        int shipx = sx>>8, shipy = sy>>8;
+
+        // UFO collision (larger saucer → wider hitbox: |dx|≤5 and |dy|≤3).
+        for (int i = 0; i < LUN_MAXUFO; i++) if (ufo[i].active) {
+            int ddx = (ufo[i].x>>8)-shipx, ddy = (ufo[i].y>>8)-shipy;
+            if (ddx > -6 && ddx < 6 && ddy > -4 && ddy < 4) {
+                phase = 2; expl = 1; timer = 0;
+                shared.ast_gate_seq = shared.ast_gate_seq + 1;
+            }
+        }
+
+        // Ground contact.
+        if (shipx >= 0 && shipx < GREY_W && shipy >= ground[shipx] - 3) {
+            bool on_pad = (shipx >= padx0 && shipx <= padx1);
+            bool slow   = (svy < LUN_VLAND && (svx < 200 && svx > -200));
+            bool upright= (sang < 16 || sang > 240);       // near 0
+            if (on_pad && slow && upright) { phase = 1; timer = 60;
+                                             shared.ast_gate_seq = shared.ast_gate_seq + 1; }
+            else { phase = 2; expl = 1; timer = 0;
+                   shared.ast_gate_seq = shared.ast_gate_seq + 1; }
+        }
+
+        // CV Out 1 = altitude above ground under the ship.
+        int gh = (shipx>=0&&shipx<GREY_W) ? ground[shipx] : GREY_H;
+        int alt = gh - shipy; if (alt < 0) alt = 0;
+        shared.alt_cv1 = (alt * 4095) / GREY_H - 2048;
+
+        // Draw ship: a small lander triangle around (shipx,shipy), nose along -sang.
+        int nx = shipx + (sin_a(sang)*5>>8),  ny = shipy + (-cos_a(sang)*5>>8);   // nose
+        uint8_t bl = sang + 96, br = sang + 160;                                   // base corners
+        int lx = shipx + (sin_a(bl)*4>>8), ly = shipy + (-cos_a(bl)*4>>8);
+        int rx = shipx + (sin_a(br)*4>>8), ry = shipy + (-cos_a(br)*4>>8);
+        draw_line(nx,ny,lx,ly,GREY_LEVELS-1); draw_line(nx,ny,rx,ry,GREY_LEVELS-1);
+        draw_line(lx,ly,rx,ry,GREY_LEVELS-1);
+        // Thrust flame: a plume shooting out the TAIL, directly opposite the nose (i.e. the
+        // exhaust direction). Drawn as a short fan of lines from the tail centre, length
+        // flickering, so it reads clearly as a rocket jet rather than a stray line.
+        if ((shared.pu1_held || shared.sw_position == 2) && fuel > 0) {
+            int tailx = (lx + rx) / 2, taily = (ly + ry) / 2;      // tail centre
+            int flen = 6 + (int)(lcg_rand() & 3);                  // flicker 6..9
+            // exhaust unit direction = opposite the nose = (-sin(sang), +cos(sang))
+            int ex = tailx - (sin_a(sang) * flen >> 8);
+            int ey = taily + (cos_a(sang) * flen >> 8);
+            draw_line(tailx, taily, ex, ey, GREY_LEVELS-1);        // central jet
+            // two side flares fanning ±~25° for a plume shape
+            uint8_t fa = sang + 128;                               // straight back bearing
+            int e2x = tailx + (sin_a((uint8_t)(fa-18)) * flen >> 8);
+            int e2y = taily + (-cos_a((uint8_t)(fa-18)) * flen >> 8);
+            int e3x = tailx + (sin_a((uint8_t)(fa+18)) * flen >> 8);
+            int e3y = taily + (-cos_a((uint8_t)(fa+18)) * flen >> 8);
+            draw_line(tailx, taily, e2x, e2y, GREY_LEVELS-2);
+            draw_line(tailx, taily, e3x, e3y, GREY_LEVELS-2);
+        }
+    } else if (phase == 1) {
+        // LANDED: hold message, then advance stage. Double-struck for a bold/thick weight.
+        draw_text(70, 40, "LANDED", GREY_LEVELS-1);
+        draw_text(71, 40, "LANDED", GREY_LEVELS-1);
+        // still draw the resting ship
+        int shipx = sx>>8, shipy = sy>>8;
+        if (shipx>=0&&shipx<GREY_W&&shipy>=0&&shipy<GREY_H) GREY_SET(grey_buffer,shipy,shipx,GREY_LEVELS-1);
+        if (--timer <= 0) { stage++; fuel = 600; regen(); reset_ship(); phase = 0; }
+    } else {
+        // CRASH: expanding explosion, then restart at stage 1.
+        int mx = sx>>8, my = sy>>8;
+        for (int a = 0; a < 256; a += 20) {
+            int ex = mx + (cos_a((uint8_t)a)*expl>>8), ey = my + (sin_a((uint8_t)a)*expl>>8);
+            if (ex>=0&&ex<GREY_W&&ey>=0&&ey<GREY_H) GREY_SET(grey_buffer,ey,ex,GREY_LEVELS-1);
+        }
+        if (++expl > 16) { stage = 1; fuel = 600; regen(); reset_ship(); phase = 0; }
+    }
+
+    // HUD: STAGE n (top-left) + a big obvious FUEL bar (top-right), crisp text.
+    text_mode = true;
+    // "ST n" drawn twice with a 1px offset = a bold/thicker weight. Shifted right 1 char.
+    draw_text(11, 2, "ST", GREY_LEVELS-1);   draw_text(12, 2, "ST", GREY_LEVELS-1);
+    draw_number(31, 2, stage, GREY_LEVELS-1); draw_number(32, 2, stage, GREY_LEVELS-1);
+
+    // Fuel: a thick outlined bar on the right that empties left-to-right (obvious at a
+    // glance; no text label needed — it's clearly a gauge).
+    const int fx = 112, fy = 3, fw = 62, fh = 8;   // bar box (ends at col 174)
+    // outline
+    for (int i = 0; i <= fw; i++) {
+        GREY_SET(grey_buffer, fy,      fx + i, GREY_LEVELS-1);
+        GREY_SET(grey_buffer, fy + fh, fx + i, GREY_LEVELS-1);
+    }
+    for (int j = 0; j <= fh; j++) {
+        GREY_SET(grey_buffer, fy + j, fx,      GREY_LEVELS-1);
+        GREY_SET(grey_buffer, fy + j, fx + fw, GREY_LEVELS-1);
+    }
+    int fill = (fuel * (fw - 2)) / 600;            // inner fill width
+    for (int i = 0; i < fill; i++)
+        for (int j = 2; j < fh - 1; j++)
+            GREY_SET(grey_buffer, fy + j, fx + 1 + i, GREY_LEVELS-1);
+}
+
+// ── 3DMAZE: chunky first-person raycast maze (ZX81 3D Monster Maze style) ────────────
+// Randomly generated maze. Main knob = smooth angle turn; PU1/held switch-DOWN = walk
+// forward. Walls raycast (DDA), shaded by distance (near bright → far dim) for depth;
+// ceiling/floor left black for the chunky look. A monster roams and looms larger as it
+// nears in line of sight; catching the player = flash + new maze. Positions 8.8 fixed.
+#define MAZ_W    15          // maze grid (odd = clean carve)
+#define MAZ_H    15
+#define MAZ_FOV  48          // half-FOV in angle units (48/256*360 ≈ 67° total)
+#define MAZ_STEP 2           // cast every Nth column (perf)
+#define MAZ_MAXD 20          // max DDA cell steps
+static void __not_in_flash_func(screensaver_maze)() {
+    static bool init = false;
+    static uint8_t wall[MAZ_H][MAZ_W];
+    static int32_t px, py;                 // player pos, 8.8 (cell units)
+    static uint8_t pang;                   // heading 0..255
+    static int32_t mx, my; static int mtimer; static uint8_t mdir;   // monster
+    static int caught = 0;                 // >0: scare/flash countdown
+
+    auto rnd = [](){ return (int)(lcg_rand() & 0x7fffffff); };
+    auto solid = [&](int cx, int cy)->bool {
+        if (cx < 0 || cx >= MAZ_W || cy < 0 || cy >= MAZ_H) return true;
+        return wall[cy][cx] != 0;
+    };
+    auto gen = [&](){
+        for (int y=0;y<MAZ_H;y++) for (int x=0;x<MAZ_W;x++) wall[y][x]=1;
+        // Randomized DFS carve on odd cells.
+        int stx[MAZ_W*MAZ_H], sty[MAZ_W*MAZ_H], sp=0;
+        int cx=1, cy=1; wall[cy][cx]=0; stx[sp]=cx; sty[sp]=cy; sp++;
+        while (sp>0) {
+            cx=stx[sp-1]; cy=sty[sp-1];
+            int dirs[4]={0,1,2,3};
+            for (int i=3;i>0;i--){ int j=rnd()%(i+1); int t=dirs[i];dirs[i]=dirs[j];dirs[j]=t; }
+            bool moved=false;
+            for (int d=0; d<4; d++) {
+                int nx=cx, ny=cy;
+                if (dirs[d]==0) ny-=2; else if (dirs[d]==1) ny+=2;
+                else if (dirs[d]==2) nx-=2; else nx+=2;
+                if (nx>0&&nx<MAZ_W-1&&ny>0&&ny<MAZ_H-1&&wall[ny][nx]) {
+                    wall[(cy+ny)/2][(cx+nx)/2]=0; wall[ny][nx]=0;
+                    stx[sp]=nx; sty[sp]=ny; sp++; moved=true; break;
+                }
+            }
+            if (!moved) sp--;
+        }
+        px = (1<<8) + 128; py = (1<<8) + 128;                // start in cell (1,1)
+        // Face the open corridor out of the start cell (so forward works immediately).
+        // Forward-cardinal = (pang+64), so pang = cardinal_angle - 64 to look that way.
+        if      (!solid(2,1)) pang = 192;    // east  (0-64)
+        else if (!solid(1,2)) pang = 0;      // south (64-64)
+        else if (!solid(0,1)) pang = 64;     // west  (128-64)
+        else                  pang = 128;    // north (192-64)
+        // Monster in a far open cell.
+        mx = ((MAZ_W-2)<<8)+128; my = ((MAZ_H-2)<<8)+128; mtimer=0; mdir=0;
+    };
+    if (!init) { init = true; gen(); }
+
+    dilate_cap = 2;                                // thicker walls (dilate one more pixel)
+    effect_invert = shared.pu2_held;               // PU2 held → invert (white-on-black accent)
+    memset(grey_buffer, 0, GREY_SIZE);
+
+    // ── Scare state: flash + big monster, then reset. ──
+    if (caught > 0) {
+        caught--;
+        if (caught & 4) memset(grey_buffer, GREY_LEVELS-1, GREY_SIZE);   // strobe
+        if (caught == 0) { shared.ast_gate_seq = shared.ast_gate_seq + 1; gen(); }
+        return;
+    }
+
+    // ── Movement. Two modes:
+    //   AUTOPLAY: Knob X / CV In 1 non-zero → self-drives forward at that speed, choosing a
+    //     random open direction at each junction (a hands-free screensaver).
+    //   MANUAL:   X/CV1 ~zero → Main knob turns the view; PU1/held-DOWN walks forward.
+    // Either way the player is RAIL-LOCKED to corridor centres (no wall-straddle glitch).
+    static int auto_card = -1;                      // current autoplay travel cardinal
+    const int32_t CEN = 128;
+    int cellx = px >> 8, celly = py >> 8;
+    int32_t cxc = (cellx << 8) + CEN, cyc = (celly << 8) + CEN;
+
+    // AUTO engages when Knob X is turned up from its fully-CCW (off) end. X sets the base
+    // walk speed; CV In 1 is BIPOLAR around that — it slows or speeds the walk, but can't
+    // stop it while X is engaged (speed clamps to a lively minimum). X fully CCW = MANUAL.
+    bool auto_on = (shared.knob_x > 200);          // small dead-zone at the CCW end
+    int autosp = shared.knob_x / 96 + shared.cv_x / 96;   // X base ± CV1 (bipolar)
+    if (auto_on && autosp < 6) autosp = 6;         // never stall while engaged
+    // openings out of the current cell (0=E,1=S,2=W,3=N)
+    auto open_dir = [&](int c)->bool {
+        int dx=(c==0)-(c==2), dy=(c==1)-(c==3); return !solid(cellx+dx, celly+dy); };
+
+    static int last_cell = -1;                     // cell we last made a decision in
+    static bool turning = false;                    // currently rotating to a new direction
+    if (auto_on) {                                 // ── AUTOPLAY ──
+        if (auto_card < 0) { auto_card = 0; last_cell = -1; }
+        int this_cell = celly*MAZ_W + cellx;
+        // Decide ONCE per cell (no teleport). Straight travel flows smoothly; only when a
+        // turn is actually needed do we pin to the cell centre so the pivot is clean.
+        if (this_cell != last_cell) {
+            last_cell = this_cell;
+            if (!open_dir(auto_card)) {             // straight blocked → turn
+                int left = (auto_card+3)&3, right = (auto_card+1)&3;
+                bool lo = open_dir(left), ro = open_dir(right);
+                if (lo && ro)      auto_card = (rnd()&1) ? left : right;
+                else if (lo)       auto_card = left;
+                else if (ro)       auto_card = right;
+                else               auto_card = (auto_card+2)&3;          // dead end → U-turn
+                px = cxc; py = cyc;                 // pin to centre only for the turn pivot
+                turning = true;                     // rotate to face it before walking on
+            }
+        }
+        // Rotate the view gradually toward the travel direction (visible turn); once aligned,
+        // walk forward. Turning blocks forward motion only until aligned, then resumes.
+        uint8_t target = (uint8_t)((uint8_t)(auto_card*64) - 64);
+        int8_t adiff = (int8_t)(target - pang);
+        if (turning && (adiff > 4 || adiff < -4)) {
+            pang = (uint8_t)(pang + (adiff > 0 ? 4 : -4));   // ~4/frame visible turn
+        } else {
+            pang = target; turning = false;
+            int dx=(auto_card==0)-(auto_card==2), dy=(auto_card==1)-(auto_card==3);
+            if (dx) { px += dx*autosp; py = cyc; }   // advance, snap perpendicular to centre
+            else    { py += dy*autosp; px = cxc; }
+        }
+    } else {                                       // ── MANUAL ──
+        last_cell = -1; turning = false;
+        auto_card = -1;
+        int32_t turn = (shared.knob_main - 2048);
+        pang = (uint8_t)(pang - turn / 512);       // smooth view turn (Main only in manual)
+        if (shared.pu1_held || shared.sw_position == 2) {
+            int32_t sp = 40;
+            uint8_t h = (uint8_t)(pang + 64);      // camera forward → cardinal
+            int card;
+            if      (h < 32 || h >= 224) card = 0;
+            else if (h < 96)             card = 1;
+            else if (h < 160)            card = 2;
+            else                         card = 3;
+            int dx = (card==0) - (card==2), dy = (card==1) - (card==3);
+            if (!solid(cellx+dx, celly+dy)) { if (dx){px+=dx*sp;py=cyc;} else {py+=dy*sp;px=cxc;} }
+            else { px = cxc; py = cyc; }
+        } else {                                   // ease to centre when idle
+            if (px > cxc) px -= (px-cxc > 24 ? 24 : px-cxc);
+            else if (px < cxc) px += (cxc-px > 24 ? 24 : cxc-px);
+            if (py > cyc) py -= (py-cyc > 24 ? 24 : py-cyc);
+            else if (py < cyc) py += (cyc-py > 24 ? 24 : cyc-py);
+        }
+    }
+
+    // ── Vector 3D: project the corner VERTICES of visible wall faces and draw their edges
+    //    (wireframe corridor). For each wall cell near the player, each side that borders an
+    //    OPEN cell is a wall face (a vertical quad); we transform its two base corners into
+    //    camera space, perspective-project, and draw the quad's 4 edges (near-clipped).
+    const int HALF = GREY_W/2, HORIZON = GREY_H/2;
+    const int FOCAL = 90;                  // focal length (px) — sets FOV/zoom
+    const int NEAR  = 24;                  // near-plane depth in 8.8 (~0.1 cell)
+    const int32_t WALLH = 1 << 8;          // wall half-height in world (1 cell)
+    int32_t cs = cos_a((uint8_t)(256 - pang)), sn = sin_a((uint8_t)(256 - pang)); // inverse rot
+
+    // World (wx,wy) → camera space (right, forward). 8.8 throughout.
+    auto to_cam = [&](int32_t wx, int32_t wy, int32_t &camx, int32_t &camy){
+        int32_t rxw = wx - px, ryw = wy - py;
+        camx = (rxw*cs - ryw*sn) >> 8;              // right
+        camy = (rxw*sn + ryw*cs) >> 8;              // forward (depth)
+    };
+    // Project a camera-space point (camx, camy forward, v up) → screen (clamped so Bresenham
+    // never runs a huge off-screen span). Assumes camy > 0.
+    auto proj_cam = [&](int32_t camx, int32_t camy, int32_t v, int &sxp, int &syp){
+        if (camy < 1) camy = 1;
+        int32_t sxr = HALF + (int)((camx * FOCAL) / camy);
+        int32_t syr = HORIZON - (int)((v * FOCAL) / camy);
+        if (sxr < -GREY_W)   sxr = -GREY_W;
+        if (sxr > 2*GREY_W)  sxr = 2*GREY_W;
+        if (syr < -GREY_H)   syr = -GREY_H;
+        if (syr > 2*GREY_H)  syr = 2*GREY_H;
+        sxp = (int)sxr; syp = (int)syr;
+    };
+    // Collect visible wall faces, then draw FAR→NEAR (painter's algorithm): each face is a
+    // black-filled trapezoid (occludes faces behind it) with bright edges on top → correct
+    // wireframe occlusion. The face's near edge is CLIPPED to the near plane so faces you're
+    // right up against still render (no see-through) instead of being dropped whole.
+    // Store projected corners AND the endpoint depths (da,db) so depth can be interpolated
+    // PER COLUMN in the depth buffer (a single per-face average depth is wrong for angled
+    // walls and is the cause of the see-through).
+    struct Face { int atx,aty,abx,aby, btx,bty,bbx,bby; int32_t da, db; int lvl; };
+    static Face faces[256];
+    int nf = 0;
+    auto addface = [&](int32_t ax, int32_t ay, int32_t bx, int32_t by){
+        if (nf >= 256) return;
+        int32_t cax, cay, cbx, cby;
+        to_cam(ax, ay, cax, cay);
+        to_cam(bx, by, cbx, cby);
+        if (cay <= NEAR && cby <= NEAR) return;     // whole face behind the near plane → skip
+        // Clip the segment A→B to camy = NEAR where one endpoint is behind it.
+        if (cay <= NEAR) {                          // move A up to the near plane
+            int32_t t = ((NEAR - cay) << 8) / (cby - cay);   // 0..256 along A→B
+            cax = cax + (((cbx - cax) * t) >> 8);
+            cay = NEAR;
+        } else if (cby <= NEAR) {                    // move B up to the near plane
+            int32_t t = ((NEAR - cby) << 8) / (cay - cby);
+            cbx = cbx + (((cax - cbx) * t) >> 8);
+            cby = NEAR;
+        }
+        Face f;
+        proj_cam(cax, cay,  WALLH, f.atx, f.aty);
+        proj_cam(cax, cay, -WALLH, f.abx, f.aby);
+        proj_cam(cbx, cby,  WALLH, f.btx, f.bty);
+        proj_cam(cbx, cby, -WALLH, f.bbx, f.bby);
+        f.da = cay; f.db = cby;                      // endpoint depths (for per-column interp)
+        int32_t avg = (cay + cby) >> 1;
+        int lvl = 4 - (int)(avg >> 9);
+        if (lvl < 1) lvl = 1;
+        if (lvl > 4) lvl = 4;
+        f.lvl = lvl;
+        faces[nf++] = f;
+    };
+
+    int pcx = px>>8, pcy = py>>8;
+    for (int gy = pcy-8; gy <= pcy+8; gy++)
+        for (int gx = pcx-8; gx <= pcx+8; gx++) {
+            if (gx<0||gx>=MAZ_W||gy<0||gy>=MAZ_H) continue;
+            if (!wall[gy][gx]) continue;
+            int32_t X = gx<<8, Y = gy<<8, U = 1<<8;
+            if (!solid(gx, gy-1)) addface(X,   Y,   X+U, Y  );   // north
+            if (!solid(gx, gy+1)) addface(X,   Y+U, X+U, Y+U);   // south
+            if (!solid(gx-1, gy)) addface(X,   Y,   X,   Y+U);   // west
+            if (!solid(gx+1, gy)) addface(X+U, Y,   X+U, Y+U);   // east
+        }
+    // Per-column depth buffer holding inverse depth (1/z, bigger = nearer). Perspective-
+    // correct: 1/z is LINEAR in screen space, so we interpolate it per column and compare.
+    // Draw order no longer matters — each column keeps whatever is truly nearest.
+    static int32_t colinv[GREY_W];
+    for (int i = 0; i < GREY_W; i++) colinv[i] = 0;          // 0 = infinitely far
+    const int32_t INVK = 1 << 20;
+    for (int i = 0; i < nf; i++) {
+        Face &f = faces[i];
+        int lx = f.atx, rx = f.btx;                 // screen x of the A-end and B-end verticals
+        int xl = lx, xr = rx;
+        if (xl > xr) { xl = rx; xr = lx; }
+        if (xr < 0 || xl >= GREY_W) continue;
+        int span = (rx - lx); if (span == 0) span = 1;
+        int32_t ia = INVK / (f.da < 1 ? 1 : f.da);  // inverse depths at the two ends
+        int32_t ib = INVK / (f.db < 1 ? 1 : f.db);
+        // Chunky: draw in 2-wide pixel pairs (double the width of every pixel).
+        int x0 = xl < 0 ? 0 : xl, x1 = xr >= GREY_W ? GREY_W-1 : xr;
+        x0 &= ~1;                                    // align pairs to even columns
+        for (int x = x0; x <= x1; x += 2) {
+            int t = ((x - lx) << 8) / span;         // 0..256 from A-end to B-end
+            int32_t inv = ia + (((ib - ia) * t) >> 8);       // 1/z at this column pair
+            if (inv <= colinv[x]) continue;         // something nearer already owns this pair
+            colinv[x] = inv; if (x+1 < GREY_W) colinv[x+1] = inv;
+            int yt = f.aty + (((f.bty - f.aty) * t) >> 8);   // top edge y here
+            int yb = f.aby + (((f.bby - f.aby) * t) >> 8);   // bottom edge y
+            if (yt > yb) { int tmp = yt; yt = yb; yb = tmp; }
+            int cyt = yt < 0 ? 0 : yt, cyb = yb >= GREY_H ? GREY_H-1 : yb;
+            bool vert = (x <= xl+1) || (x >= xr-1);          // near a vertical face edge
+            for (int xx = x; xx <= x+1 && xx < GREY_W; xx++) {
+                for (int y = cyt; y <= cyb; y++) GREY_SET(grey_buffer, y, xx, 0);   // black fill
+                if (yt >= 0 && yt < GREY_H) GREY_SET(grey_buffer, yt, xx, f.lvl);   // top edge
+                if (yb >= 0 && yb < GREY_H) GREY_SET(grey_buffer, yb, xx, f.lvl);   // bottom edge
+                if (vert) for (int y = cyt; y <= cyb; y++) GREY_SET(grey_buffer, y, xx, f.lvl);
+            }
+        }
+    }
+
+    // ── Monster: wander; crude chase when near; billboard if in view + line of sight. ──
+    if (--mtimer <= 0) {
+        mtimer = 20 + rnd()%30;
+        // pick a direction biased toward the player
+        int ddx = (px - mx), ddy = (py - my);
+        mdir = atan2_u8(ddy, ddx);
+        if (rnd()&1) mdir += (rnd()%64) - 32;                 // some wander
+    }
+    { int32_t msp=18; int32_t nmx=mx+(cos_a(mdir)*msp>>8), nmy=my+(sin_a(mdir)*msp>>8);
+      if (!solid(nmx>>8, my>>8)) mx=nmx; else mtimer=0;
+      if (!solid(mx>>8, nmy>>8)) my=nmy; else mtimer=0; }
+    // catch?
+    { int cdx=(mx-px)>>8, cdy=(my-py)>>8; if (cdx*cdx+cdy*cdy <= 1) caught = 24; }
+    // billboard render if roughly ahead + line of sight
+    {
+        uint8_t mb = atan2_u8((my-py), (mx-px));
+        int8_t rel = (int8_t)(mb - pang);
+        if (rel > -MAZ_FOV && rel < MAZ_FOV) {
+            // line of sight: march from player to monster, stop if wall first
+            int32_t lx=px, ly=py; int32_t ldx=cos_a(mb), ldy=sin_a(mb); bool blocked=false;
+            int mdist=0;
+            for (int s=0;s<MAZ_MAXD*8;s++){ lx+=ldx>>2; ly+=ldy>>2; mdist++;
+                int gxx=lx>>8, gyy=ly>>8;
+                if (gxx==(mx>>8)&&gyy==(my>>8)) break;
+                if (solid(gxx,gyy)) { blocked=true; break; } }
+            if (!blocked && mdist>0) {
+                int sx = HALF + (rel * HALF) / MAZ_FOV;         // screen column
+                int perp = (mdist * cos_a((uint8_t)rel)) >> 8; if (perp<1) perp=1;
+                int mh = (GREY_H * 20) / perp; if (mh > GREY_H-4) mh = GREY_H-4;
+                int mw = mh*3/4;
+                int y0 = HORIZON - mh/2, y1 = HORIZON + mh/2;
+                for (int x=sx-mw/2; x<=sx+mw/2; x++) {
+                    if (x<0||x>=GREY_W) continue;
+                    for (int y=y0; y<=y1; y++) if (y>=0&&y<GREY_H) GREY_SET(grey_buffer,y,x,GREY_LEVELS-1);
+                }
+                // simple black "eyes"
+                if (mh>16){ int ey=y0+mh/3; for(int e=-1;e<=1;e++){int ex1=sx-mw/4+e,ex2=sx+mw/4+e;
+                    if(ey>=0&&ey<GREY_H){ if(ex1>=0&&ex1<GREY_W)GREY_SET(grey_buffer,ey,ex1,0);
+                                          if(ex2>=0&&ex2<GREY_W)GREY_SET(grey_buffer,ey,ex2,0);} } }
+                shared.alt_cv1 = 2047 - perp*16;                // CV Out 1 = monster nearness
+            }
+        }
+    }
+}
+
 // ── Alt-boot selector ───────────────────────────────────────────────────────────────
-// Alt boot (DOWN held through power-on) offers a menu of performance-tool/screensaver
-// hybrids. Switch UP shows this menu; the Main knob picks one; switch MID/DOWN plays it.
-// Add a hybrid: add its name here and a case in the alt_mode dispatch (update_framebuffer).
-static const char *ALT_NAMES[] = { "PATCHTEROIDS", "COMET" };
+// Alt boot (DOWN held through power-on) offers a set of performance-tool/screensaver
+// hybrids, shown one at a time as a SCROLLING selector: the Main knob scrolls through the
+// modes. Top line = mode name (left) + "n/N" position (right); below it is the per-mode
+// help (inputs/outputs). Switch MID/DOWN plays the shown mode. Add a hybrid: add a name
+// here, its help lines below, and a case in the alt_mode dispatch (update_framebuffer).
+static const char *ALT_NAMES[] = { "COMET", "PATCHTEROIDS", "BOING", "STARFIELD", "RADAR", "LUNAR", "3DMAZE" };
 #define ALT_COUNT ((int)(sizeof(ALT_NAMES)/sizeof(ALT_NAMES[0])))
-static int alt_select = 0;   // chosen hybrid index (Core 1 only)
+#define ALT_HYBRID_PATCH 1   // index of PATCHTEROIDS (its CV bridge is special on Core 0)
+#define ALT_DEFAULT 0        // mode used if you boot straight to MID/DOWN (COMET)
+static int alt_select = ALT_DEFAULT;   // chosen hybrid index (Core 1 only)
+
+// Per-mode help: up to 5 short lines (inputs / outputs / notes). "" = blank line.
+static const char *ALT_HELP[ALT_COUNT][5] = {
+    /* COMET        */ { "MAIN/CV1:SPEED", "Y/CV2:TAIL", "", "", "" },
+    /* PATCHTEROIDS */ { "MAIN/CV1:STEER", "PU1/DOWN:FIRE", "OUT1:PITCH", "OUT2:GATE", "" },
+    /* BOING        */ { "X/CV1:SPIN/IMPULSE", "MAIN/CV2:BOUNCE", "Y:H-SPEED", "PU1/DOWN:KICK", "OUT1:HT OUT2:HIT" },
+    /* STARFIELD    */ { "MAIN:SPEED", "X/CV1:TURN H", "Y/CV2:TURN V", "", "" },
+    /* RADAR        */ { "MAIN:AIM PU1:FIRE", "PU2/CV1:PLACE ENEMY", "OUT1:SWEEP", "OUT2:HIT", "" },
+    /* LUNAR        */ { "MAIN/CV1:ROTATE", "PU1/DOWN:THRUST", "OUT1:ALT", "OUT2:CRASH", "" },
+    /* 3DMAZE       */ { "MAIN:TURN PU1:FWD", "X/CV1:AUTORUN", "PU2:INVERT", "AVOID MONSTER", "OUT2:CAUGHT" },
+};
+
+// Draw text right-justified so it ends at grey column `gright` (font advance 9 cells/glyph).
+static void draw_text_right(int gright, int gy, const char *s, uint8_t level) {
+    int n = 0; for (const char *p = s; *p; p++) n++;
+    int gx = gright - n * 9;
+    if (gx < 0) gx = 0;
+    draw_text(gx, gy, s, level);
+}
 
 static void __not_in_flash_func(draw_alt_menu)() {
     text_mode = true;
-    // Main knob (0..4095) → selection index across ALT_COUNT entries.
+    // Main knob (0..4095) → selection index; only the current mode is shown (scrolling).
     int sel = (shared.knob_main * ALT_COUNT) / 4096;
     if (sel < 0) sel = 0;
     if (sel >= ALT_COUNT) sel = ALT_COUNT - 1;
     alt_select = sel;
+    shared.alt_hybrid = sel;        // tell Core 0 which hybrid's CV behaviour to run
 
     memset(grey_buffer, 0, GREY_SIZE);
-    draw_text(6, 4, "SELECT", GREY_LEVELS - 1);
-    for (int i = 0; i < ALT_COUNT; i++) {
-        int y = 24 + i * 14;
-        if (i == sel) draw_text(2, y, ">", GREY_LEVELS - 1);  // cursor marks the choice
-        draw_text(12, y, ALT_NAMES[i], GREY_LEVELS - 1);
+
+    // Top line: title (left) + "n/N" position (right).
+    draw_text(4, 4, ALT_NAMES[sel], GREY_LEVELS - 1);
+    char pos[8]; pos[0] = '1' + sel; pos[1] = '/'; pos[2] = '0' + ALT_COUNT; pos[3] = 0;
+    draw_text_right(GREY_W - 4, 4, pos, GREY_LEVELS - 1);
+
+    // Per-mode help (inputs/outputs) below.
+    for (int h = 0; h < 5; h++) {
+        const char *t = ALT_HELP[sel][h];
+        if (t && t[0]) draw_text(4, 22 + h * 12, t, GREY_LEVELS - 1);
     }
 }
 
 static void __not_in_flash_func(update_framebuffer)() {
     text_mode = false;   // default: normal (dilated) rendering; text screens set it true
+    dilate_cap = WHITE_DILATE;   // default full dilation; some screens lower it per-frame
     // Snapshot volatile shared state once. (CV is read per-sample from the etch
     // ring below, not from this snapshot.)
     int32_t  knob    = shared.knob_main;
@@ -1000,12 +2070,19 @@ static void __not_in_flash_func(update_framebuffer)() {
     // Alt boot mode: a selectable set of performance-tool/screensaver hybrids.
     // Switch UP = selector menu (Main knob picks); MID/DOWN = run the selected hybrid.
     if (shared.alt_mode) {
+        effect_invert = false;                    // default; a mode may set it (maze: PU2)
         if (shared.sw_position == 0) {           // UP → selector
             draw_alt_menu();
         } else {                                  // MID/DOWN → play selected
+            shared.alt_hybrid = alt_select;       // keep Core 0's CV bridge in sync
             switch (alt_select) {
-                case 1:  screensaver_bounce();    break;   // COMET (parked example)
-                default: screensaver_asteroids(); break;   // 0 = PATCHTEROIDS
+                case 1:  screensaver_asteroids(); break;   // PATCHTEROIDS
+                case 2:  screensaver_boing();     break;   // BOING (rotating ball)
+                case 3:  screensaver_starfield(); break;   // STARFIELD (fly through space)
+                case 4:  screensaver_radar();     break;   // RADAR (radar shooter)
+                case 5:  screensaver_lunar();     break;   // LUNAR (lunar lander)
+                case 6:  screensaver_maze();      break;   // 3DMAZE (first-person maze)
+                default: screensaver_bounce();    break;   // 0 = COMET
             }
         }
         expand_grey_to_fb();
@@ -1349,6 +2426,7 @@ public:
         static bool menu_x_eng = false, menu_y_eng = false, menu_m_eng = false;
         static bool prev_down = false;
         int32_t rawX = KnobVal(Knob::X), rawY = KnobVal(Knob::Y);
+        shared.knob_x = rawX; shared.knob_y = rawY;   // publish raw X/Y for alt-mode hybrids
         int32_t rawM = shared.knob_main;      // Main knob (selects cfg_sw in the menu)
         if (!boot_latched && boot_ctr >= 4800) {
             shared.alt_mode = down;           // DOWN held through boot → screensaver
@@ -1356,24 +2434,37 @@ public:
         }
         if (!seen_release && boot_ctr >= 4800 && !down) seen_release = true;
 
-        // ── Patchteroids CV bridge (alt mode only) ─────────────────────────────
-        // Steering: CV1 (bipolar) adds to the Main knob → game turn. Fire: PU1 rising
-        // edge latches ast_fire (Core 1 reads-and-clears). CV outs: CVOut1 = pitch
-        // (base note + ast_note semitones, calibrated v/oct); CVOut2 = short gate,
-        // (re)triggered whenever ast_gate_seq changes (a hit or an arpeggio step).
-        if (shared.alt_mode) {
-            int32_t steer = shared.knob_main + shared.cv_x;   // cv_x = CVIn1, ±2048
-            if (steer < 0) steer = 0;
-            if (steer > 4095) steer = 4095;
-            shared.knob_main = steer;                          // game reads this as turn
+        // ── Alt-mode CV bridge (hybrid-aware) ──────────────────────────────────
+        // Common to all hybrids: PU1 rising latches ast_fire (Patchteroids = fire, Boing =
+        //   kick); CVOut2 fires a ~10ms gate whenever ast_gate_seq changes (Patchteroids =
+        //   a hit; Boing = a floor bounce).
+        // Patchteroids ONLY (alt_hybrid==0): CV1 adds to the Main knob (steering); CVOut1 =
+        //   pitch from ast_note. Other hybrids read Main/CV1 raw and drive CVOut1 = alt_cv1
+        //   (Boing: ball height).
+        // Only run the game CV bridge while PLAYING (switch MID/DOWN). When the SELECTOR is
+        // showing (switch UP), leave knob_main raw so only the Main knob picks the mode
+        // (CV1 must not fold into it, or it would drift the selection).
+        if (shared.alt_mode && shared.sw_position != 0) {
+            if (shared.pu1_rising) { shared.ast_fire = true; shared.pu1_rising = false; }
 
-            if (PulseIn1RisingEdge()) shared.ast_fire = true; // PU1 = fire
+            if (shared.alt_hybrid == ALT_HYBRID_PATCH) {       // PATCHTEROIDS
+                int32_t steer = shared.knob_main + shared.cv_x;   // cv_x = CVIn1, ±2048
+                if (steer < 0) steer = 0;
+                if (steer > 4095) steer = 4095;
+                shared.knob_main = steer;                          // game reads this as turn
 
-            // Pitch: MIDI note 36 (C2) + accumulated semitones, calibrated v/oct.
-            int n = 36 + (int)shared.ast_note;
-            if (n < 0) n = 0;
-            if (n > 127) n = 127;
-            CVOut1MIDINote((uint8_t)n);
+                // Pitch: MIDI note 36 (C2) + accumulated semitones, calibrated v/oct.
+                int n = 36 + (int)shared.ast_note;
+                if (n < 0) n = 0;
+                if (n > 127) n = 127;
+                CVOut1MIDINote((uint8_t)n);
+            } else {                                           // other hybrids
+                // CVOut1 = the hybrid's generic value (Boing: ball height). Raw, ±2048.
+                int32_t v = shared.alt_cv1;
+                if (v < -2048) v = -2048;
+                if (v > 2047)  v = 2047;
+                CVOut1((int16_t)v);
+            }
 
             // Gate: edge-detect the sequence counter, emit a ~10ms high pulse on CVOut2.
             static uint32_t gate_seen = 0;
