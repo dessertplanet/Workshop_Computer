@@ -54,7 +54,7 @@ all:
 			failures=$$((failures+1)); \
 		fi; \
 		rm -f "$$log_file"; \
-	done < <(find "$(RELEASES_DIR)" -mindepth 2 -maxdepth 4 -type f -name CMakeLists.txt ! -path "*/lua/*" -print0 | sort -z); \
+	done < <(find "$(RELEASES_DIR)" -mindepth 2 -maxdepth 4 -type f -name CMakeLists.txt ! -path "*/lua/*" ! -path "*/pico-sdk/*" ! -path "*/ComputerCard/*" -print0 | sort -z); \
 	if [[ $$found -eq 0 ]]; then \
 		echo "No CMakeLists.txt found under $(RELEASES_DIR)" >&2; \
 		exit 2; \
