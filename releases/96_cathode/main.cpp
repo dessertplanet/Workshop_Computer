@@ -66,37 +66,66 @@ static_assert(FB_HEIGHT % GREY_SCALE == 0, "GREY_SCALE must divide FB_HEIGHT");
 
 #define GREY_SET(buf, r, c, lvl) ((buf)[(r)*GREY_W + (c)] = (uint8_t)(lvl))
 
-// ─── PAL line timing (7.000MHz clock, 142.857ns/tick, divider=144/7) ─────────
-// Line = 64µs = 448 ticks. Segments must sum to exactly 448.
-//   fp=12 + hs=33 + bp=40 + av=363 = 448 ✓
-//   fp  = 1.65µs target → 12 ticks = 1.714µs
-//   hs  = 4.7µs  target → 33 ticks = 4.714µs
-//   bp  = 5.7µs  target → 40 ticks = 5.714µs
-//   av  = 51.95µs target → 363 ticks = 51.857µs  (FB_WIDTH=360 + 3 px right pad)
-#define LINE_FP_PX          12      // front porch
-#define LINE_HS_PX          33      // h-sync
-#define LINE_BP_PX          40      // back porch
+// ─── TV timing: PAL (default) or NTSC (build with -DTV_NTSC) ──────────────────
+// BOTH formats share the SAME 7.000 MHz pixel clock (144MHz / (144/7), 142.857 ns/tick)
+// and the SAME 360×256 framebuffer + 180×128 grey buffer — so ALL drawing code (scope,
+// etch, spectrum, every alt-boot mode) is identical for both. Only the line/frame TIMING
+// and the number of framebuffer rows scanned out (a small crop for NTSC) differ. This is
+// the ONE place PAL and NTSC diverge — everything else derives automatically.
+//   Frame-structure macros are format-neutral (TV_*) so build_frame_words() is shared.
+#ifdef TV_NTSC
+// NTSC: line = 63.556µs. At 7MHz → 445 ticks (63.571µs, +0.02%). 262 lines → 60.04Hz.
+//   fp=10 + hs=33 + bp=32 + av=370 = 445.  Active = 240 (a centred crop of the 256-row FB).
+#define LINE_FP_PX          10      // front porch (~1.5µs)
+#define LINE_HS_PX          33      // h-sync (~4.7µs)
+#define LINE_BP_PX          32      // back porch (~4.5µs)
+#define LINE_AV_PX          370     // active video (FB_WIDTH=360 + 10 px right padding)
+#define LINE_TOTAL_PX       445     // 10+33+32+370 = 445 ✓
+#define VSYNC_LOW_PX        190     // broad sync pulse LOW (~27µs)
+#define TV_VSYNC_LINES      6
+#define TV_BLANK_TOP        8
+#define TV_ACTIVE_LINES     240     // scan out 240 of the 256 FB rows (crop 8 top / 8 bot)
+#define TV_ACTIVE_ROW0      8       // first FB row scanned → centres the crop
+#define TV_BLANK_BOT        8       // 6+8+240+8 = 262 ✓
+#define TV_TOTAL_LINES      262
+#else
+// PAL: line = 64µs = 448 ticks. Segments sum to exactly 448. 312 lines → 50Hz.
+//   fp=12 + hs=33 + bp=40 + av=363 = 448 ✓  (av: FB_WIDTH=360 + 3 px right pad)
+#define LINE_FP_PX          12      // front porch (1.65µs → 1.714µs)
+#define LINE_HS_PX          33      // h-sync (4.7µs → 4.714µs)
+#define LINE_BP_PX          40      // back porch (5.7µs → 5.714µs)
 #define LINE_AV_PX          363     // active video (FB_WIDTH=360 + 3 px right padding)
 #define LINE_TOTAL_PX       448     // 12+33+40+363 = 448 ✓
+#define VSYNC_LOW_PX        191     // V-sync long pulse: 27.3µs → 191 ticks LOW
+#define TV_VSYNC_LINES      5
+#define TV_BLANK_TOP        33      // picture vertical position (down vs default)
+#define TV_ACTIVE_LINES     FB_HEIGHT   // 256 — all FB rows
+#define TV_ACTIVE_ROW0      0
+#define TV_BLANK_BOT        18      // 5+33+256+18 = 312 ✓
+#define TV_TOTAL_LINES      312
+#endif
+#define VSYNC_HIGH_PX       (LINE_TOTAL_PX - VSYNC_LOW_PX)
 
-// V-sync long pulse: 27.3µs → 191 ticks LOW, 257 ticks HIGH
-#define VSYNC_LOW_PX        191
-#define VSYNC_HIGH_PX       (LINE_TOTAL_PX - VSYNC_LOW_PX)  // 257
-
-// Frame structure:
-#define PAL_VSYNC_LINES     5
-#define PAL_BLANK_TOP       33                 // picture vertical position (down vs default)
-#define PAL_ACTIVE_LINES    FB_HEIGHT          // 256
-#define PAL_BLANK_BOT       18                 // 5+33+256+18 = 312 ✓
-#define PAL_TOTAL_LINES     312
+// Bottom-anchored drawing (spectrum bar bases, Lunar ground) sits at the very bottom of the
+// 256-row framebuffer. NTSC crops a few rows off the bottom, so on NTSC nudge such content up
+// by this many GREY cells so it isn't clipped. PAL = 0 (no crop).
+#ifdef TV_NTSC
+#define NTSC_BOTTOM_INSET   6
+#else
+#define NTSC_BOTTOM_INSET   0
+#endif
 
 // ─── DMA word stream ─────────────────────────────────────────────────────────
-// 2 bits/pixel now. 448 px/line × 312 lines = 139776 px × 2 = 279552 bits.
-// ceil(279552/32) = 8736 words/frame.  word_buf[2][8736] = 69888 B (~70KB).
-#define FRAME_WORDS         8736
+// 2 bits/pixel, packed contiguously (16 px/word). Words per frame = ceil(px/16), where
+// px = LINE_TOTAL_PX × TV_TOTAL_LINES. This is the DMA transfer count and MUST match the
+// format exactly, or the frame period (and thus refresh rate / sync) is wrong.
+//   PAL : 448×312 = 139776 px → 8736 words.   NTSC: 445×262 = 116590 → 7287 words.
+#define FRAME_WORDS         ((LINE_TOTAL_PX * TV_TOTAL_LINES + 15) / 16)
+// Buffers are sized for the LARGER (PAL) frame so one allocation serves both formats.
+#define FRAME_WORDS_MAX     8736
 
 // Double-buffered word streams: Core 1 writes to back buffer, DMA reads from front.
-static uint32_t __attribute__((aligned(4))) word_buf[2][FRAME_WORDS];
+static uint32_t __attribute__((aligned(4))) word_buf[2][FRAME_WORDS_MAX];
 static volatile int active_buf = 0;  // which buffer DMA is currently reading
 
 // ─── Framebuffer (written by Core 1 during vblank) ───────────────────────────
@@ -137,6 +166,8 @@ struct SharedState {
     volatile int32_t  etch_cvgain_y; // (>>12): scale·(GREY_H-1)·4096/(256·4095)
     volatile int32_t  scope_audio_scale; // Y knob in scope: 0..512 (256 = 1×, max 2×) audio gain
     volatile int32_t  scope_baseline;    // X knob in scope: 0..GREY_H-1 centre-line row
+    volatile int32_t  spec_gain;         // Y knob in spectrum: own gain 0..4095 (pickup)
+    volatile int32_t  spec_rot;          // X knob in spectrum: own rotate/pos 0..4095 (pickup)
     volatile int32_t  knob_main;     // KnobVal(Main): 0..4095 (far-CCW=etch, else scope speed)
     volatile int32_t  knob_x;        // KnobVal(X): 0..4095 raw (alt-mode hybrids read this)
     volatile int32_t  knob_y;        // KnobVal(Y): 0..4095 raw (alt-mode hybrids read this)
@@ -149,6 +180,9 @@ struct SharedState {
     volatile bool     pu1_rising;    // Pulse In 1 rising edge (latch)
     volatile bool     pu2_held;      // Pulse In 2 currently high
     volatile bool     pu2_rising;    // Pulse In 2 rising edge (latch)
+    // Audio inputs as triggers (FourTrig alt-mode): edge-detect a rising level crossing.
+    volatile bool     ain1_rising;   // Audio In 1 crossed the trigger threshold (latch)
+    volatile bool     ain2_rising;   // Audio In 2 crossed the trigger threshold (latch)
     // Config (set in menu; RAM-only). Three independent triggers. Defaults reproduce
     // original firmware (DOWN cycles effects, PU2 inverts).
     volatile uint8_t  cfg_sw;        // Behaviour for switch-DOWN (Main knob; def CYCLE FX)
@@ -181,11 +215,15 @@ static SharedState shared;
 #define PICK_OFFSET     1
 #define PICK_AUDIO      2
 #define PICK_BASELINE   3
+#define PICK_SPEC_GAIN  4        // spectrum Y: own gain (distinct from scope's PICK_AUDIO)
+#define PICK_SPEC_ROT   5        // spectrum X: own rotate/position
 struct KnobPick {
     int32_t stored_offset;       // grey coords — etch X/Y position
     int32_t stored_scale;        // 0..1024 (256 = 1×)  — etch CV scale
     int32_t stored_audio;        // 0..512 (256 = 1×, max 2×) — scope audio scale (Y only)
     int32_t stored_baseline;     // 0..GREY_H-1 — scope centre-line vertical pos (X only)
+    int32_t stored_specgain;     // 0..4095 — spectrum audio gain (Y, own value)
+    int32_t stored_specrot;      // 0..4095 — spectrum rotate/position (X, own value)
     uint8_t bound;               // current destination (PICK_*)
     int32_t bind_raw;            // raw knob value captured at last bind change
     bool    captured;            // false until knob moves past threshold after a switch
@@ -282,23 +320,25 @@ static void build_frame_words(int back, bool invert) {
         emit_const(BLACK, VSYNC_HIGH_PX - LINE_FP_PX);
     };
 
-    // V-sync lines (0 .. PAL_VSYNC_LINES-1)
-    for (int l = 0; l < PAL_VSYNC_LINES; l++) {
+    // V-sync lines
+    for (int l = 0; l < TV_VSYNC_LINES; l++) {
         emit_vsync_line();
     }
 
     // Top blank lines
-    for (int l = 0; l < PAL_BLANK_TOP; l++) {
+    for (int l = 0; l < TV_BLANK_TOP; l++) {
         emit_blank_line();
     }
 
-    // Active video. Framebuffer bit SET = white pixel, CLEAR = black pixel.
-    // invert swaps WHITE/BLACK selection.
-    for (int row = 0; row < PAL_ACTIVE_LINES; row++) {
+    // Active video. TV_ACTIVE_LINES rows are scanned, starting at framebuffer row
+    // TV_ACTIVE_ROW0 (PAL: 0/256 = all rows; NTSC: 8/240 = a centred crop of the 256-row
+    // framebuffer, so the drawing geometry is identical for both formats).
+    // Framebuffer bit SET = white pixel, CLEAR = black; invert swaps WHITE/BLACK.
+    for (int row = 0; row < TV_ACTIVE_LINES; row++) {
         emit_const(BLACK, LINE_FP_PX);   // front porch (black)
         emit_const(SYNC,  LINE_HS_PX);   // h-sync
         emit_const(BLACK, LINE_BP_PX);   // back porch (black)
-        const uint8_t *fb_row = &frame_buffer[row * FB_STRIDE];
+        const uint8_t *fb_row = &frame_buffer[(TV_ACTIVE_ROW0 + row) * FB_STRIDE];
         for (int p = 0; p < FB_WIDTH; p++) {
             bool set = (fb_row[p / 8] >> (7 - (p & 7))) & 1u;
             if (invert) set = !set;
@@ -313,7 +353,7 @@ static void build_frame_words(int back, bool invert) {
     }
 
     // Bottom blank lines
-    for (int l = 0; l < PAL_BLANK_BOT; l++) {
+    for (int l = 0; l < TV_BLANK_BOT; l++) {
         emit_blank_line();
     }
 
@@ -388,8 +428,15 @@ static uint32_t audio_read_idx = 0; // Core 1's drain position in the audio ring
 //   fast = 180/(0.1*50)=36 cols/frame; slow = 180/(3.0*50)=1.2 cols/frame.
 #define SCOPE_STEP_SLOW   (307u)   //  1.2 cols/frame × 256 ≈ 307  (~3.0s/sweep)
 #define SCOPE_STEP_FAST   (9216u)  // 36.0 cols/frame × 256 = 9216 (~0.1s/sweep)
-// Main knob: lowest 25% (0..1023) = etch (knob sets fade rate); upper 75% = scope speed.
-#define ETCH_THRESH       1024     // knob_main below this = etch (CV1 vs CV2) mode
+// Main knob is split into THIRDS: lower = ETCH (CV vs CV), middle = SCOPE (audio wave),
+// upper = SPECTRUM (audio analyser). ETCH_THRESH kept as the etch/scope-and-up boundary
+// (used by Core-0 pickup routing: below it = etch, at/above = scope-style X/Y roles).
+#define ETCH_THRESH       1365     // < this = etch (lower third)
+#define SPECTRUM_THRESH   2730     // >= this = spectrum (upper third); between = scope
+enum MainMode { MODE_ETCH = 0, MODE_SCOPE = 1, MODE_SPECTRUM = 2 };
+static inline MainMode main_mode(int32_t knob) {
+    return knob < ETCH_THRESH ? MODE_ETCH : knob < SPECTRUM_THRESH ? MODE_SCOPE : MODE_SPECTRUM;
+}
 
 // ─── Phosphor fade ───────────────────────────────────────────────────────────
 // Scope fade is LOCKED to the sweep: one global level-decrement each time the sweep
@@ -584,6 +631,10 @@ static const uint8_t font5x7[][7] = {
     {0x0E,0x08,0x08,0x08,0x08,0x08,0x0E}, // [
     {0x0E,0x02,0x02,0x02,0x02,0x02,0x0E}, // ]
     {0x01,0x02,0x02,0x04,0x08,0x08,0x10}, // /  (slash)
+    {0x04,0x04,0x04,0x04,0x04,0x00,0x04}, // !
+    {0x0E,0x11,0x01,0x06,0x04,0x00,0x04}, // ?
+    {0x00,0x0A,0x04,0x1F,0x04,0x0A,0x00}, // *
+    {0x0A,0x0A,0x1F,0x0A,0x1F,0x0A,0x0A}, // #
 };
 
 static int font_index(char c) {
@@ -592,7 +643,8 @@ static int font_index(char c) {
     if (c >= '0' && c <= '9') return 26 + (c - '0');
     switch (c) { case ' ': return 36; case ':': return 37; case '.': return 38;
                  case '>': return 39; case '[': return 40; case ']': return 41;
-                 case '/': return 42; }
+                 case '/': return 42; case '!': return 43; case '?': return 44;
+                 case '*': return 45; case '#': return 46; }
     return 36;  // unknown → space
 }
 
@@ -744,14 +796,14 @@ static bool __not_in_flash_func(apply_behaviour)(int bhv, bool held, bool rising
 static void __not_in_flash_func(draw_menu)() {
     text_mode = true;                 // crisp text — no white-dilation this frame
     memset(grey_buffer, 0, GREY_SIZE);
-    draw_text(6,  2,  "CONFIG", GREY_LEVELS - 1);
+    draw_text(6,  14, "CONFIG", GREY_LEVELS - 1);   // whole menu nudged down one char line
     // Three independent triggers: DOWN (Main knob), PU1 (Knob X), PU2 (Knob Y).
-    draw_text(6,  22, "DOWN",   GREY_LEVELS - 2);
-    draw_text(6,  32, BHV_NAMES[shared.cfg_sw],  GREY_LEVELS - 1);
-    draw_text(6,  56, "PU1",    GREY_LEVELS - 2);
-    draw_text(6,  66, BHV_NAMES[shared.cfg_pu1], GREY_LEVELS - 1);
-    draw_text(6,  90, "PU2",    GREY_LEVELS - 2);
-    draw_text(6, 100, BHV_NAMES[shared.cfg_pu2], GREY_LEVELS - 1);
+    draw_text(6,  34, "DOWN",   GREY_LEVELS - 2);
+    draw_text(6,  44, BHV_NAMES[shared.cfg_sw],  GREY_LEVELS - 1);
+    draw_text(6,  68, "PU1",    GREY_LEVELS - 2);
+    draw_text(6,  78, BHV_NAMES[shared.cfg_pu1], GREY_LEVELS - 1);
+    draw_text(6, 102, "PU2",    GREY_LEVELS - 2);
+    draw_text(6, 112, BHV_NAMES[shared.cfg_pu2], GREY_LEVELS - 1);
 }
 
 // COMET: a round comet bouncing around, leaving a phosphor tail. Main knob / CV In 1 set
@@ -817,6 +869,446 @@ static const int16_t sin256[256] = {
   -86,-80,-74,-68,-62,-56,-50,-44,-38,-31,-25,-19,-13,-6 };
 static inline int sin_a(uint8_t a){ return sin256[a]; }
 static inline int cos_a(uint8_t a){ return sin256[(uint8_t)(a + 64)]; }
+
+// ── FOURTRIG: four trigger inputs stamp a "thing" into their screen quadrant ─────────
+// AudioIn1, AudioIn2, PulseIn1, PulseIn2 are all trigger inputs. Each fires a stamp into
+// its own quadrant (pulled in toward screen centre). Stamps decay through the 5 greys to
+// black over a few frames. Knob X = bank (5), Knob Y (+CV2) = set within the bank
+// (5 sets of 4), Main (+CV1) = CHAOS.
+//   Banks are ordered icons/pictures FIRST, words LAST:
+//     Bank 0 = SHAPES, Bank 1 = MUSIC/HIT glyphs, Bank 2 = SYMBOLS (more icons),
+//     Bank 3 = WORDS, Bank 4 = EMPHASIS.
+// CHAOS 0 → tidy centres, uniform size, no glitch. Rising chaos → position jitter +
+// occasional quadrant swap, GROWING + randomised size, and (past ~50%) a growing chance
+// that a stamp ALSO fires a screen glitch (corrupt / snow-fleck / roll kick).
+#define FT_BANKS 5
+#define FT_SETS  5
+enum { FT_BANK_SHAPES = 0, FT_BANK_MUSIC = 1, FT_BANK_SYMBOLS = 2,
+       FT_BANK_WORDS = 3, FT_BANK_EMPH = 4 };
+
+// Bank 3 (WORDS) — drum/shout style hits, one per trigger quadrant.
+static const char *const FT_WORDS[FT_SETS][4] = {
+    { "HAT",  "CLAP", "KICK", "SNARE"    },
+    { "TSH",  "CHCK", "BOOOM","CRACK"    },
+    { "WOW",  "YES",  "BOOM", "NO"       },
+    { "LOVE", "SEX",  "HATE", "RELIGION" },
+    { "EVERY","BODY", "SAY",  "YEAH"     },
+};
+
+// Bank 4 (EMPHASIS) — short punchy text stabs.
+static const char *const FT_EMPH[FT_SETS][4] = {
+    { "YEAH!", "NOPE", "OW",   "HUH?"   },
+    { "!!!",   "???",  "***",  "###"    },
+    { "STOP",  "GO",   "WAIT", "NOW"    },
+    { "UH",    "OH",   "AH",   "EH"     },
+    { "BANG",  "POW",  "ZAP",  "WHAM"   },
+};
+
+// ── Thick (2×2) drawing primitives for the shape stamps ──────────────────────────────
+// plot_dot is 2×1 grey cells (DOT_W×DOT_H); the shapes want a heftier 2×2 look, so ftD
+// stamps a 2×2 cell block and ftL draws a thick line out of it. Used by all ft_* shapes.
+static inline void ftD(int gx, int gy, uint8_t level) {
+    plot_dot(gx, gy,     level);       // 2×1
+    plot_dot(gx, gy + 1, level);       // → 2×2
+}
+
+static inline void ft_cell(int gx, int gy, uint8_t level) {   // set one grey cell, clipped
+    if (gx >= 0 && gx < GREY_W && gy >= 0 && gy < GREY_H) GREY_SET(grey_buffer, gy, gx, level);
+}
+
+// Draw a word centred on grey (cx,cy) at `level`, DOUBLED: each 5×7 glyph pixel becomes a
+// 2×2 grey block, so strokes are solid (reach full white) and the word reads larger.
+// Vertical strokes get one extra grey column so uprights read a touch bolder (height
+// unchanged). Cell = 10 wide (5px×2) + gap; ADV per glyph = 13 (extra px for the fatter
+// uprights so glyphs don't touch); 14 tall (7×2).
+static void __not_in_flash_func(ft_draw_word)(int cx, int cy, const char *s, uint8_t level) {
+    int n = 0; for (const char *p = s; *p; p++) n++;
+    const int ADV = 13;                        // per-glyph advance (10px glyph + fat gap)
+    int w = n * ADV - 3;                        // last glyph has no trailing gap
+    int gx0 = cx - w / 2, gy0 = cy - 7;        // 14 tall → top = cy-7
+    int gx = gx0;
+    for (; *s; s++) {
+        const uint8_t *g = font5x7[font_index(*s)];
+        for (int row = 0; row < 7; row++) {
+            uint8_t bits = g[row];
+            uint8_t above = (row > 0) ? g[row-1] : 0;
+            uint8_t below = (row < 6) ? g[row+1] : 0;
+            for (int col = 0; col < 5; col++) {
+                uint8_t m = 0x10 >> col;
+                if (bits & m) {
+                    int px = gx + col * 2, py = gy0 + row * 2;
+                    ftD(px, py, level);        // ftD is 2×2 → doubled pixel
+                    // Vertical-stroke member (lit above or below) → +1 grey column right.
+                    if ((above & m) || (below & m)) {
+                        ft_cell(px + 2, py,     level);
+                        ft_cell(px + 2, py + 1, level);
+                    }
+                }
+            }
+        }
+        gx += ADV;
+    }
+}
+static void __not_in_flash_func(ftL)(int x0, int y0, int x1, int y1, uint8_t level) {
+    int adx = x1 - x0; if (adx < 0) adx = -adx;
+    int ady = y1 - y0; if (ady < 0) ady = -ady;
+    int dx =  adx, sx = x0 < x1 ? 1 : -1;
+    int dy = -ady, sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    for (;;) {
+        ftD(x0, y0, level);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
+// ── Vector shape stamps (SHAPES / MUSIC / SYMBOLS banks) ──────────────────────────────
+// All draw centred on grey (cx,cy) with radius r, into grey_buffer at `level`. Use the
+// thick ftL/ftD primitives so lines read as 2×2.
+static void __not_in_flash_func(ft_circle)(int cx, int cy, int r, uint8_t level) {
+    for (int a = 0; a < 256; a += 8) {             // 32 segments over the full 256-step circle
+        int x0 = cx + (r * cos_a((uint8_t)a)      >> 8), y0 = cy + (r * sin_a((uint8_t)a)      >> 8);
+        int x1 = cx + (r * cos_a((uint8_t)(a + 8)) >> 8), y1 = cy + (r * sin_a((uint8_t)(a + 8)) >> 8);
+        ftL(x0, y0, x1, y1, level);
+    }
+}
+static void __not_in_flash_func(ft_disc)(int cx, int cy, int r, uint8_t level) {
+    for (int rr = r; rr > 0; rr -= 2) ft_circle(cx, cy, rr, level);  // filled circle
+    ftD(cx, cy, level);
+}
+static void __not_in_flash_func(ft_square)(int cx, int cy, int r, uint8_t level) {
+    ftL(cx-r, cy-r, cx+r, cy-r, level); ftL(cx+r, cy-r, cx+r, cy+r, level);
+    ftL(cx+r, cy+r, cx-r, cy+r, level); ftL(cx-r, cy+r, cx-r, cy-r, level);
+}
+static void __not_in_flash_func(ft_triangle)(int cx, int cy, int r, uint8_t level) {
+    ftL(cx, cy-r, cx+r, cy+r, level); ftL(cx+r, cy+r, cx-r, cy+r, level);
+    ftL(cx-r, cy+r, cx, cy-r, level);
+}
+static void __not_in_flash_func(ft_star)(int cx, int cy, int r, uint8_t level) {
+    // 5-point star via the classic {0,2,4,1,3} vertex skip.
+    int px[5], py[5];
+    for (int i = 0; i < 5; i++) {
+        uint8_t a = (uint8_t)(192 + i * 256 / 5);          // start pointing up
+        px[i] = cx + (r * cos_a(a) >> 8); py[i] = cy + (r * sin_a(a) >> 8);
+    }
+    int order[6] = {0,2,4,1,3,0};
+    for (int i = 0; i < 5; i++)
+        ftL(px[order[i]], py[order[i]], px[order[i+1]], py[order[i+1]], level);
+}
+static void __not_in_flash_func(ft_wavy)(int cx, int cy, int r, uint8_t level) {
+    for (int row = -1; row <= 1; row++) {                   // three wavy lines
+        int y = cy + row * (r/2);
+        for (int x = -r; x < r; x++) {
+            int yy = y + (sin_a((uint8_t)((x + r) * 8)) >> 6);
+            ftD(cx + x, yy, level);
+        }
+    }
+}
+static void __not_in_flash_func(ft_cross)(int cx, int cy, int r, uint8_t level) {
+    ftL(cx-r, cy, cx+r, cy, level); ftL(cx, cy-r, cx, cy+r, level);
+}
+static void __not_in_flash_func(ft_ninedots)(int cx, int cy, int r, uint8_t level) {
+    for (int j = -1; j <= 1; j++)
+        for (int i = -1; i <= 1; i++)
+            ftD(cx + i*r/2, cy + j*r/2, level);
+}
+static void __not_in_flash_func(ft_hash)(int cx, int cy, int r, uint8_t level) {
+    ftL(cx-r, cy-r/2, cx+r, cy-r/2, level); ftL(cx-r, cy+r/2, cx+r, cy+r/2, level);
+    ftL(cx-r/2, cy-r, cx-r/2, cy+r, level); ftL(cx+r/2, cy-r, cx+r/2, cy+r, level);
+}
+// Arrow pointing in direction dir (0=left,1=right,2=up,3=down).
+static void __not_in_flash_func(ft_arrow)(int cx, int cy, int r, int dir, uint8_t level) {
+    int dx = (dir==0)?-1:(dir==1)?1:0, dy = (dir==2)?-1:(dir==3)?1:0;
+    int tx = cx + dx*r, ty = cy + dy*r, bx = cx - dx*r, by = cy - dy*r;
+    ftL(bx, by, tx, ty, level);
+    int px = -dy, py = dx;                                  // perpendicular for the head barbs
+    ftL(tx, ty, tx - dx*r/2 + px*r/2, ty - dy*r/2 + py*r/2, level);
+    ftL(tx, ty, tx - dx*r/2 - px*r/2, ty - dy*r/2 - py*r/2, level);
+}
+static void __not_in_flash_func(ft_sun)(int cx, int cy, int r, uint8_t level) {
+    ft_circle(cx, cy, r/2, level);
+    for (int a = 0; a < 256; a += 32) {                     // 8 rays around the full circle
+        uint8_t aa = (uint8_t)a;
+        int x0 = cx + (r*3/4 * cos_a(aa) >> 8), y0 = cy + (r*3/4 * sin_a(aa) >> 8);
+        int x1 = cx + (r     * cos_a(aa) >> 8), y1 = cy + (r     * sin_a(aa) >> 8);
+        ftL(x0, y0, x1, y1, level);
+    }
+}
+static void __not_in_flash_func(ft_cloud)(int cx, int cy, int r, uint8_t level) {
+    ft_circle(cx - r/2, cy, r/2, level); ft_circle(cx + r/2, cy, r/2, level);
+    ft_circle(cx, cy - r/3, r/2, level);
+    ftL(cx-r, cy+r/3, cx+r, cy+r/3, level);
+}
+static void __not_in_flash_func(ft_rain)(int cx, int cy, int r, uint8_t level) {
+    ft_cloud(cx, cy - r/2, r, level);
+    for (int i = -1; i <= 1; i++) ftL(cx+i*r/2, cy+r/3, cx+i*r/2-2, cy+r, level);
+}
+static void __not_in_flash_func(ft_snow)(int cx, int cy, int r, uint8_t level) {
+    for (int a = 0; a < 256; a += 42) {                     // 6-arm flake (256/6 ≈ 42)
+        uint8_t aa = (uint8_t)a;
+        int x1 = cx + (r * cos_a(aa) >> 8), y1 = cy + (r * sin_a(aa) >> 8);
+        ftL(cx, cy, x1, y1, level);
+    }
+}
+static void __not_in_flash_func(ft_heart)(int cx, int cy, int r, uint8_t level) {
+    ft_circle(cx - r/2, cy - r/3, r/2, level); ft_circle(cx + r/2, cy - r/3, r/2, level);
+    ftL(cx-r, cy, cx, cy+r, level); ftL(cx+r, cy, cx, cy+r, level);
+}
+static void __not_in_flash_func(ft_spade)(int cx, int cy, int r, uint8_t level) {
+    ft_triangle(cx, cy - r/3, r, level);                   // body
+    ftL(cx, cy+r/3, cx, cy+r, level);                      // stem
+    ft_circle(cx - r/3, cy + r/4, r/3, level); ft_circle(cx + r/3, cy + r/4, r/3, level);
+}
+static void __not_in_flash_func(ft_club)(int cx, int cy, int r, uint8_t level) {
+    ft_circle(cx, cy - r/2, r/2, level);
+    ft_circle(cx - r/2, cy + r/6, r/2, level); ft_circle(cx + r/2, cy + r/6, r/2, level);
+    ftL(cx, cy, cx, cy+r, level);
+}
+static void __not_in_flash_func(ft_diamond)(int cx, int cy, int r, uint8_t level) {
+    ftL(cx, cy-r, cx+r, cy, level); ftL(cx+r, cy, cx, cy+r, level);
+    ftL(cx, cy+r, cx-r, cy, level); ftL(cx-r, cy, cx, cy-r, level);
+}
+static void __not_in_flash_func(ft_note)(int cx, int cy, int r, uint8_t level) {
+    ft_circle(cx - r/2, cy + r/2, r/3, level);             // note head
+    ftL(cx - r/6, cy + r/2, cx - r/6, cy - r, level);      // stem
+    ftL(cx - r/6, cy - r, cx + r/2, cy - r + r/3, level);  // flag
+}
+static void __not_in_flash_func(ft_bolt)(int cx, int cy, int r, uint8_t level) {
+    ftL(cx+r/2, cy-r, cx-r/3, cy, level); ftL(cx-r/3, cy, cx+r/4, cy, level);
+    ftL(cx+r/4, cy, cx-r/2, cy+r, level);
+}
+static void __not_in_flash_func(ft_burst)(int cx, int cy, int r, uint8_t level) {
+    // 16 spikes around the full circle: radius alternates long/short each segment.
+    int prevx = 0, prevy = 0;
+    for (int i = 0; i <= 16; i++) {
+        uint8_t a = (uint8_t)(i * 16);
+        int rr = (i & 1) ? r : r/2;
+        int x = cx + (rr * cos_a(a) >> 8), y = cy + (rr * sin_a(a) >> 8);
+        if (i) ftL(prevx, prevy, x, y, level);
+        prevx = x; prevy = y;
+    }
+}
+static void __not_in_flash_func(ft_rings)(int cx, int cy, int r, uint8_t level) {
+    ft_circle(cx, cy, r, level); ft_circle(cx, cy, r*2/3, level); ft_circle(cx, cy, r/3, level);
+}
+// ── SYMBOLS bank (more icons) ──
+static void __not_in_flash_func(ft_face)(int cx, int cy, int r, int mood, uint8_t level) {
+    ft_circle(cx, cy, r, level);                           // head
+    ftD(cx - r/2, cy - r/4, level); ftD(cx + r/2, cy - r/4, level);  // eyes
+    if (mood == 0)      { for (int x=-r/2;x<=r/2;x++) ftD(cx+x, cy+r/2 - (sin_a((uint8_t)((x+r)*4))>>6), level); } // smile
+    else if (mood == 1) ftL(cx - r/2, cy + r/3, cx + r/2, cy + r/3, level);   // flat
+    else if (mood == 2) { for (int x=-r/2;x<=r/2;x++) ftD(cx+x, cy+r/4 + (sin_a((uint8_t)((x+r)*4))>>6), level); } // frown (raised so it clears the chin)
+    else                { ft_circle(cx, cy + r/4, r/4, level); }              // shock (O mouth)
+}
+static void __not_in_flash_func(ft_plus)(int cx, int cy, int r, uint8_t level) {
+    ftL(cx-r, cy, cx+r, cy, level); ftL(cx, cy-r, cx, cy+r, level);
+    ft_circle(cx, cy, r, level);                           // plus in a ring
+}
+static void __not_in_flash_func(ft_x)(int cx, int cy, int r, uint8_t level) {
+    ftL(cx-r, cy-r, cx+r, cy+r, level); ftL(cx-r, cy+r, cx+r, cy-r, level);
+}
+static void __not_in_flash_func(ft_check)(int cx, int cy, int r, uint8_t level) {
+    ftL(cx-r, cy, cx-r/4, cy+r, level); ftL(cx-r/4, cy+r, cx+r, cy-r, level);
+}
+static void __not_in_flash_func(ft_target)(int cx, int cy, int r, uint8_t level) {
+    ft_circle(cx, cy, r, level); ft_circle(cx, cy, r/2, level); ftD(cx, cy, level);
+}
+static void __not_in_flash_func(ft_bolt2)(int cx, int cy, int r, uint8_t level) { ft_bolt(cx,cy,r,level); }
+static void __not_in_flash_func(ft_house)(int cx, int cy, int r, uint8_t level) {
+    ft_square(cx, cy + r/3, r*2/3, level);                 // body
+    ftL(cx-r, cy - r/3, cx, cy-r, level); ftL(cx, cy-r, cx+r, cy-r/3, level);  // roof
+}
+static void __not_in_flash_func(ft_eye)(int cx, int cy, int r, uint8_t level) {
+    // Almond outline: two arcs meeting at the corners (±r, 0), bulging ±r/2 at the centre.
+    for (int x = -r; x <= r; x++) {
+        int lid = (r/2) * (r*r - x*x) / (r*r + 1);         // 0 at corners, ~r/2 at centre
+        ftD(cx + x, cy - lid, level);
+        ftD(cx + x, cy + lid, level);
+    }
+    ft_circle(cx, cy, r/3, level);                         // iris
+    ftD(cx, cy, level);                                    // pupil
+}
+static void __not_in_flash_func(ft_moon)(int cx, int cy, int r, uint8_t level) {
+    // Crescent moon: the outer circle's left-facing arc, plus an inner arc (a circle offset
+    // to the right) that carves the concave edge. Both arcs run from the top tip to bottom
+    // tip, so they meet and read as a crescent opening to the right.
+    int ir  = r*3/4;               // inner circle radius
+    int iox = r/2;                 // inner circle x-offset (to the right)
+    // Outer arc: left half of the circle (angles 64..192 = bottom→left→top in this table).
+    for (int a = 64; a <= 192; a += 6) {
+        uint8_t a0 = (uint8_t)a, a1 = (uint8_t)(a + 6);
+        int x0 = cx + (r*cos_a(a0)>>8), y0 = cy + (r*sin_a(a0)>>8);
+        int x1 = cx + (r*cos_a(a1)>>8), y1 = cy + (r*sin_a(a1)>>8);
+        ftL(x0, y0, x1, y1, level);
+    }
+    // Inner arc: left half of the offset circle (the concave bite).
+    for (int a = 64; a <= 192; a += 6) {
+        uint8_t a0 = (uint8_t)a, a1 = (uint8_t)(a + 6);
+        int x0 = cx+iox + (ir*cos_a(a0)>>8), y0 = cy + (ir*sin_a(a0)>>8);
+        int x1 = cx+iox + (ir*cos_a(a1)>>8), y1 = cy + (ir*sin_a(a1)>>8);
+        ftL(x0, y0, x1, y1, level);
+    }
+    // Close the two tips so the crescent is a continuous outline.
+    ftL(cx, cy+r, cx+iox, cy+ir, level);   // bottom tip
+    ftL(cx, cy-r, cx+iox, cy-ir, level);   // top tip
+}
+
+// Draw one shape/glyph for (bank,set,slot) centred at (cx,cy), radius r.
+static void __not_in_flash_func(ft_draw_shape)(int bank, int set, int slot,
+                                               int cx, int cy, int r, uint8_t level) {
+    if (bank == FT_BANK_SHAPES) {                           // geometric / cards / arrows / …
+        switch (set) {
+            case 0: (slot==0?ft_circle:slot==1?ft_square:slot==2?ft_triangle:ft_star)(cx,cy,r,level); break;
+            case 1: (slot==0?ft_wavy:slot==1?ft_cross:slot==2?ft_ninedots:ft_hash)(cx,cy,r,level); break;
+            case 2: ft_arrow(cx,cy,r, slot, level); break;   // slot 0=L 1=R 2=U 3=D
+            case 3: (slot==0?ft_sun:slot==1?ft_rain:slot==2?ft_cloud:ft_snow)(cx,cy,r,level); break;
+            default:(slot==0?ft_heart:slot==1?ft_spade:slot==2?ft_club:ft_diamond)(cx,cy,r,level); break;
+        }
+        return;
+    }
+    if (bank == FT_BANK_MUSIC) {                            // abstract sound glyphs
+        switch (set) {
+            case 0: (slot==0?ft_note:slot==1?ft_bolt:slot==2?ft_burst:ft_rings)(cx,cy,r,level); break;
+            case 1: (slot==0?ft_burst:slot==1?ft_rings:slot==2?ft_note:ft_bolt)(cx,cy,r,level); break;
+            case 2: (slot==0?ft_disc:slot==1?ft_circle:slot==2?ft_target:ft_rings)(cx,cy,r,level); break;
+            case 3: (slot==0?ft_bolt:slot==1?ft_burst:slot==2?ft_star:ft_note)(cx,cy,r,level); break;
+            default:(slot==0?ft_rings:slot==1?ft_disc:slot==2?ft_burst:ft_target)(cx,cy,r,level); break;
+        }
+        return;
+    }
+    // FT_BANK_SYMBOLS — more figurative icons.
+    switch (set) {
+        case 0: ft_face(cx,cy,r, slot, level); break;        // 4 moods
+        case 1: (slot==0?ft_check:slot==1?ft_x:slot==2?ft_plus:ft_target)(cx,cy,r,level); break;
+        case 2: (slot==0?ft_house:slot==1?ft_eye:slot==2?ft_moon:ft_star)(cx,cy,r,level); break;
+        case 3: ft_arrow(cx,cy,r, slot, level); break;       // reuse arrows (diagonal feel via jitter)
+        default:(slot==0?ft_bolt2:slot==1?ft_sun:slot==2?ft_snow:ft_diamond)(cx,cy,r,level); break;
+    }
+}
+
+// Flip the whole grey buffer 180° (upside-down + mirrored) in place — used as FourTrig's
+// SWAP effect. In-place reversal fits the buffer exactly (unlike a 90° turn, which would
+// have to squash the non-square framebuffer). One frame's flip is enough; repeated calls
+// just toggle it back and forth (a churn while held).
+static void __not_in_flash_func(ft_flip180)() {
+    for (int i = 0, j = GREY_SIZE - 1; i < j; i++, j--) {
+        uint8_t t = grey_buffer[i]; grey_buffer[i] = grey_buffer[j]; grey_buffer[j] = t;
+    }
+}
+
+// FourTrig "glitch" = one of the full VFX set (like normal-boot RANDOM FX), NOT just the
+// corrupt/roll/snow subset. Runs effect `fx` for the current frame. Sets *inv for a
+// whole-frame invert (STROBE / INVERT). SWAP here means flip 180° (see ft_flip180).
+enum { FTFX_STROBE, FTFX_INVERT, FTFX_FADE_BLACK, FTFX_FADE_WHITE, FTFX_SNOW,
+       FTFX_CORRUPT, FTFX_ROLL, FTFX_SWAP, FTFX_COUNT };
+static void __not_in_flash_func(ft_run_vfx)(int fx, uint32_t ph, bool *inv) {
+    switch (fx) {
+        case FTFX_STROBE:     *inv = (ph & 2); break;                 // rapid flash
+        case FTFX_INVERT:     *inv = true; break;                     // held invert
+        case FTFX_FADE_BLACK: if ((ph & 3) == 0) fade_step();  break; // fade to black
+        case FTFX_FADE_WHITE: if ((ph & 3) == 0) bloom_step(); break; // bloom to white
+        case FTFX_SNOW: {
+            for (int i = 0; i < GREY_SIZE; i++)
+                grey_buffer[i] = (uint8_t)(lcg_rand() % GREY_LEVELS);
+            break;
+        }
+        case FTFX_CORRUPT:    corrupt_step(); break;
+        case FTFX_ROLL:       roll_step();    break;
+        case FTFX_SWAP:       if ((ph & 7) == 0) ft_flip180(); break; // flip 180° periodically
+    }
+}
+
+static void __not_in_flash_func(screensaver_fourtrig)() {
+    auto rnd = [](){ return (int)(lcg_rand() & 0x7fffffff); };
+    dilate_cap = 3;                         // heavier strokes (shapes are thick 2×2 too)
+
+    // Fade the whole buffer toward black one level every other frame (~10-frame trail).
+    static uint8_t phase = 0;
+    phase++;
+    if (phase & 1) {
+        for (int i = 0; i < GREY_SIZE; i++) if (grey_buffer[i]) grey_buffer[i]--;
+    }
+
+    // Controls: raw alt-mode knobs read here, with CV folded in (Core 0 leaves them raw for
+    // this hybrid). knob_x/y are 0..4095; cv_x/cv_y are ±2048 — clamp after summing.
+    int bank = clamp(shared.knob_x * FT_BANKS / 4096, 0, FT_BANKS - 1);      // X → bank
+    int ysel = clamp((shared.knob_y + shared.cv_y) * FT_SETS / 4096, 0, FT_SETS - 1); // Y+CV2 → set
+    int chaos = clamp((shared.knob_main + shared.cv_x) * 100 / 4096, 0, 100);// Main+CV1 → chaos %
+
+    // Read-and-clear the four trigger latches (Core 0 sets the rising edges).
+    bool trig[4];
+    trig[0] = shared.ain1_rising; shared.ain1_rising = false;   // Audio In 1 → quadrant 0 (TL)
+    trig[1] = shared.ain2_rising; shared.ain2_rising = false;   // Audio In 2 → quadrant 1 (TR)
+    trig[2] = shared.pu1_rising;  shared.pu1_rising  = false;   // Pulse In 1 → quadrant 2 (BL)
+    trig[3] = shared.pu2_rising;  shared.pu2_rising  = false;   // Pulse In 2 → quadrant 3 (BR)
+
+    // Quadrant centres, pulled ~40% of the way in toward screen centre so the default
+    // placement sits closer to the middle of the screen (not out in the corners).
+    const int SCX = GREY_W/2, SCY = GREY_H/2;
+    auto pull = [](int q, int c){ return c + (q - c) * 6 / 10; };   // 0.6 toward centre
+    const int qx[4] = { pull(GREY_W/4,SCX), pull(GREY_W*3/4,SCX), pull(GREY_W/4,SCX), pull(GREY_W*3/4,SCX) };
+    const int qy[4] = { pull(GREY_H/4,SCY), pull(GREY_H/4,SCY),   pull(GREY_H*3/4,SCY), pull(GREY_H*3/4,SCY) };
+
+    for (int i = 0; i < 4; i++) {
+        if (!trig[i]) continue;
+
+        // CHAOS: which quadrant actually gets drawn (swap chance rises with chaos).
+        int q = i;
+        if (chaos > 0 && rnd() % 100 < chaos / 2) q = rnd() & 3;   // up to 50% swap at max
+
+        int cx = qx[q], cy = qy[q];
+        // Position jitter grows with chaos (±up to ~a quarter-quadrant at max).
+        if (chaos > 0) {
+            int j = chaos * GREY_W / 400;                          // 0..~45 px at chaos 100
+            cx += (rnd() % (2*j + 1)) - j;
+            cy += (rnd() % (2*j + 1)) - j;
+        }
+        cx = clamp(cx, 14, GREY_W - 14);
+        cy = clamp(cy, 10, GREY_H - 10);
+
+        // Size GROWS with chaos AND is randomised: base rises from ~10 (chaos 0) toward
+        // ~20 (chaos 100), plus a ± wobble that also widens with chaos.
+        int base = 10 + chaos * 10 / 100;                         // 10..20
+        int wob  = chaos / 8;                                     // ±0..12
+        int r = base + (wob ? (rnd() % (2*wob + 1)) - wob : 0);
+        if (r < 6)  r = 6;
+        if (r > 24) r = 24;
+
+        const uint8_t white = GREY_LEVELS - 1;
+        if      (bank == FT_BANK_WORDS) ft_draw_word(cx, cy, FT_WORDS[ysel][i], white);
+        else if (bank == FT_BANK_EMPH)  ft_draw_word(cx, cy, FT_EMPH[ysel][i],  white);
+        else                            ft_draw_shape(bank, ysel, i, cx, cy, r, white);
+
+        // Past ~50% chaos, a stamp can ALSO fire a random VFX (one of the full set, like
+        // normal-boot RANDOM FX). Chance rises to ~50% at max chaos.
+        if (chaos > 50) {
+            int gp = (chaos - 50);                                 // 0..50
+            if (rnd() % 100 < gp) {
+                bool inv = false;
+                // phase 0 → the phase-gated effects (fade/flip) fire on this one-shot hit.
+                ft_run_vfx(rnd() % FTFX_COUNT, 0, &inv);
+                if (inv) effect_invert = true;
+            }
+        }
+        // OUT2 pulse on any trigger (Core 0 gates on ast_gate_seq change).
+        shared.ast_gate_seq = shared.ast_gate_seq + 1;
+    }
+
+    // Momentary Switch DOWN = held VFX (as in normal boot, where DOWN runs an effect).
+    // Picks one random effect from the full set on press and holds/churns it while down.
+    static bool ft_down_prev = false;
+    static int  ft_down_fx   = 0;
+    bool ft_down = (shared.sw_position == 2);
+    if (ft_down && !ft_down_prev) ft_down_fx = rnd() % FTFX_COUNT;   // re-roll on each press
+    if (ft_down) {
+        bool inv = false;
+        ft_run_vfx(ft_down_fx, phase, &inv);
+        if (inv) effect_invert = true;
+    }
+    ft_down_prev = ft_down;
+}
 
 static void __not_in_flash_func(screensaver_asteroids)() {
     struct Comet  { int32_t x, y, vx, vy; uint8_t active; uint8_t gen; }; // gen 0=parent,1=child
@@ -1487,7 +1979,7 @@ static void __not_in_flash_func(screensaver_lunar)() {
         // Gently rolling terrain: a random walk with SLOPE momentum (real hills, not noise),
         // over a modest vertical band. Slope changes slowly and is capped shallow so it's
         // not too spiky. Also only nudge the slope every few columns → longer, smoother hills.
-        const int HI = GREY_H - 40, LO = GREY_H - 6;   // highest peak .. lowest valley
+        const int HI = GREY_H - 40, LO = GREY_H - 10;  // highest peak .. lowest valley (raised)
         int h = (GREY_H - 24) - (rnd() % 12);
         int slope = 0;
         for (int i = 0; i < GREY_W; i++) {
@@ -1513,7 +2005,7 @@ static void __not_in_flash_func(screensaver_lunar)() {
         for (int i = 0; i < LUN_MAXUFO; i++) {
             if (i < n) { ufo[i].active = 1; ufo[i].x = (rnd()%GREY_W)<<8;
                          // spawn across the WHOLE playfield height (they pass through hills)
-                         ufo[i].y = (20 + rnd()%(GREY_H-30))<<8;
+                         ufo[i].y = (32 + rnd()%(GREY_H-42))<<8;  // top raised down 12px
                          // direction from a HIGH bit (LCG low bits are correlated → all same
                          // way); speed independent → some go L→R, others R→L, varied speeds.
                          int spd = 48 + rnd()%208;
@@ -1671,13 +2163,14 @@ static void __not_in_flash_func(screensaver_lunar)() {
 
     // HUD: STAGE n (top-left) + a big obvious FUEL bar (top-right), crisp text.
     text_mode = true;
-    // "ST n" drawn twice with a 1px offset = a bold/thicker weight. Shifted right 1 char.
-    draw_text(11, 2, "ST", GREY_LEVELS-1);   draw_text(12, 2, "ST", GREY_LEVELS-1);
-    draw_number(31, 2, stage, GREY_LEVELS-1); draw_number(32, 2, stage, GREY_LEVELS-1);
+    // "ST n" drawn twice with a 1px offset = a bold/thicker weight. Shifted right 1 char,
+    // and down one line (y 2 -> 14).
+    draw_text(11, 14, "ST", GREY_LEVELS-1);   draw_text(12, 14, "ST", GREY_LEVELS-1);
+    draw_number(31, 14, stage, GREY_LEVELS-1); draw_number(32, 14, stage, GREY_LEVELS-1);
 
     // Fuel: a thick outlined bar on the right that empties left-to-right (obvious at a
     // glance; no text label needed — it's clearly a gauge).
-    const int fx = 112, fy = 3, fw = 62, fh = 8;   // bar box (ends at col 174)
+    const int fx = 112, fy = 15, fw = 62, fh = 8;  // bar box (ends col 174); down one line
     // outline
     for (int i = 0; i <= fw; i++) {
         GREY_SET(grey_buffer, fy,      fx + i, GREY_LEVELS-1);
@@ -1708,8 +2201,8 @@ static void __not_in_flash_func(screensaver_maze)() {
     static uint8_t wall[MAZ_H][MAZ_W];
     static int32_t px, py;                 // player pos, 8.8 (cell units)
     static uint8_t pang;                   // heading 0..255
-    static int32_t mx, my; static int mtimer; static uint8_t mdir;   // monster
-    static int caught = 0;                 // >0: scare/flash countdown
+    static int exitx, exity, exit_face;   // EXIT: wall cell + which side faces open (0E1S2W3N)
+    static int caught = 0;                 // >0: reached-exit flash countdown
 
     auto rnd = [](){ return (int)(lcg_rand() & 0x7fffffff); };
     auto solid = [&](int cx, int cy)->bool {
@@ -1744,8 +2237,27 @@ static void __not_in_flash_func(screensaver_maze)() {
         else if (!solid(1,2)) pang = 0;      // south (64-64)
         else if (!solid(0,1)) pang = 64;     // west  (128-64)
         else                  pang = 128;    // north (192-64)
-        // Monster in a far open cell.
-        mx = ((MAZ_W-2)<<8)+128; my = ((MAZ_H-2)<<8)+128; mtimer=0; mdir=0;
+        // EXIT: pick a WALL cell (preferably far from the start) that borders an open cell,
+        // and record which side faces open — that face is drawn as a glowing white panel.
+        exitx = exity = exit_face = -1;
+        for (int tries = 0; tries < 200 && exit_face < 0; tries++) {
+            int wx = 1 + rnd() % (MAZ_W - 2), wy = 1 + rnd() % (MAZ_H - 2);
+            if (!wall[wy][wx]) continue;                 // must be a wall cell
+            if (wx + wy < (MAZ_W + MAZ_H) / 2) continue; // bias to the far half
+            if      (!solid(wx,   wy-1)) { exit_face = 3; }   // north face open
+            else if (!solid(wx,   wy+1)) { exit_face = 1; }   // south
+            else if (!solid(wx-1, wy))   { exit_face = 2; }   // west
+            else if (!solid(wx+1, wy))   { exit_face = 0; }   // east
+            if (exit_face >= 0) { exitx = wx; exity = wy; }
+        }
+        // Fallback: scan for any wall bordering open (guarantees an exit exists).
+        for (int wy = MAZ_H-2; wy >= 1 && exit_face < 0; wy--)
+            for (int wx = MAZ_W-2; wx >= 1 && exit_face < 0; wx--) {
+                if (!wall[wy][wx]) continue;
+                if      (!solid(wx,wy-1)) exit_face=3; else if (!solid(wx,wy+1)) exit_face=1;
+                else if (!solid(wx-1,wy)) exit_face=2; else if (!solid(wx+1,wy)) exit_face=0;
+                if (exit_face>=0) { exitx=wx; exity=wy; }
+            }
     };
     if (!init) { init = true; gen(); }
 
@@ -1753,12 +2265,19 @@ static void __not_in_flash_func(screensaver_maze)() {
     effect_invert = shared.pu2_held;               // PU2 held → invert (white-on-black accent)
     memset(grey_buffer, 0, GREY_SIZE);
 
-    // ── Scare state: flash + big monster, then reset. ──
+    // ── Reached-exit flash, then a fresh maze. ──
     if (caught > 0) {
         caught--;
         if (caught & 4) memset(grey_buffer, GREY_LEVELS-1, GREY_SIZE);   // strobe
         if (caught == 0) { shared.ast_gate_seq = shared.ast_gate_seq + 1; gen(); }
         return;
+    }
+    // Reached the exit? (player cell adjacent to the exit cell on its open face.)
+    {
+        int pcx0 = px>>8, pcy0 = py>>8;
+        int ex = exitx + (exit_face==0) - (exit_face==2);   // the open cell in front of the panel
+        int ey = exity + (exit_face==1) - (exit_face==3);
+        if (pcx0 == ex && pcy0 == ey) caught = 24;          // win → flash → new maze
     }
 
     // ── Movement. Two modes:
@@ -1844,7 +2363,13 @@ static void __not_in_flash_func(screensaver_maze)() {
     const int HALF = GREY_W/2, HORIZON = GREY_H/2;
     const int FOCAL = 90;                  // focal length (px) — sets FOV/zoom
     const int NEAR  = 24;                  // near-plane depth in 8.8 (~0.1 cell)
-    const int32_t WALLH = 1 << 8;          // wall half-height in world (1 cell)
+#ifdef TV_NTSC
+    // NTSC crops top/bottom, so shrink the walls vertically → borders top & bottom that let
+    // more of the receding top/bottom diagonals show (and nothing clips off the crop).
+    const int32_t WALLH = (1 << 8) * 205 / 256;   // ~0.8× wall half-height
+#else
+    const int32_t WALLH = 1 << 8;          // PAL: full wall half-height (1 cell)
+#endif
     int32_t cs = cos_a((uint8_t)(256 - pang)), sn = sin_a((uint8_t)(256 - pang)); // inverse rot
 
     // World (wx,wy) → camera space (right, forward). 8.8 throughout.
@@ -1872,10 +2397,10 @@ static void __not_in_flash_func(screensaver_maze)() {
     // Store projected corners AND the endpoint depths (da,db) so depth can be interpolated
     // PER COLUMN in the depth buffer (a single per-face average depth is wrong for angled
     // walls and is the cause of the see-through).
-    struct Face { int atx,aty,abx,aby, btx,bty,bbx,bby; int32_t da, db; int lvl; };
+    struct Face { int atx,aty,abx,aby, btx,bty,bbx,bby; int32_t da, db; int lvl; bool exit; };
     static Face faces[256];
     int nf = 0;
-    auto addface = [&](int32_t ax, int32_t ay, int32_t bx, int32_t by){
+    auto addface = [&](int32_t ax, int32_t ay, int32_t bx, int32_t by, bool is_exit=false){
         if (nf >= 256) return;
         int32_t cax, cay, cbx, cby;
         to_cam(ax, ay, cax, cay);
@@ -1902,6 +2427,7 @@ static void __not_in_flash_func(screensaver_maze)() {
         if (lvl < 1) lvl = 1;
         if (lvl > 4) lvl = 4;
         f.lvl = lvl;
+        f.exit = is_exit;
         faces[nf++] = f;
     };
 
@@ -1911,10 +2437,11 @@ static void __not_in_flash_func(screensaver_maze)() {
             if (gx<0||gx>=MAZ_W||gy<0||gy>=MAZ_H) continue;
             if (!wall[gy][gx]) continue;
             int32_t X = gx<<8, Y = gy<<8, U = 1<<8;
-            if (!solid(gx, gy-1)) addface(X,   Y,   X+U, Y  );   // north
-            if (!solid(gx, gy+1)) addface(X,   Y+U, X+U, Y+U);   // south
-            if (!solid(gx-1, gy)) addface(X,   Y,   X,   Y+U);   // west
-            if (!solid(gx+1, gy)) addface(X+U, Y,   X+U, Y+U);   // east
+            bool ex = (gx==exitx && gy==exity);      // this is the exit wall cell
+            if (!solid(gx, gy-1)) addface(X,   Y,   X+U, Y,   ex && exit_face==3); // north
+            if (!solid(gx, gy+1)) addface(X,   Y+U, X+U, Y+U, ex && exit_face==1); // south
+            if (!solid(gx-1, gy)) addface(X,   Y,   X,   Y+U, ex && exit_face==2); // west
+            if (!solid(gx+1, gy)) addface(X+U, Y,   X+U, Y+U, ex && exit_face==0); // east
         }
     // Per-column depth buffer holding inverse depth (1/z, bigger = nearer). Perspective-
     // correct: 1/z is LINEAR in screen space, so we interpolate it per column and compare.
@@ -1944,8 +2471,9 @@ static void __not_in_flash_func(screensaver_maze)() {
             if (yt > yb) { int tmp = yt; yt = yb; yb = tmp; }
             int cyt = yt < 0 ? 0 : yt, cyb = yb >= GREY_H ? GREY_H-1 : yb;
             bool vert = (x <= xl+1) || (x >= xr-1);          // near a vertical face edge
+            uint8_t fill = f.exit ? (GREY_LEVELS-1) : 0;     // EXIT face = glowing white panel
             for (int xx = x; xx <= x+1 && xx < GREY_W; xx++) {
-                for (int y = cyt; y <= cyb; y++) GREY_SET(grey_buffer, y, xx, 0);   // black fill
+                for (int y = cyt; y <= cyb; y++) GREY_SET(grey_buffer, y, xx, fill); // fill
                 if (yt >= 0 && yt < GREY_H) GREY_SET(grey_buffer, yt, xx, f.lvl);   // top edge
                 if (yb >= 0 && yb < GREY_H) GREY_SET(grey_buffer, yb, xx, f.lvl);   // bottom edge
                 if (vert) for (int y = cyt; y <= cyb; y++) GREY_SET(grey_buffer, y, xx, f.lvl);
@@ -1953,49 +2481,7 @@ static void __not_in_flash_func(screensaver_maze)() {
         }
     }
 
-    // ── Monster: wander; crude chase when near; billboard if in view + line of sight. ──
-    if (--mtimer <= 0) {
-        mtimer = 20 + rnd()%30;
-        // pick a direction biased toward the player
-        int ddx = (px - mx), ddy = (py - my);
-        mdir = atan2_u8(ddy, ddx);
-        if (rnd()&1) mdir += (rnd()%64) - 32;                 // some wander
-    }
-    { int32_t msp=18; int32_t nmx=mx+(cos_a(mdir)*msp>>8), nmy=my+(sin_a(mdir)*msp>>8);
-      if (!solid(nmx>>8, my>>8)) mx=nmx; else mtimer=0;
-      if (!solid(mx>>8, nmy>>8)) my=nmy; else mtimer=0; }
-    // catch?
-    { int cdx=(mx-px)>>8, cdy=(my-py)>>8; if (cdx*cdx+cdy*cdy <= 1) caught = 24; }
-    // billboard render if roughly ahead + line of sight
-    {
-        uint8_t mb = atan2_u8((my-py), (mx-px));
-        int8_t rel = (int8_t)(mb - pang);
-        if (rel > -MAZ_FOV && rel < MAZ_FOV) {
-            // line of sight: march from player to monster, stop if wall first
-            int32_t lx=px, ly=py; int32_t ldx=cos_a(mb), ldy=sin_a(mb); bool blocked=false;
-            int mdist=0;
-            for (int s=0;s<MAZ_MAXD*8;s++){ lx+=ldx>>2; ly+=ldy>>2; mdist++;
-                int gxx=lx>>8, gyy=ly>>8;
-                if (gxx==(mx>>8)&&gyy==(my>>8)) break;
-                if (solid(gxx,gyy)) { blocked=true; break; } }
-            if (!blocked && mdist>0) {
-                int sx = HALF + (rel * HALF) / MAZ_FOV;         // screen column
-                int perp = (mdist * cos_a((uint8_t)rel)) >> 8; if (perp<1) perp=1;
-                int mh = (GREY_H * 20) / perp; if (mh > GREY_H-4) mh = GREY_H-4;
-                int mw = mh*3/4;
-                int y0 = HORIZON - mh/2, y1 = HORIZON + mh/2;
-                for (int x=sx-mw/2; x<=sx+mw/2; x++) {
-                    if (x<0||x>=GREY_W) continue;
-                    for (int y=y0; y<=y1; y++) if (y>=0&&y<GREY_H) GREY_SET(grey_buffer,y,x,GREY_LEVELS-1);
-                }
-                // simple black "eyes"
-                if (mh>16){ int ey=y0+mh/3; for(int e=-1;e<=1;e++){int ex1=sx-mw/4+e,ex2=sx+mw/4+e;
-                    if(ey>=0&&ey<GREY_H){ if(ex1>=0&&ex1<GREY_W)GREY_SET(grey_buffer,ey,ex1,0);
-                                          if(ex2>=0&&ex2<GREY_W)GREY_SET(grey_buffer,ey,ex2,0);} } }
-                shared.alt_cv1 = 2047 - perp*16;                // CV Out 1 = monster nearness
-            }
-        }
-    }
+    // (No monster — the goal is the white EXIT panel; reaching it is detected above.)
 }
 
 // ── Alt-boot selector ───────────────────────────────────────────────────────────────
@@ -2004,9 +2490,10 @@ static void __not_in_flash_func(screensaver_maze)() {
 // modes. Top line = mode name (left) + "n/N" position (right); below it is the per-mode
 // help (inputs/outputs). Switch MID/DOWN plays the shown mode. Add a hybrid: add a name
 // here, its help lines below, and a case in the alt_mode dispatch (update_framebuffer).
-static const char *ALT_NAMES[] = { "COMET", "PATCHTEROIDS", "BOING", "STARFIELD", "RADAR", "LUNAR", "3DMAZE" };
+static const char *ALT_NAMES[] = { "COMET", "PATCHTEROIDS", "BOING", "STARFIELD", "RADAR", "LUNAR", "3DMAZE", "FOURTRIG" };
 #define ALT_COUNT ((int)(sizeof(ALT_NAMES)/sizeof(ALT_NAMES[0])))
 #define ALT_HYBRID_PATCH 1   // index of PATCHTEROIDS (its CV bridge is special on Core 0)
+#define ALT_FOURTRIG     7   // index of FOURTRIG (reads PU1/PU2/audio as its own triggers)
 #define ALT_DEFAULT 0        // mode used if you boot straight to MID/DOWN (COMET)
 static int alt_select = ALT_DEFAULT;   // chosen hybrid index (Core 1 only)
 
@@ -2018,7 +2505,8 @@ static const char *ALT_HELP[ALT_COUNT][5] = {
     /* STARFIELD    */ { "MAIN:SPEED", "X/CV1:TURN H", "Y/CV2:TURN V", "", "" },
     /* RADAR        */ { "MAIN:AIM PU1:FIRE", "PU2/CV1:PLACE ENEMY", "OUT1:SWEEP", "OUT2:HIT", "" },
     /* LUNAR        */ { "MAIN/CV1:ROTATE", "PU1/DOWN:THRUST", "OUT1:ALT", "OUT2:CRASH", "" },
-    /* 3DMAZE       */ { "MAIN:TURN PU1:FWD", "X/CV1:AUTORUN", "PU2:INVERT", "AVOID MONSTER", "OUT2:CAUGHT" },
+    /* 3DMAZE       */ { "MAIN:TURN PU1:FWD", "X/CV1:AUTORUN", "PU2:INVERT", "FIND EXIT", "OUT2:EXIT" },
+    /* FOURTRIG     */ { "TRIG:A1 A2 PU1 PU2", "X:BANK Y/CV2:SET", "MAIN/CV1:CHAOS", "DOWN:GLITCH", "OUT2:TRIG" },
 };
 
 // Draw text right-justified so it ends at grey column `gright` (font advance 9 cells/glyph).
@@ -2040,15 +2528,135 @@ static void __not_in_flash_func(draw_alt_menu)() {
 
     memset(grey_buffer, 0, GREY_SIZE);
 
-    // Top line: title (left) + "n/N" position (right).
-    draw_text(4, 4, ALT_NAMES[sel], GREY_LEVELS - 1);
+    // Top line: title (left) + "n/N" position (right). Nudged down one char line.
+    draw_text(4, 16, ALT_NAMES[sel], GREY_LEVELS - 1);
     char pos[8]; pos[0] = '1' + sel; pos[1] = '/'; pos[2] = '0' + ALT_COUNT; pos[3] = 0;
-    draw_text_right(GREY_W - 4, 4, pos, GREY_LEVELS - 1);
+    draw_text_right(GREY_W - 4, 16, pos, GREY_LEVELS - 1);
 
     // Per-mode help (inputs/outputs) below.
     for (int h = 0; h < 5; h++) {
         const char *t = ALT_HELP[sel][h];
-        if (t && t[0]) draw_text(4, 22 + h * 12, t, GREY_LEVELS - 1);
+        if (t && t[0]) draw_text(4, 34 + h * 12, t, GREY_LEVELS - 1);
+    }
+}
+
+// ── SPECTRUM: audio analyser (Goertzel filter bank) ─────────────────────────────────
+// A bank of 24 integer Goertzel detectors, log-spaced ~80 Hz…8 kHz (fs 48 kHz), run once
+// per frame over the frame's audio block (Core 1). Each → one vertical bar (low freq left).
+// coeff = 2·cos(2π·f/fs) in Q13 (×8192). Bars decay smoothly; UP = spiky peak-hold, MID =
+// solid bargraph. Knob Y = gain (shared.scope_audio_scale), like the scope.
+#define SPEC_BANDS 24
+static const int32_t spec_coeff[SPEC_BANDS] = {
+    16383,16383,16382,16381,16380,16377,16374,16369,16362,16351,16335,16311,
+    16274,16220,16140,16020,15842,15578,15186,14607,13755,12514,10725,8192 };
+// Per-band gain TILT (Q8, 256 = 1×): cut the low end, lift the highs so a swept sine reads
+// roughly even (bass is otherwise over-represented — many log bands + more natural LF
+// energy). Moderate rising ramp ~0.27× (low) → ~3.0× (high) — between the too-flat and
+// over-corrected extremes.
+static const int32_t spec_tilt[SPEC_BANDS] = {
+    54,64,76,90,107,127,151,179,213,253,300,356,
+    423,502,596,708,840,997,1184,1405,1668,1980,2350,2790 };
+
+static void __not_in_flash_func(spectrum_render)(uint8_t sw, int32_t knob, bool swap) {
+    static int  bar[SPEC_BANDS]  = {0};   // current (decaying) magnitudes, cells
+
+    dilate_cap = 1;
+
+    // Spectrum's OWN X/Y, resolved by the Core-0 pickup system (PICK_SPEC_GAIN/ROT) so they
+    // are distinct from the scope's baseline/gain and only change when the knob is physically
+    // moved (no jump when entering the mode).
+    int32_t ky = shared.spec_gain;                 // 0..4095 → gain
+    int32_t kx = shared.spec_rot;                  // 0..4095 → radial rotate offset
+
+    // Decay speed set by how far through the SPECTRUM third the Main knob is (like the fade-
+    // rate/sweep-speed sub-mappings of the other two zones). Low end of the zone = slow,
+    // lingering decay; high end = fast, snappy.
+    int32_t kspan = 4095 - SPECTRUM_THRESH;
+    int32_t kpos  = knob - SPECTRUM_THRESH;
+    if (kpos < 0) kpos = 0;
+    if (kpos > kspan) kpos = kspan;
+    int fall = 1 + (kpos * 6) / kspan;            // bar fall: 1 (slow) .. 7 (fast) cells/frame
+
+    // ── Analyse the frame's audio block. Read the newest N samples (don't disturb the
+    //    scope's audio_read_idx — take a private window ending at the write head). ──
+    const int N = 512;
+    uint32_t aw = audio_write_idx;
+    for (int b = 0; b < SPEC_BANDS; b++) {
+        int32_t c = spec_coeff[b];
+        int32_t s1 = 0, s2 = 0;
+        uint32_t idx = aw - N;
+        for (int n = 0; n < N; n++) {
+            int32_t x = audio_ring[idx & AUDIO_RING_MASK] >> 3;   // scale down (overflow guard)
+            int32_t s0 = ((c * s1) >> 13) - s2 + x;
+            s2 = s1; s1 = s0;
+            idx++;
+        }
+        // Goertzel magnitude²: s1² + s2² − coeff·s1·s2 . Then sqrt → magnitude.
+        int32_t p = s1*s1 + s2*s2 - (int32_t)(((int64_t)c * s1 * s2) >> 13);
+        if (p < 0) p = 0;
+        int32_t mag = (int32_t)isqrt_u((uint32_t)p);
+        mag = (mag * spec_tilt[b]) >> 8;                          // per-band tilt (tame lows)
+        // Gain from Knob Y — gentle so the useful range spans the whole knob (not maxed in
+        // the bottom 20%). h in cells.
+        int h = (int)(((int64_t)mag * ky) >> 16);                 // tune the shift for range
+        if (h > GREY_H - 1) h = GREY_H - 1;
+        // Decay: bars fall smoothly instead of snapping down.
+        if (h >= bar[b]) bar[b] = h; else { bar[b] -= fall; if (bar[b] < h) bar[b] = h; }
+    }
+
+    if (sw == 1) {
+        // ── MID: vertical bargraph, each bar styled like a stack of LEDs — solid white with
+        //    thin BLACK divider lines every SEG cells; the topmost occupied segment is grey-
+        //    shaded by its fractional fill (5 levels). SWAP flips bass↔treble across X. ──
+        memset(grey_buffer, 0, GREY_SIZE);
+        const int bw  = GREY_W / SPEC_BANDS;       // ~7 px per band
+        const int SEG = 6;                         // LED segment height (cells)
+        const int base = GREY_H - 1 - NTSC_BOTTOM_INSET;   // bar baseline (raised on NTSC)
+        for (int b = 0; b < SPEC_BANDS; b++) {
+            int bi = swap ? (SPEC_BANDS - 1 - b) : b;   // swap → reverse bin order on screen
+            int x0 = bi * bw, x1 = x0 + bw - 1;    // 1px gap between bars
+            int hgt = bar[b];
+            for (int seg_base = 0; seg_base < hgt; seg_base += SEG) {
+                int seg_fill = hgt - seg_base;      // cells filled in this segment
+                bool topmost = (seg_fill < SEG);
+                int lvl = GREY_LEVELS - 1;          // full segments = white
+                if (topmost) {                      // part-lit top: level by fraction
+                    lvl = 1 + (seg_fill * (GREY_LEVELS - 1)) / SEG;   // 1..4
+                    if (lvl > GREY_LEVELS - 1) lvl = GREY_LEVELS - 1;
+                }
+                int cells = topmost ? seg_fill : (SEG - 1);   // leave 1 cell for the divider
+                int ytop = base - (seg_base + cells - 1);
+                int ybot = base - seg_base;
+                for (int gx = x0; gx < x1 && gx < GREY_W; gx++)
+                    for (int gy = ytop; gy <= ybot; gy++)
+                        if (gy >= 0 && gy < GREY_H) GREY_SET(grey_buffer, gy, gx, lvl);
+            }
+        }
+    } else {
+        // ── UP: RADIAL BLOB — 24 vertices at even angles, pushed out by magnitude and
+        //    CONNECTED around the perimeter (closed loop). FADE (not clear) → grey echo trail.
+        //    Knob X rotates the whole blob; SWAP reverses the band→angle order. ──
+        static int echo_ctr = 0;
+        int echo_every = 8 - fall;
+        if (echo_every < 1) echo_every = 1;
+        if (++echo_ctr >= echo_every) { echo_ctr = 0; fade_step(); }
+        const int ccx = GREY_W / 2, ccy = GREY_H / 2;
+        const int RMIN = 6, RMAX = GREY_H / 2 - 3;
+        uint8_t rot = (uint8_t)(kx >> 4);          // Knob X → 0..255 rotation offset
+        int vx[SPEC_BANDS], vy[SPEC_BANDS];
+        for (int b = 0; b < SPEC_BANDS; b++) {
+            int bi = swap ? (SPEC_BANDS - 1 - b) : b;
+            uint8_t a = (uint8_t)((bi * 256) / SPEC_BANDS + rot);
+            int len = RMIN + (bar[b] * (RMAX - RMIN)) / (GREY_H - 1);
+            vx[b] = ccx + (cos_a(a) * len >> 8);
+            vy[b] = ccy + (sin_a(a) * len >> 8);
+        }
+        // 2×2-thick perimeter (plot_dot is 2px wide; one extra vertical offset → 2×2).
+        for (int b = 0; b < SPEC_BANDS; b++) {
+            int nb = (b + 1) % SPEC_BANDS;
+            draw_line(vx[b], vy[b],   vx[nb], vy[nb],   GREY_LEVELS-1);
+            draw_line(vx[b], vy[b]+1, vx[nb], vy[nb]+1, GREY_LEVELS-1);
+        }
     }
 }
 
@@ -2063,7 +2671,10 @@ static void __not_in_flash_func(update_framebuffer)() {
     int32_t  gxn     = shared.etch_cvgain_x;
     int32_t  gyn     = shared.etch_cvgain_y;
     uint8_t  sw      = shared.sw_position;
-    bool     etch    = (knob < ETCH_THRESH);   // far-CCW = etch (CV1 vs CV2)
+    // Normal-mode switch view with UP<->MID SWAPPED (DOWN unchanged). All normal-mode
+    // render/behaviour uses nsw; alt-boot keeps the raw physical sw_position.
+    uint8_t  nsw     = (sw == 0) ? 1 : (sw == 1) ? 0 : 2;
+    MainMode mode    = main_mode(knob);        // thirds: etch / scope / spectrum
     // (Pulse In 1 is now a configurable trigger source — see below; clearing the screen
     //  is available as the CLS behaviour.)
 
@@ -2082,6 +2693,7 @@ static void __not_in_flash_func(update_framebuffer)() {
                 case 4:  screensaver_radar();     break;   // RADAR (radar shooter)
                 case 5:  screensaver_lunar();     break;   // LUNAR (lunar lander)
                 case 6:  screensaver_maze();      break;   // 3DMAZE (first-person maze)
+                case 7:  screensaver_fourtrig();  break;   // FOURTRIG (four trigger stamps)
                 default: screensaver_bounce();    break;   // 0 = COMET
             }
         }
@@ -2113,12 +2725,19 @@ static void __not_in_flash_func(update_framebuffer)() {
     effect_invert = fx_down.strobe_invert || fx_pu1.strobe_invert || fx_pu2.strobe_invert;
     if (finished) { expand_grey_to_fb(); return; }
 
-    if (!etch) {
+    if (mode == MODE_SPECTRUM) {
+        etch_have_prev = false;
+        spectrum_render(nsw, knob, swap_xy);   // knob-in-zone = decay; swap reverses bins
+        expand_grey_to_fb();
+        return;
+    }
+
+    if (mode == MODE_SCOPE) {
         etch_have_prev = false;   // in scope mode: next etch sample starts fresh
 
-        // Sweep speed from knob: lerp SCOPE_STEP_SLOW..FAST across knob[ETCH_THRESH..4095].
-        // 8.8 fixed-point cols/frame.
-        int32_t kspan = 4095 - ETCH_THRESH;
+        // Sweep speed from knob: lerp SCOPE_STEP_SLOW..FAST across the MIDDLE third of the
+        // knob (ETCH_THRESH..SPECTRUM_THRESH). 8.8 fixed-point cols/frame.
+        int32_t kspan = SPECTRUM_THRESH - ETCH_THRESH;
         int32_t kpos  = knob - ETCH_THRESH; if (kpos < 0) kpos = 0; if (kpos > kspan) kpos = kspan;
         uint32_t step = SCOPE_STEP_SLOW +
             (uint32_t)((int64_t)(SCOPE_STEP_FAST - SCOPE_STEP_SLOW) * kpos / kspan);
@@ -2169,18 +2788,18 @@ static void __not_in_flash_func(update_framebuffer)() {
             int lo = gpy < mid ? gpy : mid;
             int hi = gpy < mid ? mid : gpy;
 
-            if (sw == 1) {  // MIDDLE — static: clear column for a single clean trace
+            if (nsw == 1) {  // (swapped) static: clear column for a single clean trace
                 for (int gy = 0; gy < GREY_H; gy++) GREY_SET(grey_buffer, gy, gx, 0);
             }
             for (int gy = lo; gy <= hi; gy++)
                 GREY_SET(grey_buffer, gy, gx, GREY_LEVELS - 1);
 
-            if (sw == 0) {  // UP — fade locked to sweep
+            if (nsw == 0) {  // (swapped) fade locked to sweep
                 if (++fade_cols >= FADE_EVERY_COLS) { fade_cols = 0; fade_step(); }
             }
         }
         audio_read_idx = aw;   // consumed up to the snapshot head
-    } else {
+    } else {   // MODE_ETCH (spectrum returned early above)
         // Etch-a-sketch: drain every CV sample Core 0 queued and plot at white (L2).
         uint32_t w = etch_write_idx;        // snapshot Core 0's write head
         uint32_t avail = w - etch_read_idx; // unsigned wrap-safe count
@@ -2216,9 +2835,9 @@ static void __not_in_flash_func(update_framebuffer)() {
             etch_prev_y = gy;
             etch_have_prev = true;
         }
-        // Etch fade (switch UP): rate from knob across the etch quarter — knob 0 =
-        // fastest (~0.25s), knob (ETCH_THRESH-1) = slowest (~3s).
-        if (sw == 0) {
+        // Etch fade (now on MIDDLE after the UP<->MID swap): rate from knob across the etch
+        // zone — knob 0 = fastest (~0.25s), knob (ETCH_THRESH-1) = slowest (~3s).
+        if (nsw == 0) {
             int32_t kp = knob; if (kp < 0) kp = 0; if (kp >= ETCH_THRESH) kp = ETCH_THRESH - 1;
             uint32_t interval = ETCH_FADE_FAST +
                 (uint32_t)((ETCH_FADE_SLOW - ETCH_FADE_FAST) * kp / (ETCH_THRESH - 1));
@@ -2394,6 +3013,18 @@ public:
         shared.pu2_held = PulseIn2();
         if (PulseIn2RisingEdge()) shared.pu2_rising = true;
 
+        // Audio In 1/2 as trigger inputs (FourTrig). Edge-detect a rising crossing of
+        // +AIN_HI with hysteresis: fire once when it rises past AIN_HI, re-arm only after
+        // it falls back below AIN_LO. Works for audio/percussive transients and gates.
+        #define AIN_HI 500
+        #define AIN_LO 150
+        static bool ain1_armed = true, ain2_armed = true;
+        int32_t a1 = AudioIn1(), a2 = AudioIn2();
+        if (ain1_armed && a1 > AIN_HI) { shared.ain1_rising = true; ain1_armed = false; }
+        else if (!ain1_armed && a1 < AIN_LO) ain1_armed = true;
+        if (ain2_armed && a2 > AIN_HI) { shared.ain2_rising = true; ain2_armed = false; }
+        else if (!ain2_armed && a2 < AIN_LO) ain2_armed = true;
+
         Switch sw = SwitchVal();
         if      (sw == Switch::Up)     shared.sw_position = 0;
         else if (sw == Switch::Middle) shared.sw_position = 1;
@@ -2406,15 +3037,17 @@ public:
         static uint32_t boot_ctr = 0;
         static KnobPick pkX, pkY;
         static bool pick_init = false;
-        if (!pick_init) {   // defaults: centred offset/baseline, unity scale & audio
-            //     offset,        scale, audio, baseline,        bound,      bind, captured
-            pkX = { (GREY_W-1)/2, 256,   256,   (GREY_H-1)/2,    PICK_SCALE, 0,    true };
-            pkY = { (GREY_H-1)/2, 256,   256,   (GREY_H-1)/2,    PICK_SCALE, 0,    true };
+        if (!pick_init) {   // defaults: centred offset/baseline, unity scale & audio, mid spec
+            //     offset,        scale, audio, baseline,     specgain, specrot, bound,     bind, captured
+            pkX = { (GREY_W-1)/2, 256,   256,   (GREY_H-1)/2, 2048,     2048,    PICK_SCALE, 0,   true };
+            pkY = { (GREY_H-1)/2, 256,   256,   (GREY_H-1)/2, 2048,     2048,    PICK_SCALE, 0,   true };
             pick_init = true;
         }
-        uint8_t swp = shared.sw_position;     // 0=UP 1=MID 2=DOWN
+        uint8_t swp = shared.sw_position;     // 0=UP 1=MID 2=DOWN (physical)
+        // Normal-mode view with UP<->MID swapped (DOWN unchanged) — used for the etch
+        // scale/offset knob-role choice so it matches the render-side swap.
+        uint8_t nswp = (swp == 0) ? 1 : (swp == 1) ? 0 : 2;
         bool down = (swp == 2);
-        bool etch_mode = (shared.knob_main < ETCH_THRESH);
 
         // ── Alt-boot latch + UI state machine (Core 0 owns) ────────────────────
         // Latch alt-mode once the ADC has settled: DOWN held through settle = alt mode.
@@ -2445,7 +3078,10 @@ public:
         // showing (switch UP), leave knob_main raw so only the Main knob picks the mode
         // (CV1 must not fold into it, or it would drift the selection).
         if (shared.alt_mode && shared.sw_position != 0) {
-            if (shared.pu1_rising) { shared.ast_fire = true; shared.pu1_rising = false; }
+            // PU1 → ast_fire for the game hybrids (Patchteroids/Boing). FOURTRIG reads
+            // pu1_rising itself (as one of its four triggers), so don't consume it there.
+            if (shared.alt_hybrid != ALT_FOURTRIG &&
+                shared.pu1_rising) { shared.ast_fire = true; shared.pu1_rising = false; }
 
             if (shared.alt_hybrid == ALT_HYBRID_PATCH) {       // PATCHTEROIDS
                 int32_t steer = shared.knob_main + shared.cv_x;   // cv_x = CVIn1, ±2048
@@ -2518,13 +3154,18 @@ public:
             if (menu_x_eng) shared.cfg_pu1 = clamp(rawX*BHV_COUNT/4096, 0, BHV_COUNT-1);
             if (menu_y_eng) shared.cfg_pu2 = clamp(rawY*BHV_COUNT/4096, 0, BHV_COUNT-1);
         }
-        // Knob destinations by mode + switch:
-        //   ETCH + UP  → both SCALE      ETCH + MID → both OFFSET
-        //   SCOPE(up/mid) → X = OFFSET (centre-line vertical pos), Y = AUDIO gain
+        // Knob destinations by mode + switch (3-way: etch / scope / spectrum):
+        //   ETCH  → X/Y = SCALE (UP-swapped) or OFFSET
+        //   SCOPE → X = BASELINE, Y = AUDIO gain
+        //   SPECTRUM → X = SPEC_ROT, Y = SPEC_GAIN (own values, distinct from scope)
         //   DOWN → performance effect; knobs hold their current binding (no change).
         uint8_t desiredX, desiredY;
-        if (etch_mode) {
-            desiredX = desiredY = (swp == 0) ? PICK_SCALE : PICK_OFFSET;  // UP=scale, MID=offset
+        MainMode pmode = main_mode(shared.knob_main);
+        if (pmode == MODE_ETCH) {
+            desiredX = desiredY = (nswp == 0) ? PICK_SCALE : PICK_OFFSET; // (swapped) scale/offset
+        } else if (pmode == MODE_SPECTRUM) {
+            desiredX = PICK_SPEC_ROT;   // spectrum: X = rotate/position
+            desiredY = PICK_SPEC_GAIN;  // spectrum: Y = gain
         } else {
             desiredX = PICK_BASELINE; // scope: X = baseline vertical position
             desiredY = PICK_AUDIO;    // scope: Y = audio gain
@@ -2554,6 +3195,10 @@ public:
                 } else if (p.bound == PICK_BASELINE) {
                     // scope centre-line vertical position, 0..GREY_H-1 (0V baseline row)
                     p.stored_baseline = (raw * (GREY_H - 1)) / 4095;
+                } else if (p.bound == PICK_SPEC_GAIN) {
+                    p.stored_specgain = raw;        // spectrum gain: raw 0..4095 (own value)
+                } else if (p.bound == PICK_SPEC_ROT) {
+                    p.stored_specrot  = raw;        // spectrum rotate/pos: raw 0..4095
                 } else { // PICK_SCALE: 0..1024 (256=1×) attenuate/boost CV up to 4×
                     p.stored_scale = (raw * 1024) / 4095;
                 }
@@ -2588,12 +3233,15 @@ public:
         shared.etch_cvgain_y = (int32_t)((int64_t)pkY.stored_scale * (GREY_H - 1) * 4096 / (256 * 4095));
         shared.scope_audio_scale = pkY.stored_audio;   // Y knob in scope: 0..512 (256=1×)
         shared.scope_baseline    = pkX.stored_baseline; // X knob in scope: baseline row
+        shared.spec_gain         = pkY.stored_specgain; // Y knob in spectrum: own gain
+        shared.spec_rot          = pkX.stored_specrot;  // X knob in spectrum: own rotate/pos
 
-        bool etch = (shared.knob_main < ETCH_THRESH);
-        LedOn(0, !etch);                   // scope mode
-        LedOn(1, etch);                    // etch-a-sketch mode (far CCW)
+        MainMode m = main_mode(shared.knob_main);
+        LedOn(0, m == MODE_SCOPE);         // scope mode
+        LedOn(1, m == MODE_ETCH);          // etch-a-sketch mode (lower third)
+        LedOn(5, m == MODE_SPECTRUM);      // spectrum analyser (upper third)
         LedOn(2, shared.menu_active);      // config menu open
-        LedOn(3, shared.sw_position == 0); // fade active
+        LedOn(3, !shared.alt_mode && shared.sw_position == 1); // fade/persistence (now MIDDLE)
         LedOn(4, shared.sw_position == 2); // switch DOWN held (effect/menu)
     }
 };
