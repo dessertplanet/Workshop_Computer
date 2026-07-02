@@ -17,6 +17,7 @@
     "vscode": {
       "extensions": [
         "marus25.cortex-debug",
+        "mcu-debug.debug-tracker-vscode",
         "ms-vscode.cpptools",
         "rioj7.command-variable"
       ],
