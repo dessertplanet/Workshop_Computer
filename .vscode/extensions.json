@@ -1,10 +1,4 @@
 {
-  "recommendations": [
-    "marus25.cortex-debug",
-    "mcu-debug.debug-tracker-vscode",
-    "ms-vscode.cpptools",
-    "rioj7.command-variable"
-  ],
   "unwantedRecommendations": [
     "ms-vscode.makefile-tools",
     "ms-vscode.cmake-tools",
