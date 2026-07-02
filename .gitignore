@@ -17,6 +17,7 @@ Icon?
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+!.vscode/settings.json
 site/
 tools/sitegen/node_modules/
 

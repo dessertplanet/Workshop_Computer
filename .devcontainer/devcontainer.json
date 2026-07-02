@@ -17,11 +17,13 @@
     "vscode": {
       "extensions": [
         "marus25.cortex-debug",
-        "ms-vscode.cpptools"
+        "ms-vscode.cpptools",
+        "rioj7.command-variable"
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "bash",
-        "cmake.ignoreCMakeListsMissing": true
+        "cmake.ignoreCMakeListsMissing": true,
+        "commandvariable.remember.persistent.file": "${workspaceFolder}${pathSeparator}.vscode${pathSeparator}.card.json"
       }
     }
   }

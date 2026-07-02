@@ -1,7 +1,8 @@
 {
   "recommendations": [
     "marus25.cortex-debug",
-    "ms-vscode.cpptools"
+    "ms-vscode.cpptools",
+    "rioj7.command-variable"
   ],
   "unwantedRecommendations": [
     "ms-vscode.makefile-tools",

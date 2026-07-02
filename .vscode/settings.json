@@ -1,0 +1,5 @@
+{
+  // Persist the "remembered" card choice (from the command-variable extension)
+  // across VS Code restarts, so you are only prompted the first time.
+  "commandvariable.remember.persistent.file": "${workspaceFolder}${pathSeparator}.vscode${pathSeparator}.card.json"
+}
