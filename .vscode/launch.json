@@ -47,7 +47,11 @@
       "executable": "${input:cardDir}/build/.last.elf",
       "preLaunchTask": "ComputerCard: build + flash",
       "runToEntryPoint": "main",
-      "postAttachCommands": ["monitor reset init"]
+      "postAttachCommands": ["monitor reset init"],
+      "liveWatch": {
+        "enabled": true,
+        "samplesPerSecond": 4
+      }
     }
   ]
 }
