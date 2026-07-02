@@ -1,6 +1,5 @@
-id: 04_BYO_Benjolin
-title: BYO Benjolin
 draft: false
+Name: BYO Benjolin
 Description: Rungler, Chaotic VCO, Noise Source, Turing Machine, Quantizer
 Language: Pico SDK
 Creator: Dune Desormeaux
@@ -88,13 +87,24 @@ panel:
       type: pulse
 
 controls:
+  switch:
+    up:
+      name: Double Length
+      description: Toggles the write cell each clock, producing a stable loop of double length
+    middle:
+      name: Unlock
+      description: Writes from the data input (or internal noise) when data exceeds the Chaos threshold
+    down:
+      name: Write
+      description: Forces the write cell to a fixed value
   knobs:
-    main:
-      name: Chaos
-      description: Lock (stable loop) through Chaos (random) probability that shift-register cells change
-    x:
-      name: Offset
-      description: Sets output offset amount (or depth for Offset CV / CV In 1 modulation)
-    y:
-      name: Chaos VCA
-      description: Scales rungler output amplitude (or depth for VCA CV / CV In 2 modulation)
+    - when: { z: any }
+      main:
+        name: Chaos
+        description: Lock (stable loop) through Chaos (random) probability that shift-register cells change
+      x:
+        name: Offset
+        description: Sets output offset amount (or depth for Offset CV / CV In 1 modulation)
+      y:
+        name: Chaos VCA
+        description: Scales rungler output amplitude (or depth for VCA CV / CV In 2 modulation)
