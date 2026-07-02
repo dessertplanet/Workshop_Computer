@@ -71,11 +71,26 @@ and flashes the matching `build/<stem>.elf`. Useful variables:
 
 Debug probe reference: https://learn.adafruit.com/raspberry-pi-pico-debug-probe
 
+## VS Code tasks and F5 debugging
+
+The committed `.vscode/` configs let you build, flash, and debug without the
+terminal. They ask for the **card directory** via a prompt (default
+`releases/04_BYO_Benjolin`) instead of guessing from the open file, so they work
+no matter what you have focused:
+
+- **Tasks** (`Run Task`): `ComputerCard: build`, `ComputerCard: flash`.
+- **Debug (F5)**: `ComputerCard: attach (OpenOCD)` builds the card, attaches
+  Cortex-Debug to the host OpenOCD GDB server, and breaks at `main`. Start
+  OpenOCD on the host first (see above).
+
+The debug config loads `<cardDir>/build/.last.elf` — a symlink the build step
+updates to the most recently built ELF — so it is card-name agnostic.
+
+Only `tasks.json`, `launch.json`, and `extensions.json` are tracked; personal
+VS Code settings under `.vscode/` remain ignored.
+
 ## Notes
 
-- VS Code tasks/launch configs are intentionally not committed (this repo
-  ignores `.vscode/`); wire up your own if you want F5 debugging against the
-  running OpenOCD GDB server.
 - Submodules (e.g. `releases/41_blackbird/lua`) are not initialized
   automatically; run `git submodule update --init --recursive <path>` only for
   the card you are building.

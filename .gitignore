@@ -13,7 +13,10 @@ Icon?
 *.tmp
 *.dmp
 .fseventsd
-.vscode/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
 site/
 tools/sitegen/node_modules/
 

@@ -20,7 +20,8 @@
         "ms-vscode.cpptools"
       ],
       "settings": {
-        "terminal.integrated.defaultProfile.linux": "bash"
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "cmake.ignoreCMakeListsMissing": true
       }
     }
   }
