@@ -70,6 +70,6 @@
 | 91_chorgan | Chorgan — 6-voice chord synthesizer with morphing timbre, chord extension presets, and built-in chord sequencer. Two modes: normal (detune/chorus) and slew (portamento chord changes). Inspired by the Music Thing Modular Chord Organ. | 1.1.0<br>released | C++ (Pico SDK / ComputerCard) | Andy Jenkinson (uglifruit) |
 | 93_Turing_Matrix | <br>[Web editor](https://tomwhitwell.github.io/Workshop_Computer/programs/93-turing-matrix/web/index.html) |  |  |  |
 | 95_offair2 | OffAir — AM/Shortwave/Longwave radio simulator. Tune between two Stations and interference with authentic heterodyne whistles, SSB pitch-shift detuning, AM envelope detection, swelling per-band static, and triggerable Insta-ference one-shots. Baked recordings or live audio inputs become the Stations. | 1.0.1<br>released | C++ (Pico SDK / ComputerCard) | Andy Jenkinson (uglifruit) |
-| 96_cathode | PAL composite video synthesiser — oscilloscope + etch-a-sketch, greyscale via dithering, performance effects | 1.1.0<br>Released | C++ (RP2040 Pico SDK) | Andy Jenkinson (uglifruit) |
+| 96_cathode | Composite video synthesiser (PAL + NTSC builds) — oscilloscope, etch-a-sketch & spectrum analyser, greyscale via dithering, performance effects, 8 alt-boot screensaver/game modes | 1.2.0<br>Released | C++ (RP2040 Pico SDK) | Andy Jenkinson (uglifruit) |
 | 98_duo_midi | A duophonic midi device/host interface | 0.1<br>Released | Lua / Blackbird | Dune Desormeaux |
 | 99_toolbox | Mixer, VCA, noise, S&H, clock generator, etc. | 0.1.1<br>Released | C++ (ComputerCard) | divmod |
