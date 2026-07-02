@@ -3,7 +3,7 @@ Name: Cathode Ray
 Description: PAL composite video synthesiser — oscilloscope + etch-a-sketch, greyscale via dithering, performance effects
 Language: C++ (RP2040 Pico SDK)
 Creator: Andy Jenkinson (uglifruit)
-Version: 1.0.0
+Version: 1.1.0
 Status: Released
 License: MIT
 Repository: https://github.com/TomWhitwell/Workshop_Computer/tree/main/releases/96_cathode
@@ -32,11 +32,24 @@ manual: |
   effect: strobe / fade / fade-to-white / snow / swap / corrupt / roll). Hold Switch
   DOWN and twist Main/X/Y to open the on-screen config menu and assign each source.
 
-  Hold Switch DOWN at power-on for alt-boot mode: Switch UP shows a selector (Main knob
-  picks), MIDDLE/DOWN plays. PATCHTEROIDS is a patch-controlled Asteroids game — Main
-  knob (+ CV In 1) steers, PU1 / Switch DOWN fire; CV Out 1 = pitch (rises a semitone
-  per hit, arpeggiates down on a crash), CV Out 2 = gate per hit. COMET is a passive
-  bouncing-block screensaver. Both protect CRTs from burn-in.
+  Hold Switch DOWN at power-on for ALT-BOOT mode: a selector of screensaver / performance
+  hybrids that also protect a CRT from burn-in. Switch UP shows the selector (Main knob
+  scrolls through the modes, with on-screen input/output help); Switch MIDDLE or DOWN
+  plays the shown mode. Modes:
+   • COMET — a round comet with a phosphor tail (Main/CV1 = speed, Y/CV2 = tail length).
+   • PATCHTEROIDS — patch-controlled Asteroids. Main (+ CV In 1) steers, PU1 / Switch DOWN
+     fire. CV Out 1 = pitch (+1 semitone per hit, arpeggiates down on a crash), CV Out 2 =
+     gate per hit.
+   • BOING — Amiga-style tilted rotating checkered ball. Knob X / CV1 = spin & kick impulse,
+     Main / CV2 = bounce efficiency, Knob Y = horizontal speed, PU1 / DOWN = kick.
+     CV Out 1 = height, CV Out 2 = trigger on each floor bounce.
+   • STARFIELD — fly through space. Main = speed, X/CV1 = horizontal turn, Y/CV2 = vertical.
+   • RADAR — a radar scope. Main aims a turret, PU1 / DOWN fires a ballistic missile (hold =
+     range); PU2 (CV1 sets radius) drops fading target blocks. CV Out 2 = pulse on a hit.
+   • LUNAR — Lunar Lander. Main / CV1 rotate, PU1 / DOWN thrust; land gently on the pad
+     (narrows each stage) avoiding drifting UFOs. CV Out 1 = altitude, CV Out 2 = crash.
+   • 3DMAZE — first-person wireframe maze with a roaming monster. Main turns, PU1 / DOWN
+     walks; Knob X / CV1 = hands-free auto-run. CV Out 2 = pulse when the monster catches you.
 
 panel:
   inputs:
@@ -63,11 +76,11 @@ panel:
       name: Video DAC bit 1
       description: Composite video via 220Ω (white step); summed into RCA centre pin
     - id: CVOut1
-      name: Patchteroids Pitch
-      description: Alt-boot Patchteroids only — 1V/oct pitch, +1 semitone per hit (else unused)
+      name: Alt-boot CV
+      description: Alt-boot only — mode-dependent (Patchteroids pitch / Boing height / etc). Unused in the main synth.
     - id: CVOut2
-      name: Patchteroids Gate
-      description: Alt-boot Patchteroids only — gate pulse on each hit (else unused)
+      name: Alt-boot Trigger
+      description: Alt-boot only — mode-dependent event pulse (hit / bounce / crash / caught). Unused in the main synth.
 
 controls:
   modes:
