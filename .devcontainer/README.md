@@ -16,9 +16,8 @@ the toolchain and `make` behavior.
 3. Build a card:
 
    ```sh
-   cd releases/10_twists/src
-   make            # configure + build into ./build/
-   make uf2        # stage produced *.uf2 into ./UF2/
+   cd releases/11_goldfish
+   make            # configure + build into ./build/, and stage *.uf2 into ./UF2/
    ```
 
 The container ships CMake, Ninja, the ARM GCC toolchain, a pinned Pico SDK at
@@ -32,8 +31,10 @@ The container sets `MAKEFILES` to auto-include
 that looks like a Pico SDK CMake project but has no local `Makefile`, this
 provides:
 
-- `make` / `make build` — configure + build into `./build/`
-- `make uf2` — stage produced `*.uf2` into `./UF2/`
+- `make` / `make build` — configure + build into `./build/`, and stage any
+  produced `*.uf2` into `./UF2/`
+- `make uf2` — same as `make build`, then print the staged `*.uf2` path(s)
+  (staging already happens during the build; this is just for convenience)
 - `make clean` — remove the build directory
 - `make flash` — flash via GDB against a host-side OpenOCD (see below)
 
@@ -49,7 +50,7 @@ every compatible `releases/*` card with `make all`.
 
 ## Flashing / debugging (host-side OpenOCD)
 
-Flashing runs OpenOCD **on the host** and connects from inside the container to
+Flashing runs OpenOCD **on the host (outside the container!)** and connects from inside the container to
 its GDB server at `host.docker.internal:3333`. This keeps USB probe access and
 permissions simple across platforms.
 
@@ -61,7 +62,7 @@ Start OpenOCD on the host:
 Then, inside the container:
 
 ```sh
-cd releases/10_twists/src
+cd releases/11_goldfish
 make flash
 ```
 
@@ -74,23 +75,69 @@ Debug probe reference: https://learn.adafruit.com/raspberry-pi-pico-debug-probe
 ## VS Code tasks and F5 debugging
 
 The committed `.vscode/` configs let you build, flash, and debug without the
-terminal. They ask for the **card directory** via a prompt (default
-`releases/04_BYO_Benjolin`) instead of guessing from the open file, so they work
-no matter what you have focused:
+terminal. Instead of guessing the card from the open file, they ask **once** for
+the card folder and remember it.
 
-- **Tasks** (`Run Task`): `ComputerCard: build`, `ComputerCard: flash`.
-- **Debug (F5)**: `ComputerCard: attach (OpenOCD)` builds the card, attaches
-  Cortex-Debug to the host OpenOCD GDB server, and breaks at `main`. Start
-  OpenOCD on the host first (see above).
+### Choosing the card
 
-The debug config loads `<cardDir>/build/.last.elf` — a symlink the build step
-updates to the most recently built ELF — so it is card-name agnostic.
+The first time you build/flash/debug, a native **folder picker** opens (starting
+in `releases/`). Pick a card folder and the choice is remembered under the key
+`cardDir` and reused for every later build/flash/debug — no more prompts.
 
-Only `tasks.json`, `launch.json`, and `extensions.json` are tracked; personal
-VS Code settings under `.vscode/` remain ignored.
+- The choice is persisted to `.vscode/.card.json` (git-ignored) so it survives
+  window reloads and container restarts.
+- To switch cards, run the **`ComputerCard: select card`** task; it reopens the
+  folder picker and overwrites the stored choice (takes effect immediately, no
+  reload needed).
 
-## Notes
+This is powered by the `rioj7.command-variable` extension (installed
+automatically in the container). Both `tasks.json` and `launch.json` share the
+same `cardDir` key, so pressing play prompts at most once — the `preLaunchTask`
+reuses the remembered value.
 
-- Submodules (e.g. `releases/41_blackbird/lua`) are not initialized
-  automatically; run `git submodule update --init --recursive <path>` only for
-  the card you are building.
+### Tasks (`Run Task`)
+
+- `ComputerCard: build` — `make build`, then refresh the `build/.last.elf`
+  symlink (see below).
+- `ComputerCard: flash` — `make flash` (programs the chip via host OpenOCD).
+- `ComputerCard: build + flash` — build then flash; used as the debug
+  pre-launch step.
+- `ComputerCard: select card` — change the remembered card folder.
+
+### Debug (F5)
+
+`ComputerCard: attach (OpenOCD)`:
+
+1. Runs `ComputerCard: build + flash`, so the **selected card is programmed onto
+   the chip** first.
+2. Attaches Cortex-Debug to the host OpenOCD GDB server and breaks at `main`.
+
+Start OpenOCD on the host first (see the section above). The config loads
+`<cardDir>/build/.last.elf` — a symlink that the build step
+([`scripts/last_elf.sh`](../scripts/last_elf.sh)) points at the most recently
+built ELF. That script runs after every build so the symlink exists even for
+cards that ship their own `Makefile`/`GNUmakefile` (which the Pico auto-make
+harness does not create), keeping the debug config card-name agnostic.
+
+### Live Watch
+
+The debug config enables Cortex-Debug **Live Watch** (`liveWatch.enabled`,
+sampling a few times per second). To use it:
+
+- During a session, open the **LIVE WATCH** tree in the Run and Debug sidebar
+  and click **+** to add expressions (it starts empty).
+- Values update only while the target is **running** — press **Continue** after
+  the initial break at `main`.
+- Only globals/statics can be live-watched (Live Watch reads memory by fixed
+  address while the CPU runs; stack locals have no fixed address).
+
+### Required extensions
+
+Installed automatically in the container (and recommended in
+`.vscode/extensions.json`): `marus25.cortex-debug`,
+`mcu-debug.debug-tracker-vscode` (a Cortex-Debug dependency),
+`ms-vscode.cpptools`, and `rioj7.command-variable`.
+
+`tasks.json`, `launch.json`, `extensions.json`, and `settings.json` are tracked;
+the remembered-card file `.vscode/.card.json` and other personal `.vscode/`
+files remain ignored.

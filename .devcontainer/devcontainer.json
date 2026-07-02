@@ -13,6 +13,7 @@
     "PICO_SDK_PATH": "/opt/pico-sdk",
     "MAKEFILES": "${containerWorkspaceFolder}/scripts/pico_auto_make.mk"
   },
+  "postCreateCommand": "git submodule update --init --recursive",
   "customizations": {
     "vscode": {
       "extensions": [
