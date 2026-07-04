@@ -24,7 +24,7 @@ The card contains three modes which can be selected by turning off the power, mo
 
 All modes have a play (Z-up), stop (Z-mid) and settings function (Z-hold-down). In settings, the X knob controls the clock divide and the Y knob selects the scale. Each mode may have other settings as indicated below.
 
-<img src="https://github.com/thewatchingeye/Workshop_Computer/blob/main/releases/36_GradualProcess/images/leds_XY.svg" width="600">
+<img src="https://github.com/thewatchingeye/Workshop_Computer/blob/main/releases/36_GradualProcess/images/leds_XY.svg" width="400">
 
 Everything works a lot better if you <a href="https://www.musicthing.co.uk/Workshop_System_Calibration/">callibrate the Computer</a> so the tuning tracks accurately.
 
