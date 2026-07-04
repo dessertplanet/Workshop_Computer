@@ -1,10 +1,11 @@
-draft: true
+draft: false
 Name: Sheep
 Description: A time-stretching and pitch-shifting granular processor and digital degradation playground with 2 fidelity options.
 Language: Pico SDK
 Creator: Dune Desormeaux
 Version: 1.2
 Status: Released
+demo-link: https://youtu.be/LfkgfMzVabg
 
 tags:
   - effect
@@ -61,10 +62,20 @@ panel:
       description: Probabilistic pulse stream influenced by X and grain size
 
 controls:
+  switch:
+    up:
+      name: Freeze
+      description: Freezes the buffer; grains play from the frozen audio
+    middle:
+      name: Normal
+      description: Continuously records the input into the circular buffer
+    down:
+      name: Glitch
+      description: Enables looping/glitch grain playback around a captured baseline
   knobs:
-    - when: { z: middle }
+    - when: { z: any }
       main:
-        name: Grain Playback Speed
+        name: Grain Speed
         description: Bidirectional speed from reverse to forward, with center pause detent
       x:
         name: Delay Spread
@@ -72,42 +83,3 @@ controls:
       y:
         name: Grain Size
         description: Sets grain length from very short to long windows
-    - when: { z: up }
-      main:
-        name: Grain Playback Speed
-        description: Same control while buffer is frozen
-      x:
-        name: Position or Spread
-      y:
-        name: Grain Size
-    - when: { z: down }
-      main:
-        name: Loop Modulation
-        description: Modulates looping grain playback around captured baseline
-      x:
-        name: Glitch Spread
-      y:
-        name: Loop Grain Size
-
-  leds:
-    - when: { z: any }
-      display: list
-      items:
-        - id: LED0
-          name: Audio Level Left
-          description: Brightness follows left output amplitude
-        - id: LED1
-          name: Audio Level Right
-          description: Brightness follows right output amplitude
-        - id: LED2
-          name: CV Out 1 Level
-          description: Brightness follows random CV magnitude
-        - id: LED3
-          name: CV Out 2 Level
-          description: Brightness follows buffer phase voltage
-        - id: LED4
-          name: Pulse Out 1 State
-          description: Indicates grain-completion trigger pulse
-        - id: LED5
-          name: Pulse Out 2 State
-          description: Indicates stochastic clock pulse

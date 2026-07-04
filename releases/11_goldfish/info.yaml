@@ -1,10 +1,11 @@
-draft: true
+draft: false
 Name: Goldfish
 Description: Weird delay/looper for audio and CV
 Language: Pico SDK
 Creator: Dune Desormeaux
 Version: 1.0
 Status: Ready
+demo-link: https://youtu.be/pdzMC6afrHY
 
 tags:
   - delay
@@ -12,7 +13,6 @@ tags:
   - cv
   - glitch
 
-# certainty: low — manual inferred from main.cpp; no README.md found in release folder
 manual: |
   Goldfish is a multi-mode delay/looper with synchronized pulse/CV outputs. Switch selects record,
   delay, and play behaviors; Pulse inputs provide clock/reset; and CV/audio inputs modulate delay time,
@@ -24,17 +24,17 @@ panel:
       name: Audio Input
       description: Primary audio input for delay/record/play processing
     - id: AudioIn2
-      name: Main Parameter Modulation
+      name: Mod Main
       description: Modulates Main control behavior in multiple modes
     - id: CVIn1
-      name: X Modulation
+      name: X Mod
       description: Modulates X-dependent CV mix and playback position
     - id: CVIn2
-      name: Y Modulation
+      name: Y Mod
       description: Modulates Y-dependent CV mix and playback position
     - id: PulseIn1
-      name: Clock / Step Trigger
-      description: Advances divider and timing events
+      name: Sample Trig / clock
+      description: Advances divider, triggers S&H
     - id: PulseIn2
       name: Reset Trigger
       description: Requests playback/reset actions on rising edge
@@ -47,37 +47,36 @@ panel:
       description: Secondary processed audio channel
     - id: CVOut1
       name: CV Mix Output
-      description: Mixed CV/noise output derived from X/Y/CV inputs
+      description: Mixed output derived from X/Y/CV inputs
     - id: CVOut2
       name: Quantized CV Output
-      description: MIDI-note quantized version of CV material
+      description: CV material quantized to a major scale
     - id: PulseOut1
-      name: Pulse A
+      name: Internal Clock Output
       description: Timed pulse output tied to clock/divider events
     - id: PulseOut2
-      name: Pulse B
+      name: Clock Divider Output
       description: Secondary timed pulse output tied to divider events
 
 controls:
+  switch:
+    up:
+      name: Delay
+      description: Enter delay behavior
+    middle:
+      name: Play
+      description: Enter loop playback behavior
+    down:
+      name: Record
+      description: Enter record behavior (clears the loop and records fresh)
   knobs:
-    - main:
-        name: Time / Rate Macro
+    - when: { z: any }
+      main:
+        name: Time / CV Xfade
         description: Mode-dependent delay/playback macro, modulated by AudioIn2 when connected
       x:
-        name: X Parameter
-        description: Controls internal clock rate and CV/playback mapping
+        name: Int Clock Rate
+        description: Sets the internal clock rate; also attenuverts CV mix input 1 and maps playback position
       y:
-        name: Y Parameter
-        description: Controls divider amount and CV/playback mapping
-    - when: { z: down }
-      main:
-        name: Record Mode
-        description: Enter record behavior
-    - when: { z: middle }
-      main:
-        name: Play Mode
-        description: Enter loop playback behavior
-    - when: { z: up }
-      main:
-        name: Delay Mode
-        description: Enter delay behavior
+        name: Clock Div
+        description: Sets the clock divider amount; also attenuverts CV mix input 2 and maps playback position
