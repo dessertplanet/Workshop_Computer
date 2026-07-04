@@ -1,0 +1,7 @@
+Description: A sequencer that provides 12 bell ringing methods with tempo and jitter controls, quantised to six different scales and optionally plays the methods using bell samples.
+Name: the bells
+Language: C++ (ComputerCard)
+Creator: James Saunders
+Version: 1.1
+Status: Released
+Editor: 
