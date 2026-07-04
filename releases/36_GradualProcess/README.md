@@ -20,11 +20,13 @@ All three modes generate a new pitch sequence each time, drawing on broadly idio
 
 The card contains three modes which can be selected by turning off the power, moving the main knob to the correct position, and turning it on again:
 
-<img src="https://github.com/TomWhitwell/Workshop_Computer/blob/main/releases/16_the_bells/images/maindial.svg" width="600">
+<img src="https://github.com/TomWhitwell/Workshop_Computer/blob/main/releases/36_GradualProcess/images/maindial.svg" width="600">
 
 All modes have a play (Z-up), stop (Z-mid) and settings function (Z-hold-down). In settings, the X knob controls the clock divide and the Y knob selects the scale. Each mode may have other settings as indicated below.
 
-<img src="https://github.com/TomWhitwell/Workshop_Computer/blob/main/releases/16_the_bells/images/leds_XY.svg" width="600">
+<img src="https://github.com/TomWhitwell/Workshop_Computer/blob/main/releases/36_GradualProcess/images/leds_XY.svg" width="600">
+
+Everything works a lot better if you <a href="https://www.musicthing.co.uk/Workshop_System_Calibration/">callibrate the Computer</a> so the tuning tracks accurately.
 
 ## MODES
 
