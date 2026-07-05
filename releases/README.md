@@ -59,7 +59,7 @@
 | 71_degenerator | Degenerator — Disintegrating Looper. Capture audio loops and apply irreversible degradation with 6 algorithms (Saturation, Filter Drift, Tape Hiss, Oxide Shedding, Bit Crush, Bit Rot) via preview/apply workflow. Inspired by William Basinski's The Disintegration Loops.<br>[Web editor](https://degenerator-web.netlify.app/) | 1.3<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 72_motorik | Motorik drum machine — kick/snare/hihat with bass and melody CV, classic Krautrock grooves | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 74_Wild_Pebble |  |  |  |  |
-| 76_hot_fuzz | Hot Fuzz — stereo fuzz/distortion + resonant wah effects processor with manual and auto-wah modes, pulse-toggle fuzz bypass and auto-wah | 1.0<br>Released | C++ (ComputerCard) | Joep Vermaat |
+| 76_hot_fuzz | A stereo fuzz/distortion + resonant wah effects processor with manual and auto-wah modes, built on fixed-point DSP. | 1.0<br>Released | C++ (ComputerCard) | Joep Vermaat |
 | 77_Placeholder | Reserved for secret project | 0.0<br>None | None | None |
 | 78_Talker | Proof of concept speech synthesizer, based on TalkiePCM, inspired by 1970s LPC speech synths. | 0.1<br>Proof of concept | C++ (ComputerCard) | Chris Johnson |
 | 81_West_Coast_LPG | Dual vactrol-emulating low-pass gate (combined VCA + low-pass filter) with fast-attack/slow-decay 'plong', self-pinging percussion, and per-channel VCA/VCF/LPG modes. | 0.1<br>Working | C++ (ComputerCard) | Jason Moore |
@@ -69,6 +69,7 @@
 | 86_tesserae | Tesserae — Variable-voice (2-8) arpeggiated chord generator with 5 patterns, 10 scales, tap tempo, CV/audio transpose inputs, and dual CV + audio pitch outputs. Inspired by Laurie Spiegel's Music Mouse and Patchwork. | 1.0<br>released | C++ (Pico SDK) | Joep Vermaat |
 | 87_fr330hfr33 |  |  |  |  |
 | 88_Blank | Reserved for blank 88 cards | 0<br>None | None | Tom Whitwell |
+| 90_Pantograph | Trace and record CV — record knob movements, loop them at bipolar speed | 1.0<br>Ready | Pico SDK | Kenny Shen |
 | 91_chorgan | Chorgan — 6-voice chord synthesizer with morphing timbre, chord extension presets, and built-in chord sequencer. Two modes: normal (detune/chorus) and slew (portamento chord changes). Inspired by the Music Thing Modular Chord Organ. | 1.1.0<br>released | C++ (Pico SDK / ComputerCard) | Andy Jenkinson (uglifruit) |
 | 93_Turing_Matrix | <br>[Web editor](https://tomwhitwell.github.io/Workshop_Computer/programs/93-turing-matrix/web/index.html) |  |  |  |
 | 95_offair2 | OffAir — AM/Shortwave/Longwave radio simulator. Tune between two Stations and interference with authentic heterodyne whistles, SSB pitch-shift detuning, AM envelope detection, swelling per-band static, and triggerable Insta-ference one-shots. Baked recordings or live audio inputs become the Stations. | 1.0.1<br>released | C++ (Pico SDK / ComputerCard) | Andy Jenkinson (uglifruit) |
