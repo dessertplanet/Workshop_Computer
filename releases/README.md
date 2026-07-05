@@ -11,7 +11,7 @@
 | 08_bytebeat | Generates and mangles bytebeats | 0.1<br>Functional but WIP | C++/Arduino-Pico | Matt Kuebrich |
 | 09_DivCom | Comparator and VC clock divider, inspired by Serge NCOM | 0.1<br>Released | C++ (RPi Pico SDK) compat. cmake. | divmod |
 | 10_twists | A port of Mutable Instruments Braids with a web editor | 0.1<br>Functional but WIP | C (RPi Pico SDK) | Random Works |
-| 11_goldfish | Weird delay/looper for audio and CV | 1.0<br>Ready | Pico SDK | Dune Desormeaux |
+| 11_goldfish | Weird delay/looper for audio and CV | 2.0<br>Released | Pico SDK | Dune Desormeaux |
 | 12_am_coupler | AM radio transmitter / coupler | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 13_noisebox | 13-algorithm noise synth with CV modulation, sample-and-hold, and crusher mode | 1.0<br>Released | C++ (ComputerCard) | Eric Gao |
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
