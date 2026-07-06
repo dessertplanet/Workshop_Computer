@@ -128,6 +128,29 @@ http://localhost:5173
 
 Use Chrome or another browser with Web MIDI and SysEx support.
 
+## C1ZZL3 Import Lab
+
+Hosted import lab:
+
+```text
+https://soveda.github.io/CozmikC1zzl3/experiments/cz-import/
+```
+
+Local import lab:
+
+```sh
+python3 -m http.server 5174 --directory experiments/cz-import
+```
+
+Open:
+
+```text
+http://localhost:5174
+```
+
+Use this page to decode Casio CZ `.syx` patches into C1ZZL3 drafts, then open
+the result in Envelope Lab for final editing and sending.
+
 ## How To Use The Editor
 
 1. Pick a preset on the left, or add a custom one.
