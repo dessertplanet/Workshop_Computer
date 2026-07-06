@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>C1ZZL3 Envelope Lab</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260706-8">
 </head>
 <body>
   <main class="shell">
@@ -14,6 +14,8 @@
         <h1>Envelope Lab</h1>
       </div>
       <div class="transport">
+        <a id="onlineEditorLink" href="https://soveda.github.io/CozmikC1zzl3/web-midi/editor/index.html" target="_blank" rel="noopener noreferrer" class="transport-link">Online</a>
+        <a id="importLabLink" href="https://soveda.github.io/CozmikC1zzl3/experiments/cz-import/" target="_blank" rel="noopener noreferrer" class="transport-link">Import Lab</a>
         <button id="audition" type="button" title="Loop browser audition">▶</button>
         <button id="stop" type="button" title="Stop browser audition">■</button>
         <button id="themeToggle" type="button" role="switch" aria-checked="false" title="Toggle light mode">Dark</button>
@@ -41,12 +43,16 @@
             <input id="pitchInput" type="number" min="24" max="96" value="60">
           </label>
           <label>
-            Preview waveform
+            Preview waveform family
             <select id="waveSelect">
-              <option value="sine">Sine</option>
-              <option value="sawtooth">Saw</option>
-              <option value="square">Square</option>
-              <option value="triangle">Triangle</option>
+              <option value="0">Saw</option>
+              <option value="1">Square</option>
+              <option value="2">Narrow pulse</option>
+              <option value="3">Double sine</option>
+              <option value="4">Saw pulse</option>
+              <option value="5">Resonant saw window</option>
+              <option value="6">Resonant triangle window</option>
+              <option value="7">Resonant trapezoid window</option>
             </select>
           </label>
           <label>
@@ -77,6 +83,7 @@
           <span><strong>Selected lane:</strong> only the active window can be moved.</span>
           <span><strong>Point numbers:</strong> when stages stack, only the highest number is shown.</span>
           <span><strong>Dragging:</strong> move a point to change its level and timing together.</span>
+          <span><strong>Preset status:</strong> Local only is stored in this browser; Saved is on the card; Changed has edits not yet saved to the card.</span>
           <span><strong>Play / Stop:</strong> Play previews the envelope in the browser on a loop. Stop ends the browser preview only.</span>
         </div>
 
@@ -88,11 +95,16 @@
 
         <div class="output-actions editor-actions">
           <button id="sendSysex" type="button" title="Load this envelope until reset">Load RAM</button>
-          <button id="flashSysex" type="button" title="Save this envelope after reset">Save Slot</button>
-          <button id="deleteSlot" type="button" title="Delete the selected custom slot from card flash">Delete Slot</button>
-          <button id="requestSettings" type="button" title="Load current card settings into the editor">Read Card</button>
-          <button id="sendSettings" type="button">Set Card</button>
+          <button id="loadEnvelopeAndSettings" type="button" title="Load this envelope and send the current settings until reset">Load Envelope + Settings</button>
+          <button id="flashSysex" type="button" title="Save this envelope after reset">Save Envelope</button>
+          <button id="deleteSlot" type="button" title="Delete the selected custom slot from card flash">Delete Envelope Slot</button>
+          <button id="requestEnvelopes" type="button" title="Load saved card envelopes into the editor">Read Envelopes from Card</button>
+          <button id="requestSettings" type="button" title="Load current card settings into the editor">Read Settings from Card</button>
+          <button id="sendSettings" type="button" title="Send these settings to the card">Send Settings</button>
           <button id="resetPreset" type="button">Reset Preset</button>
+        </div>
+        <div class="volatility-warning" role="note">
+          <strong>Temporary changes:</strong> Load RAM, Load Envelope + Settings, and Send Settings are lost when the card restarts. Use Save Envelope to keep the envelope. To make the current settings the hardware baseline, move the switch from middle to down and hold it until the card confirms the save.
         </div>
       </section>
 
@@ -104,6 +116,31 @@
           </select>
         </label>
         <section class="performance-panel" aria-label="Performance settings">
+          <h2 class="performance-title">Settings:</h2>
+          <label>
+            PD amount
+            <input id="pdControl" type="range" min="0" max="4095" value="0">
+          </label>
+          <label class="detune-setting">
+            Detune
+            <span class="detune-control">
+              <input id="detuneControl" type="range" min="0" max="4095" value="2048">
+              <span class="detune-scale" aria-hidden="true"><span>-</span><strong>OFF</strong><span>+</span></span>
+            </span>
+          </label>
+          <label>
+            Wave family
+            <select id="performanceWaveSelect">
+              <option value="0">Saw</option>
+              <option value="1">Square</option>
+              <option value="2">Narrow pulse</option>
+              <option value="3">Double sine</option>
+              <option value="4">Saw pulse</option>
+              <option value="5">Resonant saw window</option>
+              <option value="6">Resonant triangle window</option>
+              <option value="7">Resonant trapezoid window</option>
+            </select>
+          </label>
           <label>
             Ring mod
             <input id="ringControl" type="range" min="0" max="4095" value="0">
@@ -174,6 +211,6 @@
     </section>
   </main>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20260706-9"></script>
 </body>
 </html>
