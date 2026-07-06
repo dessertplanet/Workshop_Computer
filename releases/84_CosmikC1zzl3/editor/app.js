@@ -2,6 +2,7 @@ const SAMPLE_RATE = 48000;
 const MAX_LEVEL = 4095;
 const STAGES = 8;
 const CUSTOM_SLOT_COUNT = 8;
+const MAX_BROWSER_CUSTOM_PRESETS = 32;
 const AUDITION_TIME_SCALE = 4;
 const EDITOR_VIEW_SAMPLES = SAMPLE_RATE * 4;
 const MIN_SEND_SAMPLES = 960;
@@ -14,6 +15,11 @@ const SYSEX_COMMAND_SAVE_SETTINGS = 0x04;
 const SYSEX_COMMAND_DELETE = 0x05;
 const SYSEX_COMMAND_REQUEST_SETTINGS = 0x06;
 const SYSEX_COMMAND_SETTINGS_RESPONSE = 0x07;
+const SYSEX_COMMAND_REQUEST_ENVELOPE_SLOTS = 0x08;
+const SYSEX_COMMAND_ENVELOPE_SLOTS_RESPONSE = 0x09;
+const SYSEX_COMMAND_REQUEST_ENVELOPE = 0x0a;
+const SYSEX_COMMAND_ENVELOPE_RESPONSE = 0x0b;
+const ENVELOPE_PROTOCOL_VERSION = 1;
 
 const factoryPresets = [
   preset("Off", fill(0, 1), fill(0, 1)),
@@ -59,6 +65,31 @@ let activeLaneView = "amp";
 let developerMode = false;
 let themeMode = loadThemeMode();
 let developerLogLines = [];
+let settingsProtocol = "unknown";
+let settingsRequestPending = false;
+let settingsRequestTimer = null;
+let envelopeReadSession = null;
+let envelopeReadTimer = null;
+let envelopeReadSupported = null;
+const CZ_IMPORT_HANDOFF_KEY = "c1zzl3-cz-import-draft";
+const HOSTED_EDITOR_URL = "https://soveda.github.io/CozmikC1zzl3/web-midi/editor/index.html";
+let messageImportedDraft = null;
+const WAVE_FAMILIES = [
+  "Saw",
+  "Square",
+  "Narrow pulse",
+  "Double sine",
+  "Saw pulse",
+  "Resonant saw window",
+  "Resonant triangle window",
+  "Resonant trapezoid window"
+];
+
+window.addEventListener("message", (event) => {
+  if (event.data?.type === "cz-import-handoff" && event.data?.payload) {
+    messageImportedDraft = event.data.payload;
+  }
+});
 
 const el = {
   presetList: document.querySelector("#presetList"),
@@ -69,6 +100,7 @@ const el = {
   customSlot: document.querySelector("#customSlot"),
   canvas: document.querySelector("#curveCanvas"),
   themeToggle: document.querySelector("#themeToggle"),
+  onlineEditorLink: document.querySelector("#onlineEditorLink"),
   ampStages: document.querySelector("#ampStages"),
   pdStages: document.querySelector("#pdStages"),
   ampView: document.querySelector("#ampView"),
@@ -87,13 +119,18 @@ const el = {
   audition: document.querySelector("#audition"),
   stop: document.querySelector("#stop"),
   midiToggle: document.querySelector("#midiToggle"),
+  pdControl: document.querySelector("#pdControl"),
+  detuneControl: document.querySelector("#detuneControl"),
+  performanceWaveSelect: document.querySelector("#performanceWaveSelect"),
   midiOutput: document.querySelector("#midiOutput"),
   copyCpp: document.querySelector("#copyCpp"),
   copySysex: document.querySelector("#copySysex"),
   sendSysex: document.querySelector("#sendSysex"),
+  loadEnvelopeAndSettings: document.querySelector("#loadEnvelopeAndSettings"),
   flashSysex: document.querySelector("#flashSysex"),
   deleteSlot: document.querySelector("#deleteSlot"),
   requestSettings: document.querySelector("#requestSettings"),
+  requestEnvelopes: document.querySelector("#requestEnvelopes"),
   sendSettings: document.querySelector("#sendSettings"),
   downloadJson: document.querySelector("#downloadJson"),
   resetPreset: document.querySelector("#resetPreset"),
@@ -105,8 +142,14 @@ const el = {
   turingMidiChannel: document.querySelector("#turingMidiChannel")
 };
 
-function preset(name, amp, pd) {
-  return { name, amp: normalizeStages(amp), pd: normalizeStages(pd) };
+function preset(name, amp, pd, slot = null, cardDirty = false) {
+  return {
+    name,
+    amp: normalizeStages(amp),
+    pd: normalizeStages(pd),
+    slot: Number.isInteger(slot) ? clampInt(slot, 0, CUSTOM_SLOT_COUNT - 1) : null,
+    cardDirty: Boolean(cardDirty)
+  };
 }
 
 function fill(level, time) {
@@ -132,14 +175,14 @@ function loadPresets() {
     if (Array.isArray(saved)) {
       const custom = saved
         .slice(FACTORY_PRESET_COUNT)
-        .map((item) => preset(item.name || "Custom preset", item.amp, item.pd))
-        .slice(0, CUSTOM_SLOT_COUNT);
+        .map((item) => preset(item.name || "Custom preset", item.amp, item.pd, item.slot, item.cardDirty))
+        .slice(0, MAX_BROWSER_CUSTOM_PRESETS);
       return [...structuredClone(factoryPresets), ...custom];
     }
     if (Array.isArray(saved?.customPresets)) {
       const custom = saved.customPresets
-        .map((item) => preset(item.name || "Custom preset", item.amp, item.pd))
-        .slice(0, CUSTOM_SLOT_COUNT);
+        .map((item) => preset(item.name || "Custom preset", item.amp, item.pd, item.slot, item.cardDirty))
+        .slice(0, MAX_BROWSER_CUSTOM_PRESETS);
       return [...structuredClone(factoryPresets), ...custom];
     }
   } catch {
@@ -150,7 +193,15 @@ function loadPresets() {
 
 function savePresets() {
   localStorage.setItem("c1zzl3-envelope-presets", JSON.stringify({
-    customPresets: presets.slice(FACTORY_PRESET_COUNT, FACTORY_PRESET_COUNT + CUSTOM_SLOT_COUNT)
+    customPresets: presets
+      .slice(FACTORY_PRESET_COUNT, FACTORY_PRESET_COUNT + MAX_BROWSER_CUSTOM_PRESETS)
+      .map((item) => ({
+        name: item.name,
+        amp: item.amp,
+        pd: item.pd,
+        slot: Number.isInteger(item.slot) ? item.slot : null,
+        cardDirty: Boolean(item.cardDirty)
+      }))
   }));
 }
 
@@ -159,6 +210,9 @@ function loadPerformanceSettings() {
     const saved = JSON.parse(localStorage.getItem("c1zzl3-performance-settings"));
     if (saved && typeof saved === "object") {
       return {
+        pd: clampInt(saved.pd ?? 0, 0, MAX_LEVEL),
+        detune: clampInt(saved.detune ?? 2048, 0, MAX_LEVEL),
+        waveform: clampInt(saved.waveform ?? 0, 0, 7),
         ring: clampInt(saved.ring, 0, MAX_LEVEL),
         noise: clampInt(saved.noise, 0, MAX_LEVEL),
         midiInChannel: clampInt(saved.midiInChannel, 1, 16),
@@ -172,6 +226,9 @@ function loadPerformanceSettings() {
   }
 
   return {
+    pd: 0,
+    detune: 2048,
+    waveform: 0,
     ring: 0,
     noise: 0,
     midiInChannel: 1,
@@ -199,6 +256,126 @@ function saveThemeMode() {
   localStorage.setItem("c1zzl3-theme-mode", themeMode);
 }
 
+function clearImportedDraftSources() {
+  messageImportedDraft = null;
+  localStorage.removeItem(CZ_IMPORT_HANDOFF_KEY);
+  window.history.replaceState(null, "", window.location.pathname);
+}
+
+function applyImportedPerformance(draft) {
+  if (!draft || typeof draft !== "object") return;
+
+  performanceSettings = {
+    ...performanceSettings,
+    detune: clampInt(draft.performance?.detune ?? performanceSettings.detune, 0, MAX_LEVEL),
+    ring: clampInt(draft.performance?.ring ?? performanceSettings.ring, 0, MAX_LEVEL),
+    noise: clampInt(draft.performance?.noise ?? performanceSettings.noise, 0, MAX_LEVEL),
+    waveform: clampInt(draft.wave?.value ?? performanceSettings.waveform, 0, 7)
+  };
+}
+
+function consumeImportedDraft() {
+  try {
+    if (messageImportedDraft) {
+      const payload = messageImportedDraft;
+      const draft = payload?.draft;
+      if (draft && Array.isArray(draft.amp) && Array.isArray(draft.pd)) {
+        const imported = preset(draft.name || "Imported CZ patch", draft.amp, draft.pd);
+        if (customPresetCount() >= MAX_BROWSER_CUSTOM_PRESETS) {
+          presets[FACTORY_PRESET_COUNT + MAX_BROWSER_CUSTOM_PRESETS - 1] = imported;
+          selected = FACTORY_PRESET_COUNT + MAX_BROWSER_CUSTOM_PRESETS - 1;
+        } else {
+          presets.push(imported);
+          selected = presets.length - 1;
+        }
+
+        applyImportedPerformance(draft);
+
+        savePresets();
+        savePerformanceSettings();
+        clearImportedDraftSources();
+        return true;
+      }
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const queryPayload = params.get("cz-import");
+    if (queryPayload) {
+      const payload = JSON.parse(decodeURIComponent(queryPayload));
+      const draft = payload?.draft;
+      if (draft && Array.isArray(draft.amp) && Array.isArray(draft.pd)) {
+        const imported = preset(draft.name || "Imported CZ patch", draft.amp, draft.pd);
+        if (customPresetCount() >= MAX_BROWSER_CUSTOM_PRESETS) {
+          presets[FACTORY_PRESET_COUNT + MAX_BROWSER_CUSTOM_PRESETS - 1] = imported;
+          selected = FACTORY_PRESET_COUNT + MAX_BROWSER_CUSTOM_PRESETS - 1;
+        } else {
+          presets.push(imported);
+          selected = presets.length - 1;
+        }
+
+        applyImportedPerformance(draft);
+
+        savePresets();
+        savePerformanceSettings();
+        clearImportedDraftSources();
+        return true;
+      }
+    }
+
+    const hashMatch = window.location.hash.match(/(?:^|&)cz-import=([^&]+)/);
+    if (hashMatch) {
+      const payload = JSON.parse(decodeURIComponent(hashMatch[1]));
+      const draft = payload?.draft;
+      if (draft && Array.isArray(draft.amp) && Array.isArray(draft.pd)) {
+        const imported = preset(draft.name || "Imported CZ patch", draft.amp, draft.pd);
+        if (customPresetCount() >= MAX_BROWSER_CUSTOM_PRESETS) {
+          presets[FACTORY_PRESET_COUNT + MAX_BROWSER_CUSTOM_PRESETS - 1] = imported;
+          selected = FACTORY_PRESET_COUNT + MAX_BROWSER_CUSTOM_PRESETS - 1;
+        } else {
+          presets.push(imported);
+          selected = presets.length - 1;
+        }
+
+        applyImportedPerformance(draft);
+
+        savePresets();
+        savePerformanceSettings();
+        clearImportedDraftSources();
+        return true;
+      }
+    }
+
+    const raw = localStorage.getItem(CZ_IMPORT_HANDOFF_KEY);
+    if (!raw) return false;
+
+    const payload = JSON.parse(raw);
+    const draft = payload?.draft;
+    if (!draft || !Array.isArray(draft.amp) || !Array.isArray(draft.pd)) {
+      localStorage.removeItem(CZ_IMPORT_HANDOFF_KEY);
+      return false;
+    }
+
+    const imported = preset(draft.name || "Imported CZ patch", draft.amp, draft.pd);
+    if (customPresetCount() >= MAX_BROWSER_CUSTOM_PRESETS) {
+      presets[FACTORY_PRESET_COUNT + MAX_BROWSER_CUSTOM_PRESETS - 1] = imported;
+      selected = FACTORY_PRESET_COUNT + MAX_BROWSER_CUSTOM_PRESETS - 1;
+    } else {
+      presets.push(imported);
+      selected = presets.length - 1;
+    }
+
+    applyImportedPerformance(draft);
+
+    savePresets();
+    savePerformanceSettings();
+    clearImportedDraftSources();
+    return true;
+  } catch {
+    localStorage.removeItem(CZ_IMPORT_HANDOFF_KEY);
+    return false;
+  }
+}
+
 function render() {
   selected = Math.max(0, Math.min(selected, presets.length - 1));
   const current = presets[selected];
@@ -206,7 +383,7 @@ function render() {
   renderPresetList();
   el.presetName.value = current.name;
   el.presetName.disabled = selected < FACTORY_PRESET_COUNT;
-  el.addPreset.disabled = customPresetCount() >= CUSTOM_SLOT_COUNT;
+  el.addPreset.disabled = customPresetCount() >= MAX_BROWSER_CUSTOM_PRESETS;
   renderStages("amp", el.ampStages);
   renderStages("pd", el.pdStages);
   renderPerformanceSettings();
@@ -222,6 +399,11 @@ function renderThemeMode() {
   el.themeToggle.classList.toggle("is-active", themeMode === "light");
   el.themeToggle.textContent = themeMode === "light" ? "Light" : "Dark";
   el.themeToggle.setAttribute("aria-checked", String(themeMode === "light"));
+  if (el.onlineEditorLink) {
+    const host = window.location.hostname;
+    const isLocalDev = host === "localhost" || host === "127.0.0.1" || host === "::1";
+    el.onlineEditorLink.classList.toggle("is-active", !isLocalDev && window.location.href.startsWith(HOSTED_EDITOR_URL));
+  }
   drawCurves();
 }
 
@@ -250,6 +432,9 @@ function renderDeveloperMode() {
 }
 
 function renderPerformanceSettings() {
+  el.pdControl.value = performanceSettings.pd;
+  el.detuneControl.value = performanceSettings.detune;
+  el.performanceWaveSelect.value = performanceSettings.waveform;
   el.ringControl.value = performanceSettings.ring;
   el.noiseControl.value = performanceSettings.noise;
   el.midiInChannel.value = performanceSettings.midiInChannel;
@@ -266,9 +451,25 @@ function renderPresetList() {
     const button = document.createElement("button");
     button.className = `preset-button${index === selected ? " is-active" : ""}`;
     button.type = "button";
-    button.innerHTML = `<span>${escapeHtml(item.name)}</span><span>${index < FACTORY_PRESET_COUNT ? index : `C${index - FACTORY_PRESET_COUNT + 1}`}</span>`;
+    if (index < FACTORY_PRESET_COUNT) {
+      button.innerHTML = `<span class="preset-name">${escapeHtml(item.name)}</span><span class="preset-code">${index}</span>`;
+    } else {
+      const status = item.slot === null
+        ? { label: "Local only", className: "is-local" }
+        : item.cardDirty
+          ? { label: `Changed - slot ${item.slot + 1}`, className: "is-changed" }
+          : { label: `Saved - slot ${item.slot + 1}`, className: "is-saved" };
+      button.innerHTML = `
+        <span class="preset-name">${escapeHtml(item.name)}</span>
+        <span class="preset-meta">
+          <span class="preset-state ${status.className}">${status.label}</span>
+          <span class="preset-code">C${index - FACTORY_PRESET_COUNT + 1}</span>
+        </span>`;
+      button.title = status.label;
+    }
     button.addEventListener("click", () => {
       selected = index;
+      if (Number.isInteger(item.slot)) el.customSlot.value = String(item.slot);
       render();
     });
     row.append(button);
@@ -300,13 +501,19 @@ function removeCustomPreset(index) {
   setStatus("Custom preset removed.");
 }
 
-function removeLocalCustomPresetForSlot(slot) {
-  const index = FACTORY_PRESET_COUNT + slot;
-  if (index >= presets.length) return;
-  presets.splice(index, 1);
-  selected = Math.min(selected, presets.length - 1);
+function bindSelectedPresetToSlot(slot) {
+  if (selected < FACTORY_PRESET_COUNT || !presets[selected]) return;
+
+  presets.forEach((item, index) => {
+    if (index >= FACTORY_PRESET_COUNT && item.slot === slot) {
+      item.slot = null;
+    }
+  });
+
+  presets[selected].slot = slot;
+  presets[selected].cardDirty = false;
   savePresets();
-  render();
+  renderPresetList();
 }
 
 function renderStages(lane, container) {
@@ -336,14 +543,16 @@ function updateStage(lane, index, key, value) {
   const max = key === "level" ? MAX_LEVEL : 192000;
   const min = key === "level" ? 0 : 1;
   presets[selected][lane][index][key] = clampInt(value, min, max);
+  if (presets[selected].slot !== null) presets[selected].cardDirty = true;
   savePresets();
+  renderPresetList();
   drawCurves();
   updateExport();
 }
 
 function duplicateFactoryPreset() {
   if (selected >= FACTORY_PRESET_COUNT) return true;
-  if (customPresetCount() >= CUSTOM_SLOT_COUNT) {
+  if (customPresetCount() >= MAX_BROWSER_CUSTOM_PRESETS) {
     setStatus("Custom preset limit reached.");
     return false;
   }
@@ -524,7 +733,7 @@ function playAudition(note, token) {
   const gain = audioCtx.createGain();
   const filter = audioCtx.createBiquadFilter();
 
-  osc.type = el.waveSelect.value;
+  osc.type = auditionOscType(el.waveSelect.value);
   osc.frequency.value = midiToHz(note);
   filter.type = "lowpass";
   filter.frequency.value = 220;
@@ -542,6 +751,14 @@ function playAudition(note, token) {
   };
   activeNodes = [osc, gain, filter];
   setStatus(`Looping browser audition for ${current.name} at MIDI note ${note}.`);
+}
+
+function auditionOscType(waveIndex) {
+  const index = clampInt(waveIndex, 0, 7);
+  if (index === 0 || index === 4 || index === 5) return "sawtooth";
+  if (index === 1 || index === 2) return "square";
+  if (index === 3 || index === 6 || index === 7) return "triangle";
+  return "sine";
 }
 
 function scheduleEnvelope(param, stages, startTime, base, depth) {
@@ -679,6 +896,8 @@ function renderDeveloperMidiRaw() {
 
   el.developerMidiRaw.textContent = [
     `MIDIAccess: ${constructorName(midiAccess)}`,
+    `Settings protocol: ${describeSettingsProtocol()}`,
+    `Envelope readback: ${describeEnvelopeReadback()}`,
     "",
     "Inputs map",
     inspectPortMap(midiAccess.inputs),
@@ -713,8 +932,20 @@ function renderDeveloperPorts() {
     ? outputs.map((port, index) => formatPort(port, index, "Output")).join("\n\n")
     : "None detected";
 
-  el.developerPorts.textContent = `Inputs (${inputs.length})\n${inputText}\n\nOutputs (${outputs.length})\n${outputText}`;
+  el.developerPorts.textContent = `Settings protocol: ${describeSettingsProtocol()}\nEnvelope readback: ${describeEnvelopeReadback()}\n\nInputs (${inputs.length})\n${inputText}\n\nOutputs (${outputs.length})\n${outputText}`;
   renderDeveloperMidiRaw();
+}
+
+function describeSettingsProtocol() {
+  if (settingsProtocol === "stable") return "Stable firmware";
+  if (settingsProtocol === "experimental") return "Experimental firmware";
+  return "Not detected yet";
+}
+
+function describeEnvelopeReadback() {
+  if (envelopeReadSupported === true) return "Supported";
+  if (envelopeReadSupported === false) return "No response";
+  return "Not checked yet";
 }
 
 function clearDeveloperLog() {
@@ -827,6 +1058,9 @@ function refreshMidiPorts() {
     inputNames: inputs.map((input) => input.name || input.id || "Unnamed input"),
     outputNames: outputs.map((output) => output.name || output.id || "Unnamed output")
   });
+  if (outputs.length === 0) {
+    settingsProtocol = "unknown";
+  }
   setStatus(`MIDI ready: ${inputs.length} input${inputs.length === 1 ? "" : "s"}, ${outputs.length} output${outputs.length === 1 ? "" : "s"}.`);
 }
 
@@ -876,10 +1110,13 @@ async function sendSysex(command = SYSEX_COMMAND_PREVIEW) {
     return;
   }
   const isFlash = command === SYSEX_COMMAND_SAVE;
+  const slot = clampInt(el.customSlot.value, 0, CUSTOM_SLOT_COUNT - 1);
+  const expectedEnvelope = isFlash ? structuredClone(presets[selected]) : null;
   const sendCooldownMs = isFlash ? 1800 : 250;
   const summary = frameSummary();
   sendingSysex = true;
   el.sendSysex.disabled = true;
+  el.loadEnvelopeAndSettings.disabled = true;
   el.flashSysex.disabled = true;
   el.deleteSlot.disabled = true;
   try {
@@ -894,23 +1131,77 @@ async function sendSysex(command = SYSEX_COMMAND_PREVIEW) {
     });
     sendingSysex = false;
     el.sendSysex.disabled = false;
+    el.loadEnvelopeAndSettings.disabled = false;
     el.flashSysex.disabled = false;
     el.deleteSlot.disabled = false;
     setStatus("Web MIDI send failed. Open Developer tools for details.");
     return;
   }
-  const slotLabel = `Custom ${Number(el.customSlot.value) + 1}`;
+  const slotLabel = `Custom ${slot + 1}`;
   const status = isFlash
     ? `Saved ${slotLabel}; after reset it appears after the factory presets. Amp max ${summary.ampMax}, ${summary.seconds}s.`
     : `Loaded ${slotLabel} until reset. Amp max ${summary.ampMax}, ${summary.seconds}s.`;
+  if (isFlash) {
+    bindSelectedPresetToSlot(slot);
+    if (envelopeReadSupported === true) {
+      window.setTimeout(() => requestCardEnvelopes("save", slot, expectedEnvelope), 350);
+    }
+  }
   setStatus(`${status} ${frame.length} byte SysEx to ${output.name || "MIDI output"}.`);
 
   window.setTimeout(() => {
     sendingSysex = false;
     el.sendSysex.disabled = false;
+    el.loadEnvelopeAndSettings.disabled = false;
     el.flashSysex.disabled = false;
     el.deleteSlot.disabled = false;
   }, sendCooldownMs);
+}
+
+async function loadEnvelopeAndSettings() {
+  if (sendingSysex) {
+    setStatus("SysEx send already in progress.");
+    return;
+  }
+  if (!canSendSelectedEnvelope()) {
+    setStatus("Preset 0, silent envelopes, and very short envelopes cannot be loaded to the card.");
+    return;
+  }
+  if (!midiAccess) await connectMidi();
+  const output = selectedMidiOutput();
+  if (!output) {
+    setStatus("No MIDI output found for combined load.");
+    return;
+  }
+
+  try {
+    const envelopeFrame = buildSysex(SYSEX_COMMAND_PREVIEW);
+    sendingSysex = true;
+    el.sendSysex.disabled = true;
+    el.loadEnvelopeAndSettings.disabled = true;
+    el.flashSysex.disabled = true;
+    el.deleteSlot.disabled = true;
+    output.send(envelopeFrame);
+    sendSettingsFrames(output, SYSEX_COMMAND_SETTINGS, 60);
+    const slot = clampInt(el.customSlot.value, 0, CUSTOM_SLOT_COUNT - 1);
+    setStatus(`Loaded ${presets[selected].name} into RAM slot ${slot + 1} and sent the current settings. Both are temporary until saved.`);
+  } catch (error) {
+    logDeveloper("Combined envelope and settings load failed.", {
+      preset: presets[selected]?.name,
+      output: output.name || output.id || "Unknown output",
+      message: error?.message || "Unknown error",
+      stack: error?.stack || "No stack trace"
+    });
+    setStatus("Combined load failed. Open Developer tools for details.");
+  }
+
+  window.setTimeout(() => {
+    sendingSysex = false;
+    el.sendSysex.disabled = false;
+    el.loadEnvelopeAndSettings.disabled = false;
+    el.flashSysex.disabled = false;
+    el.deleteSlot.disabled = false;
+  }, 350);
 }
 
 async function deleteCustomSlot() {
@@ -929,15 +1220,25 @@ async function deleteCustomSlot() {
     return;
   }
 
-  const slot = clampInt(el.customSlot.value, 0, CUSTOM_SLOT_COUNT - 1);
+  const selectedPreset = presets[selected];
+  const slot = Number.isInteger(selectedPreset?.slot)
+    ? selectedPreset.slot
+    : clampInt(el.customSlot.value, 0, CUSTOM_SLOT_COUNT - 1);
   let frame;
   try {
     frame = buildDeleteSlotSysex(slot);
     sendingSysex = true;
     el.sendSysex.disabled = true;
+    el.loadEnvelopeAndSettings.disabled = true;
     el.flashSysex.disabled = true;
     el.deleteSlot.disabled = true;
     output.send(frame);
+    logDeveloper("Delete slot SysEx sent.", {
+      slot: slot + 1,
+      preset: selectedPreset?.name || "No selected custom preset",
+      output: output.name || output.id || "Unknown output",
+      bytes: frame
+    });
   } catch (error) {
     logDeveloper("Delete slot SysEx failed.", {
       slot,
@@ -947,17 +1248,26 @@ async function deleteCustomSlot() {
     });
     sendingSysex = false;
     el.sendSysex.disabled = false;
+    el.loadEnvelopeAndSettings.disabled = false;
     el.flashSysex.disabled = false;
     el.deleteSlot.disabled = false;
     setStatus("Delete failed. Open Developer tools for details.");
     return;
   }
-  removeLocalCustomPresetForSlot(slot);
-  setStatus(`Deleted Custom ${slot + 1} from card flash. ${frame.length} byte SysEx to ${output.name || "MIDI output"}.`);
+  if (envelopeReadSupported !== true) {
+    markCardSlotLocal(slot);
+    savePresets();
+    render();
+    setStatus(`Delete sent for card slot ${slot + 1}. Use Read Envelopes from Card to confirm it.`);
+  } else {
+    setStatus(`Delete sent for card slot ${slot + 1}; checking the card...`);
+    window.setTimeout(() => requestCardEnvelopes("delete", slot), 350);
+  }
 
   window.setTimeout(() => {
     sendingSysex = false;
     el.sendSysex.disabled = false;
+    el.loadEnvelopeAndSettings.disabled = false;
     el.flashSysex.disabled = false;
     el.deleteSlot.disabled = false;
   }, 1800);
@@ -977,6 +1287,14 @@ function buildSysex(command) {
 }
 
 function buildSettingsSysex(command) {
+  if (settingsProtocol === "experimental") {
+    return buildExperimentalSettingsSysex(command);
+  }
+
+  return buildStableSettingsSysex(command);
+}
+
+function buildStableSettingsSysex(command) {
   const payload = [];
   payload.push(...ensureArray(packUint14(performanceSettings.ring), "packUint14(ring)"));
   payload.push(...ensureArray(packUint14(performanceSettings.noise), "packUint14(noise)"));
@@ -987,12 +1305,34 @@ function buildSettingsSysex(command) {
   return [0xf0, SYSEX_MANUFACTURER, ...ensureArray(SYSEX_ID, "SYSEX_ID"), command, ...ensureArray(payload, "settings payload"), 0xf7];
 }
 
+function buildExperimentalSettingsSysex(command) {
+  const payload = [];
+  payload.push(...ensureArray(packUint14(performanceSettings.ring), "packUint14(ring)"));
+  payload.push(...ensureArray(packUint14(performanceSettings.noise), "packUint14(noise)"));
+  payload.push(...ensureArray(packUint14(performanceSettings.pd), "packUint14(pd)"));
+  payload.push(...ensureArray(packUint14(performanceSettings.detune), "packUint14(detune)"));
+  payload.push(...ensureArray(packUint14(waveFamilyToControl(performanceSettings.waveform)), "packUint14(waveform)"));
+  payload.push(clampInt(performanceSettings.midiInChannel, 1, 16) - 1);
+  payload.push(clampInt(performanceSettings.turingRange, 1, 8));
+  payload.push(performanceSettings.turingMidiOut ? 1 : 0);
+  payload.push(clampInt(performanceSettings.turingMidiChannel, 1, 16) - 1);
+  return [0xf0, SYSEX_MANUFACTURER, ...ensureArray(SYSEX_ID, "SYSEX_ID"), command, ...ensureArray(payload, "experimental settings payload"), 0xf7];
+}
+
 function buildDeleteSlotSysex(slot) {
   return [0xf0, SYSEX_MANUFACTURER, ...SYSEX_ID, SYSEX_COMMAND_DELETE, slot & 0x7f, 0xf7];
 }
 
 function buildRequestSettingsSysex() {
   return [0xf0, SYSEX_MANUFACTURER, ...SYSEX_ID, SYSEX_COMMAND_REQUEST_SETTINGS, 0xf7];
+}
+
+function buildRequestEnvelopeSlotsSysex() {
+  return [0xf0, SYSEX_MANUFACTURER, ...SYSEX_ID, SYSEX_COMMAND_REQUEST_ENVELOPE_SLOTS, 0xf7];
+}
+
+function buildRequestEnvelopeSysex(slot) {
+  return [0xf0, SYSEX_MANUFACTURER, ...SYSEX_ID, SYSEX_COMMAND_REQUEST_ENVELOPE, slot & 0x07, 0xf7];
 }
 
 function canSendSelectedEnvelope() {
@@ -1021,8 +1361,22 @@ function packUint14(value) {
   return [v & 0x7f, (v >> 7) & 0x7f];
 }
 
+function waveFamilyToControl(family) {
+  return Math.round((clampInt(family, 0, 7) * MAX_LEVEL) / 7);
+}
+
+function waveControlToFamily(control) {
+  return clampInt(Math.round((clampInt(control, 0, MAX_LEVEL) * 7) / MAX_LEVEL), 0, 7);
+}
+
 function unpackUint14(data, offset) {
   return (data[offset] & 0x7f) | ((data[offset + 1] & 0x7f) << 7);
+}
+
+function unpackUint21(data, offset) {
+  return (data[offset] & 0x7f) |
+    ((data[offset + 1] & 0x7f) << 7) |
+    ((data[offset + 2] & 0x7f) << 14);
 }
 
 function packUint21(value) {
@@ -1043,6 +1397,240 @@ function sysexHex() {
     .join(" ");
 }
 
+function stagesMatch(a, b) {
+  return a.length === b.length && a.every((stage, index) =>
+    stage.level === b[index].level && stage.time === b[index].time);
+}
+
+function envelopesMatch(a, b) {
+  return stagesMatch(a.amp, b.amp) && stagesMatch(a.pd, b.pd);
+}
+
+function markCardSlotLocal(slot) {
+  presets.forEach((item, index) => {
+    if (index >= FACTORY_PRESET_COUNT && item.slot === slot) {
+      item.slot = null;
+      item.cardDirty = false;
+    }
+  });
+}
+
+function reconcileCardEnvelopes(mask, cardEnvelopes) {
+  let preservedChanges = 0;
+  let skipped = 0;
+
+  for (let slot = 0; slot < CUSTOM_SLOT_COUNT; slot++) {
+    if ((mask & (1 << slot)) === 0) markCardSlotLocal(slot);
+  }
+
+  cardEnvelopes.forEach((cardEnvelope, slot) => {
+    const matching = [];
+    presets.forEach((item, index) => {
+      if (index >= FACTORY_PRESET_COUNT && item.slot === slot) matching.push(index);
+    });
+    const existingIndex = matching.shift();
+    matching.forEach((index) => {
+      presets[index].slot = null;
+      presets[index].cardDirty = false;
+    });
+
+    if (existingIndex !== undefined) {
+      const existing = presets[existingIndex];
+      if (existing.cardDirty && !envelopesMatch(existing, cardEnvelope)) {
+        existing.slot = null;
+        existing.cardDirty = false;
+        preservedChanges++;
+      } else {
+        existing.amp = normalizeStages(cardEnvelope.amp);
+        existing.pd = normalizeStages(cardEnvelope.pd);
+        existing.cardDirty = false;
+        return;
+      }
+    }
+
+    if (customPresetCount() >= MAX_BROWSER_CUSTOM_PRESETS) {
+      skipped++;
+      return;
+    }
+    presets.push(preset(`Card Envelope ${slot + 1}`, cardEnvelope.amp, cardEnvelope.pd, slot, false));
+  });
+
+  savePresets();
+  render();
+  return { preservedChanges, skipped };
+}
+
+function clearEnvelopeReadTimer() {
+  if (envelopeReadTimer !== null) {
+    window.clearTimeout(envelopeReadTimer);
+    envelopeReadTimer = null;
+  }
+}
+
+function armEnvelopeReadTimeout() {
+  clearEnvelopeReadTimer();
+  envelopeReadTimer = window.setTimeout(() => {
+    const session = envelopeReadSession;
+    envelopeReadSession = null;
+    envelopeReadTimer = null;
+    envelopeReadSupported = false;
+    el.requestEnvelopes.disabled = false;
+    renderDeveloperPorts();
+    if (session?.reason === "delete") {
+      markCardSlotLocal(session.slot);
+      savePresets();
+      render();
+    }
+    setStatus("The card did not reply to the envelope read request. This firmware may not support envelope readback.");
+  }, 2500);
+}
+
+function sendNextEnvelopeRequest() {
+  if (!envelopeReadSession) return;
+  if (envelopeReadSession.pendingSlots.length === 0) {
+    finishEnvelopeRead();
+    return;
+  }
+
+  const output = selectedMidiOutput();
+  if (!output) {
+    envelopeReadSession = null;
+    el.requestEnvelopes.disabled = false;
+    setStatus("No MIDI output found for envelope readback.");
+    return;
+  }
+  const slot = envelopeReadSession.pendingSlots[0];
+  envelopeReadSession.waitingForSlot = slot;
+  try {
+    output.send(buildRequestEnvelopeSysex(slot));
+    armEnvelopeReadTimeout();
+  } catch (error) {
+    envelopeReadSession = null;
+    el.requestEnvelopes.disabled = false;
+    logDeveloper("Envelope slot request failed.", {
+      slot: slot + 1,
+      message: error?.message || "Unknown error",
+      stack: error?.stack || "No stack trace"
+    });
+    setStatus(`Could not request card envelope slot ${slot + 1}.`);
+  }
+}
+
+function finishEnvelopeRead() {
+  const session = envelopeReadSession;
+  if (!session) return;
+  clearEnvelopeReadTimer();
+  envelopeReadSession = null;
+  envelopeReadSupported = true;
+  el.requestEnvelopes.disabled = false;
+  renderDeveloperPorts();
+
+  const result = reconcileCardEnvelopes(session.mask, session.cardEnvelopes);
+  const count = session.cardEnvelopes.size;
+  if (session.reason === "save") {
+    const cardEnvelope = session.cardEnvelopes.get(session.slot);
+    const verified = cardEnvelope && session.expectedEnvelope &&
+      envelopesMatch(cardEnvelope, session.expectedEnvelope);
+    setStatus(verified
+      ? `Verified envelope saved in card slot ${session.slot + 1}.`
+      : `The envelope in card slot ${session.slot + 1} did not match the saved draft.`);
+    return;
+  }
+  if (session.reason === "delete") {
+    const deleted = (session.mask & (1 << session.slot)) === 0;
+    setStatus(deleted
+      ? `Verified card slot ${session.slot + 1} is empty. The browser draft was retained as Local only.`
+      : `Card slot ${session.slot + 1} still reports a saved envelope.`);
+    return;
+  }
+
+  const notes = [];
+  if (result.preservedChanges) notes.push(`${result.preservedChanges} changed local draft${result.preservedChanges === 1 ? " was" : "s were"} preserved`);
+  if (result.skipped) notes.push(`${result.skipped} card envelope${result.skipped === 1 ? " was" : "s were"} not added because the browser list is full`);
+  setStatus(`Loaded ${count} envelope${count === 1 ? "" : "s"} from the card.${notes.length ? ` ${notes.join("; ")}.` : ""}`);
+}
+
+async function requestCardEnvelopes(reason = "manual", slot = null, expectedEnvelope = null) {
+  if (envelopeReadSession) {
+    setStatus("An envelope read is already in progress.");
+    return;
+  }
+  if (!midiAccess) await connectMidi();
+  const output = selectedMidiOutput();
+  if (!output) {
+    setStatus("No MIDI output found for envelope readback.");
+    return;
+  }
+
+  envelopeReadSession = {
+    reason,
+    slot,
+    expectedEnvelope,
+    mask: 0,
+    pendingSlots: [],
+    waitingForSlot: null,
+    cardEnvelopes: new Map()
+  };
+  el.requestEnvelopes.disabled = true;
+  try {
+    output.send(buildRequestEnvelopeSlotsSysex());
+    armEnvelopeReadTimeout();
+    if (reason === "manual") setStatus("Reading saved envelopes from the card...");
+  } catch (error) {
+    envelopeReadSession = null;
+    clearEnvelopeReadTimer();
+    el.requestEnvelopes.disabled = false;
+    logDeveloper("Envelope inventory request failed.", {
+      message: error?.message || "Unknown error",
+      stack: error?.stack || "No stack trace"
+    });
+    setStatus("Envelope read request failed. Open Developer tools for details.");
+  }
+}
+
+function handleEnvelopeSlotsResponse(data) {
+  if (!envelopeReadSession || data.length !== 11) return;
+  const version = data[7] & 0x7f;
+  if (version !== ENVELOPE_PROTOCOL_VERSION) {
+    clearEnvelopeReadTimer();
+    envelopeReadSession = null;
+    envelopeReadSupported = false;
+    el.requestEnvelopes.disabled = false;
+    renderDeveloperPorts();
+    setStatus(`Unsupported card envelope protocol version ${version}.`);
+    return;
+  }
+
+  envelopeReadSupported = true;
+  renderDeveloperPorts();
+  envelopeReadSession.mask = unpackUint14(data, 8) & 0xff;
+  envelopeReadSession.pendingSlots = Array.from({ length: CUSTOM_SLOT_COUNT }, (_, slot) => slot)
+    .filter((slot) => (envelopeReadSession.mask & (1 << slot)) !== 0);
+  clearEnvelopeReadTimer();
+  sendNextEnvelopeRequest();
+}
+
+function handleEnvelopeResponse(data) {
+  if (!envelopeReadSession || data.length !== 89) return;
+  const slot = data[7] & 0x07;
+  if (slot !== envelopeReadSession.waitingForSlot) return;
+
+  let offset = 8;
+  const readStages = () => Array.from({ length: STAGES }, () => {
+    const stage = {
+      level: clampInt(unpackUint14(data, offset), 0, MAX_LEVEL),
+      time: clampInt(unpackUint21(data, offset + 2), 1, 192000)
+    };
+    offset += 5;
+    return stage;
+  });
+  envelopeReadSession.cardEnvelopes.set(slot, { amp: readStages(), pd: readStages() });
+  envelopeReadSession.pendingSlots.shift();
+  envelopeReadSession.waitingForSlot = null;
+  clearEnvelopeReadTimer();
+  sendNextEnvelopeRequest();
+}
+
 function handleMidi(event) {
   if (event.data[0] === 0xf0) {
     handleSysexResponse(event.data);
@@ -1061,29 +1649,76 @@ function handleMidi(event) {
 }
 
 function handleSysexResponse(data) {
-  if (data.length !== 16 ||
-      data[0] !== 0xf0 ||
+  if (data[0] !== 0xf0 ||
       data[1] !== SYSEX_MANUFACTURER ||
       data[2] !== SYSEX_ID[0] ||
       data[3] !== SYSEX_ID[1] ||
       data[4] !== SYSEX_ID[2] ||
       data[5] !== SYSEX_ID[3] ||
-      data[6] !== SYSEX_COMMAND_SETTINGS_RESPONSE ||
-      data[15] !== 0xf7) {
+      data[data.length - 1] !== 0xf7) {
     return;
   }
 
-  performanceSettings = {
-    ring: clampInt(unpackUint14(data, 7), 0, MAX_LEVEL),
-    noise: clampInt(unpackUint14(data, 9), 0, MAX_LEVEL),
-    midiInChannel: clampInt((data[11] & 0x0f) + 1, 1, 16),
-    turingRange: clampInt(data[12], 1, 8),
-    turingMidiOut: (data[13] & 0x01) !== 0,
-    turingMidiChannel: clampInt((data[14] & 0x0f) + 1, 1, 16)
-  };
+  if (data[6] === SYSEX_COMMAND_ENVELOPE_SLOTS_RESPONSE) {
+    handleEnvelopeSlotsResponse(data);
+    return;
+  }
+  if (data[6] === SYSEX_COMMAND_ENVELOPE_RESPONSE) {
+    handleEnvelopeResponse(data);
+    return;
+  }
+  if (data[6] !== SYSEX_COMMAND_SETTINGS_RESPONSE) return;
+
+  if (!settingsRequestPending) {
+    logDeveloper("Ignored unsolicited settings response.", {
+      length: data.length,
+      reason: "Use Read Settings from Card to replace editor settings with card settings."
+    });
+    return;
+  }
+
+  settingsRequestPending = false;
+  if (settingsRequestTimer !== null) {
+    window.clearTimeout(settingsRequestTimer);
+    settingsRequestTimer = null;
+  }
+
+  if (data.length === 16) {
+    settingsProtocol = "stable";
+    performanceSettings = {
+      ...performanceSettings,
+      ring: clampInt(unpackUint14(data, 7), 0, MAX_LEVEL),
+      noise: clampInt(unpackUint14(data, 9), 0, MAX_LEVEL),
+      midiInChannel: clampInt((data[11] & 0x0f) + 1, 1, 16),
+      turingRange: clampInt(data[12], 1, 8),
+      turingMidiOut: (data[13] & 0x01) !== 0,
+      turingMidiChannel: clampInt((data[14] & 0x0f) + 1, 1, 16)
+    };
+  } else if (data.length === 22) {
+    settingsProtocol = "experimental";
+    performanceSettings = {
+      ...performanceSettings,
+      ring: clampInt(unpackUint14(data, 7), 0, MAX_LEVEL),
+      noise: clampInt(unpackUint14(data, 9), 0, MAX_LEVEL),
+      pd: clampInt(unpackUint14(data, 11), 0, MAX_LEVEL),
+      detune: clampInt(unpackUint14(data, 13), 0, MAX_LEVEL),
+      waveform: waveControlToFamily(unpackUint14(data, 15)),
+      midiInChannel: clampInt((data[17] & 0x0f) + 1, 1, 16),
+      turingRange: clampInt(data[18], 1, 8),
+      turingMidiOut: (data[19] & 0x01) !== 0,
+      turingMidiChannel: clampInt((data[20] & 0x0f) + 1, 1, 16)
+    };
+  } else {
+    logDeveloper("Ignored unexpected settings response.", {
+      length: data.length,
+      bytes: Array.from(data)
+    });
+    return;
+  }
   savePerformanceSettings();
   renderPerformanceSettings();
-  setStatus(`Loaded settings from card: ring ${performanceSettings.ring}, noise ${performanceSettings.noise}, MIDI in ch ${performanceSettings.midiInChannel}, Turing ${performanceSettings.turingRange} oct, Turing MIDI ${performanceSettings.turingMidiOut ? "on" : "off"} ch ${performanceSettings.turingMidiChannel}.`);
+  renderDeveloperPorts();
+  setStatus(`Loaded settings from card: PD ${performanceSettings.pd}, detune ${performanceSettings.detune}, wave ${WAVE_FAMILIES[performanceSettings.waveform] || performanceSettings.waveform}, ring ${performanceSettings.ring}, noise ${performanceSettings.noise}, MIDI in ch ${performanceSettings.midiInChannel}, Turing ${performanceSettings.turingRange} oct, Turing MIDI ${performanceSettings.turingMidiOut ? "on" : "off"} ch ${performanceSettings.turingMidiChannel}.`);
 }
 
 function downloadJson() {
@@ -1164,7 +1799,9 @@ function updateDraggedStage(event) {
 
   stage.level = clampInt(level, 0, MAX_LEVEL);
   stage.time = clampInt(targetEnd - before, 1, maxStageTime);
+  if (presets[selected].slot !== null) presets[selected].cardDirty = true;
   savePresets();
+  renderPresetList();
   syncStageInputs(dragTarget.lane, dragTarget.index);
   drawCurves();
   updateExport();
@@ -1188,8 +1825,10 @@ function updatePerformanceSetting(key, value) {
     performanceSettings[key] = Boolean(value);
   } else if (key === "turingMidiChannel") {
     performanceSettings[key] = clampInt(value, 1, 16);
-  } else if (key === "ring" || key === "noise") {
+  } else if (key === "ring" || key === "noise" || key === "pd" || key === "detune") {
     performanceSettings[key] = clampInt(value, 0, MAX_LEVEL);
+  } else if (key === "waveform") {
+    performanceSettings.waveform = clampInt(value, 0, 7);
   }
 
   savePerformanceSettings();
@@ -1207,8 +1846,7 @@ async function sendPerformanceSettings(command = SYSEX_COMMAND_SETTINGS) {
   }
 
   try {
-    const frame = buildSettingsSysex(command);
-    output.send(frame);
+    sendSettingsFrames(output, command);
   } catch (error) {
     logDeveloper("Settings SysEx failed.", {
       command,
@@ -1219,11 +1857,31 @@ async function sendPerformanceSettings(command = SYSEX_COMMAND_SETTINGS) {
     setStatus("Card settings send failed. Open Developer tools for details.");
     return;
   }
-  const action = command === SYSEX_COMMAND_SAVE_SETTINGS ? "Saved" : "Set";
-  setStatus(`${action} ring ${performanceSettings.ring}, noise ${performanceSettings.noise}, MIDI in ch ${performanceSettings.midiInChannel}, Turing ${performanceSettings.turingRange} oct, Turing MIDI ${performanceSettings.turingMidiOut ? "on" : "off"} ch ${performanceSettings.turingMidiChannel} on ${output.name || "MIDI output"}.`);
+  const action = command === SYSEX_COMMAND_SAVE_SETTINGS ? "Saved to card" : "Sent to card";
+  const protocolLabel = settingsProtocol === "unknown" ? "Protocol not confirmed yet." : `Protocol: ${describeSettingsProtocol()}.`;
+  setStatus(`${action}: PD ${performanceSettings.pd}, detune ${performanceSettings.detune}, wave ${WAVE_FAMILIES[performanceSettings.waveform] || performanceSettings.waveform}, ring ${performanceSettings.ring}, noise ${performanceSettings.noise}, MIDI in ch ${performanceSettings.midiInChannel}, Turing ${performanceSettings.turingRange} oct, Turing MIDI ${performanceSettings.turingMidiOut ? "on" : "off"} ch ${performanceSettings.turingMidiChannel} on ${output.name || "MIDI output"}. ${protocolLabel}`);
 }
 
-async function requestPerformanceSettings() {
+function sendSettingsFrames(output, command, delayMs = 0) {
+  const sendAt = (frame, extraDelay = 0) => {
+    const delay = delayMs + extraDelay;
+    if (delay > 0) output.send(frame, window.performance.now() + delay);
+    else output.send(frame);
+  };
+
+  if (settingsProtocol === "experimental") {
+    sendAt(buildExperimentalSettingsSysex(command));
+  } else if (settingsProtocol === "stable") {
+    sendAt(buildStableSettingsSysex(command));
+  } else {
+    sendAt(buildStableSettingsSysex(command));
+    if (command === SYSEX_COMMAND_SETTINGS) {
+      sendAt(buildExperimentalSettingsSysex(command), 40);
+    }
+  }
+}
+
+async function requestPerformanceSettings(isProbe = false) {
   if (!midiAccess) {
     await connectMidi();
   }
@@ -1235,8 +1893,20 @@ async function requestPerformanceSettings() {
   }
 
   try {
+    settingsRequestPending = true;
+    if (settingsRequestTimer !== null) window.clearTimeout(settingsRequestTimer);
+    settingsRequestTimer = window.setTimeout(() => {
+      settingsRequestPending = false;
+      settingsRequestTimer = null;
+      setStatus("The card did not reply to Read Settings from Card.");
+    }, 1500);
     output.send(buildRequestSettingsSysex());
   } catch (error) {
+    settingsRequestPending = false;
+    if (settingsRequestTimer !== null) {
+      window.clearTimeout(settingsRequestTimer);
+      settingsRequestTimer = null;
+    }
     logDeveloper("Settings request failed.", {
       output: output.name || output.id || "Unknown output",
       message: error?.message || "Unknown error",
@@ -1245,11 +1915,13 @@ async function requestPerformanceSettings() {
     setStatus("Settings request failed. Open Developer tools for details.");
     return;
   }
-  setStatus(`Requested settings from ${output.name || "MIDI output"}.`);
+  if (!isProbe) {
+    setStatus(`Requested settings from ${output.name || "MIDI output"}.`);
+  }
 }
 
 el.addPreset.addEventListener("click", () => {
-  if (customPresetCount() >= CUSTOM_SLOT_COUNT) {
+  if (customPresetCount() >= MAX_BROWSER_CUSTOM_PRESETS) {
     setStatus("Custom preset limit reached.");
     return;
   }
@@ -1331,10 +2003,15 @@ el.copySysex.addEventListener("click", async () => {
   setStatus(`SysEx preview frame copied for Custom ${Number(el.customSlot.value) + 1}.`);
 });
 el.sendSysex.addEventListener("click", () => sendSysex(SYSEX_COMMAND_PREVIEW));
+el.loadEnvelopeAndSettings.addEventListener("click", loadEnvelopeAndSettings);
 el.flashSysex.addEventListener("click", () => sendSysex(SYSEX_COMMAND_SAVE));
 el.deleteSlot.addEventListener("click", deleteCustomSlot);
+el.requestEnvelopes.addEventListener("click", () => requestCardEnvelopes());
 el.requestSettings.addEventListener("click", requestPerformanceSettings);
-el.sendSettings.addEventListener("click", () => sendPerformanceSettings(SYSEX_COMMAND_SAVE_SETTINGS));
+el.sendSettings.addEventListener("click", () => sendPerformanceSettings(SYSEX_COMMAND_SETTINGS));
+el.pdControl.addEventListener("input", () => updatePerformanceSetting("pd", el.pdControl.value));
+el.detuneControl.addEventListener("input", () => updatePerformanceSetting("detune", el.detuneControl.value));
+el.performanceWaveSelect.addEventListener("change", () => updatePerformanceSetting("waveform", el.performanceWaveSelect.value));
 el.ringControl.addEventListener("input", () => updatePerformanceSetting("ring", el.ringControl.value));
 el.noiseControl.addEventListener("input", () => updatePerformanceSetting("noise", el.noiseControl.value));
 el.midiInChannel.addEventListener("input", () => updatePerformanceSetting("midiInChannel", el.midiInChannel.value));
@@ -1358,4 +2035,5 @@ el.canvas.addEventListener("pointercancel", () => {
 
 window.addEventListener("resize", drawCurves);
 renderDeveloperLog();
+consumeImportedDraft();
 render();
