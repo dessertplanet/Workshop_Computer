@@ -16,12 +16,18 @@ static constexpr uint8_t WebMidiCommandSaveSettings = 0x04u;
 static constexpr uint8_t WebMidiCommandDeleteEnvelope = 0x05u;
 static constexpr uint8_t WebMidiCommandRequestSettings = 0x06u;
 static constexpr uint8_t WebMidiCommandSettingsResponse = 0x07u;
-static constexpr uint32_t WebMidiSettingsPayloadLength = 8u;
+static constexpr uint8_t WebMidiCommandRequestEnvelopeSlots = 0x08u;
+static constexpr uint8_t WebMidiCommandEnvelopeSlotsResponse = 0x09u;
+static constexpr uint8_t WebMidiCommandRequestEnvelope = 0x0Au;
+static constexpr uint8_t WebMidiCommandEnvelopeResponse = 0x0Bu;
+static constexpr uint8_t WebMidiEnvelopeProtocolVersion = 1u;
+static constexpr uint32_t WebMidiSettingsPayloadLength = 14u;
+static constexpr uint32_t WebMidiStableSettingsPayloadLength = 8u;
 static constexpr uint32_t WebMidiRangeSettingsPayloadLength = 6u;
 static constexpr uint32_t WebMidiLegacySettingsPayloadLength = 5u;
 static constexpr uint32_t WebMidiEnvelopePayloadLength = 97u;
 static constexpr uint32_t WebMidiDeleteEnvelopePayloadLength = 1u;
-static constexpr uint32_t WebMidiMaxSysexLength = 112u;
+static constexpr uint32_t WebMidiMaxSysexLength = 118u;
 
 class C1ZZL3 : public ComputerCard
 {
@@ -321,7 +327,7 @@ private:
     static constexpr uint32_t StartupSelectDelaySamples = 12000u;
     static constexpr uint32_t StartupSelectWindowSamples = 24000u;
     static constexpr uint32_t SaveMagic = 0x43315A33u; // C1Z3
-    static constexpr uint16_t SaveVersion = 2;
+    static constexpr uint16_t SaveVersion = 3;
     static constexpr int32_t OutputLowpassAlphaQ12 = 2458; // 7 kHz at 48 kHz.
     static constexpr int32_t OutputHighpassAlphaQ12 = 4075; // 40 Hz at 48 kHz.
     static constexpr uint32_t SaveFlashOffset =
@@ -341,6 +347,8 @@ private:
         uint16_t size;
         int32_t osc2Detune;
         int32_t osc2Level;
+        int32_t pdControl;
+        int32_t waveControl;
         int32_t osc2Ring;
         int32_t osc2Noise;
         uint8_t envelopePreset;
@@ -776,7 +784,19 @@ private:
         }
 
         if (command == WebMidiCommandRequestSettings)
+        {
             handleWebMidiRequestSettings();
+            return;
+        }
+
+        if (command == WebMidiCommandRequestEnvelopeSlots)
+        {
+            handleWebMidiRequestEnvelopeSlots();
+            return;
+        }
+
+        if (command == WebMidiCommandRequestEnvelope)
+            handleWebMidiRequestEnvelope();
     }
 
     bool webMidiHeaderMatches()
@@ -799,6 +819,7 @@ private:
     void handleWebMidiSettings(bool persist)
     {
         if (sysexLength != WebMidiSettingsPayloadLength + 6u &&
+            sysexLength != WebMidiStableSettingsPayloadLength + 6u &&
             sysexLength != WebMidiRangeSettingsPayloadLength + 6u &&
             sysexLength != WebMidiLegacySettingsPayloadLength + 6u)
             return;
@@ -806,12 +827,34 @@ private:
         uint32_t offset = 6;
         int32_t ring = decodeWebMidiUint14(offset);
         int32_t noise = decodeWebMidiUint14(offset);
+        int32_t pd = pdControl;
+        int32_t detune = osc2Detune + 2048;
+        int32_t wave = waveControl;
+        if (sysexLength == WebMidiSettingsPayloadLength + 6u)
+        {
+            pd = decodeWebMidiUint14(offset);
+            detune = decodeWebMidiUint14(offset);
+            wave = decodeWebMidiUint14(offset);
+        }
         uint8_t channel = sysexBuffer[offset] & 0x0Fu;
         offset++;
 
         osc2Ring = ring;
         osc2Noise = noise;
+        pdControl = clamp12(pd);
+        setDetuneFromControl(detune);
+        waveControl = clamp12(wave);
         midiInChannel = channel;
+
+        // Remote settings hold until each physical control reaches its new value.
+        midiResetAltXPickup = true;
+        midiResetAltYPickup = true;
+        if (sysexLength == WebMidiSettingsPayloadLength + 6u)
+        {
+            midiResetSynthXPickup = true;
+            midiResetSynthYPickup = true;
+            midiResetAltMainPickup = true;
+        }
 
         if (sysexLength >= WebMidiRangeSettingsPayloadLength + 6u)
         {
@@ -835,7 +878,7 @@ private:
         if (sysexLength != 6u)
             return;
 
-        uint8_t frame[16] = {
+        uint8_t frame[22] = {
             0xF0u,
             WebMidiManufacturer,
             WebMidiId[0],
@@ -847,12 +890,71 @@ private:
         uint32_t offset = 7;
         appendWebMidiUint14(frame, offset, clamp12(osc2Ring));
         appendWebMidiUint14(frame, offset, clamp12(osc2Noise));
+        appendWebMidiUint14(frame, offset, clamp12(pdControl));
+        appendWebMidiUint14(frame, offset, clamp12(osc2Detune + 2048));
+        appendWebMidiUint14(frame, offset, clamp12(waveControl));
         frame[offset++] = midiInChannel & 0x0Fu;
         frame[offset++] = clampTuringCvOctaveRange(turingCvOctaveRange);
         frame[offset++] = turingMidiOutputEnabled ? 1u : 0u;
         frame[offset++] = turingMidiOutputChannel & 0x0Fu;
         frame[offset++] = 0xF7u;
 
+        tud_midi_stream_write(0, frame, offset);
+    }
+
+    void handleWebMidiRequestEnvelopeSlots()
+    {
+        if (sysexLength != 6u)
+            return;
+
+        uint8_t frame[11] = {
+            0xF0u,
+            WebMidiManufacturer,
+            WebMidiId[0],
+            WebMidiId[1],
+            WebMidiId[2],
+            WebMidiId[3],
+            WebMidiCommandEnvelopeSlotsResponse,
+            WebMidiEnvelopeProtocolVersion
+        };
+        uint32_t offset = 8;
+        appendWebMidiUint14(frame, offset, customEnvelopeMask());
+        frame[offset++] = 0xF7u;
+        tud_midi_stream_write(0, frame, offset);
+    }
+
+    void handleWebMidiRequestEnvelope()
+    {
+        if (sysexLength != 7u)
+            return;
+
+        uint8_t slot = sysexBuffer[6] & 0x07u;
+        if (!customEnvelopeLoaded[slot])
+            return;
+
+        uint8_t frame[89] = {
+            0xF0u,
+            WebMidiManufacturer,
+            WebMidiId[0],
+            WebMidiId[1],
+            WebMidiId[2],
+            WebMidiId[3],
+            WebMidiCommandEnvelopeResponse,
+            slot
+        };
+        uint32_t offset = 8;
+        const EnvelopeProgram& envelope = customEnvelopes[slot];
+        for (uint32_t i = 0; i < 8u; ++i)
+        {
+            appendWebMidiUint14(frame, offset, envelope.amp[i].level);
+            appendWebMidiUint21(frame, offset, envelope.amp[i].time);
+        }
+        for (uint32_t i = 0; i < 8u; ++i)
+        {
+            appendWebMidiUint14(frame, offset, envelope.pd[i].level);
+            appendWebMidiUint21(frame, offset, envelope.pd[i].time);
+        }
+        frame[offset++] = 0xF7u;
         tud_midi_stream_write(0, frame, offset);
     }
 
@@ -930,6 +1032,18 @@ private:
         uint32_t packed = (uint32_t)clamp12(value);
         buffer[offset++] = packed & 0x7Fu;
         buffer[offset++] = (packed >> 7) & 0x7Fu;
+    }
+
+    void appendWebMidiUint21(uint8_t* buffer, uint32_t& offset, uint32_t value)
+    {
+        uint32_t packed = value;
+        if (packed < 1u)
+            packed = 1u;
+        if (packed > MaxWebMidiStageSamples)
+            packed = MaxWebMidiStageSamples;
+        buffer[offset++] = packed & 0x7Fu;
+        buffer[offset++] = (packed >> 7) & 0x7Fu;
+        buffer[offset++] = (packed >> 14) & 0x7Fu;
     }
 
     uint32_t decodeWebMidiUint21(uint32_t& offset)
@@ -1077,12 +1191,23 @@ private:
     {
         uint32_t scaled = ((uint32_t)wave * 7u);
         uint32_t index = scaled >> 12;
-        uint32_t frac = smoothStep12(scaled & 4095);
+        uint32_t frac = compressWaveTransition(smoothStep12(scaled & 4095));
 
         int32_t a = czWave(phase, index);
         int32_t b = czWave(phase, index < 7 ? index + 1 : 7);
 
         return a + (((b - a) * (int32_t)frac) >> 12);
+    }
+
+    uint32_t compressWaveTransition(uint32_t frac)
+    {
+        if (frac <= 1024u)
+            return 0u;
+        if (frac >= 3072u)
+            return 4095u;
+
+        uint32_t span = frac - 1024u;
+        return ((span * 4095u) / 2048u);
     }
 
     inline int32_t czWave(uint32_t phase, uint32_t wave)
@@ -1632,6 +1757,8 @@ private:
         state.size = sizeof(SavedPerformanceState);
         state.osc2Detune = osc2Detune;
         state.osc2Level = osc2Level;
+        state.pdControl = pdControl;
+        state.waveControl = waveControl;
         state.osc2Ring = clamp12(osc2Ring);
         state.osc2Noise = clamp12(osc2Noise);
         state.envelopePreset =
@@ -1758,6 +1885,8 @@ private:
         return
             a.osc2Detune == b.osc2Detune &&
             a.osc2Level == b.osc2Level &&
+            a.pdControl == b.pdControl &&
+            a.waveControl == b.waveControl &&
             a.osc2Ring == b.osc2Ring &&
             a.osc2Noise == b.osc2Noise &&
             a.envelopePreset == b.envelopePreset &&
@@ -1774,6 +1903,8 @@ private:
 
         osc2Detune = state.osc2Detune;
         osc2Level = clamp12(state.osc2Level);
+        pdControl = clamp12(state.pdControl);
+        waveControl = clamp12(state.waveControl);
         osc2Ring = clamp12(state.osc2Ring);
         osc2Noise = clamp12(state.osc2Noise);
         turingCvOctaveRange = clampTuringCvOctaveRange(state.reserved[0]);
