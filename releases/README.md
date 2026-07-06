@@ -16,7 +16,7 @@
 | 13_noisebox | 13-algorithm noise synth with CV modulation, sample-and-hold, and crusher mode | 1.0<br>Released | C++ (ComputerCard) | Eric Gao |
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 15_MLRws | A remix of monome's classic MLR sample cutting platform (grid controller encouraged but optional). Diagrams here are for Gridless mode.<br>[Web editor](https://dessertplanet.github.io/MLRws-web/) | 1.1.5<br>Released | Pico SDK | Dune Desormeaux |
-| 16_the_bells |  |  |  |  |
+| 16_the_bells | Bellringing methods sequencer — 12 change-ringing methods with tempo and jitter, quantised to six scales | 1.0.0<br>Released | C++ (ComputerCard) | James Saunders |
 | 18_chord_organ | Chord Organ-ish - 16 chords, 8 voices, 1V/oct root. Inspired by Music Thing Chord Organ. | 0.1<br>Working | Pico SDK (C++), ComputerCard | jkeyworth |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface.<br>[Web editor](https://www.musicthing.co.uk/web_config/reverb.html) | 1.5<br>Released | C (RPi Pico SDK) | Chris Johnson |
 | 21_resonator | Karplus-Strong based sympathetic resonator. Can be used for resonant droning as well as plucking sounds.<br>[Web editor](https://johaneklund.io/resonator) | 1.1.1<br>Released | C++ (ComputerCard) | Johan Eklund |
@@ -33,7 +33,7 @@
 | 33_drumdrum | DFAM-style 8-step sequencer<br>[Web editor](https://mohoyt.com/drumdrum.html) | 1.2.0<br>Functional but WIP | C++ (ComputerCard / Pico SDK) | Moses Hoyt |
 | 34_dual_quant |  |  |  |  |
 | 35_FreqShift | Dual Input Frequency Shifter for Feedback Experimentation | 1.1<br>Functional | C++ (ComputerCard) | Ben Regnier |
-| 36_GradualProcess |  |  |  |  |
+| 36_GradualProcess | Three generative composition processes (Glass, Reich, Tintinnabuli) in one card, chosen by Main's position at power-on | 1.0.0<br>Released | C++ (ComputerCard) | James Saunders |
 | 37_compulidean | Generative Euclidean drum + sample player. | (see source repo)<br>Functional, but WIP | C++/Arduino, with vscode+platformio. | Tristan Rowley |
 | 38_od | Loopable chaotic Lorenz attractor trajectories and zero-crossings as CV and pulses, with sensitivity to initial conditions. | 1.0<br>Released | MicroPython | M. John Mills |
 | 39_knots | Six-engine oscillator firmware for the Music Thing Workshop System | 0.2<br>Released | C++ (RPi Pico SDK / ComputerCard) | Jeff Fletcher |
