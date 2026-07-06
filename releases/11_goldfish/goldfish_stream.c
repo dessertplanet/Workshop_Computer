@@ -119,6 +119,13 @@ static uint32_t s_keyframe_interval;
 static uint32_t s_kf_slots;          /* keyframe slots = capacity/interval (ring in continuous mode) */
 static bool     s_continuous;        /* DELAY: wrap region + never stop recording */
 
+volatile uint8_t  g_goldfish_jedec_rx[4];
+volatile uint8_t  g_goldfish_jedec_capacity_code;
+volatile uint32_t g_goldfish_detected_flash_size_bytes;
+volatile uint32_t g_goldfish_storage_capacity_samples;
+volatile uint32_t g_goldfish_storage_audio_bytes;
+volatile uint32_t g_goldfish_storage_cv_bytes;
+
 #if GOLDFISH_DEBUG
 /* Diagnostics: max wall-time (us) spent in the record_sample encode loop vs CV
  * block, read via GDB. Localises the XIP-during-flash-write stall. */
@@ -180,17 +187,7 @@ static inline const uint8_t *xip_ptr(uint32_t flash_off)
 	return (const uint8_t *)(XIP_BASE + flash_off);
 }
 
-/* Program one page with interrupts masked on the calling (core 1) core.
- * Correctness relies on core 0 being fully RAM-resident so it never touches
- * XIP during these windows. */
-static void flash_program_page(uint32_t off, const uint8_t *data)
-{
-	uint32_t ints = save_and_disable_interrupts();
-	GF_DBG(g_erasing = 1u;)
-	flash_range_program(off, data, GOLDFISH_PAGE_SIZE);
-	GF_DBG(g_erasing = 0u;)
-	restore_interrupts(ints);
-}
+static void flash_program_page(uint32_t off, const uint8_t *data);
 
 /* Account one just-programmed audio page towards the flushed (readable) limit.
  * CV pages carry no keyframes and don't gate the audio heads, so are ignored. */
@@ -322,6 +319,22 @@ static void __not_in_flash_func(qspi_program_page)(uint32_t off, const uint8_t *
 	}
 	qspi_cs(true);
 	while (qspi_status() & 0x01u) { /* WIP: page program in progress */ }
+}
+
+/* Program one page with interrupts masked on the calling (core 1) core.
+ * Uses the raw QSPI command path so runtime-detected 16 MB cards are not capped
+ * by the SDK's compile-time PICO_FLASH_SIZE_BYTES assertion for the pico board. */
+static void __not_in_flash_func(flash_program_page)(uint32_t off, const uint8_t *data)
+{
+	uint32_t ints = save_and_disable_interrupts();
+	s_rom_connect();
+	s_rom_exit_xip();
+	GF_DBG(g_erasing = 1u;)
+	qspi_program_page(off, data);
+	s_rom_flush();
+	s_rom_enter_xip();
+	GF_DBG(g_erasing = 0u;)
+	restore_interrupts(ints);
 }
 
 /* True if the sector containing flash offset `off` has already been erased by
@@ -512,6 +525,9 @@ void goldfish_stream_init(void)
 	uint32_t cap_audio = s_audio_bytes * 2u;
 	uint32_t cap_cv    = s_cv_bytes * GOLDFISH_CV_DECIM;
 	s_capacity_samples = (cap_audio < cap_cv) ? cap_audio : cap_cv;
+	g_goldfish_storage_capacity_samples = s_capacity_samples;
+	g_goldfish_storage_audio_bytes = s_audio_bytes;
+	g_goldfish_storage_cv_bytes = s_cv_bytes;
 
 	/* Choose the smallest power-of-two interval that keeps the keyframe count
 	 * within budget. Power-of-two keeps keyframe indexing a shift. */

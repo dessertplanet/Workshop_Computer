@@ -255,6 +255,7 @@ flash: uf2
 	      -ex "target extended-remote $(OPENOCD_HOST):$(OPENOCD_GDB_PORT)" \
 	      -ex "monitor reset init" \
 	      -ex "load" \
+	      -ex "compare-sections" \
 	      -ex "monitor reset run" \
 	      -ex "detach" \
 	      "$$elf" || rc=$$?; \
