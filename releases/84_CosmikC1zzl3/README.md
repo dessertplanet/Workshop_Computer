@@ -29,32 +29,16 @@ Checksum:
 
 This is hardware-tested production release 1.1, promoted on 2026-07-06.
 
-The previous production release 1.0 is archived at:
-
-```text
-uf2/archive/production-1.0-20260706/C1ZZL3_1.0_production.uf2
-```
-
-Release 1.1 works with Envelope Lab and CZ Import and includes Web MIDI PD,
-detune, eight waveform families, and card-to-editor envelope readback.
-
-Previous UF2s are archived in:
-
-```text
-uf2/archive/
-```
-
-Source snapshots and experiment notes are archived in:
-
-```text
-archive/
-```
+Release 1.1 works with Envelope Lab and C1ZZL3 Import Lab and includes Web
+MIDI PD, detune, eight waveform families, card-to-editor envelope readback,
+and browser CZ patch import handoff.
 
 ## Current Stable Feature Set
 
 - Phase-distortion synth voice.
 - Factory envelopes plus eight protected custom envelope slots.
 - Web MIDI envelope editor.
+- Hosted CZ patch import workflow.
 - USB MIDI device mode for DAW/browser use.
 - USB MIDI host mode for class-compliant controllers.
 - MIDI notes with envelope triggering.
@@ -106,7 +90,7 @@ The physical knobs and MIDI CC controls share the same control values. After a
 CC change, the related knob must be swept through the current value before it
 takes over again.
 
-## Web MIDI Editor
+## Envelope Lab
 
 Hosted editor:
 
@@ -114,10 +98,10 @@ Hosted editor:
 https://soveda.github.io/CozmikC1zzl3/web-midi/editor/
 ```
 
-Local editor:
+Local editor from this release folder:
 
 ```sh
-python3 -m http.server 5173 --directory web-midi/editor
+python3 -m http.server 5173 --directory editor
 ```
 
 Open:
@@ -136,20 +120,26 @@ Hosted import lab:
 https://soveda.github.io/CozmikC1zzl3/experiments/cz-import/
 ```
 
-Local import lab:
+This release folder does not include the Import Lab files locally. Use the
+hosted page to decode Casio CZ `.syx` patches into C1ZZL3 drafts, then open the
+result in Envelope Lab for final editing and sending.
 
-```sh
-python3 -m http.server 5174 --directory experiments/cz-import
-```
+Current Import Lab features:
 
-Open:
+- Light and dark mode toggle matching the Envelope Lab palette.
+- Larger `C1ZZL3 Import Lab` header and a clearer guided import workflow.
+- Drag-and-drop or file-picker import for Casio CZ `.syx` files.
+- Browser-side validation, patch summary, decoded data, and draft mapping.
+- Draft handoff into Envelope Lab in a new tab for final editing and card send.
+- Separate import page so CZ translation and envelope editing stay distinct.
 
-```text
-http://localhost:5174
-```
+Import Lab flow:
 
-Use this page to decode Casio CZ `.syx` patches into C1ZZL3 drafts, then open
-the result in Envelope Lab for final editing and sending.
+1. Open `C1ZZL3 Import Lab`.
+2. Drop in or choose a Casio CZ patch file.
+3. Review the validation, decoded summary, warnings, and mapped draft.
+4. Use `Open In Envelope Lab` to carry the draft into the main editor.
+5. In Envelope Lab, review the result, adjust if needed, and send or save it.
 
 ## How To Use The Editor
 
@@ -158,7 +148,7 @@ the result in Envelope Lab for final editing and sending.
 3. Drag points on the graph to change both level and timing.
 4. Watch the point numbers. Matching numbers mean the stages are stacked at the same spot.
 5. Use the tables below the graph for exact values when you want precise edits.
-6. Use the action buttons on the right when you want to send, save, read, or export.
+6. Use the action buttons on the right when you want to send, save, read, or reset.
 
 Button quick reference:
 
@@ -171,7 +161,6 @@ Button quick reference:
   overwriting changed local drafts.
 - `Read Settings from Card`: pull the current performance settings into the editor.
 - `Send Settings`: send the current performance settings to the card.
-- `Export JSON`: download all editor presets.
 - `Reset Preset`: restore the selected preset to its factory value.
 
 `Load RAM`, `Load Envelope + Settings`, and `Send Settings` are temporary.
@@ -179,11 +168,27 @@ Use `Save Envelope` to retain an envelope in flash. To make the current
 performance settings the startup baseline, move the hardware switch from
 middle to down and hold it until the card confirms the save.
 
-The card can save up to eight custom envelopes. The browser can retain additional
-local drafts. Factory presets are not overwritten.
+The card can save up to eight custom envelopes. The browser can retain
+additional local drafts. Factory presets are not overwritten.
 Custom presets are labelled `Local only`, `Saved - slot N`, or `Changed - slot N`.
-Envelope readback confirms which custom slots are occupied and verifies saves and
-deletions when supported by the experimental firmware.
+Envelope readback confirms which custom slots are occupied and verifies saves
+and deletions when supported by the firmware.
+
+`Play` loops a browser preview of the envelope.
+`Stop` stops the browser preview only. It does not send a stop command to the
+hardware.
+`Bounce` is the reset preset because it shows the envelope shape clearly.
+
+## Mobile Web MIDI Notes
+
+- Mobile browser support is less consistent than desktop support.
+- If `MIDI` connects but no output appears, open `Developer tools` in the editor
+  and check `MIDI Ports Seen By Browser`.
+- Some mobile browsers report MIDI access but expose ports in a non-standard
+  way. The editor tries several detection paths, but browser/device support can
+  still vary.
+- If ports still do not appear, reconnect the device, reload the page, and try
+  another USB adapter, hub, or browser.
 
 ## Build
 
@@ -219,16 +224,3 @@ Possible future optimisation notes are kept in:
 ```text
 FUTURE_NOTES.md
 ```
-
-## Repository Layout
-
-- `C1ZZL3.cpp`: main firmware
-- `C1ZZL3_LUT.cpp` / `C1ZZL3_LUT.h`: phase-distortion lookup tables
-- `FUTURE_NOTES.md`: deferred optimisation and cleanup notes
-- `web-midi/editor/`: browser editor
-- `experimental-firmware/pd-detune-wave/`: current stable experimental firmware
-- `uf2/C1ZZL3.uf2`: current stable firmware
-- `uf2/archive/`: older UF2s and rollbacks
-- `archive/`: source snapshots and experiment notes
-- `CARD_README.md`: user-facing card guide
-- `info.yaml`: Workshop Computer site metadata
