@@ -4,12 +4,13 @@
 // PR / commit-time CI hooks — to validate source YAML without pulling in the
 // site renderer.
 
-export { parseSource, parseSourceFile } from './parseSource.js';
+export { parseSource } from './parseSource.js';
+export { parseSourceFile } from './readSource.js';
 export { validateInfoYaml } from './validateInfoYaml.js';
 export { allRules } from './rules/index.js';
 export { reporters, reportText, reportJson, reportGithub } from './reporters/index.js';
 
-import { parseSourceFile } from './parseSource.js';
+import { parseSourceFile } from './readSource.js';
 import { validateInfoYaml } from './validateInfoYaml.js';
 
 /** Convenience: read + parse + validate a single info.yaml file on disk. */

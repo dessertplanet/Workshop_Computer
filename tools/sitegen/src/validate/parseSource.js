@@ -3,9 +3,12 @@
 // Keeps the raw text alongside the parsed data so reporters can point at source
 // lines, and surfaces YAML syntax errors as structured diagnostics (with
 // line/column when the parser provides them) rather than throwing.
+//
+// This module is browser-safe: it imports only the `yaml` parser and pure
+// string helpers, so it can be shipped to the client-side author preview. The
+// filesystem-backed loader lives in `readSource.js` (Node only).
 
 import YAML from 'yaml';
-import { fsAsync as fs } from '../utils/fs.js';
 import { normalizeYamlKey } from '../utils/strings.js';
 
 /** Convert a character offset in `raw` to a 1-based {line, col}. */
@@ -61,18 +64,4 @@ export function parseSource(raw, file = '<memory>') {
   result.data = doc.toJS() ?? {};
   result.keyLines = collectKeyLines(doc, raw);
   return result;
-}
-
-/** Read and parse an info.yaml file from disk. */
-export async function parseSourceFile(file) {
-  let raw;
-  try {
-    raw = await fs.readFile(file, 'utf8');
-  } catch (err) {
-    return {
-      file, raw: '', data: null, keyLines: {},
-      error: { severity: 'error', ruleId: 'source-read', file, path: '', message: `Cannot read file: ${err.message}` },
-    };
-  }
-  return parseSource(raw, file);
 }
