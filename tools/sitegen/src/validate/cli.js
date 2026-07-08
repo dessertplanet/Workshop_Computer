@@ -15,7 +15,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fsAsync as fs, fileExists, listSubdirs } from '../utils/fs.js';
-import { parseSourceFile } from './parseSource.js';
+import { parseSourceFile } from './readSource.js';
 import { validateInfoYaml } from './validateInfoYaml.js';
 import { reportText, reportJson, reportGithub } from './reporters/index.js';
 
