@@ -182,9 +182,9 @@ if (!('usb' in navigator)) {
       var tg=tagSel&&tagSel.value?tagSel.value.toLowerCase():'';
       var s=searchInput&&searchInput.value?searchInput.value.trim().toLowerCase():'';
 
-      if(searchClear) searchClear.style.display = s ? 'block' : 'none';
-
       var active = !!(t||c||l||tg||s);
+
+      if(searchClear) searchClear.style.display = active ? 'flex' : 'none';
 
       if(resultsEl){
         // Index: reveal flat results only while filtering
@@ -229,7 +229,14 @@ if (!('usb' in navigator)) {
     wire(searchInput, 'input');
     if(searchInput) searchInput.addEventListener('search', applyFilters);
     if(searchClear) searchClear.addEventListener('click', function(){
-      if(searchInput) { searchInput.value = ''; applyFilters(); searchInput.focus(); }
+      // Full reset back to the default curated view: clear search text and every filter.
+      if(searchInput) searchInput.value = '';
+      if(typeSel) typeSel.value = '';
+      if(creatorSel) creatorSel.value = '';
+      if(langSel) langSel.value = '';
+      if(tagSel) tagSel.value = '';
+      applyFilters();
+      if(searchInput) searchInput.focus();
     });
     if(sortSel) sortSel.addEventListener('change', applySort);
     if(typeSel||creatorSel||langSel||tagSel||searchInput) applyFilters();
