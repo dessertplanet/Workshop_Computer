@@ -12,6 +12,7 @@ import { renderDiscovery, renderArchive, renderTile } from './render/discovery.j
 import { curation } from './curation/index.js';
 import { parseSource } from './validate/parseSource.js';
 import { validateInfoYaml } from './validate/validateInfoYaml.js';
+import { renderPreviewPage } from './render/previewPage.js';
 
 // ========== Path & Globals ==========
 const __filename = fileURLToPath(import.meta.url);
@@ -333,8 +334,58 @@ async function build() {
     content: '<h1>404</h1><p>Page not found.</p>'
   }));
 
+  // Author preview/editor (static, client-side; reuses the shared engine).
+  await buildPreviewTool();
+
   console.log(`Built site with ${releases.length} releases -> ${OUT_DIR}`);
   reportValidation(validationResults);
+}
+
+// Shared source modules shipped to the browser author preview. Copied verbatim
+// (preserving relative paths) so client-side validation/rendering matches the
+// build exactly. Keep this list in sync with the preview client's imports.
+const PREVIEW_LIB_FILES = [
+  'utils/strings.js',
+  'utils/youtube.js',
+  'schema/schemaDefinition.js',
+  'schema/schemaAdapter.js',
+  'validate/parseSource.js',
+  'validate/validateInfoYaml.js',
+  'validate/rules/index.js',
+  'model/card.js',
+  'render/panelPositions.js',
+  'render/cardPage.js',
+];
+
+/** Build the static author preview/editor under site/preview/. */
+async function buildPreviewTool() {
+  const previewDir = path.join(OUT_DIR, 'preview');
+  const libDir = path.join(previewDir, 'lib');
+  const vendorDir = path.join(previewDir, 'vendor');
+  await ensureDir(previewDir);
+
+  // Shared engine + renderer source (mirrors src/ layout under lib/).
+  for (const rel of PREVIEW_LIB_FILES) {
+    const dest = path.join(libDir, rel);
+    await ensureDir(path.dirname(dest));
+    await fs.copyFile(path.join(__dirname, rel), dest);
+  }
+
+  // Vendor browser builds for the bare `yaml` / `marked` imports.
+  const nodeModules = path.join(ROOT, 'tools', 'sitegen', 'node_modules');
+  await fs.cp(path.join(nodeModules, 'yaml', 'browser'), path.join(vendorDir, 'yaml'), { recursive: true });
+  await ensureDir(vendorDir);
+  await fs.copyFile(
+    path.join(nodeModules, 'marked', 'lib', 'marked.esm.js'),
+    path.join(vendorDir, 'marked.esm.js')
+  );
+
+  // Client script + page.
+  await fs.copyFile(
+    path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'preview-client.js'),
+    path.join(previewDir, 'preview-client.js')
+  );
+  await writeFileEnsured(path.join(previewDir, 'index.html'), renderPreviewPage());
 }
 
 /** Print a concise, non-fatal summary of the info.yaml conformance pass. */
