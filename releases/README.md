@@ -14,7 +14,7 @@
 | 13_noisebox |  |  |  |  |  |  |  |
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0 | C++ (ComputerCard) | Chris Johnson |  | CVMod | Released |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface. | 1.4 | C (RPi Pico SDK) | Chris Johnson | https://www.musicthing.co.uk/web_config/reverb.html | Reverb+ | Released |
-| 21_resonator | Karplus-Strong based sympathetic resonator. Can be used for resonant droning as well as plucking sounds. | 1.1.1 | C++ (ComputerCard) | Johan Eklund | https://johaneklund.io/resonator| Resonator | Released |
+| 21_resonator | Karplus-Strong sympathetic resonator for droning and plucked textures, with chord & tanpura tunings, arpeggiator, pitch tracking and web-configurable CV/pulse outputs. | 1.2| C++ (ComputerCard) | Johan Eklund | https://johaneklund.io/resonator| Resonator | Released |
 | 22_sheep | A time-stretching and pitch-shifting granular processor and digital degradation playground with 2 fidelity options. | 1.1 | Pico SDK | Dune Desormeaux |  |  | Released |
 | 23_SlowMod | Chaotic quad-LFO with VCAs | 0.1 | C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE. | divmod/@olt |  |  | Released |
 | 24_crafted_volts | Manually set control voltages (CV) with the input knobs and switch. It also attenuverts (attenuates and inverts) incoming voltages. | (see source repo) | Rust (Embassy framework) | Brian Dorsey |  |  | Released |
