@@ -2,7 +2,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { marked } from 'marked';
 import { fsAsync as fs, fileExists } from '../utils/fs.js';
-import { slugify, parseDisplayFromFolder, formatDisplayTitle, normalizeYamlKey } from '../utils/strings.js';
+import { slugify, normalizeYamlKey } from '../utils/strings.js';
 import { toPosix } from '../utils/fs.js';
 import { discoverDocs } from './docs.js';
 import { discoverDownloads } from './downloads.js';
@@ -119,10 +119,6 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   // downloads
   const { downloads, latestUf2 } = await discoverDownloads(abs, repoRelBase, makeRawUrl);
 
-  // display fields
-  const parsed = parseDisplayFromFolder(folderName);
-  const finalTitle = info.title ? formatDisplayTitle(info.title) : (parsed.title || folderName);
-  const display = { number: parsed.number, title: finalTitle };
   const sourceFile = toPosix(path.join('releases', folderName, 'info.yaml'));
   const sourceUrl = `https://github.com/${repoSlug}/tree/${refName}/releases/${folderName}`;
   const readmeRelPath = toPosix(path.join('releases', folderName, 'README.md'));
@@ -131,8 +127,7 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   const card = buildCanonicalCardModel({
     folderName,
     slug,
-    display,
-    info: { ...info, title: finalTitle },
+    info,
     rawYaml,
     docs,
     downloads,
@@ -149,14 +144,12 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   return {
     folderName,
     slug,
-    info: { ...info, title: finalTitle },
     rawInfoSource,
     rawYaml,
     readmeHtml,
     docs,
     downloads,
     latestUf2,
-    display,
     web,
     card,
   };

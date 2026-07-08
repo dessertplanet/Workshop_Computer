@@ -61,7 +61,7 @@ function typeKey(raw) {
 }
 
 function detailPage(rel) {
-  const { info, docs, readmeHtml, card } = rel;
+  const { docs, readmeHtml, card } = rel;
   const uf2Url = rel.latestUf2?.url || '';
   const yamlUrl = card?.source_file
     ? `https://github.com/${REPO}/blob/${BRANCH}/${card.source_file}`
@@ -89,7 +89,7 @@ function detailPage(rel) {
   });
 
   return renderLayout({
-    title: `${info.title} – Workshop Computer`,
+    title: `${card.title} – Workshop Computer`,
     relativeRoot: '../..',
     repoUrl: `https://github.com/${REPO}`,
     content: `
@@ -166,13 +166,13 @@ async function build() {
       const source = parseSource(rel.rawInfoSource, `releases/${rel.folderName}/info.yaml`);
       validationResults.push(validateInfoYaml(source));
     }
-    const info = rel.info || {};
-    const typeRaw = (info.type || info.status || 'Unknown').toString();
+    const meta = rel.card?.metadata || {};
+    const typeRaw = (meta.status || 'Unknown').toString();
     const key = typeKey(typeRaw) || 'unknown';
     const display = normalizeSpaces(typeRaw) || 'Unknown';
     if (!typeMap.has(key)) typeMap.set(key, display);
-    const creatorVal = (info.creator || 'Unknown').toString().trim() || 'Unknown';
-    const languageVal = (info.language || 'Unknown').toString().trim() || 'Unknown';
+    const creatorVal = (meta.creator || 'Unknown').toString().trim() || 'Unknown';
+    const languageVal = (meta.language || 'Unknown').toString().trim() || 'Unknown';
     creatorSet.add(creatorVal);
     languageSet.add(languageVal);
   }
