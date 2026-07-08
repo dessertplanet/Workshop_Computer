@@ -6,8 +6,10 @@ import { makeRawUrl as makeRawUrlExternal } from './links.js';
 import { renderLayout } from './render/layout.js';
 import { sevenSegmentSvg, mapStatusToClass, renderMetaList } from './render/components.js';
 import { formatVersion } from './utils/strings.js';
+import { marked } from 'marked';
 import { discoverRelease as discoverReleaseMod } from './discover/release.js';
 import { githubPagesBase, copyWebAssets } from './discover/webEditor.js';
+import { getInfoYamlSchemaAdapter } from './schema/schemaAdapter.js';
 
 // ========== Path & Globals ==========
 const __filename = fileURLToPath(import.meta.url);
@@ -28,6 +30,7 @@ const DEFAULT_BRANCH = 'main';
 const REPO = process.env.GITHUB_REPOSITORY || detectRepoFromGit() || DEFAULT_REPO;
 const BRANCH = process.env.GITHUB_SHA || process.env.GITHUB_REF_NAME || detectRefFromGit() || DEFAULT_BRANCH;
 const PAGES_BASE = githubPagesBase(REPO);
+const schemaAdapter = getInfoYamlSchemaAdapter();
 
 
 // (info parsing handled in discover/release.js)
@@ -38,11 +41,193 @@ function makeRawUrl(relPathFromRepoRoot) {
 
 async function discoverRelease(folderName) {
   const outPrograms = path.join(OUT_DIR, 'programs');
-  return discoverReleaseMod(RELEASES_DIR, folderName, outPrograms, makeRawUrl, PAGES_BASE);
+  return discoverReleaseMod(RELEASES_DIR, folderName, outPrograms, makeRawUrl, PAGES_BASE, REPO, BRANCH);
 }
 
 function escapeAttr(s) {
   return String(s ?? '').replaceAll('"', '&quot;');
+}
+
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function normalizeCollection(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') return Object.values(value);
+  return [];
+}
+
+function normalizeNamedCollection(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') {
+    return Object.entries(value).map(([key, item]) => {
+      if (item && typeof item === 'object') return { ...item, id: item.id || key };
+      return { id: key, name: String(item ?? key) };
+    });
+  }
+  return [];
+}
+
+function formatWhenLabel(when) {
+  if (!when || typeof when !== 'object') return '';
+  const entries = Object.entries(when)
+    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .map(([key, value]) => `${key}: ${String(value).trim()}`);
+  return entries.join(', ');
+}
+
+function renderChips(items) {
+  const values = (items || []).map(item => String(item ?? '').trim()).filter(Boolean);
+  if (!values.length) return '';
+  return `<div class="chip-row">${values.map(value => `<span class="chip">${escapeHtml(value)}</span>`).join('')}</div>`;
+}
+
+function renderMarkdownBlock(text) {
+  const val = String(text ?? '').trim();
+  if (!val) return '';
+  return `<div class="markdown-body">${marked.parse(val)}</div>`;
+}
+
+function renderQuickStart(card) {
+  const steps = normalizeCollection(card?.quick_start)
+    .map(item => String(item ?? '').trim())
+    .filter(Boolean);
+  if (!steps.length) return '';
+  return `
+    <section class="section section-card">
+      <h2>Quick Start</h2>
+      <ol class="detail-list numbered-list">
+        ${steps.map(step => `<li>${escapeHtml(step)}</li>`).join('')}
+      </ol>
+    </section>`;
+}
+
+function renderPortList(title, portsInput) {
+  const ports = normalizeNamedCollection(portsInput)
+    .map(item => {
+      const id = String(item?.id || '').trim();
+      const name = String(item?.name || item?.label || id || '').trim();
+      const description = String(item?.description || '').trim();
+      const type = String(item?.type || '').trim();
+      return { id, name, description, type };
+    })
+    .filter(item => item.name || item.id || item.description || item.type);
+  if (!ports.length) return '';
+
+  return `
+    <section class="section section-card">
+      <h3>${escapeHtml(title)}</h3>
+      <ul class="detail-list">
+        ${ports.map(port => {
+          const heading = port.id && port.id !== port.name ? `${port.name} (${port.id})` : (port.name || port.id);
+          const meta = [port.type ? `type: ${port.type}` : ''].filter(Boolean).join(' · ');
+          return `<li>
+            <strong>${escapeHtml(heading)}</strong>
+            ${port.description ? `<p>${escapeHtml(port.description)}</p>` : ''}
+            ${meta ? `<p class="detail-meta">${escapeHtml(meta)}</p>` : ''}
+          </li>`;
+        }).join('')}
+      </ul>
+    </section>`;
+}
+
+function renderPanel(card) {
+  const panel = card?.panel;
+  if (!panel || typeof panel !== 'object') return '';
+  const inputs = renderPortList('Panel Inputs', panel.inputs);
+  const outputs = renderPortList('Panel Outputs', panel.outputs);
+  return `${inputs}${outputs}`;
+}
+
+function renderSwitchModes(card) {
+  const switchModes = card?.switch_modes;
+  if (!switchModes || typeof switchModes !== 'object' || Array.isArray(switchModes)) return '';
+  const rows = Object.entries(switchModes)
+    .map(([pos, value]) => ({ position: pos, text: String(value ?? '').trim() }))
+    .filter(row => row.text);
+  if (!rows.length) return '';
+  return `
+    <section class="section section-card">
+      <h2>Switch Modes</h2>
+      <ul class="detail-list">
+        ${rows.map(row => `<li>
+          <strong>${escapeHtml(row.position.charAt(0).toUpperCase() + row.position.slice(1))}</strong>: ${escapeHtml(row.text)}
+        </li>`).join('')}
+      </ul>
+    </section>`;
+}
+
+function renderControls(card) {
+  const controls = card?.panel?.controls;
+  if (!controls || typeof controls !== 'object' || Array.isArray(controls)) return '';
+  const rows = ['main', 'x', 'y', 'z']
+    .map(key => ({ key, ...(controls[key] || {}) }))
+    .filter(row => row.label || row.description);
+  if (!rows.length) return '';
+  return `
+    <section class="section section-card">
+      <h2>Controls</h2>
+      <ul class="detail-list">
+        ${rows.map(row => {
+          const label = String(row.label || row.key).replace(/\n/g, ' ').trim();
+          const description = String(row.description || '').trim();
+          return `<li><strong>${escapeHtml(label)}</strong>${description ? ` — ${escapeHtml(description)}` : ''}</li>`;
+        }).join('')}
+      </ul>
+    </section>`;
+}
+
+function renderLeds(card) {
+  const leds = normalizeCollection(card?.leds).map(item => String(item ?? '').trim()).filter(Boolean);
+  if (!leds.length) return '';
+  return `
+    <section class="section section-card">
+      <h2>LED Behavior</h2>
+      <ul class="detail-list">${leds.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+    </section>`;
+}
+
+function renderDocumentation(card) {
+  const documentation = card?.documentation;
+  if (!documentation || typeof documentation !== 'object') return '';
+  const blocks = [];
+  if (String(documentation.intro || '').trim()) {
+    blocks.push(`<section class="section section-card">${renderMarkdownBlock(documentation.intro)}</section>`);
+  }
+  for (const section of (Array.isArray(documentation.sections) ? documentation.sections : [])) {
+    const title = String(section?.title || '').trim();
+    const body = String(section?.body || '').trim();
+    if (!body) continue;
+    const heading = title ? title.replace(/\b\w/g, c => c.toUpperCase()) : '';
+    blocks.push(`<section class="section section-card">${heading ? `<h3>${escapeHtml(heading)}</h3>` : ''}${renderMarkdownBlock(body)}</section>`);
+  }
+  if (!blocks.length) return '';
+  return `<section class="section"><h2>Documentation</h2>${blocks.join('')}</section>`;
+}
+
+function renderNotes(card) {
+  const notes = normalizeCollection(card?.notes)
+    .map(item => String(item ?? '').trim())
+    .filter(Boolean);
+  if (!notes.length) return '';
+  return `
+    <section class="section section-card">
+      <h2>Notes</h2>
+      <ul class="detail-list">
+        ${notes.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
+      </ul>
+    </section>`;
+}
+
+function renderDraftBanner(info) {
+  if (!info?.draft) return '';
+  return '<div class="detail-banner">Draft metadata: this card info is still under review.</div>';
 }
 
 // Helpers for Release Type: preserve original YAML text, but dedupe case/space-insensitively
@@ -91,7 +276,7 @@ function releaseCard(rel) {
 //  
 
 function detailPage(rel) {
-  const { info, slug, display, downloads, docs, readmeHtml } = rel;
+  const { info, display, downloads, docs, readmeHtml, card } = rel;
   const desc = info.description ? String(info.description) : 'No description available.';
   const creator = info.creator || 'unknown';
   const version = formatVersion(info.version || 'unknown');
@@ -102,6 +287,16 @@ function detailPage(rel) {
   const num = display.number;
   const uf2Downloads = (downloads || []).filter(d => /\.uf2$/i.test(d.name));
 	const editorURL = info.editor;
+
+  const tagsHtml = renderChips(card?.tags || info?.tags || []);
+  const draftBanner = renderDraftBanner(info);
+  const quickStartHtml = renderQuickStart(card);
+  const panelHtml = renderPanel(card);
+  const switchModesHtml = renderSwitchModes(card);
+  const controlsHtml = renderControls(card);
+  const ledsHtml = renderLeds(card);
+  const documentationHtml = renderDocumentation(card);
+  const notesHtml = renderNotes(card);
 
   return renderLayout({
     title: `${info.title} – Workshop Computer`,
@@ -114,17 +309,27 @@ function detailPage(rel) {
     ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
   </div>
   <div class="card-body">
+    ${draftBanner}
 
   <aside class="detail-aside card" aria-label="Release info and downloads">
       <div class="card-body">
     <p class="aside-desc">${desc}</p>
         ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
+        ${tagsHtml ? `<section class="aside-group"><h3>Tags</h3>${tagsHtml}</section>` : ''}
         <div class="actions aside-actions">
           ${uf2Downloads.length ? uf2Downloads.map(d => `<a class="btn download" href="${d.url}" download data-uf2-url="${d.url}">💾 Download ${d.name}</a>`).join('') : `<span class="btn disabled" aria-disabled="true">💾 No Download</span>`}
           ${editorURL ? `<a class="btn editor" href="${editorURL}">🛠️ Web Editor</a>` : `<span class="btn disabled" aria-disabled="true">🛠️ Web Editor</span>`}
         </div>
       </div>
     </aside>
+
+    ${quickStartHtml}
+    ${panelHtml}
+    ${switchModesHtml}
+    ${controlsHtml}
+    ${ledsHtml}
+    ${documentationHtml}
+    ${notesHtml}
 
     <div class="section">
       <h2>README</h2>
@@ -182,6 +387,8 @@ async function build() {
   const releaseFolders = (await listSubdirs(RELEASES_DIR)).sort();
 
   const releases = [];
+  const normalizedCards = [];
+  const rawInfoIndex = [];
   const typeMap = new Map(); // key -> display (original YAML text, normalized spacing)
   const creatorSet = new Set();
   const languageSet = new Set();
@@ -191,6 +398,15 @@ async function build() {
     if (!hasFiles) continue;
     const rel = await discoverRelease(folder);
     releases.push(rel);
+    normalizedCards.push(rel.card);
+    if (rel.rawInfoSource) {
+      rawInfoIndex.push({
+        id: rel.folderName,
+        slug: rel.slug,
+        sourceFile: rel.card.source_file,
+        path: `raw-info/${rel.folderName}/info.yaml`,
+      });
+    }
     const info = rel.info || {};
     const typeRaw = (info.type || info.status || 'Unknown').toString();
     const key = typeKey(typeRaw) || 'unknown';
@@ -260,6 +476,22 @@ async function build() {
 <div class="grid">${cards}</div>`
   });
   await writeFileEnsured(path.join(OUT_DIR, 'index.html'), indexHtml);
+  await writeFileEnsured(path.join(OUT_DIR, 'cards.json'), JSON.stringify({
+    schema: {
+      id: schemaAdapter.id,
+      version: schemaAdapter.version,
+      source: schemaAdapter.source,
+      requiredFields: schemaAdapter.requiredFields().map(field => field.path),
+    },
+    cards: normalizedCards,
+  }, null, 2));
+  await writeFileEnsured(path.join(OUT_DIR, 'raw-info', 'index.json'), JSON.stringify(rawInfoIndex, null, 2));
+
+  for (const rel of releases) {
+    if (rel.rawInfoSource) {
+      await writeFileEnsured(path.join(OUT_DIR, 'raw-info', rel.folderName, 'info.yaml'), rel.rawInfoSource);
+    }
+  }
 
   for (const rel of releases) {
     const base = path.join(OUT_DIR, 'programs', rel.slug);

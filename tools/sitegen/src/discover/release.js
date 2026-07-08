@@ -3,12 +3,14 @@ import YAML from 'yaml';
 import { marked } from 'marked';
 import { fsAsync as fs, fileExists } from '../utils/fs.js';
 import { slugify, parseDisplayFromFolder, formatDisplayTitle, normalizeYamlKey } from '../utils/strings.js';
+import { toPosix } from '../utils/fs.js';
 import { discoverDocs } from './docs.js';
 import { discoverDownloads } from './downloads.js';
-import { getLastCommitDate } from '../utils/git.js';
+import { getLastCommitDate, getCommitDates } from '../utils/git.js';
 import { resolveWebConfig } from './webEditor.js';
 import { normalizeTags, normalizeRepository, normalizeContact, normalizeDraft, resolveAudioSample } from './infoFields.js';
 import { parseYoutubeId, youtubeEmbedHtml } from '../utils/youtube.js';
+import { buildCanonicalCardModel } from '../model/card.js';
 
 export function normalizeInfo(raw, fallbackTitle) {
   const out = {};
@@ -32,7 +34,7 @@ export function normalizeInfo(raw, fallbackTitle) {
   };
 }
 
-export async function discoverRelease(rootReleasesDir, folderName, outDirPrograms, makeRawUrl, pagesBaseUrl) {
+export async function discoverRelease(rootReleasesDir, folderName, outDirPrograms, makeRawUrl, pagesBaseUrl, repoSlug, refName) {
   const abs = path.join(rootReleasesDir, folderName);
   const slug = slugify(folderName);
 
@@ -40,8 +42,10 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   const infoPath = path.join(abs, 'info.yaml');
   let rawYaml = {};
   let info = { title: folderName };
+  let rawInfoSource = '';
   if (await fileExists(infoPath)) {
     const raw = await fs.readFile(infoPath, 'utf8');
+    rawInfoSource = raw;
     try {
       rawYaml = YAML.parse(raw) || {};
       info = normalizeInfo(rawYaml, folderName);
@@ -119,17 +123,42 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   const parsed = parseDisplayFromFolder(folderName);
   const finalTitle = info.title ? formatDisplayTitle(info.title) : (parsed.title || folderName);
   const display = { number: parsed.number, title: finalTitle };
+  const sourceFile = toPosix(path.join('releases', folderName, 'info.yaml'));
+  const sourceUrl = `https://github.com/${repoSlug}/tree/${refName}/releases/${folderName}`;
+  const readmeRelPath = toPosix(path.join('releases', folderName, 'README.md'));
+  const readmeUrl = `https://github.com/${repoSlug}/blob/${refName}/releases/${folderName}/README.md`;
+  const { first: gitFirstDate, last: gitLastDate } = getCommitDates(path.join('releases', folderName));
+  const card = buildCanonicalCardModel({
+    folderName,
+    slug,
+    display,
+    info: { ...info, title: finalTitle },
+    rawYaml,
+    docs,
+    downloads,
+    latestUf2,
+    web,
+    readmePath: readmeRelPath,
+    sourceFile,
+    sourceUrl,
+    readmeUrl,
+    gitFirstDate,
+    gitLastDate,
+  });
 
   return {
     folderName,
     slug,
     info: { ...info, title: finalTitle },
+    rawInfoSource,
+    rawYaml,
     readmeHtml,
     docs,
     downloads,
     latestUf2,
     display,
     web,
+    card,
   };
 }
 

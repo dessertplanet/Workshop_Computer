@@ -187,6 +187,22 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.
 .theme-dark .detail-aside.card{background:color-mix(in srgb, var(--bg), #ffffff 8%)}
 .theme-light .detail-aside.card{background:color-mix(in srgb, var(--light-bg), #000000 6%)}
 
+/* Detail metadata sections */
+.detail-banner{margin:0 0 16px 0;padding:10px 12px;border:1px solid #c77d00;border-radius:8px;background:#fff1d6;color:#5a3a00;font-weight:600}
+.theme-dark .detail-banner{background:#4e3400;color:#ffe2a7;border-color:#ffb347}
+.aside-group{margin-top:14px;padding-top:10px;border-top:1px solid var(--border)}
+.aside-group h3{margin:0 0 8px 0;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.chip-row{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-block;padding:4px 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;background:color-mix(in srgb, var(--card), #000 6%)}
+.section-card{padding:14px;border:1px solid var(--border);border-radius:10px;background:color-mix(in srgb, var(--card), #000 4%)}
+.section-card h2,.section-card h3{margin-top:0}
+.detail-list{margin:8px 0 0 0;padding-left:20px}
+.detail-list li{margin:8px 0}
+.detail-list p{margin:6px 0 0 0}
+.detail-meta{color:var(--muted);font-size:13px}
+.numbered-list{padding-left:24px}
+.nested-list{margin-top:4px}
+
 /* =====================================================================
   Theming helpers
   ===================================================================== */
