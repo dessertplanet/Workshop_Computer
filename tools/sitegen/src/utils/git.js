@@ -40,3 +40,19 @@ export function getLastCommitDate(relPath) {
     return null;
   }
 }
+
+/**
+ * Returns { first, last } short commit dates (YYYY-MM-DD) for a path, or '' when unavailable.
+ * Mirrors the MTM importer's git_date(:first/:last) fallback used for created/updated metadata.
+ */
+export function getCommitDates(relPath) {
+  try {
+    const out = execSync(`git log --format=%cs -- "${relPath}"`, { cwd: ROOT, encoding: 'utf8' });
+    const dates = out.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!dates.length) return { first: '', last: '' };
+    return { first: dates[dates.length - 1], last: dates[0] };
+  } catch (e) {
+    debugLog(`getCommitDates failed for ${relPath}:`, e?.message || e);
+    return { first: '', last: '' };
+  }
+}
