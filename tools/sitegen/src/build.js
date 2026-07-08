@@ -10,6 +10,8 @@ import { getInfoYamlSchemaAdapter } from './schema/schemaAdapter.js';
 import { renderCardArticle } from './render/cardPage.js';
 import { renderDiscovery, renderArchive, renderTile } from './render/discovery.js';
 import { curation } from './curation/index.js';
+import { parseSource } from './validate/parseSource.js';
+import { validateInfoYaml } from './validate/validateInfoYaml.js';
 
 // ========== Path & Globals ==========
 const __filename = fileURLToPath(import.meta.url);
@@ -141,6 +143,7 @@ async function build() {
   const releases = [];
   const normalizedCards = [];
   const rawInfoIndex = [];
+  const validationResults = []; // non-fatal info.yaml conformance pass
   const typeMap = new Map(); // key -> display (original YAML text, normalized spacing)
   const creatorSet = new Set();
   const languageSet = new Set();
@@ -158,6 +161,10 @@ async function build() {
         sourceFile: rel.card.source_file,
         path: `raw-info/${rel.folderName}/info.yaml`,
       });
+      // Validate the raw author source against the canonical schema. This is a
+      // non-fatal reporting pass: it never blocks the build.
+      const source = parseSource(rel.rawInfoSource, `releases/${rel.folderName}/info.yaml`);
+      validationResults.push(validateInfoYaml(source));
     }
     const info = rel.info || {};
     const typeRaw = (info.type || info.status || 'Unknown').toString();
@@ -327,6 +334,24 @@ async function build() {
   }));
 
   console.log(`Built site with ${releases.length} releases -> ${OUT_DIR}`);
+  reportValidation(validationResults);
+}
+
+/** Print a concise, non-fatal summary of the info.yaml conformance pass. */
+function reportValidation(results) {
+  if (!results.length) return;
+  const errorCount = results.reduce((n, r) => n + r.errorCount, 0);
+  const warningCount = results.reduce((n, r) => n + r.warningCount, 0);
+  const failing = results.filter(r => r.errorCount > 0);
+  if (!errorCount && !warningCount) {
+    console.log('info.yaml validation: all cards conform to documentation/info.yaml.md.');
+    return;
+  }
+  console.log(`info.yaml validation (non-fatal): ${errorCount} error(s), ${warningCount} warning(s) across ${results.length} card(s).`);
+  if (failing.length) {
+    console.log(`  ${failing.length} card(s) with errors: ${failing.map(r => r.file.replace(/^releases\//, '').replace(/\/info\.yaml$/, '')).join(', ')}`);
+    console.log('  Run `npm run validate-info` for details.');
+  }
 }
 
 build().catch(err => {
