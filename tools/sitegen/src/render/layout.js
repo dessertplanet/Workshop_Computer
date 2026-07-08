@@ -11,6 +11,7 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="${relativeRoot}/assets/style.css" />
+  <link rel="stylesheet" href="${relativeRoot}/assets/program-cards.css" />
   <style>
     .filter-bar{margin:0 0 16px 0}
   .filter-row label{font-weight:600;color:var(--muted)}
@@ -55,7 +56,7 @@ function setConnected(on) {
     connectBtn.setAttribute('aria-checked', String(on));
     connectBtn.classList.toggle('active', on);
   }
-  document.querySelectorAll('a.btn.download[data-uf2-url]').forEach(function(a) {
+  document.querySelectorAll('a[data-uf2-url]').forEach(function(a) {
     if (on) {
       if (!a.dataset.origHtml) a.dataset.origHtml = a.innerHTML;
       a.innerHTML = '⚡ Program';

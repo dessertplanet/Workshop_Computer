@@ -99,8 +99,9 @@ The build should normalize each release into a single object, similar to the MTM
 
 ### Status
 
-- **Phase 1: complete.** The MTM importer is fully ported into `tools/sitegen/src/model/card.js` (case-insensitive field lookup, API-jack to panel-slot mapping, `compactPanelLabel`, controls/switch/LED synthesis, host to notes, source provenance, cleaned metadata). `discoverRelease()` returns the canonical model; `utils/git.js` gained `getCommitDates()` for created/updated fallback. The detail-page renderers in `build.js` consume the normalized shape. Build passes for all releases and emits `site/cards.json`, `site/raw-info/<id>/info.yaml`, and `site/raw-info/index.json`.
-- **Phases 2-4, validator, curation, schema layer, author preview: not started.**
+- **Phase 1: complete.** The MTM importer is fully ported into `tools/sitegen/src/model/card.js` (case-insensitive field lookup, API-jack to panel-slot mapping, `compactPanelLabel`, controls/switch/LED synthesis, host to notes, source provenance, cleaned metadata). `discoverRelease()` returns the canonical model; `utils/git.js` gained `getCommitDates()` for created/updated fallback. Build passes for all releases and emits `site/cards.json`, `site/raw-info/<id>/info.yaml`, and `site/raw-info/index.json`.
+- **Phase 2: complete.** The MTM program-card detail page is ported into `tools/sitegen/src/render/cardPage.js` (draft banner, hero + tags + actions, demo video, quick start, panel SVG diagram with positioned labels, controls/switch/socket lists, documentation, about/notes/data-sources). Panel coordinates live in `src/render/panelPositions.js`; the panel SVG and ported detail-page CSS (`assets/program-cards.css`) are copied into `site/`. The embedded README + PDF docs are retained as a documentation extra. WebUSB flashing is wired to the hero download via `data-uf2-url`. Also fixed: headline download now skips `old` / `old versions` firmware, and `github-markdown.css` is copied to the output.
+- **Phases 3-4, validator, curation, schema layer, author preview: not started.**
 
 ### Phase 1: Replace the data model first
 
