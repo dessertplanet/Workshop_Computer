@@ -1,11 +1,10 @@
 export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'https://github.com/TomWhitwell/Workshop_Computer' }) {
   return `<!doctype html>
-<html lang="en" class="theme-dark" data-theme="dark">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title ? String(title).replace(/</g, '&lt;') : 'Workshop Computer'}</title>
-  <script>(function(){try{var k='wc-theme';var d=document.documentElement;var prefersDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;var t=localStorage.getItem(k);if(t!=='dark'&&t!=='light'){t=prefersDark?'dark':'light';}d.classList.remove('theme-dark','theme-light');d.classList.add('theme-'+t);d.setAttribute('data-theme',t);}catch(e){}})();</script>
   <link rel="stylesheet" href="${relativeRoot}/assets/github-markdown.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -24,10 +23,8 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
       <h1 class="site-title"><a href="${relativeRoot}/index.html">Workshop Computer Program Cards</a></h1>
       <div style="display:flex;align-items:center;gap:10px">
         <button id="connectToggle" class="connect-toggle" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting">
-          <span class="c-track"><span class="c-thumb"></span><span class="c-icons" aria-hidden="true">💾<span class="c-gap"></span>⚡</span></span>
-        </button>
-        <button id="themeToggle" class="theme-toggle" type="button" role="switch" aria-checked="true" aria-label="Toggle color scheme">
-          <span class="track"><span class="thumb"></span><span class="icons" aria-hidden="true">☀️<span class="gap"></span>🌙</span></span>
+          <span class="c-label">Connect</span>
+          <span class="c-track"><span class="c-thumb"></span></span>
         </button>
       </div>
     </div>
@@ -133,80 +130,109 @@ if (!('usb' in navigator)) {
 }
   </script>
   <script>(function(){
-    // Theme toggle
-    var btn=document.getElementById('themeToggle');if(btn){var k='wc-theme';function cur(){return document.documentElement.getAttribute('data-theme')||'dark';}function set(t){try{localStorage.setItem(k,t);}catch(e){}var d=document.documentElement;d.classList.remove('theme-dark','theme-light');d.classList.add('theme-'+t);d.setAttribute('data-theme',t);update();}function update(){var t=cur();btn.setAttribute('aria-checked',String(t==='dark'));}btn.addEventListener('click',function(){set(cur()==='dark'?'light':'dark');});update();}
-
-    // Filters (index only)
+    // Search + filters. Index toggles curated shelves <-> flat results; the
+    // archive page filters its one-line rows in place. Both support type-ahead
+    // search and latest-update sort.
     var typeSel=document.getElementById('filter-type');
     var creatorSel=document.getElementById('filter-creator');
     var langSel=document.getElementById('filter-language');
+    var tagSel=document.getElementById('filter-tag');
     var searchInput=document.getElementById('filter-search');
     var searchClear=document.getElementById('search-clear');
-    var sortCheckbox = document.getElementById('sort-latest');
+    var sortSel = document.getElementById('sort-mode');
     var countEl=document.getElementById('cards-count');
-    
+    var discoveryEl=document.getElementById('discovery');
+    var resultsEl=document.getElementById('search-results');
+    var resultsGrid=resultsEl?resultsEl.querySelector('.program-card-grid'):null;
+    var noResults=document.getElementById('no-results');
+    var archiveList=document.querySelector('.program-card-archive-list');
+    // The collection to sort/filter directly in place (archive) vs behind a toggle (index).
+    var sortContainer=resultsGrid||archiveList;
+    var itemSelector=resultsGrid?'.program-card-tile':'.program-card-archive-row';
+
     function normTypeKey(v){
       return String(v||'').toLowerCase().replace(/\s+/g,' ').replace(/[^a-z0-9\s]+/g,' ').replace(/\s+/g,' ').trim();
     }
-    
-    function applyFilters(){
-      var t=typeSel&&typeSel.value?normTypeKey(typeSel.value):'';
-      var c=creatorSel&&creatorSel.value?creatorSel.value.toLowerCase():'';
-      var l=langSel&&langSel.value?langSel.value.toLowerCase():'';
-      var s=searchInput&&searchInput.value?searchInput.value.toLowerCase():'';
-      
-      if(searchClear) searchClear.style.display = s ? 'block' : 'none';
 
-      var cards=document.querySelectorAll('.grid .card');
+    function filterCollection(items, t, c, l, tg, s){
       var shown=0;
-      cards.forEach(function(card){
-        var ct=normTypeKey(card.getAttribute('data-type')||'');
-        var cr=(card.getAttribute('data-creator')||'').toLowerCase();
-        var lg=(card.getAttribute('data-language')||'').toLowerCase();
-        var st=(card.getAttribute('data-search')||'');
+      items.forEach(function(el){
+        var ct=normTypeKey(el.getAttribute('data-type')||'');
+        var cr=(el.getAttribute('data-creator')||'').toLowerCase();
+        var lg=(el.getAttribute('data-language')||'').toLowerCase();
+        var tags=(el.getAttribute('data-tags')||'').toLowerCase().split(/\s+/);
+        var st=(el.getAttribute('data-search')||'');
         var ok=true;
         if(t && ct!==t) ok=false;
         if(c && cr!==c) ok=false;
         if(l && lg!==l) ok=false;
+        if(tg && tags.indexOf(tg)===-1) ok=false;
         if(s && st.indexOf(s)===-1) ok=false;
-        card.style.display=ok?'':'none';
+        el.style.display=ok?'':'none';
         if(ok) shown++;
       });
-      if(countEl) countEl.textContent=String(shown);
+      if(countEl) countEl.textContent = shown?('('+shown+')'):'';
+      if(noResults) noResults.hidden = shown>0;
     }
 
-    // Sort Logic
-    var grid = document.querySelector('.grid');
-    if(grid) {
-      grid.querySelectorAll('.card').forEach(function(c,i){ c.setAttribute('data-idx', i); });
+    function applyFilters(){
+      var t=typeSel&&typeSel.value?normTypeKey(typeSel.value):'';
+      var c=creatorSel&&creatorSel.value?creatorSel.value.toLowerCase():'';
+      var l=langSel&&langSel.value?langSel.value.toLowerCase():'';
+      var tg=tagSel&&tagSel.value?tagSel.value.toLowerCase():'';
+      var s=searchInput&&searchInput.value?searchInput.value.trim().toLowerCase():'';
+
+      if(searchClear) searchClear.style.display = s ? 'block' : 'none';
+
+      var active = !!(t||c||l||tg||s);
+
+      if(resultsEl){
+        // Index: reveal flat results only while filtering
+        if(discoveryEl) discoveryEl.hidden = active;
+        resultsEl.hidden = !active;
+        if(!active) return;
+        filterCollection(resultsGrid?resultsGrid.querySelectorAll('.program-card-tile'):[], t, c, l, tg, s);
+      } else if(archiveList){
+        // Archive: filter rows in place
+        filterCollection(archiveList.querySelectorAll('.program-card-archive-row'), t, c, l, tg, s);
+      }
+    }
+
+    if(sortContainer) {
+      sortContainer.querySelectorAll(itemSelector).forEach(function(c,i){ c.setAttribute('data-idx', i); });
     }
     function applySort() {
-      if(!sortCheckbox || !grid) return;
-      var latest = sortCheckbox.checked;
-      var cards = Array.from(grid.children);
-      cards.sort(function(a,b){
-        if(!latest) {
-          return Number(a.getAttribute('data-idx')) - Number(b.getAttribute('data-idx'));
+      if(!sortSel || !sortContainer) return;
+      var mode = sortSel.value;
+      var items = Array.from(sortContainer.children);
+      function idx(el){ return Number(el.getAttribute('data-idx'))||0; }
+      function dv(el){ var d=el.getAttribute('data-date')||''; return d==='n/a'?'':d; }
+      function nv(el){ return Number(el.getAttribute('data-num'))||0; }
+      function nm(el){ return el.getAttribute('data-name')||''; }
+      items.sort(function(a,b){
+        var da, db;
+        switch(mode){
+          case 'updated-desc': da=dv(a); db=dv(b); if(!da&&!db) return idx(a)-idx(b); if(!da) return 1; if(!db) return -1; return db.localeCompare(da);
+          case 'updated-asc': da=dv(a); db=dv(b); if(!da&&!db) return idx(a)-idx(b); if(!da) return 1; if(!db) return -1; return da.localeCompare(db);
+          case 'name-asc': return nm(a).localeCompare(nm(b));
+          case 'name-desc': return nm(b).localeCompare(nm(a));
+          case 'number-asc': return nv(a)-nv(b);
+          case 'number-desc': return nv(b)-nv(a);
+          default: return idx(a)-idx(b);
         }
-        var da = a.getAttribute('data-date') || '';
-        var db = b.getAttribute('data-date') || '';
-        // Date Descending
-        if (!da && !db) return 0;
-        if (!da) return 1;
-        if (!db) return -1;
-        return db.localeCompare(da);
       });
-      cards.forEach(function(c){ grid.appendChild(c); });
+      items.forEach(function(c){ sortContainer.appendChild(c); });
     }
 
-    function wire(sel, ev){if(!sel) return; sel.addEventListener(ev||'change',applyFilters);} 
-    wire(typeSel); wire(creatorSel); wire(langSel); wire(searchInput, 'input');
+    function wire(sel, ev){if(!sel) return; sel.addEventListener(ev||'change',applyFilters);}
+    wire(typeSel); wire(creatorSel); wire(langSel); wire(tagSel);
+    wire(searchInput, 'input');
+    if(searchInput) searchInput.addEventListener('search', applyFilters);
     if(searchClear) searchClear.addEventListener('click', function(){
-      if(searchInput) { searchInput.value = ''; applyFilters(); }
+      if(searchInput) { searchInput.value = ''; applyFilters(); searchInput.focus(); }
     });
-    if(sortCheckbox) sortCheckbox.addEventListener('change', applySort);
-    // Initialize count on load
-    if(typeSel||creatorSel||langSel||searchInput) applyFilters();
+    if(sortSel) sortSel.addEventListener('change', applySort);
+    if(typeSel||creatorSel||langSel||tagSel||searchInput) applyFilters();
   })();</script>
 </body>
 </html>`;

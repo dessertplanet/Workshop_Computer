@@ -4,12 +4,12 @@ import { fileURLToPath } from 'node:url';
 import { detectRepoFromGit, detectRefFromGit } from './utils/git.js';
 import { makeRawUrl as makeRawUrlExternal } from './links.js';
 import { renderLayout } from './render/layout.js';
-import { sevenSegmentSvg, mapStatusToClass, renderMetaList } from './render/components.js';
-import { formatVersion } from './utils/strings.js';
 import { discoverRelease as discoverReleaseMod } from './discover/release.js';
 import { githubPagesBase, copyWebAssets } from './discover/webEditor.js';
 import { getInfoYamlSchemaAdapter } from './schema/schemaAdapter.js';
 import { renderCardArticle } from './render/cardPage.js';
+import { renderDiscovery, renderArchive, renderTile } from './render/discovery.js';
+import { curation } from './curation/index.js';
 
 // ========== Path & Globals ==========
 const __filename = fileURLToPath(import.meta.url);
@@ -57,41 +57,6 @@ function typeKey(raw) {
   const s = normalizeSpaces(raw).toLowerCase().replace(/[^a-z0-9\s]+/g, ' ');
   return s.replace(/\s+/g, ' ').trim();
 }
-
-function releaseCard(rel) {
-  const { info, slug, display } = rel;
-  const desc = info.description ? String(info.description) : 'No description available.';
-  const num = display.number;
-  const creator = info.creator || 'Unknown';
-  const version = formatVersion(info.version || 'unknown');
-  const language = info.language || 'Unknown';
-  const typeOrStatus = normalizeSpaces(info.type || info.status || 'Unknown');
-  const typeKeyVal = typeKey(typeOrStatus);
-  const statusRaw = (info.status || 'Unknown').toString();
-  const statusClass = mapStatusToClass(statusRaw);
-    const metaItems = renderMetaList({ creator, version, language, statusRaw, statusClass });
-	const latestUf2 = rel.latestUf2;
-  const editorLink = (info.editor != '');
-  const editor = info.editor;
-  const date = info.date || '';
-  const searchText = normalizeSpaces(`${display.title} ${desc}`).toLowerCase();
-  return `<article class="card" data-creator="${escapeAttr(creator)}" data-language="${escapeAttr(language)}" data-type="${escapeAttr(typeOrStatus)}" data-type-key="${escapeAttr(typeKeyVal)}" data-date="${escapeAttr(date)}" data-search="${escapeAttr(searchText)}">
-<div class="card-head">
-    <h3 class="card-title">${display.title}</h3>
-    ${num ? `<span class="card-num" aria-label="Program ${num}">${sevenSegmentSvg(num)}</span>` : ''}
-  </div>
-  <div class="card-body">
-    <p>${desc}</p>
-    ${metaItems ? `<ul class="meta-list">${metaItems}</ul>` : ''}
-    <div class="actions actions-grid">
-      <a class="btn wide" href="programs/${slug}/index.html">📄 View Details</a>
-      ${latestUf2 ? `<a class="btn download" href="${latestUf2.url}" data-uf2-url="${latestUf2.url}">💾 Download</a>` : `<span class="btn disabled" aria-disabled="true">💾 Download</span>`}
-      ${editorLink ? `<a class="btn editor" href="${editor}">🛠️ Web Editor</a>` : `<span class="btn disabled" aria-disabled="true">🛠️ Web Editor</span>`}
-    </div>
-  </div>
-</article>`;
-}
-//  
 
 function detailPage(rel) {
   const { info, docs, readmeHtml, card } = rel;
@@ -206,7 +171,8 @@ async function build() {
   }
 
   // Index page
-  const cards = releases.map(releaseCard).join('\n');
+  const discoveryHtml = renderDiscovery(normalizedCards, '.');
+  const resultsTiles = normalizedCards.map(card => renderTile(card, { root: '.' })).join('');
   const typeOptions = ['<option value="">All</option>'].concat(
     Array.from(typeMap.entries())
       .sort((a,b)=>a[1].toLowerCase().localeCompare(b[1].toLowerCase()))
@@ -218,6 +184,18 @@ async function build() {
   const languageOptions = ['<option value="">All</option>'].concat(
     Array.from(languageSet).sort((a,b)=>a.localeCompare(b)).map(v=>`<option value="${escapeAttr(v)}">${v}</option>`)
   ).join('');
+  const tagOptions = ['<option value="">All</option>'].concat(
+    curation.availableTags.map(t=>`<option value="${escapeAttr(t.id)}">${escapeAttr(t.label)}</option>`)
+  ).join('');
+  const sortOptions = [
+    ['', 'Default order'],
+    ['updated-desc', 'Recently updated'],
+    ['updated-asc', 'Oldest updated'],
+    ['name-asc', 'Name A\u2013Z'],
+    ['name-desc', 'Name Z\u2013A'],
+    ['number-asc', 'Number (low to high)'],
+    ['number-desc', 'Number (high to low)'],
+  ].map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
   const indexHtml = renderLayout({
     title: 'Workshop Computer Program Cards',
     relativeRoot: '.',
@@ -230,39 +208,87 @@ async function build() {
 </article>
 <div class="filter-bar card" aria-label="Filter programs">
   <div class="card-body">
-    <div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+    <div class="search-bar-row">
       <div class="search-wrapper">
         <input type="text" id="filter-search" placeholder="Search programs..." class="search-input" aria-label="Search programs">
         <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
       </div>
+      <a class="btn secondary" href="archive/">Browse all cards →</a>
     </div>
-    <div class="filter-row">
-      <div class="filter-group">
-        <label for="filter-type">Release type</label>
-        <select id="filter-type">${typeOptions}</select>
+    <details class="advanced-options">
+      <summary>Advanced search</summary>
+      <div class="filter-row">
+        <div class="filter-group">
+          <label for="filter-type">Release type</label>
+          <select id="filter-type">${typeOptions}</select>
+        </div>
+        <div class="filter-group">
+          <label for="filter-creator">Creator</label>
+          <select id="filter-creator">${creatorOptions}</select>
+        </div>
+        <div class="filter-group">
+          <label for="filter-language">Language</label>
+          <select id="filter-language">${languageOptions}</select>
+        </div>
+        <div class="filter-group">
+          <label for="filter-tag">Tag</label>
+          <select id="filter-tag">${tagOptions}</select>
+        </div>
       </div>
-      <div class="filter-group">
-        <label for="filter-creator">Creator</label>
-        <select id="filter-creator">${creatorOptions}</select>
+      <div class="filter-row" style="margin-top:12px;">
+        <div class="filter-group">
+          <label for="sort-mode">Sort</label>
+          <select id="sort-mode">${sortOptions}</select>
+        </div>
       </div>
-      <div class="filter-group">
-        <label for="filter-language">Language</label>
-        <select id="filter-language">${languageOptions}</select>
+    </details>
+  </div>
+</div>
+<div class="program-cards program-cards--index">
+  ${discoveryHtml}
+  <div id="search-results" hidden>
+    <section class="program-card-shelf">
+      <header class="program-card-shelf__header"><h2>Results <span id="cards-count"></span></h2></header>
+      <div class="program-card-grid program-card-grid--list">${resultsTiles}</div>
+      <p id="no-results" class="program-card-empty" hidden>No matching cards.</p>
+    </section>
+  </div>
+</div>`
+  });
+  await writeFileEnsured(path.join(OUT_DIR, 'index.html'), indexHtml);
+
+  // Archive page (complete one-line index, with search + sort)
+  const archiveHtml = renderLayout({
+    title: 'All cards – Workshop Computer',
+    relativeRoot: '..',
+    repoUrl: `https://github.com/${REPO}`,
+    content: `
+<div class="program-cards program-cards--archive">
+  <header class="program-cards__title">
+    <h1>All cards</h1>
+    <nav class="program-cards__links" aria-label="Program card links">
+      <a href="../index.html">Program cards</a>
+      <a href="https://github.com/${REPO}">Make a card</a>
+    </nav>
+  </header>
+  <div class="filter-bar card" aria-label="Search cards">
+    <div class="card-body">
+      <div class="search-wrapper">
+        <input type="text" id="filter-search" placeholder="Search cards..." class="search-input" aria-label="Search cards">
+        <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
       </div>
-    </div>
-    <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);" class="filter-row">
-      <div class="filter-group">
-        <label for="sort-latest" style="display:flex;align-items:center;cursor:pointer">
-          Sort by Latest Update
-          <input type="checkbox" id="sort-latest" style="margin-left:8px;transform:scale(1.2)">
-        </label>
+      <div class="filter-actions">
+        <div class="filter-group">
+          <label for="sort-mode">Sort</label>
+          <select id="sort-mode">${sortOptions}</select>
+        </div>
       </div>
     </div>
   </div>
-</div>
-<div class="grid">${cards}</div>`
+  ${renderArchive(normalizedCards, '..')}
+</div>`
   });
-  await writeFileEnsured(path.join(OUT_DIR, 'index.html'), indexHtml);
+  await writeFileEnsured(path.join(OUT_DIR, 'archive', 'index.html'), archiveHtml);
   await writeFileEnsured(path.join(OUT_DIR, 'cards.json'), JSON.stringify({
     schema: {
       id: schemaAdapter.id,

@@ -2,44 +2,31 @@
   Variables & Themes
   ===================================================================== */
 :root{
-  --bg: #0b0d10;
-  --card: #11151a;
-  --muted: #9aa6b2;
-  --text: #e6edf3;
-  --accent: #2f81f7;
-  --border: #27313b;
-  --ok: #3fb950;
-  --toggle-track: #0e1217;
+  --bg: #fdfdfd;
+  --card: #ffffff;
+  --muted: #828282;
+  --text: #111111;
+  --accent: #5b62c4;
+  --border: #d8d8d8;
+  --ok: #1a7f37;
+  --toggle-track: #111111;
   --toggle-thumb: #ffffff;
   --pcb-start: #2d7c30;
   --pcb-end: #195f20;
   --editor-start: #7c2d30;
   --editor-end: #5f1920;
-  --dark-bg: #1b222b;   /* inputs in dark mode */
-  --light-bg: #fff;     /* inputs in light mode */
-  --light-text: #0b1220;
-}
-.theme-dark{ --thumb-x: 23px }
-.theme-light{
-  --bg: #f7f8fa;
-  --card: #ffffff;
-  --muted: #5b6875;
-  --text: #0b1220;
-  --accent: #0969da;
-  --border: #d0d7de;
-  --ok: #1a7f37;
-  --toggle-track: #e9eef3;
-  --toggle-thumb: #0b1220;
-  --thumb-x: 0px;
+  --dark-bg: #ffffff;   /* inputs */
   --light-bg: #fff;
-  --light-text: #0b1220;
+  --light-text: #111111;
+  --link: #878ed4;
+  --thumb-x: 0px;
 }
 
 /* =====================================================================
   Base, Typography & Layout
   ===================================================================== */
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.5 "Helvetica Neue",Helvetica,Arial,system-ui,"Apple Color Emoji","Segoe UI Emoji"}
 .container{max-width:1100px;margin:0 auto;padding:20px}
 .markdown-body{font-family:"Inter",Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
 .section{margin:24px 0}
@@ -49,11 +36,12 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.
 /* =====================================================================
   Header & Footer
   ===================================================================== */
-.site-header{border-bottom:1px solid var(--border);background:linear-gradient(90deg,var(--pcb-start),var(--pcb-end));color:#fff}
+.site-header{border-bottom:1px solid var(--text);background:var(--bg);color:var(--text)}
 .header-bar{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.site-title{font-size:20px;margin:0}
-.site-header a{color:#fff;text-decoration:none}
-.site-footer{border-top:1px solid var(--border);background:color-mix(in srgb, var(--bg), #000 10%);margin-top:40px}
+.site-title{font-size:clamp(19px,2.2vw,26px);margin:0;font-weight:800;text-transform:uppercase;letter-spacing:-0.01em}
+.site-header a{color:var(--text);text-decoration:none}
+.site-footer{border-top:1px solid var(--border);background:transparent;margin-top:40px;color:var(--muted)}
+.site-footer a{color:var(--link)}
 .site-footer .container{text-align:center}
 
 /* =====================================================================
@@ -67,8 +55,8 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.
 .card-body{padding:16px;display:flex;flex-direction:column;flex:1}
 
 /* Intro (About) card */
-.intro-card{background:#212830;color:#fff;margin-bottom:16px;margin-top:-20px;border-top-left-radius:0;border-top-right-radius:0;border-top:0}
-.intro-card a{color:#fff}
+.intro-card{background:transparent;color:var(--text);margin:0 0 4px;border:0;border-radius:0}
+.intro-card a{color:var(--link)}
 /* Light-mode: match other cards */
 .theme-light .intro-card{background:var(--card) !important;color:var(--text) !important}
 .theme-light .intro-card a{color:var(--text) !important}
@@ -119,6 +107,22 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.
 .search-input:focus{outline:2px solid var(--accent);border-color:transparent}
 .search-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;width:24px;height:24px;border-radius:50%;display:none;align-items:center;justify-content:center;padding:0}
 .search-clear:hover{background:rgba(128,128,128,0.2);color:var(--text)}
+
+/* Search row: input grows, action sits inline on the right */
+.search-bar-row{display:flex;align-items:stretch;gap:12px}
+.search-bar-row .search-wrapper{flex:1 1 auto;min-width:0}
+.search-bar-row .btn{flex:0 0 auto;white-space:nowrap;display:inline-flex;align-items:center;padding-top:0;padding-bottom:0}
+
+/* Advanced options disclosure */
+.advanced-options{margin-top:12px}
+.advanced-options>summary{cursor:pointer;font-weight:600;color:var(--muted);font-size:14px;list-style:none;display:inline-flex;align-items:center;gap:6px;padding:2px 0;user-select:none}
+.advanced-options>summary::-webkit-details-marker{display:none}
+.advanced-options>summary::before{content:"▸";font-size:11px;transition:transform .15s}
+.advanced-options[open]>summary::before{transform:rotate(90deg)}
+.advanced-options>summary:hover{color:var(--text)}
+.advanced-options[open]{padding-top:6px}
+.advanced-options .filter-row{margin-top:10px}
+.filter-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px}
 
 .filter-bar label{font-weight:600;color:var(--muted)}
 .filter-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;align-items:end}
@@ -232,11 +236,10 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:16px/1.
 /* =====================================================================
   Connect toggle (WebUSB programmer)
   ===================================================================== */
-.connect-toggle{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer;display:flex;align-items:center;gap:7px;color:rgba(255,255,255,0.85);font-size:13px;white-space:nowrap}
-.connect-toggle .c-track{position:relative;display:inline-flex;align-items:center;width:47px;height:26px;border-radius:999px;background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.35);flex-shrink:0;transition:background .2s,border-color .2s;padding:3px}
-.connect-toggle .c-icons{font-size:12px;line-height:1;width:100%;display:flex;justify-content:space-between}
-.connect-toggle .c-gap{width:3px;display:inline-block}
-.connect-toggle .c-thumb{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;background:#fff;transition:transform .2s ease}
+.connect-toggle{appearance:none;-webkit-appearance:none;border:0;background:transparent;cursor:pointer;display:flex;align-items:center;gap:8px;color:var(--text);font-size:14px;font-weight:600;white-space:nowrap}
+.connect-toggle .c-label{color:var(--text)}
+.connect-toggle .c-track{position:relative;display:inline-block;width:44px;height:24px;border-radius:999px;background:rgba(0,0,0,0.22);border:1px solid rgba(0,0,0,0.28);flex-shrink:0;transition:background .2s,border-color .2s}
+.connect-toggle .c-thumb{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:999px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.3);transition:transform .2s ease}
 .connect-toggle.active .c-track{background:#3fb950;border-color:#3fb950}
-.connect-toggle.active .c-thumb{transform:translateX(23px)}
+.connect-toggle.active .c-thumb{transform:translateX(20px)}
 .connect-toggle:disabled{opacity:.4;cursor:not-allowed}
