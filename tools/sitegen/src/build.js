@@ -161,6 +161,15 @@ async function build() {
         slug: rel.slug,
         sourceFile: rel.card.source_file,
         path: `raw-info/${rel.folderName}/info.yaml`,
+        // Build-discovered assets the browser preview cannot compute on its own,
+        // so it can render the same download/source/readme links a full build
+        // would produce.
+        uf2Url: rel.latestUf2?.url || '',
+        sourceUrl: rel.card?.source_url || '',
+        readmeUrl: rel.card?.readme_url || '',
+        yamlUrl: rel.card?.source_file
+          ? `https://github.com/${REPO}/blob/${BRANCH}/${rel.card.source_file}`
+          : '',
       });
       // Validate the raw author source against the canonical schema. This is a
       // non-fatal reporting pass: it never blocks the build.
