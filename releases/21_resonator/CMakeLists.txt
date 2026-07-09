@@ -37,12 +37,15 @@ target_link_libraries(resonator
     pico_unique_id
 )
 
+# Run from RAM to prevent flash access delays during audio
+pico_set_binary_type(resonator copy_to_ram)
+
 # Create map/bin/hex/uf2 files
 pico_add_extra_outputs(resonator)
 
 target_compile_definitions(resonator PUBLIC PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
 
-# Enable USB output for debugging (optional)
+# Enable USB stdio
 pico_enable_stdio_usb(resonator 1)
 pico_enable_stdio_uart(resonator 0)
 

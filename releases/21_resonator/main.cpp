@@ -1,8 +1,19 @@
 #include "ComputerCard.h"
+#include "pico/stdlib.h"
+#include "pico/multicore.h"
+#include "hardware/flash.h"
+#include "hardware/sync.h"
+#include <cstring>
+#include <cstdio>
+
+// Flash storage for progression persistence
+// Use last sector of flash (4KB before end of 2MB)
+#define FLASH_PROG_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+#define FLASH_PROG_MAGIC 0xAB
 
 /**
 Resonator Workshop System Computer Card - by Johan Eklund
-version 1.0 - 2026-01-12
+version 1.1.1 - 2026-02-18
 
 Four resonating strings using Karplus-Strong synthesis
 */
@@ -96,19 +107,47 @@ private:
         DIM = 4,         // 1:1, 6:5, 36:25, 3:2 (diminished)
         SUS4 = 5,        // 1:1, 4:3, 3:2, 2:1 (suspended 4th)
         ADD9 = 6,        // 1:1, 5:4, 3:2, 9:4 (major add 9)
-        TANPURA_PA = 7,  // 1:1, 3:2, 2:1, 4:1 (Sa, Pa, Sa', Sa'')
-        TANPURA_MA = 8,  // 1:1, 4:3, 2:1, 4:1 (Sa, Ma, Sa', Sa'')
-        TANPURA_NI = 9,  // 1:1, 15:8, 2:1, 4:1 (Sa, Ni, Sa', Sa'')
-        TANPURA_NI_KOMAL = 10  // 1:1, 9:5, 2:1, 4:1 (Sa, ni, Sa', Sa'')
+        MAJOR10 = 7,     // 1:1, 5:4, 3:2, 5:2 (major chord with 10th)
+        SUS2 = 8,        // 1:1, 9:8, 3:2, 2:1 (suspended 2nd)
+        MAJOR = 9,       // 1:1, 5:4, 3:2, 2:1 (major triad)
+        MINOR = 10,      // 1:1, 6:5, 3:2, 2:1 (minor triad)
+        MAJOR6 = 11,     // 1:1, 5:4, 3:2, 5:3 (major 6th)
+        DOM7 = 12,       // 1:1, 5:4, 3:2, 9:5 (dominant 7th)
+        MIN9 = 13,       // 1:1, 6:5, 3:2, 9:4 (minor add 9)
+        TANPURA_PA = 14, // 1:1, 3:2, 2:1, 4:1 (Sa, Pa, Sa', Sa'')
+        TANPURA_MA = 15, // 1:1, 4:3, 2:1, 4:1 (Sa, Ma, Sa', Sa'')
+        TANPURA_NI = 16, // 1:1, 15:8, 2:1, 4:1 (Sa, Ni, Sa', Sa'')
+        TANPURA_NI_KOMAL = 17  // 1:1, 9:5, 2:1, 4:1 (Sa, ni, Sa', Sa'')
     };
-    static const int NUM_MODES = 11;
+    static const int NUM_MODES = 18;
     ChordMode currentMode;
+
+    // Double-buffered progression for lock-free Core0/Core1 sharing
+    static const int MAX_PROGRESSION_LENGTH = 18;
+    struct ProgressionBuffer {
+        ChordMode chords[MAX_PROGRESSION_LENGTH];
+        int length;
+    };
+    volatile int activeBuffer;
+    ProgressionBuffer progressionBuffers[2];
+    volatile bool progressionChanged;
+    volatile bool pendingFlashSave;  // Flag for Core 1 to save flash (Core 0 can't lock out Core 1)
+    int progressionIndex;
+
     bool lastSwitchDown;
 
     int32_t pulseExciteEnvelope;
     uint32_t noiseState;
 
     int32_t dcState1, dcState2, dcState3, dcState4;
+
+    // Smoothed delay values for glide between chord modes (fixed-point, 8 bits fraction)
+    int32_t smoothDelay1, smoothDelay2, smoothDelay3, smoothDelay4;
+
+    // Long-press reset detection
+    uint32_t switchDownCounter;
+    bool resetTriggered;
+    static const uint32_t RESET_HOLD_SAMPLES = 144000;  // 3 seconds at 48kHz
 
     // One-pole lowpass filter for damping
     int32_t dampingFilter(int32_t input, int32_t& state, int32_t coefficient) {
@@ -206,6 +245,48 @@ private:
                 num3 = 3; den3 = 2;
                 num4 = 9; den4 = 4;
                 break;
+            case MAJOR10:
+                // Major 10th: 1:1, 5:4, 3:2, 5:2 (root, M3, P5, M10)
+                num2 = 5; den2 = 4;
+                num3 = 3; den3 = 2;
+                num4 = 5; den4 = 2;
+                break;
+            case SUS2:
+                // Suspended 2nd: 1:1, 9:8, 3:2, 2:1 (root, M2, P5, octave)
+                num2 = 9; den2 = 8;
+                num3 = 3; den3 = 2;
+                num4 = 2; den4 = 1;
+                break;
+            case MAJOR:
+                // Major triad: 1:1, 5:4, 3:2, 2:1 (root, M3, P5, octave)
+                num2 = 5; den2 = 4;
+                num3 = 3; den3 = 2;
+                num4 = 2; den4 = 1;
+                break;
+            case MINOR:
+                // Minor triad: 1:1, 6:5, 3:2, 2:1 (root, m3, P5, octave)
+                num2 = 6; den2 = 5;
+                num3 = 3; den3 = 2;
+                num4 = 2; den4 = 1;
+                break;
+            case MAJOR6:
+                // Major 6th: 1:1, 5:4, 3:2, 5:3 (root, M3, P5, M6)
+                num2 = 5; den2 = 4;
+                num3 = 3; den3 = 2;
+                num4 = 5; den4 = 3;
+                break;
+            case DOM7:
+                // Dominant 7th: 1:1, 5:4, 3:2, 9:5 (root, M3, P5, m7)
+                num2 = 5; den2 = 4;
+                num3 = 3; den3 = 2;
+                num4 = 9; den4 = 5;
+                break;
+            case MIN9:
+                // Minor add 9: 1:1, 6:5, 3:2, 9:4 (root, m3, P5, M9)
+                num2 = 6; den2 = 5;
+                num3 = 3; den3 = 2;
+                num4 = 9; den4 = 4;
+                break;
             case TANPURA_PA:
                 // Tanpura Pa: 1:1, 3:2, 2:1, 4:1 (Sa, Pa, Sa', Sa'')
                 num2 = 3; den2 = 2;
@@ -237,9 +318,28 @@ public:
     ResonatingStrings() : writeIndex1(0), writeIndex2(0), writeIndex3(0), writeIndex4(0),
                           delayLength1(100), delayLength2(150), delayLength3(200), delayLength4(400),
                           filterState1(0), filterState2(0), filterState3(0), filterState4(0),
-                          currentMode(HARMONIC), lastSwitchDown(true),
+                          currentMode(HARMONIC), activeBuffer(0), progressionChanged(false), pendingFlashSave(false),
+                          progressionIndex(0), lastSwitchDown(true),
                           pulseExciteEnvelope(0), noiseState(12345),
-                          dcState1(0), dcState2(0), dcState3(0), dcState4(0) {
+                          dcState1(0), dcState2(0), dcState3(0), dcState4(0),
+                          smoothDelay1(0), smoothDelay2(0), smoothDelay3(0), smoothDelay4(0),
+                          switchDownCounter(0), resetTriggered(false) {
+        // Try to load progression from flash, fall back to defaults
+        if (!loadProgressionFromFlash()) {
+            // Default progression: all chords (card works standalone without browser UI)
+            const ChordMode allChords[] = {
+                HARMONIC, FIFTH, MAJOR7, MINOR7, DIM, SUS4, ADD9, MAJOR10,
+                SUS2, MAJOR, MINOR, MAJOR6, DOM7, MIN9,
+                TANPURA_PA, TANPURA_MA, TANPURA_NI, TANPURA_NI_KOMAL
+            };
+            for (int i = 0; i < NUM_MODES; i++) {
+                progressionBuffers[0].chords[i] = allChords[i];
+                progressionBuffers[1].chords[i] = allChords[i];
+            }
+            progressionBuffers[0].length = NUM_MODES;
+            progressionBuffers[1].length = NUM_MODES;
+        }
+
         // Initialize delay lines with silence
         for (int i = 0; i < MAX_DELAY_SIZE; i++) {
             delayLine1[i] = 0;
@@ -249,18 +349,203 @@ public:
         }
     }
 
+    // Check and perform deferred flash save (called from Core 1)
+    void checkPendingFlashSave() {
+        if (pendingFlashSave) {
+            pendingFlashSave = false;
+            saveProgressionToFlash();
+        }
+    }
+
+    // Serial command handler (called from Core 1)
+    void handleSerialCommand(const char* cmd) {
+        if (strncmp(cmd, "SET ", 4) == 0) {
+            handleSet(cmd + 4);
+        } else if (strcmp(cmd, "GET") == 0) {
+            handleGet();
+        } else {
+            printf("ERR unknown_command\n");
+        }
+    }
+
+private:
+    void handleSet(const char* args) {
+        ChordMode newChords[MAX_PROGRESSION_LENGTH];
+        int count = 0;
+        const char* p = args;
+
+        while (*p && count < MAX_PROGRESSION_LENGTH) {
+            int val = 0;
+            bool hasDigit = false;
+            while (*p >= '0' && *p <= '9') {
+                val = val * 10 + (*p - '0');
+                p++;
+                hasDigit = true;
+            }
+            if (!hasDigit) break;
+            if (val < 0 || val >= NUM_MODES) {
+                printf("ERR invalid_id\n");
+                return;
+            }
+            newChords[count++] = (ChordMode)val;
+            if (*p == ',') p++;
+        }
+
+        if (count == 0) {
+            printf("ERR empty_progression\n");
+            return;
+        }
+
+        // Write to inactive buffer, then swap
+        int writeIdx = 1 - activeBuffer;
+        for (int i = 0; i < count; i++) {
+            progressionBuffers[writeIdx].chords[i] = newChords[i];
+        }
+        progressionBuffers[writeIdx].length = count;
+        __dmb();  // ARM data memory barrier
+        activeBuffer = writeIdx;
+        progressionChanged = true;
+
+        handleGet();
+
+        // Persist to flash
+        saveProgressionToFlash();
+    }
+
+    void handleGet() {
+        int bufIdx = activeBuffer;
+        printf("PROG ");
+        for (int i = 0; i < progressionBuffers[bufIdx].length; i++) {
+            if (i > 0) printf(",");
+            printf("%d", (int)progressionBuffers[bufIdx].chords[i]);
+        }
+        printf("\n");
+    }
+
+    // Save current progression to flash (must be called from Core 1)
+    void saveProgressionToFlash() {
+        int bufIdx = activeBuffer;
+        int len = progressionBuffers[bufIdx].length;
+
+        // Prepare data buffer (must be 256-byte aligned for flash write)
+        uint8_t data[FLASH_PAGE_SIZE] = {0};
+        data[0] = FLASH_PROG_MAGIC;
+        data[1] = (uint8_t)len;
+        for (int i = 0; i < len && i < MAX_PROGRESSION_LENGTH; i++) {
+            data[2 + i] = (uint8_t)progressionBuffers[bufIdx].chords[i];
+        }
+
+        // Pause Core 0 during flash operation (XIP is blocked during erase/program)
+        multicore_lockout_start_blocking();
+        uint32_t ints = save_and_disable_interrupts();
+        flash_range_erase(FLASH_PROG_OFFSET, FLASH_SECTOR_SIZE);
+        flash_range_program(FLASH_PROG_OFFSET, data, FLASH_PAGE_SIZE);
+        restore_interrupts(ints);
+        multicore_lockout_end_blocking();
+    }
+
+private:
+    // Load progression from flash, returns true if valid data found
+    bool loadProgressionFromFlash() {
+        // Read from flash (XIP address space)
+        const uint8_t* flash_data = (const uint8_t*)(XIP_BASE + FLASH_PROG_OFFSET);
+
+        // Check magic byte
+        if (flash_data[0] != FLASH_PROG_MAGIC) {
+            return false;
+        }
+
+        int len = flash_data[1];
+        if (len < 1 || len > MAX_PROGRESSION_LENGTH) {
+            return false;
+        }
+
+        // Load into both buffers
+        for (int i = 0; i < len; i++) {
+            uint8_t modeVal = flash_data[2 + i];
+            if (modeVal >= NUM_MODES) {
+                return false;  // Invalid chord ID
+            }
+            ChordMode mode = (ChordMode)modeVal;
+            progressionBuffers[0].chords[i] = mode;
+            progressionBuffers[1].chords[i] = mode;
+        }
+        progressionBuffers[0].length = len;
+        progressionBuffers[1].length = len;
+
+        return true;
+    }
+
+    // Reset progression to factory defaults and save to flash
+    void resetToDefaults() {
+        const ChordMode allChords[] = {
+            HARMONIC, FIFTH, MAJOR7, MINOR7, DIM, SUS4, ADD9, MAJOR10,
+            SUS2, MAJOR, MINOR, MAJOR6, DOM7, MIN9,
+            TANPURA_PA, TANPURA_MA, TANPURA_NI, TANPURA_NI_KOMAL
+        };
+
+        // Write to inactive buffer, then swap
+        int writeIdx = 1 - activeBuffer;
+        for (int i = 0; i < NUM_MODES; i++) {
+            progressionBuffers[writeIdx].chords[i] = allChords[i];
+        }
+        progressionBuffers[writeIdx].length = NUM_MODES;
+        __dmb();
+        activeBuffer = writeIdx;
+
+        // Reset to first chord
+        progressionIndex = 0;
+        currentMode = progressionBuffers[activeBuffer].chords[0];
+
+        // Defer flash save to Core 1 (Core 0 can't lock out Core 1)
+        pendingFlashSave = true;
+    }
+
 protected:
     void ProcessSample() override {
         int16_t audioIn1 = AudioIn1();
         int16_t audioIn2 = AudioIn2();
         int32_t audioIn = ((int32_t)audioIn1 + (int32_t)audioIn2 + 1) >> 1;
 
-        // Mode switching
+        // Check for serial progression update from Core 1
+        if (progressionChanged) {
+            __dmb();  // Ensure we see updated buffer contents after flag
+            progressionIndex = 0;
+            currentMode = progressionBuffers[activeBuffer].chords[0];
+            progressionChanged = false;
+        }
+
+        // Mode switching (switch down or pulse in 2)
+        // Long press (3 sec) resets to factory defaults
         Switch switchPos = SwitchVal();
         bool switchDown = (switchPos == Down);
-        if (switchDown && !lastSwitchDown) {
-            currentMode = (ChordMode)((currentMode + 1) % NUM_MODES);
+
+        if (switchDown) {
+            switchDownCounter++;
+
+            // Long press detected - reset to defaults
+            if (switchDownCounter >= RESET_HOLD_SAMPLES && !resetTriggered) {
+                resetToDefaults();
+                resetTriggered = true;
+            }
+        } else {
+            // Switch released - advance chord only if it was a short press
+            if (lastSwitchDown && !resetTriggered && switchDownCounter > 0) {
+                int bufIdx = activeBuffer;
+                progressionIndex = (progressionIndex + 1) % progressionBuffers[bufIdx].length;
+                currentMode = progressionBuffers[bufIdx].chords[progressionIndex];
+            }
+            switchDownCounter = 0;
+            resetTriggered = false;
         }
+
+        // Pulse input also advances chord
+        if (PulseIn2RisingEdge()) {
+            int bufIdx = activeBuffer;
+            progressionIndex = (progressionIndex + 1) % progressionBuffers[bufIdx].length;
+            currentMode = progressionBuffers[bufIdx].chords[progressionIndex];
+        }
+
         lastSwitchDown = switchDown;
 
         // FREQUENCY CONTROL - 1V/oct
@@ -299,29 +584,43 @@ protected:
         int num1 = 1, den1 = 1, num2 = 2, den2 = 1, num3 = 3, den3 = 1, num4 = 4, den4 = 1;
         getFrequencyRatios(num1, den1, num2, den2, num3, den3, num4, den4);
 
-        // Calculate delay lengths for each string using fixed-point math
+        // Calculate target delay lengths for each string using fixed-point math
         // delay = baseDelay * denominator / numerator
         // Use 8 extra bits of precision to extract fractional part for interpolation
-        int32_t delayFull1 = ((baseDelay * den1) << 8) / num1;
-        int32_t delayFull2 = ((baseDelay * den2) << 8) / num2;
-        int32_t delayFull3 = ((baseDelay * den3) << 8) / num3;
-        int32_t delayFull4 = ((baseDelay * den4) << 8) / num4;
+        int32_t targetDelay1 = ((baseDelay * den1) << 8) / num1;
+        int32_t targetDelay2 = ((baseDelay * den2) << 8) / num2;
+        int32_t targetDelay3 = ((baseDelay * den3) << 8) / num3;
+        int32_t targetDelay4 = ((baseDelay * den4) << 8) / num4;
 
-        delayLength1 = delayFull1 >> 8;  // Integer part
-        delayLength2 = delayFull2 >> 8;
-        delayLength3 = delayFull3 >> 8;
-        delayLength4 = delayFull4 >> 8;
+        // Smooth delay transitions to avoid harsh plucks on chord changes
+        // Initialize smoothDelay on first sample (when it's 0)
+        if (smoothDelay1 == 0) smoothDelay1 = targetDelay1;
+        if (smoothDelay2 == 0) smoothDelay2 = targetDelay2;
+        if (smoothDelay3 == 0) smoothDelay3 = targetDelay3;
+        if (smoothDelay4 == 0) smoothDelay4 = targetDelay4;
 
-        int32_t frac1 = delayFull1 & 0xFF;  // Fractional part (0-255)
-        int32_t frac2 = delayFull2 & 0xFF;
-        int32_t frac3 = delayFull3 & 0xFF;
-        int32_t frac4 = delayFull4 & 0xFF;
+        // One-pole lowpass: smoothDelay approaches target
+        const int32_t GLIDE_COEFF = 2;  // Lower = slower glide (~2 seconds)
+        smoothDelay1 += ((targetDelay1 - smoothDelay1) * GLIDE_COEFF) >> 8;
+        smoothDelay2 += ((targetDelay2 - smoothDelay2) * GLIDE_COEFF) >> 8;
+        smoothDelay3 += ((targetDelay3 - smoothDelay3) * GLIDE_COEFF) >> 8;
+        smoothDelay4 += ((targetDelay4 - smoothDelay4) * GLIDE_COEFF) >> 8;
+
+        delayLength1 = smoothDelay1 >> 8;  // Integer part
+        delayLength2 = smoothDelay2 >> 8;
+        delayLength3 = smoothDelay3 >> 8;
+        delayLength4 = smoothDelay4 >> 8;
+
+        int32_t frac1 = smoothDelay1 & 0xFF;  // Fractional part (0-255)
+        int32_t frac2 = smoothDelay2 & 0xFF;
+        int32_t frac3 = smoothDelay3 & 0xFF;
+        int32_t frac4 = smoothDelay4 & 0xFF;
 
         // Clamp to valid range
-        if (delayLength1 < 10) delayLength1 = 10;
-        if (delayLength2 < 10) delayLength2 = 10;
-        if (delayLength3 < 10) delayLength3 = 10;
-        if (delayLength4 < 10) delayLength4 = 10;
+        if (delayLength1 < MIN_DELAY) delayLength1 = MIN_DELAY;
+        if (delayLength2 < MIN_DELAY) delayLength2 = MIN_DELAY;
+        if (delayLength3 < MIN_DELAY) delayLength3 = MIN_DELAY;
+        if (delayLength4 < MIN_DELAY) delayLength4 = MIN_DELAY;
         if (delayLength1 > MAX_DELAY_SIZE - 1) delayLength1 = MAX_DELAY_SIZE - 1;
         if (delayLength2 > MAX_DELAY_SIZE - 1) delayLength2 = MAX_DELAY_SIZE - 1;
         if (delayLength3 > MAX_DELAY_SIZE - 1) delayLength3 = MAX_DELAY_SIZE - 1;
@@ -405,23 +704,85 @@ protected:
         AudioOut1((int16_t)mixedOutput1);
         AudioOut2((int16_t)mixedOutput2);
 
-        // LED indicators - all 6 LEDs show chord mode
-        // LED 0: HARMONIC, LED 1: FIFTH, LED 2: MAJOR7
-        // LED 3: MINOR7, LED 4: DIM, LED 5: SUS4
-        // ADD9 (mode 6): LEDs 0+5, TANPURA_PA (mode 7): LEDs 1+4, TANPURA_MA (mode 8): LEDs 2+3
-        // TANPURA_NI (mode 9): LEDs 0+3, TANPURA_NI_KOMAL (mode 10): LEDs 2+5
-        LedOn(0, currentMode == HARMONIC || currentMode == ADD9 || currentMode == TANPURA_NI);
-        LedOn(1, currentMode == FIFTH || currentMode == TANPURA_PA);
-        LedOn(2, currentMode == MAJOR7 || currentMode == TANPURA_MA || currentMode == TANPURA_NI_KOMAL);
-        LedOn(3, currentMode == MINOR7 || currentMode == TANPURA_MA || currentMode == TANPURA_NI);
-        LedOn(4, currentMode == DIM || currentMode == TANPURA_PA);
-        LedOn(5, currentMode == SUS4 || currentMode == ADD9 || currentMode == TANPURA_NI_KOMAL);
+        // LED indicators - show position in progression (0-17)
+        // Single LED: positions 0-5
+        // Pairs for positions 6-17:
+        // 6: 0+5, 7: 1+3, 8: 0+2, 9: 1+2
+        // 10: 3+4, 11: 2+4, 12: 0+4, 13: 3+5
+        // 14: 1+4, 15: 2+3, 16: 0+3, 17: 2+5
+        // LED indicators
+        // During long press: progressive fill (0->5) showing reset countdown
+        // After reset: brief flash of all LEDs
+        // Normal: show position in progression
+        if (switchDown && switchDownCounter > 0 && !resetTriggered) {
+            // Progressive LED fill during hold (6 LEDs over 3 seconds)
+            int ledsLit = (switchDownCounter * 6) / RESET_HOLD_SAMPLES;
+            LedOn(0, ledsLit >= 1);
+            LedOn(1, ledsLit >= 2);
+            LedOn(2, ledsLit >= 3);
+            LedOn(3, ledsLit >= 4);
+            LedOn(4, ledsLit >= 5);
+            LedOn(5, ledsLit >= 6);
+        } else if (resetTriggered && switchDownCounter < RESET_HOLD_SAMPLES + 24000) {
+            // Flash all LEDs for 0.5 sec after reset
+            bool flash = ((switchDownCounter / 4800) % 2) == 0;  // 10Hz blink
+            LedOn(0, flash);
+            LedOn(1, flash);
+            LedOn(2, flash);
+            LedOn(3, flash);
+            LedOn(4, flash);
+            LedOn(5, flash);
+        } else {
+            // Normal: show position in progression (0-17)
+            LedOn(0, progressionIndex == 0 || progressionIndex == 6 || progressionIndex == 8 || progressionIndex == 12 || progressionIndex == 16);
+            LedOn(1, progressionIndex == 1 || progressionIndex == 7 || progressionIndex == 9 || progressionIndex == 14);
+            LedOn(2, progressionIndex == 2 || progressionIndex == 8 || progressionIndex == 9 || progressionIndex == 11 || progressionIndex == 15 || progressionIndex == 17);
+            LedOn(3, progressionIndex == 3 || progressionIndex == 7 || progressionIndex == 10 || progressionIndex == 13 || progressionIndex == 15 || progressionIndex == 16);
+            LedOn(4, progressionIndex == 4 || progressionIndex == 10 || progressionIndex == 11 || progressionIndex == 12 || progressionIndex == 14);
+            LedOn(5, progressionIndex == 5 || progressionIndex == 6 || progressionIndex == 13 || progressionIndex == 17);
+        }
     }
 };
 
+// Global pointer for Core 1 to access shared state
+static ResonatingStrings* g_resonator = nullptr;
+
+void core1_serial_handler() {
+    sleep_ms(500);  // Wait for USB to settle
+
+    char lineBuf[128];
+    int linePos = 0;
+
+    while (true) {
+        int c = getchar_timeout_us(10000);  // 10ms timeout
+        if (c == PICO_ERROR_TIMEOUT) {
+            // Check if Core 0 requested a flash save (e.g. long-press reset)
+            g_resonator->checkPendingFlashSave();
+            continue;
+        }
+        if (c == '\n' || c == '\r') {
+            if (linePos > 0) {
+                lineBuf[linePos] = '\0';
+                g_resonator->handleSerialCommand(lineBuf);
+                linePos = 0;
+            }
+        } else if (linePos < 127) {
+            lineBuf[linePos++] = (char)c;
+        }
+    }
+}
+
 int main() {
+    stdio_init_all();  // Initialize USB CDC
+
     static ResonatingStrings resonator;
+    g_resonator = &resonator;
     resonator.EnableNormalisationProbe();
+
+    // Enable lockout handler so Core 0 can be safely paused during flash operations
+    multicore_lockout_victim_init();
+
+    multicore_launch_core1(core1_serial_handler);
     resonator.Run();
     return 0;
 }

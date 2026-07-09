@@ -1,3 +1,6 @@
 # Build directory - ignore everything except .uf2 files
 /build/*
 !/build/*.uf2
+
+.claude/*
+CLAUDE.md
