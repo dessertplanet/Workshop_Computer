@@ -21,8 +21,15 @@ const els = {
   status: document.getElementById('editor-status'),
   diagnostics: document.getElementById('diagnostics'),
   preview: document.getElementById('card-preview'),
-  reload: document.getElementById('reload-source'),
+  download: document.getElementById('download-source'),
+  tool: document.querySelector('.author-tool'),
 };
+
+// Reveal the editor once the index + first source have loaded, hiding the
+// initial loading spinner.
+function clearLoading() {
+  if (els.tool) els.tool.classList.remove('is-loading');
+}
 
 let index = [];
 let current = null; // the selected raw-info index entry
@@ -35,6 +42,40 @@ function debounce(fn, ms) {
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Read the deeplinked card id from the URL hash. Supports both "#<id>" and
+// "#card=<id>" forms so links stay readable.
+function idFromHash() {
+  const h = decodeURIComponent(String(location.hash || '').replace(/^#/, '')).trim();
+  if (!h) return '';
+  const m = h.match(/^card=(.*)$/);
+  return (m ? m[1] : h).trim();
+}
+
+function findEntryIndexById(id) {
+  if (!id) return -1;
+  return index.findIndex((e) => String(e.id) === id);
+}
+
+// Load the card named by the URL hash (falling back to the first card), and
+// keep the dropdown in sync. This is the single place selection is applied, so
+// pasted links, back/forward navigation, and dropdown changes all flow through
+// the hash.
+function applyHash() {
+  if (!index.length) return;
+  const id = idFromHash();
+  const i = id ? findEntryIndexById(id) : -1;
+  const entry = i >= 0 ? index[i] : index[0];
+  // Normalize the URL so a bare /preview (or an unknown hash) reflects the card
+  // that actually loads, e.g. /preview/#00_Simple_MIDI. replaceState avoids a
+  // spurious history entry and does not re-trigger hashchange.
+  const canonical = `#${encodeURIComponent(String(entry.id))}`;
+  if (location.hash !== canonical) {
+    history.replaceState(null, '', canonical);
+  }
+  els.select.value = String(index.indexOf(entry));
+  loadCard(entry);
 }
 
 function renderDiagnostics(result) {
@@ -106,6 +147,20 @@ function run() {
     : `${result.errorCount} error(s), ${result.warningCount} warning(s)`;
 }
 
+// Save the current editor contents as an info.yaml file. This lets an author
+// download their edited source (the source of truth) to commit into the repo.
+function downloadSource() {
+  const blob = new Blob([els.editor.value], { type: 'text/yaml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'info.yaml';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function loadCard(entry) {
   current = entry;
   els.status.textContent = 'Loading…';
@@ -121,6 +176,8 @@ async function loadCard(entry) {
     els.diagnostics.innerHTML = `<p class="diag--error">Could not load ${esc(entry.path)}: ${esc(err.message)}</p>`;
     els.preview.innerHTML = '';
     els.status.textContent = 'Load failed';
+  } finally {
+    clearLoading();
   }
 }
 
@@ -129,16 +186,22 @@ async function init() {
     index = await fetch('../raw-info/index.json', { cache: 'no-store' }).then((r) => r.json());
   } catch (err) {
     els.status.textContent = 'Could not load card index';
+    clearLoading();
     return;
   }
   index.sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
   els.select.innerHTML = index
     .map((e, i) => `<option value="${i}">${esc(e.id)}</option>`)
     .join('');
-  els.select.addEventListener('change', () => loadCard(index[Number(els.select.value)]));
+  els.select.addEventListener('change', () => {
+    const entry = index[Number(els.select.value)];
+    if (entry) location.hash = encodeURIComponent(String(entry.id));
+  });
   els.editor.addEventListener('input', debounce(run, 250));
-  els.reload.addEventListener('click', () => { if (current) loadCard(current); });
-  if (index.length) loadCard(index[0]);
+  els.download.addEventListener('click', downloadSource);
+  window.addEventListener('hashchange', applyHash);
+  if (index.length) applyHash();
+  else clearLoading();
 }
 
 init();
