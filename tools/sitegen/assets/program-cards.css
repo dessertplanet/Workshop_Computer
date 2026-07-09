@@ -261,15 +261,9 @@
 .program-card-demo__media img {
   aspect-ratio: 16 / 9;
   display: block;
-  filter: grayscale(1);
   height: auto;
   object-fit: cover;
   width: 100%;
-}
-
-.program-card-demo a:hover .program-card-demo__media img,
-.program-card-demo a:focus-visible .program-card-demo__media img {
-  filter: grayscale(0);
 }
 
 .program-card-demo__text {
@@ -894,14 +888,9 @@
 .program-card-tile__media img {
   aspect-ratio: 16 / 9;
   display: block;
-  filter: grayscale(1);
   height: auto;
   object-fit: cover;
   width: 100%;
-}
-
-.program-card-tile:hover .program-card-tile__media img {
-  filter: grayscale(0);
 }
 
 .program-card-grid--list .program-card-tile {
