@@ -105,9 +105,11 @@ function renderPreview(source) {
   }
   try {
     // Normalize implicitly (behind the scenes) purely to render the preview.
-    // Ancillary build inputs (docs, downloads, firmware, git dates) are absent
-    // in the author tool, so pass empty stand-ins — the model derives panel,
-    // controls, tags and metadata from the edited source.
+    // Firmware/source/readme links come from the build-discovered fields in the
+    // raw-info index (the browser can't walk the release folder), so the preview
+    // shows the same download/source/readme links a full build would produce.
+    // Remaining ancillary inputs (docs, git dates) are still absent here.
+    const uf2Url = current ? (current.uf2Url || '') : '';
     const card = buildCanonicalCardModel({
       folderName: current ? current.id : 'preview',
       slug: current ? current.slug : 'preview',
@@ -115,20 +117,20 @@ function renderPreview(source) {
       rawYaml: source.data,
       docs: [],
       downloads: [],
-      latestUf2: null,
+      latestUf2: uf2Url ? { url: uf2Url } : null,
       web: {},
       readmePath: '',
       sourceFile: current ? current.sourceFile : 'info.yaml',
-      sourceUrl: '',
-      readmeUrl: '',
+      sourceUrl: current ? (current.sourceUrl || '') : '',
+      readmeUrl: current ? (current.readmeUrl || '') : '',
       gitFirstDate: '',
       gitLastDate: '',
     });
     els.preview.innerHTML = renderCardArticle({
       card,
       panelImg: '../assets/program_cards/Standalone_computer_rev1.svg',
-      yamlUrl: '',
-      uf2Url: '',
+      yamlUrl: current ? (current.yamlUrl || '') : '',
+      uf2Url,
       extraDocs: '',
     });
   } catch (err) {
