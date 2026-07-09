@@ -1,0 +1,85 @@
+draft: true
+Name: Warps
+Description: Port of Mutable Instruments' "parasites" Warps meta-modulator (cross-modulation, ring mod, wavefolder, vocoder, frequency shifter) to the Workshop System Computer. Work in progress.
+Language: C++ (RP2040 Pico SDK)
+Creator: Eric Gao
+Version: 0.1.0
+Status: WIP
+License: MIT
+Repository: https://github.com/Ericxgao/Workshop_Computer/tree/eric/warps-port/releases/97_warps
+
+tags:
+  - dsp
+  - modulation
+  - ring-modulation
+  - wavefolder
+  - vocoder
+  - port
+
+manual: |
+  WORK IN PROGRESS — this is an early port of Mutable Instruments Warps
+  (parasites firmware) to the Workshop System Computer. Not all algorithms are
+  expected to run in real time on the FPU-less RP2040 yet; see README.md.
+
+  Classic (external carrier) patch:
+    Audio In 1  = carrier
+    Audio In 2  = modulator
+    Audio Out 1 = cross-modulated main output
+    Audio Out 2 = carrier + modulator (aux) output
+
+  Main knob sweeps the meta-algorithm (crossfade -> wavefolder -> ring mods ->
+  XOR -> comparator -> vocoder). Knob X sets the timbre / modulation depth.
+  Knob Y sets input drive (gain into the saturating input stage).
+
+panel:
+  inputs:
+    - id: AudioIn1
+      name: Carrier
+      description: Carrier input (Modulator channel 0)
+    - id: AudioIn2
+      name: Modulator
+      description: Modulator input (Modulator channel 1)
+    - id: CVIn1
+      name: (unused)
+      description: Reserved for algorithm CV modulation
+    - id: CVIn2
+      name: (unused)
+      description: Reserved for timbre CV modulation
+    - id: PulseIn1
+      name: (unused)
+      description: Reserved
+    - id: PulseIn2
+      name: (unused)
+      description: Reserved
+  outputs:
+    - id: AudioOut1
+      name: Main
+      description: Cross-modulated / vocoded main output
+    - id: AudioOut2
+      name: Aux
+      description: Carrier + modulator sum (aux output)
+    - id: CVOut1
+      name: (unused)
+      description: Reserved
+    - id: CVOut2
+      name: (unused)
+      description: Reserved
+
+controls:
+  knobs:
+    - id: Main
+      name: Algorithm
+      description: Sweep across the meta-modulation algorithms (0..8)
+    - id: X
+      name: Timbre
+      description: Modulation parameter / algorithm depth
+    - id: Y
+      name: Drive
+      description: Input drive into the saturating amplifier stage
+  leds:
+    - id: LED0
+      name: Algorithm position
+    - id: LED2
+      name: Timbre
+    - id: LED4
+      name: Drive
