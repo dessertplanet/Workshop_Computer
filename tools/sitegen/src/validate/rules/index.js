@@ -289,13 +289,18 @@ export const uf2Entries = {
       const at = `uf2[${i}]`;
       if (!isPlainObject(entry)) {
         out.push({ severity: 'error', path: at, key: 'uf2',
-          message: `${at} should be an object with a "path".` });
+          message: `${at} should be an object with a "path" or "download.url".` });
         return;
       }
-      if (isBlank(entry.path)) {
-        out.push({ severity: 'error', path: `${at}.path`, key: 'uf2',
-          message: `${at} is missing required "path" (e.g. UF2/firmware.uf2).` });
-      } else if (typeof entry.path !== 'string') {
+      const dl = isPlainObject(entry.download) ? entry.download : null;
+      const urlEntry = dl && Object.entries(dl).find(([k]) => k.toLowerCase() === 'url');
+      const hasPath = !isBlank(entry.path);
+      const hasUrl = urlEntry && !isBlank(urlEntry[1]);
+      // An entry needs either a repo firmware path or an external download URL.
+      if (!hasPath && !hasUrl) {
+        out.push({ severity: 'error', path: at, key: 'uf2',
+          message: `${at} needs a "path" (repo firmware) or a "download.url" (external link).` });
+      } else if (entry.path !== undefined && typeof entry.path !== 'string') {
         out.push({ severity: 'error', path: `${at}.path`, key: 'uf2',
           message: `${at}.path should be a string path.` });
       }
@@ -303,23 +308,19 @@ export const uf2Entries = {
         out.push({ severity: 'warning', path: `${at}.name`, key: 'uf2',
           message: `${at}.name should be a string.` });
       }
-      if (entry.description !== undefined && typeof entry.description !== 'string') {
-        out.push({ severity: 'warning', path: `${at}.description`, key: 'uf2',
-          message: `${at}.description should be a string.` });
-      }
       if (entry.download !== undefined) {
         if (!isPlainObject(entry.download)) {
           out.push({ severity: 'warning', path: `${at}.download`, key: 'uf2',
             message: `${at}.download should be an object with url and sha256.` });
         } else {
-          if (entry.download.url !== undefined && !looksLikeUrl(entry.download.url)) {
+          if (urlEntry && urlEntry[1] !== undefined && !isBlank(urlEntry[1]) && !looksLikeUrl(urlEntry[1])) {
             out.push({ severity: 'warning', path: `${at}.download.url`, key: 'uf2',
               message: `${at}.download.url should be an http(s) URL.` });
           }
           const shaEntry = Object.entries(entry.download).find(([k]) => k.toLowerCase() === 'sha256');
-          if (shaEntry && isBlank(shaEntry[1])) {
-            out.push({ severity: 'warning', path: `${at}.download.sha256`, key: 'uf2',
-              message: `${at}.download.sha256 should be a non-empty hash string.` });
+          if (!shaEntry || isBlank(shaEntry[1])) {
+            out.push({ severity: 'error', path: `${at}.download.sha256`, key: 'uf2',
+              message: `${at}.download requires a "sha256" hash.` });
           }
         }
       }
