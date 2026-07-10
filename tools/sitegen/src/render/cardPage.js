@@ -98,6 +98,43 @@ function renderDocumentation(card, extraSections = '') {
   return `<section class="program-card-documentation">${joined}</section>`;
 }
 
+/**
+ * Build the "extra" documentation HTML appended into the Documentation section:
+ * the rendered README followed by any PDF docs. Shared by the site build and the
+ * author preview so both show the same thing. `docs[].url` is whatever URL the
+ * caller resolved (relative for the built detail page, raw GitHub for preview).
+ * `inlinePdf` embeds an inline `<object>` preview of the first PDF; disable it
+ * for the preview, where raw-GitHub PDF URLs would trigger a download.
+ */
+export function renderReadmeAndDocs({ readmeHtml = '', docs = [], inlinePdf = true } = {}) {
+  const readmeSection = readmeHtml
+    ? `<div class="program-card-section"><h3>README</h3><div class="markdown-body">${readmeHtml}</div></div>`
+    : '';
+  const list = Array.isArray(docs) ? docs : [];
+  let pdfSection = '';
+  if (list.length && inlinePdf) {
+    pdfSection = `
+    <div class="program-card-section docs-section">
+      <h3>Documentation PDF</h3>
+      <object data="${esc(list[0].url)}" type="application/pdf" width="100%" height="700px">
+        <p>PDF preview not available.</p>
+      </object>
+      <div style="margin-top:16px;text-align:center">
+        <a class="btn download" href="${esc(list[0].url)}" download>📜 Download ${esc(list[0].name)}</a>
+      </div>
+      ${list.length > 1 ? `<ul class="docs-list">${list.slice(1).map(d => `<li><a class="btn download" href="${esc(d.url)}" download>📄 ${esc(d.name)}</a></li>`).join('')}</ul>` : ''}
+    </div>`;
+  } else if (list.length) {
+    pdfSection = `
+    <div class="program-card-section docs-section">
+      <h3>Documentation PDF</h3>
+      <ul class="docs-list">${list.map(d => `<li><a class="btn download" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">📄 ${esc(d.name)}</a></li>`).join('')}</ul>
+      <p class="preview-note">An inline PDF preview appears on the published card page.</p>
+    </div>`;
+  }
+  return readmeSection + pdfSection;
+}
+
 /** Render the Audio section from classified audio-sample items. */
 function renderAudio(samples) {
   if (!Array.isArray(samples) || !samples.length) return '';

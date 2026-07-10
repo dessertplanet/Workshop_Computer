@@ -1,4 +1,4 @@
-import { fsAsync as fs, ensureDir, writeFileEnsured, listSubdirs } from './utils/fs.js';
+import { fsAsync as fs, ensureDir, writeFileEnsured, listSubdirs, toPosix } from './utils/fs.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectRepoFromGit, detectRefFromGit } from './utils/git.js';
@@ -7,7 +7,7 @@ import { renderLayout } from './render/layout.js';
 import { discoverRelease as discoverReleaseMod } from './discover/release.js';
 import { githubPagesBase, copyWebAssets } from './discover/webEditor.js';
 import { getInfoYamlSchemaAdapter } from './schema/schemaAdapter.js';
-import { renderCardArticle } from './render/cardPage.js';
+import { renderCardArticle, renderReadmeAndDocs } from './render/cardPage.js';
 import { renderDiscovery, renderArchive, renderTile } from './render/discovery.js';
 import { curation } from './curation/index.js';
 import { parseSource } from './validate/parseSource.js';
@@ -68,25 +68,12 @@ function detailPage(rel) {
     ? `https://github.com/${REPO}/blob/${BRANCH}/${card.source_file}`
     : `https://github.com/${REPO}`;
 
-  const readmeSection = `<div class="program-card-section"><h3>README</h3><div class="markdown-body">${readmeHtml}</div></div>`;
-  const pdfSection = docs.length ? `
-    <div class="program-card-section docs-section">
-      <h3>Documentation PDF</h3>
-      <object data="${docs[0].url}" type="application/pdf" width="100%" height="700px">
-        <p>PDF preview not available.</p>
-      </object>
-      <div style="margin-top:16px;text-align:center">
-        <a class="btn download" href="${docs[0].url}" download>📜 Download ${docs[0].name}</a>
-      </div>
-      ${docs.length > 1 ? `<ul class="docs-list">${docs.slice(1).map(d => `<li><a class="btn download" href="${d.url}" download>📄 ${d.name}</a></li>`).join('')}</ul>` : ''}
-    </div>` : '';
-
   const article = renderCardArticle({
     card,
     panelImg: '../../assets/program_cards/Standalone_computer_rev1.svg',
     yamlUrl,
     uf2Url,
-    extraDocs: readmeSection + pdfSection,
+    extraDocs: renderReadmeAndDocs({ readmeHtml, docs }),
   });
 
   return renderLayout({
@@ -328,6 +315,16 @@ async function build() {
   for (const rel of releases) {
     if (rel.rawInfoSource) {
       await writeFileEnsured(path.join(OUT_DIR, 'raw-info', rel.folderName, 'info.yaml'), rel.rawInfoSource);
+      // Ship the build-only "extras" (rendered README + PDF links with absolute
+      // raw URLs) so the author preview can show the same Documentation section.
+      const extraDocs = (rel.docs || []).map(d => ({
+        name: d.name,
+        url: makeRawUrl(toPosix(path.join('releases', rel.folderName, d.rel))),
+      }));
+      await writeFileEnsured(
+        path.join(OUT_DIR, 'raw-info', rel.folderName, 'extras.json'),
+        JSON.stringify({ readmeHtml: rel.readmeHtml || '', docs: extraDocs }),
+      );
     }
   }
 
