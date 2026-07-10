@@ -190,7 +190,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
       ${summary ? `<p>${esc(truncate(summary, 240))}</p>` : ''}
       <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${memoryMarkup}</div>
       <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>
-      <div class="program-card-sha" data-sha-display role="status" aria-live="polite" hidden></div>
+      <div class="program-card-sha" data-sha-display role="status" aria-live="polite" hidden>SHA256: <code class="program-card-sha__value" data-sha-value></code> <button type="button" class="program-card-sha__verify" data-verify-open>How to verify</button></div>
       <div class="program-card-hero__links" aria-label="Further card links">${readmeUrl ? `<a href="${esc(readmeUrl)}">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a></div>
     </div>
   </header>`;
@@ -243,6 +243,20 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     ${dataSources}
   </footer>`;
 
+  const verifyModal = `<dialog class="verify-modal" data-verify-modal aria-label="How to verify your download">
+    <div class="verify-modal__body">
+      <h2>Verify your download</h2>
+      <p>Confirm the file you downloaded really is that new firmware.</p>
+      <h3>macOS / Linux (Terminal)</h3>
+      <pre><code>shasum -a 256 firmware.uf2</code></pre>
+      <p class="verify-modal__note">Linux also has <code>sha256sum firmware.uf2</code>.</p>
+      <h3>Windows (PowerShell)</h3>
+      <pre><code>Get-FileHash firmware.uf2 -Algorithm SHA256</code></pre>
+      <p>Compare the result to the SHA256 on the website — it should match exactly.</p>
+      <button type="button" class="btn verify-modal__close" data-verify-close>Close</button>
+    </div>
+  </dialog>`;
+
   return `<article class="program-cards program-card-page">
     ${draftBar}
     ${hero}
@@ -252,5 +266,6 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     ${use}
     ${documentation}
     ${about}
+    ${verifyModal}
   </article>`;
 }
