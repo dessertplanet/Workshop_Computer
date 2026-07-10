@@ -18,7 +18,7 @@ export const infoYamlSchema = {
     { path: 'repository', type: 'string', required: false, description: 'Upstream source repository.' },
     { path: 'tags', type: 'array|string', required: false, description: 'Discovery tags.' },
     { path: 'demo-link', type: 'string', required: false, description: 'Demo video URL.' },
-    { path: 'audio-sample', type: 'string', required: false, description: 'Demo audio sample path or URL.' },
+    { path: 'audio-sample', type: 'array|string', required: false, description: 'Demo audio sample(s): a repo-relative file path, a SoundCloud URL, a Bandcamp EmbeddedPlayer URL, or a list of these.' },
     { path: 'manual', type: 'string', required: false, description: 'Abbreviated operator summary.' },
     { path: 'panel', type: 'object', required: false, description: 'Panel jack metadata.' },
     { path: 'controls', type: 'object', required: false, description: 'Control metadata.' },

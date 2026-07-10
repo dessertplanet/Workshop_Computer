@@ -57,6 +57,19 @@ document.addEventListener('click', function(e) {
   if (box) { box.textContent = 'SHA256: ' + a.getAttribute('data-sha256'); box.hidden = false; }
 });
 
+// Play the demo video inline (swap the thumbnail for an autoplay embed) instead
+// of navigating to YouTube. Falls back to the link when JS is unavailable.
+document.addEventListener('click', function(e) {
+  var a = e.target.closest('.program-card-demo a[data-youtube-id]');
+  if (!a) return;
+  e.preventDefault();
+  var id = a.getAttribute('data-youtube-id');
+  var wrap = document.createElement('div');
+  wrap.className = 'video-embed';
+  wrap.innerHTML = '<iframe src="https://www.youtube.com/embed/' + encodeURIComponent(id) + '?rel=0&autoplay=1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe>';
+  a.replaceWith(wrap);
+});
+
 function setConnected(on) {
   if (connectBtn) {
     connectBtn.setAttribute('aria-checked', String(on));

@@ -14,6 +14,7 @@ import { parseSource } from './lib/validate/parseSource.js';
 import { validateInfoYaml } from './lib/validate/validateInfoYaml.js';
 import { buildCanonicalCardModel } from './lib/model/card.js';
 import { renderCardArticle } from './lib/render/cardPage.js';
+import { resolveAudioSamples, getAudioField } from './lib/utils/audio.js';
 
 const els = {
   select: document.getElementById('card-select'),
@@ -373,6 +374,11 @@ function renderPreview(source) {
       const editedUf2 = curatedUf2FromSource(source.data);
       const effectiveUf2Downloads = editedUf2 !== null ? editedUf2 : uf2Downloads;
       const effectiveUf2Url = (editedUf2 && editedUf2[0] && editedUf2[0].url) || uf2Url;
+      const base = rawBaseForCurrent();
+      const audioSamples = resolveAudioSamples(
+        getAudioField(source.data),
+        (rel) => (base ? base + rel.split('/').filter(Boolean).map(encodeURIComponent).join('/') : ''),
+      );
       const card = buildCanonicalCardModel({
         folderName: current ? current.id : 'preview',
         slug: current ? current.slug : 'preview',
@@ -383,6 +389,7 @@ function renderPreview(source) {
         latestUf2: effectiveUf2Url ? { url: effectiveUf2Url } : null,
         uf2Downloads: effectiveUf2Downloads,
         web: {},
+        audioSamples,
         readmePath: '',
         sourceFile: current ? current.sourceFile : 'info.yaml',
         sourceUrl: current ? (current.sourceUrl || '') : '',
@@ -510,6 +517,16 @@ async function init() {
   els.editor.addEventListener('scroll', () => { hideSuggest(); syncGutter(); });
   els.download.addEventListener('click', downloadSource);
   els.preview.addEventListener('click', (e) => {
+    const demo = e.target.closest('.program-card-demo a[data-youtube-id]');
+    if (demo) {
+      e.preventDefault();
+      const id = demo.getAttribute('data-youtube-id');
+      const wrap = document.createElement('div');
+      wrap.className = 'video-embed';
+      wrap.innerHTML = `<iframe src="https://www.youtube.com/embed/${encodeURIComponent(id)}?rel=0&autoplay=1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe>`;
+      demo.replaceWith(wrap);
+      return;
+    }
     const a = e.target.closest('a.program-card-action--download[data-sha256]');
     if (!a) return;
     const href = a.getAttribute('href') || '';
