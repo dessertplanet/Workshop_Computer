@@ -474,6 +474,14 @@ async function init() {
   els.editor.addEventListener('blur', () => setTimeout(hideSuggest, 120));
   els.editor.addEventListener('scroll', () => { hideSuggest(); syncGutter(); });
   els.download.addEventListener('click', downloadSource);
+  els.preview.addEventListener('click', (e) => {
+    const a = e.target.closest('a.program-card-action--download[data-sha256]');
+    if (!a) return;
+    e.preventDefault(); // preview links are illustrative; don't navigate
+    const main = a.closest('.program-card-hero__main');
+    const box = main && main.querySelector('[data-sha-display]');
+    if (box) { box.textContent = 'SHA256: ' + a.getAttribute('data-sha256'); box.hidden = false; }
+  });
   window.addEventListener('hashchange', applyHash);
   if (index.length) applyHash();
   else clearLoading();

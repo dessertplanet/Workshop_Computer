@@ -90,6 +90,14 @@
   text-transform: none;
 }
 
+.program-card-sha {
+  color: var(--program-card-muted, #666);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  margin-top: 10px;
+  word-break: break-all;
+}
+
 .program-card-action span {
   font-size: 15px;
   font-weight: 800;

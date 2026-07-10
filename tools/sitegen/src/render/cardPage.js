@@ -166,6 +166,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
       ${summary ? `<p>${esc(truncate(summary, 240))}</p>` : ''}
       <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${memoryMarkup}</div>
       <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>
+      <div class="program-card-sha" data-sha-display role="status" aria-live="polite" hidden></div>
       <div class="program-card-hero__links" aria-label="Further card links">${readmeUrl ? `<a href="${esc(readmeUrl)}">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a></div>
     </div>
   </header>`;
