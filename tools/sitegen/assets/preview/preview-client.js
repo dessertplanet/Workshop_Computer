@@ -527,13 +527,31 @@ async function init() {
       demo.replaceWith(wrap);
       return;
     }
+    // "How to verify" modal.
+    const verifyOpen = e.target.closest('[data-verify-open]');
+    if (verifyOpen) {
+      const root = verifyOpen.closest('.program-cards');
+      const m = root && root.querySelector('[data-verify-modal]');
+      if (m && m.showModal) m.showModal();
+      return;
+    }
+    if (e.target.closest('[data-verify-close]')) {
+      const d = e.target.closest('dialog');
+      if (d) d.close();
+      return;
+    }
+    if (e.target.matches('.verify-modal')) { e.target.close(); return; }
     const a = e.target.closest('a.program-card-action--download[data-sha256]');
     if (!a) return;
     const href = a.getAttribute('href') || '';
     if (!href || href === '#') e.preventDefault(); // nothing to download in preview
     const main = a.closest('.program-card-hero__main');
     const box = main && main.querySelector('[data-sha-display]');
-    if (box) { box.textContent = 'SHA256: ' + a.getAttribute('data-sha256'); box.hidden = false; }
+    if (box) {
+      const v = box.querySelector('[data-sha-value]');
+      if (v) v.textContent = a.getAttribute('data-sha256');
+      box.hidden = false;
+    }
   });
   window.addEventListener('hashchange', applyHash);
   if (index.length) applyHash();

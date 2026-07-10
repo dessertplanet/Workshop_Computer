@@ -54,7 +54,28 @@ document.addEventListener('click', function(e) {
   if (!a) return;
   var main = a.closest('.program-card-hero__main');
   var box = main && main.querySelector('[data-sha-display]');
-  if (box) { box.textContent = 'SHA256: ' + a.getAttribute('data-sha256'); box.hidden = false; }
+  if (box) {
+    var v = box.querySelector('[data-sha-value]');
+    if (v) v.textContent = a.getAttribute('data-sha256');
+    box.hidden = false;
+  }
+});
+
+// "How to verify" modal (native <dialog>): open, close button, backdrop click.
+document.addEventListener('click', function(e) {
+  var open = e.target.closest('[data-verify-open]');
+  if (open) {
+    var root = open.closest('.program-cards');
+    var m = root && root.querySelector('[data-verify-modal]');
+    if (m && m.showModal) m.showModal();
+    return;
+  }
+  if (e.target.closest('[data-verify-close]')) {
+    var d = e.target.closest('dialog');
+    if (d) d.close();
+    return;
+  }
+  if (e.target.matches('.verify-modal')) e.target.close(); // click outside the body
 });
 
 // Play the demo video inline (swap the thumbnail for an autoplay embed) instead
