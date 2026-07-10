@@ -12,6 +12,26 @@ function readKeyCi(obj, name) {
   return '';
 }
 
+// A sensible label for an external URL: its filename, else host, else the URL.
+function nameFromUrl(u) {
+  try {
+    const parsed = new URL(u);
+    const base = parsed.pathname.split('/').filter(Boolean).pop();
+    return base || parsed.hostname || u;
+  } catch {
+    return u;
+  }
+}
+
+// The bare host of a URL (without a leading www.), for display on the tile.
+function hostFromUrl(u) {
+  try {
+    return new URL(u).hostname.replace(/^www\./i, '');
+  } catch {
+    return '';
+  }
+}
+
 export async function discoverDownloads(absReleaseDir, repoRelBase, makeRawUrl) {
   const downloads = [];
   const uf2Items = [];
@@ -111,11 +131,12 @@ async function resolveInsensitivePath(baseAbs, relPath) {
  * Build a curated UF2 download list from an author-specified `uf2:` field. When
  * present this fully replaces auto-discovery, letting authors trim noise and
  * annotate firmware. Each entry is an object:
- *   { path (required), name?, description?, download?: { url?, sha256? } }
- * `path` is resolved (case-insensitively) against the release folder (a missing
- * file is an error). `download.url`, when given, is an external/mirror link used
- * instead of the repo raw URL; `download.sha256` (hex digest) is carried through
- * as metadata. Returns { uf2Downloads, errors }.
+ *   { path?, name?, download?: { url?, sha256? } }
+ * An entry needs EITHER a `path` (repo firmware, resolved case-insensitively;
+ * missing file is an error) OR a `download.url` (an external/mirror/store link
+ * that opens in a new tab and is tagged as external). For repo files the build
+ * computes the sha256; external links carry no hash. Returns { uf2Downloads,
+ * errors }.
  */
 export async function curateUf2Downloads(uf2Field, absReleaseDir, repoRelBase, makeRawUrl) {
   const uf2Downloads = [];
@@ -123,12 +144,31 @@ export async function curateUf2Downloads(uf2Field, absReleaseDir, repoRelBase, m
   const entries = Array.isArray(uf2Field) ? uf2Field : [uf2Field];
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-      errors.push('uf2 entry must be an object with a "path".');
+      errors.push('uf2 entry must be an object with a "path" or "download.url".');
       continue;
     }
+    const download = entry.download && typeof entry.download === 'object' && !Array.isArray(entry.download)
+      ? entry.download : null;
+    const externalUrl = readKeyCi(download, 'url');
     const relPath = typeof entry.path === 'string' ? entry.path.trim() : '';
+
+    // External link (store/mirror): no repo file required.
+    if (externalUrl) {
+      const item = {
+        name: (typeof entry.name === 'string' && entry.name.trim()) || nameFromUrl(externalUrl),
+        url: externalUrl,
+        host: hostFromUrl(externalUrl),
+        external: true,
+      };
+      const authorHash = readKeyCi(download, 'sha256');
+      if (authorHash) item.sha256 = authorHash;
+      uf2Downloads.push(item);
+      continue;
+    }
+
+    // Otherwise a repo-hosted firmware file is required.
     if (!relPath) {
-      errors.push('uf2 entry is missing required "path".');
+      errors.push('uf2 entry needs a "path" or a "download.url".');
       continue;
     }
     const realRel = await resolveInsensitivePath(absReleaseDir, relPath);
@@ -137,25 +177,13 @@ export async function curateUf2Downloads(uf2Field, absReleaseDir, repoRelBase, m
       continue;
     }
     const relFromRepoRoot = toPosix(path.join(repoRelBase, realRel));
-    const download = entry.download && typeof entry.download === 'object' && !Array.isArray(entry.download)
-      ? entry.download : null;
-    const externalUrl = download && typeof download.url === 'string' ? download.url.trim() : '';
-    const authorHash = readKeyCi(download, 'sha256');
     const item = {
       name: (typeof entry.name === 'string' && entry.name.trim()) || path.basename(realRel),
-      url: externalUrl || makeRawUrl(relFromRepoRoot),
+      url: makeRawUrl(relFromRepoRoot),
       rel: relFromRepoRoot,
     };
-    if (typeof entry.description === 'string' && entry.description.trim()) item.description = entry.description.trim();
-    // For a repo-served file, hash it at build time (authoritative). For an
-    // external mirror we can't read the served bytes, so keep the author hash.
-    if (externalUrl) {
-      if (authorHash) item.sha256 = authorHash;
-    } else {
-      const sha256 = await sha256File(path.join(absReleaseDir, realRel));
-      if (sha256) item.sha256 = sha256;
-      else if (authorHash) item.sha256 = authorHash;
-    }
+    const sha256 = await sha256File(path.join(absReleaseDir, realRel));
+    if (sha256) item.sha256 = sha256;
     uf2Downloads.push(item);
   }
   return { uf2Downloads, errors };
