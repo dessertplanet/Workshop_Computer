@@ -10,6 +10,7 @@ import { getLastCommitDate, getCommitDates } from '../utils/git.js';
 import { resolveWebConfig } from './webEditor.js';
 import { normalizeTags, normalizeRepository, normalizeContact, normalizeDraft, resolveAudioSample } from './infoFields.js';
 import { parseYoutubeId, youtubeEmbedHtml } from '../utils/youtube.js';
+import { resolveAudioSamples, getAudioField } from '../utils/audio.js';
 import { buildCanonicalCardModel } from '../model/card.js';
 
 // Read the top-level `uf2` field from parsed YAML, case-insensitively.
@@ -117,9 +118,6 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
 
   // downloads and README asset link rewriting base
   const repoRelBase = path.join('releases', folderName);
-  if (info.audiosample) {
-    info.audiosampleurl = resolveAudioSample(info.audiosample, repoRelBase, makeRawUrl);
-  }
   // Rewrite relative links in README HTML to raw GitHub URLs
   readmeHtml = rewriteHtmlLinksToRaw(readmeHtml, repoRelBase);
   // Inject YouTube embeds after links, preserving the links (minimal logic)
@@ -142,6 +140,12 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   }
   const primaryUf2 = effectiveUf2Downloads[0] || null;
 
+  // Audio samples: uploaded files (repo-relative), SoundCloud, or Bandcamp.
+  const audioSamples = resolveAudioSamples(
+    getAudioField(rawYaml),
+    (rel) => resolveAudioSample(rel, repoRelBase, makeRawUrl),
+  );
+
   const sourceFile = toPosix(path.join('releases', folderName, 'info.yaml'));
   const sourceUrl = `https://github.com/${repoSlug}/tree/${refName}/releases/${folderName}`;
   const readmeRelPath = toPosix(path.join('releases', folderName, 'README.md'));
@@ -157,6 +161,7 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     latestUf2: primaryUf2,
     uf2Downloads: effectiveUf2Downloads,
     web,
+    audioSamples,
     readmePath: readmeRelPath,
     sourceFile,
     sourceUrl,

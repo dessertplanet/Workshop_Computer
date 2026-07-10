@@ -98,6 +98,23 @@ function renderDocumentation(card, extraSections = '') {
   return `<section class="program-card-documentation">${joined}</section>`;
 }
 
+/** Render the Audio section from classified audio-sample items. */
+function renderAudio(samples) {
+  if (!Array.isArray(samples) || !samples.length) return '';
+  const items = samples.map(s => {
+    const title = s.title ? `<p class="program-card-audio__title">${esc(s.title)}</p>` : '';
+    if (s.kind === 'file') {
+      return `<div class="program-card-audio__item">${title}<audio class="program-card-audio__player" controls preload="none" src="${esc(s.url)}"></audio></div>`;
+    }
+    if ((s.kind === 'soundcloud' || s.kind === 'bandcamp') && s.embedUrl) {
+      const height = s.height || (s.kind === 'soundcloud' ? 166 : 120);
+      return `<div class="program-card-audio__item">${title}<iframe class="program-card-audio__embed program-card-audio__embed--${esc(s.kind)}" src="${esc(s.embedUrl)}" width="100%" height="${height}" loading="lazy" frameborder="0" allow="autoplay" title="${esc(s.title || (s.kind + ' player'))}"></iframe></div>`;
+    }
+    return `<div class="program-card-audio__item">${title}<a class="program-card-audio__link" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.host || s.url)} ↗</a></div>`;
+  }).join('');
+  return `<section class="program-card-audio"><h2>Audio samples</h2>${items}</section>`;
+}
+
 /**
  * Render the full program-card detail article from a canonical card model.
  *
@@ -179,14 +196,18 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
   </header>`;
 
   const demo = firstVideo
-    ? `<section class="program-card-demo"><a href="${esc(firstVideo.url)}"><span class="program-card-demo__media" aria-hidden="true"><img src="https://img.youtube.com/vi/${esc(firstVideo.id)}/hqdefault.jpg" alt="" loading="lazy"></span><span class="program-card-demo__text"><span>Watch</span><strong>${esc(firstVideo.title || 'Demo video')}</strong></span></a></section>`
+    ? `<section class="program-card-demo"><a href="${esc(firstVideo.url)}" data-youtube-id="${esc(firstVideo.id)}"><span class="program-card-demo__media" aria-hidden="true"><img src="https://img.youtube.com/vi/${esc(firstVideo.id)}/hqdefault.jpg" alt="" loading="lazy"></span><span class="program-card-demo__text"><span>Watch</span><strong>${esc(firstVideo.title || 'Demo video')}</strong></span></a></section>`
     : '';
+
+  const audio = renderAudio(card.audio_samples);
 
   const quickStart = Array.isArray(card.quick_start) && card.quick_start.length
     ? `<section class="program-card-quick-start"><h2>Quick start</h2><ol>${card.quick_start.map(step => `<li>${esc(stripTags(step))}</li>`).join('')}</ol></section>`
     : '';
 
-  const use = `<div class="program-card-use">
+  const use = `<section class="program-card-use-section">
+    <h2 class="program-card-use__title">Panel</h2>
+    <div class="program-card-use">
     <div class="program-card-use__panel">${renderPanel(card, panelImg)}</div>
     <div class="program-card-use__reference">
       ${controlsMarkup ? `<section class="program-card-section"><h3>Controls</h3>${controlsMarkup}</section>` : ''}
@@ -195,7 +216,8 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
       ${renderSocketList('Outputs', panel.outputs, panelPositions.outputs)}
       ${ledsMarkup ? `<section class="program-card-section"><h3>LEDs</h3>${ledsMarkup}</section>` : ''}
     </div>
-  </div>`;
+  </div>
+  </section>`;
 
   const documentation = renderDocumentation(card, extraDocs);
 
@@ -225,6 +247,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     ${draftBar}
     ${hero}
     ${demo}
+    ${audio}
     ${quickStart}
     ${use}
     ${documentation}
