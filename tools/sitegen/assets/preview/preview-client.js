@@ -14,6 +14,7 @@ import { parseSource } from './lib/validate/parseSource.js';
 import { validateInfoYaml } from './lib/validate/validateInfoYaml.js';
 import { buildCanonicalCardModel } from './lib/model/card.js';
 import { renderCardArticle } from './lib/render/cardPage.js';
+import { renderReadmeAndDocs } from './lib/render/cardPage.js';
 import { resolveAudioSamples, getAudioField } from './lib/utils/audio.js';
 
 const els = {
@@ -402,7 +403,7 @@ function renderPreview(source) {
         panelImg: '../assets/program_cards/Standalone_computer_rev1.svg',
         yamlUrl: current ? (current.yamlUrl || '') : '',
         uf2Url: effectiveUf2Url,
-        extraDocs: '',
+        extraDocs: current && current.extras ? renderReadmeAndDocs({ ...current.extras, inlinePdf: false }) : '',
       });
     } catch (err) {
       html = `<p class="preview-note">Preview could not render: ${esc(err.message)}</p>`;
@@ -476,6 +477,11 @@ async function loadCard(entry) {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.text();
     });
+    // Build-only extras (rendered README + PDF links) so the preview shows the
+    // same Documentation section authors will get. Best-effort; absent is fine.
+    entry.extras = await fetch(`../raw-info/${entry.id}/extras.json`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
     els.editor.value = raw;
     run();
     updateGutter();
