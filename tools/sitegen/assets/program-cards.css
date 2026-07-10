@@ -104,6 +104,44 @@
   word-break: break-all;
 }
 
+.program-card-audio {
+  margin-top: 24px;
+}
+
+.program-card-audio h2 {
+  color: var(--program-card-ink);
+  font-size: clamp(24px, 3.2vw, 38px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 0.98;
+  margin: 0 0 12px;
+}
+
+.program-card-audio__item + .program-card-audio__item {
+  margin-top: 14px;
+}
+
+.program-card-audio__title {
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+
+.program-card-audio__player {
+  width: 100%;
+}
+
+.program-card-audio__embed {
+  border: 0;
+  display: block;
+  width: 100%;
+}
+
+.program-card-audio__link {
+  color: var(--program-card-link);
+  font-weight: 700;
+  text-decoration: none;
+}
+
 .program-card-action span {
   font-size: 15px;
   font-weight: 800;
@@ -362,6 +400,25 @@
   gap: 26px;
   grid-template-columns: 320px minmax(0, 1fr);
   margin-top: 22px;
+}
+
+.program-card-use-section {
+  border-top: 1px solid var(--program-card-rule);
+  margin-top: 24px;
+  padding-top: 20px;
+}
+
+.program-card-use-section .program-card-use {
+  margin-top: 0;
+}
+
+.program-card-use__title {
+  color: var(--program-card-ink);
+  font-size: clamp(24px, 3.2vw, 38px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 0.98;
+  margin: 0 0 16px;
 }
 
 .program-card-use__panel {
