@@ -104,6 +104,61 @@
   word-break: break-all;
 }
 
+.program-card-sha__verify {
+  background: none;
+  border: 0;
+  color: var(--program-card-link);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 0;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
+.verify-modal {
+  border: 1px solid var(--program-card-rule, #ccc);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+  color: var(--program-card-ink, #111);
+  max-width: 540px;
+  padding: 0;
+  width: calc(100% - 32px);
+}
+
+.verify-modal::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.verify-modal__body {
+  padding: 20px 22px 22px;
+}
+
+.verify-modal__body h2 {
+  margin: 0 0 8px;
+}
+
+.verify-modal__body h3 {
+  margin: 16px 0 6px;
+}
+
+.verify-modal__body pre {
+  background: var(--gutter-bg, #f6f8fa);
+  border-radius: 6px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px 12px;
+}
+
+.verify-modal__note {
+  color: var(--program-card-muted, #666);
+  font-size: 13px;
+}
+
+.verify-modal__close {
+  margin-top: 16px;
+}
+
 .program-card-audio {
   margin-top: 24px;
 }
