@@ -83,11 +83,17 @@
   text-transform: uppercase;
 }
 
-.program-card-action__desc {
+.program-card-action__host {
   font-weight: 600;
-  letter-spacing: 0;
   opacity: 0.72;
   text-transform: none;
+}
+
+.program-card-action__tag {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
 }
 
 .program-card-sha {

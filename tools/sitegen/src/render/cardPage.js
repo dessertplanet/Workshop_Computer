@@ -142,9 +142,16 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
   const uf2Downloads = Array.isArray(card.uf2_downloads) ? card.uf2_downloads : [];
   const downloadActions = uf2Downloads.length
     ? uf2Downloads.map(d => {
+        // An external (mirror/store) link opens in a new tab, shows its host and
+        // an External tag, and is never flashed or given a SHA readout.
+        if (d.external) {
+          const host = d.host ? `<small class="program-card-action__host">${esc(d.host)}</small>` : '';
+          const tag = '<small class="program-card-action__tag">External \u2197</small>';
+          return `<a class="program-card-action program-card-action--download program-card-action--external" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer"><span>Download</span><small>${esc(d.name)}</small>${host}${tag}</a>`;
+        }
+        // A repo file downloads directly, enables WebUSB, and exposes its SHA256.
         const hashAttr = d.sha256 ? ` data-sha256="${esc(d.sha256)}"` : '';
-        const desc = d.description ? `<small class="program-card-action__desc">${esc(d.description)}</small>` : '';
-        return `<a class="program-card-action program-card-action--download" href="${esc(d.url)}" download data-uf2-url="${esc(d.url)}"${hashAttr}><span>Download</span><small>${esc(d.name)}</small>${desc}</a>`;
+        return `<a class="program-card-action program-card-action--download" href="${esc(d.url)}" download data-uf2-url="${esc(d.url)}"${hashAttr}><span>Download</span><small>${esc(d.name)}</small></a>`;
       }).join('')
     : (() => {
         const downloadHref = uf2Url || sourceUrl;

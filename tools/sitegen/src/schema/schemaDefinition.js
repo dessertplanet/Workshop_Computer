@@ -29,6 +29,6 @@ export const infoYamlSchema = {
     { path: 'quick_start', type: 'array', required: false, description: 'Quick-start checklist.' },
     { path: 'videos', type: 'array', required: false, description: 'Structured video links.' },
     { path: 'memory', type: 'object', required: false, description: 'Card memory requirements.' },
-    { path: 'uf2', type: 'array', required: false, description: 'Curated firmware download list; when present it overrides auto-discovery. Each item: { path, name?, description?, download?: { url, sha256 } }.' },
+    { path: 'uf2', type: 'array', required: false, description: 'Curated firmware download list; when present it overrides auto-discovery. Each item needs a path OR a download.url: { path?, name?, download?: { url, sha256 } }.' },
   ],
 };

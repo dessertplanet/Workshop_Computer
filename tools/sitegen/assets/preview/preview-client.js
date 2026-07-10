@@ -49,6 +49,35 @@ function syncGutter() {
 let index = [];
 let current = null; // the selected raw-info index entry
 
+// Read a string property by a case-insensitive key, trimmed.
+function readCi(obj, name) {
+  if (!obj || typeof obj !== 'object') return '';
+  const t = String(name).toLowerCase();
+  for (const [k, v] of Object.entries(obj)) {
+    if (k.toLowerCase() === t && typeof v === 'string') return v.trim();
+  }
+  return '';
+}
+
+// A sensible label for an external URL: its filename, else host, else the URL.
+function nameFromUrl(u) {
+  try {
+    const parsed = new URL(u);
+    return parsed.pathname.split('/').filter(Boolean).pop() || parsed.hostname || u;
+  } catch {
+    return u;
+  }
+}
+
+// The bare host of a URL (without a leading www.), for display on the tile.
+function hostFromUrl(u) {
+  try {
+    return new URL(u).hostname.replace(/^www\./i, '');
+  } catch {
+    return '';
+  }
+}
+
 function debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
@@ -242,16 +271,22 @@ function curatedUf2FromSource(data) {
   const out = [];
   for (const e of arr) {
     if (!e || typeof e !== 'object' || Array.isArray(e)) continue;
-    const p = typeof e.path === 'string' ? e.path.trim() : '';
-    if (!p) continue;
     const dl = e.download && typeof e.download === 'object' && !Array.isArray(e.download) ? e.download : null;
-    const ext = dl && typeof dl.url === 'string' ? dl.url.trim() : '';
-    const url = ext || (base ? base + p.split('/').filter(Boolean).map(encodeURIComponent).join('/') : '');
-    const item = { name: (typeof e.name === 'string' && e.name.trim()) || p.split('/').pop(), url };
-    if (typeof e.description === 'string' && e.description.trim()) item.description = e.description.trim();
-    if (dl) {
-      const sha = Object.entries(dl).find(([k]) => k.toLowerCase() === 'sha256');
-      if (sha && typeof sha[1] === 'string' && sha[1].trim()) item.sha256 = sha[1].trim();
+    const ext = dl ? readCi(dl, 'url') : '';
+    const p = typeof e.path === 'string' ? e.path.trim() : '';
+    let item;
+    if (ext) {
+      // External link (store/mirror): no repo path needed.
+      item = { name: (typeof e.name === 'string' && e.name.trim()) || nameFromUrl(ext), url: ext, host: hostFromUrl(ext), external: true };
+      const sha = dl ? readCi(dl, 'sha256') : '';
+      if (sha) item.sha256 = sha;
+    } else if (p) {
+      const url = base ? base + p.split('/').filter(Boolean).map(encodeURIComponent).join('/') : '';
+      item = { name: (typeof e.name === 'string' && e.name.trim()) || p.split('/').pop(), url };
+      const sha = dl ? readCi(dl, 'sha256') : '';
+      if (sha) item.sha256 = sha;
+    } else {
+      continue; // neither path nor url — validation flags this
     }
     out.push(item);
   }
@@ -477,7 +512,8 @@ async function init() {
   els.preview.addEventListener('click', (e) => {
     const a = e.target.closest('a.program-card-action--download[data-sha256]');
     if (!a) return;
-    e.preventDefault(); // preview links are illustrative; don't navigate
+    const href = a.getAttribute('href') || '';
+    if (!href || href === '#') e.preventDefault(); // nothing to download in preview
     const main = a.closest('.program-card-hero__main');
     const box = main && main.querySelector('[data-sha-display]');
     if (box) { box.textContent = 'SHA256: ' + a.getAttribute('data-sha256'); box.hidden = false; }
