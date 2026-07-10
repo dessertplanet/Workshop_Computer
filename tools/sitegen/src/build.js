@@ -364,6 +364,7 @@ async function build() {
 const PREVIEW_LIB_FILES = [
   'utils/strings.js',
   'utils/youtube.js',
+  'utils/audio.js',
   'schema/schemaDefinition.js',
   'schema/schemaAdapter.js',
   'validate/parseSource.js',
