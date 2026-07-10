@@ -168,7 +168,8 @@ async function build() {
         uf2Downloads: (rel.uf2Downloads || []).map(d => ({
           name: d.name,
           url: d.url,
-          ...(d.description ? { description: d.description } : {}),
+          ...(d.external ? { external: true } : {}),
+          ...(d.host ? { host: d.host } : {}),
           ...(d.sha256 ? { sha256: d.sha256 } : {}),
         })),
         uf2Files: rel.trackedUf2 || [],
