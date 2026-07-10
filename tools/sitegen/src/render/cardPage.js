@@ -139,9 +139,18 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     ? `<aside class="program-card-draft-bar" aria-label="Draft documentation notice"><div class="program-card-draft-bar__message"><strong>Draft:</strong> <span>This documentation is work in progress and has not yet been approved by the card designer.</span></div><details class="program-card-draft-bar__details"><summary>I'm the designer. How should I fix this?</summary><p>Check the generated documentation against the card, then edit <a href="${esc(yamlUrl)}">the relevant <code>info.yaml</code> file</a> in the Workshop Computer repo. When everything is accurate, set <code>draft: false</code> in that YAML and submit the change.</p></details></aside>`
     : '';
 
-  const downloadHref = uf2Url || sourceUrl;
-  const downloadAttrs = uf2Url ? ` download data-uf2-url="${esc(uf2Url)}"` : '';
-  const downloadAction = `<a class="program-card-action program-card-action--download" href="${esc(downloadHref)}"${downloadAttrs}><span>Download</span>${metadata.version ? `<small>Firmware ${esc(metadata.version)}</small>` : ''}</a>`;
+  const uf2Downloads = Array.isArray(card.uf2_downloads) ? card.uf2_downloads : [];
+  const downloadActions = uf2Downloads.length
+    ? uf2Downloads.map(d => {
+        const hashAttr = d.sha256 ? ` data-sha256="${esc(d.sha256)}"` : '';
+        const desc = d.description ? `<small class="program-card-action__desc">${esc(d.description)}</small>` : '';
+        return `<a class="program-card-action program-card-action--download" href="${esc(d.url)}" download data-uf2-url="${esc(d.url)}"${hashAttr}><span>Download</span><small>${esc(d.name)}</small>${desc}</a>`;
+      }).join('')
+    : (() => {
+        const downloadHref = uf2Url || sourceUrl;
+        const downloadAttrs = uf2Url ? ` download data-uf2-url="${esc(uf2Url)}"` : '';
+        return `<a class="program-card-action program-card-action--download" href="${esc(downloadHref)}"${downloadAttrs}><span>Download</span>${metadata.version ? `<small>Firmware ${esc(metadata.version)}</small>` : ''}</a>`;
+      })();
   const editorAction = metadata.editor_url
     ? `<a class="program-card-action program-card-action--editor" href="${esc(metadata.editor_url)}"><span>Launch web editor</span><small>${esc(metadata.editor_note || 'Configure this card in your browser')}</small></a>`
     : '';
@@ -156,7 +165,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
       <h1><span class="program-card-page__number">${esc(cardNumber(card))}</span> ${esc(inline(card.title || card.id || 'Untitled card'))}</h1>
       ${summary ? `<p>${esc(truncate(summary, 240))}</p>` : ''}
       <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${memoryMarkup}</div>
-      <div class="program-card-actions" aria-label="Card actions">${downloadAction}${editorAction}</div>
+      <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>
       <div class="program-card-hero__links" aria-label="Further card links">${readmeUrl ? `<a href="${esc(readmeUrl)}">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a></div>
     </div>
   </header>`;

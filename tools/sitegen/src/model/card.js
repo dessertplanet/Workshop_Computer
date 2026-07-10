@@ -424,6 +424,7 @@ export function buildCanonicalCardModel({
   docs,
   downloads,
   latestUf2,
+  uf2Downloads = [],
   web,
   readmePath,
   sourceFile,
@@ -568,6 +569,7 @@ export function buildCanonicalCardModel({
   // Presentation extras the site build needs but the importer did not carry.
   if (Array.isArray(docs) && docs.length) card.docs = sanitizeValue(docs);
   if (Array.isArray(downloads) && downloads.length) card.downloads = sanitizeValue(downloads);
+  if (Array.isArray(uf2Downloads) && uf2Downloads.length) card.uf2_downloads = sanitizeValue(uf2Downloads);
   if (web && (web.editorUrl || web.mode)) card.web = sanitizeValue(web);
   if (normalizedInfo && normalizedInfo.audiosampleurl) card.audio_sample_url = normalizedInfo.audiosampleurl;
 
