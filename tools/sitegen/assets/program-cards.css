@@ -83,6 +83,13 @@
   text-transform: uppercase;
 }
 
+.program-card-action__desc {
+  font-weight: 600;
+  letter-spacing: 0;
+  opacity: 0.72;
+  text-transform: none;
+}
+
 .program-card-action span {
   font-size: 15px;
   font-weight: 800;
