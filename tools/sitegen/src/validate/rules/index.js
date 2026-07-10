@@ -268,6 +268,66 @@ export const generatedModelShape = {
   },
 };
 
+export const uf2Entries = {
+  id: 'uf2-entries',
+  check(ctx) {
+    const entry = ctx.entry('uf2');
+    if (!entry) return [];
+    const raw = entry.value;
+    // Declared but empty (null or []) — likely half-authored. Warn, but the
+    // build keeps auto-discovery so downloads aren't silently removed.
+    if (raw === null || raw === undefined || (Array.isArray(raw) && raw.length === 0)) {
+      return [{ severity: 'warning', path: 'uf2', key: 'uf2',
+        message: 'Field "uf2" is empty; add firmware entries (each with a "path") or remove it to use auto-discovery.' }];
+    }
+    if (!Array.isArray(raw)) {
+      return [{ severity: 'error', path: 'uf2', key: 'uf2',
+        message: 'Field "uf2" should be a list of firmware entries.' }];
+    }
+    const out = [];
+    raw.forEach((entry, i) => {
+      const at = `uf2[${i}]`;
+      if (!isPlainObject(entry)) {
+        out.push({ severity: 'error', path: at, key: 'uf2',
+          message: `${at} should be an object with a "path".` });
+        return;
+      }
+      if (isBlank(entry.path)) {
+        out.push({ severity: 'error', path: `${at}.path`, key: 'uf2',
+          message: `${at} is missing required "path" (e.g. UF2/firmware.uf2).` });
+      } else if (typeof entry.path !== 'string') {
+        out.push({ severity: 'error', path: `${at}.path`, key: 'uf2',
+          message: `${at}.path should be a string path.` });
+      }
+      if (entry.name !== undefined && typeof entry.name !== 'string') {
+        out.push({ severity: 'warning', path: `${at}.name`, key: 'uf2',
+          message: `${at}.name should be a string.` });
+      }
+      if (entry.description !== undefined && typeof entry.description !== 'string') {
+        out.push({ severity: 'warning', path: `${at}.description`, key: 'uf2',
+          message: `${at}.description should be a string.` });
+      }
+      if (entry.download !== undefined) {
+        if (!isPlainObject(entry.download)) {
+          out.push({ severity: 'warning', path: `${at}.download`, key: 'uf2',
+            message: `${at}.download should be an object with url and sha256.` });
+        } else {
+          if (entry.download.url !== undefined && !looksLikeUrl(entry.download.url)) {
+            out.push({ severity: 'warning', path: `${at}.download.url`, key: 'uf2',
+              message: `${at}.download.url should be an http(s) URL.` });
+          }
+          const shaEntry = Object.entries(entry.download).find(([k]) => k.toLowerCase() === 'sha256');
+          if (shaEntry && isBlank(shaEntry[1])) {
+            out.push({ severity: 'warning', path: `${at}.download.sha256`, key: 'uf2',
+              message: `${at}.download.sha256 should be a non-empty hash string.` });
+          }
+        }
+      }
+    });
+    return out;
+  },
+};
+
 export const allRules = [
   requiredCoreFields,
   knownFieldTypes,
@@ -279,5 +339,6 @@ export const allRules = [
   draftCompleteness,
   panelStructure,
   controlsStructure,
+  uf2Entries,
   generatedModelShape,
 ];

@@ -7,6 +7,28 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '../../../..');
 
+let _trackedCache;
+
+/**
+ * Returns a Set of git-tracked file paths (repo-root-relative, POSIX) under
+ * releases/, or null when git is unavailable. Cached for the process lifetime.
+ * Used to restrict discovered firmware to committed files whose raw URL will
+ * actually resolve (locally-built, untracked UF2s would 404).
+ */
+export function getTrackedFileSet() {
+  if (_trackedCache !== undefined) return _trackedCache;
+  try {
+    const out = execSync('git -c core.quotepath=off ls-files -- releases', {
+      cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+    });
+    _trackedCache = new Set(out.split('\n').map(s => s.trim()).filter(Boolean));
+  } catch (e) {
+    debugLog('getTrackedFileSet failed:', e?.message || e);
+    _trackedCache = null;
+  }
+  return _trackedCache;
+}
+
 export function detectRepoFromGit() {
   try {
     const url = execSync('git config --get remote.origin.url', { cwd: ROOT, encoding: 'utf8' }).trim();

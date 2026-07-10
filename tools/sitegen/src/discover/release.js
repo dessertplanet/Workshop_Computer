@@ -5,12 +5,21 @@ import { fsAsync as fs, fileExists } from '../utils/fs.js';
 import { slugify, normalizeYamlKey } from '../utils/strings.js';
 import { toPosix } from '../utils/fs.js';
 import { discoverDocs } from './docs.js';
-import { discoverDownloads } from './downloads.js';
+import { discoverDownloads, curateUf2Downloads } from './downloads.js';
 import { getLastCommitDate, getCommitDates } from '../utils/git.js';
 import { resolveWebConfig } from './webEditor.js';
 import { normalizeTags, normalizeRepository, normalizeContact, normalizeDraft, resolveAudioSample } from './infoFields.js';
 import { parseYoutubeId, youtubeEmbedHtml } from '../utils/youtube.js';
 import { buildCanonicalCardModel } from '../model/card.js';
+
+// Read the top-level `uf2` field from parsed YAML, case-insensitively.
+function readUf2Field(obj) {
+  if (!obj || typeof obj !== 'object') return undefined;
+  for (const [k, v] of Object.entries(obj)) {
+    if (normalizeYamlKey(k) === 'uf2') return v;
+  }
+  return undefined;
+}
 
 export function normalizeInfo(raw, fallbackTitle) {
   const out = {};
@@ -117,7 +126,21 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   readmeHtml = injectYouTubeEmbeds(readmeHtml);
   
   // downloads
-  const { downloads, latestUf2 } = await discoverDownloads(abs, repoRelBase, makeRawUrl);
+  const { downloads, latestUf2, uf2Downloads, trackedUf2 } = await discoverDownloads(abs, repoRelBase, makeRawUrl);
+
+  // A curated `uf2:` list in info.yaml fully replaces auto-discovery for this
+  // card, so authors can trim noise and annotate firmware (name/description/hash).
+  // An empty/null `uf2:` is treated as absent so downloads aren't lost by a
+  // half-authored field (validation warns about it separately).
+  let effectiveUf2Downloads = uf2Downloads;
+  const uf2Field = readUf2Field(rawYaml);
+  const hasCuratedUf2 = uf2Field != null && !(Array.isArray(uf2Field) && uf2Field.length === 0);
+  if (hasCuratedUf2) {
+    const { uf2Downloads: curated, errors } = await curateUf2Downloads(uf2Field, abs, repoRelBase, makeRawUrl);
+    effectiveUf2Downloads = curated;
+    for (const e of errors) console.error(`[sitegen] ${folderName}: ${e}`);
+  }
+  const primaryUf2 = effectiveUf2Downloads[0] || null;
 
   const sourceFile = toPosix(path.join('releases', folderName, 'info.yaml'));
   const sourceUrl = `https://github.com/${repoSlug}/tree/${refName}/releases/${folderName}`;
@@ -131,7 +154,8 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     rawYaml,
     docs,
     downloads,
-    latestUf2,
+    latestUf2: primaryUf2,
+    uf2Downloads: effectiveUf2Downloads,
     web,
     readmePath: readmeRelPath,
     sourceFile,
@@ -149,7 +173,9 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     readmeHtml,
     docs,
     downloads,
-    latestUf2,
+    latestUf2: primaryUf2,
+    uf2Downloads: effectiveUf2Downloads,
+    trackedUf2,
     web,
     card,
   };

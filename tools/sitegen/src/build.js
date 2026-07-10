@@ -165,6 +165,13 @@ async function build() {
         // so it can render the same download/source/readme links a full build
         // would produce.
         uf2Url: rel.latestUf2?.url || '',
+        uf2Downloads: (rel.uf2Downloads || []).map(d => ({
+          name: d.name,
+          url: d.url,
+          ...(d.description ? { description: d.description } : {}),
+          ...(d.sha256 ? { sha256: d.sha256 } : {}),
+        })),
+        uf2Files: rel.trackedUf2 || [],
         sourceUrl: rel.card?.source_url || '',
         readmeUrl: rel.card?.readme_url || '',
         yamlUrl: rel.card?.source_file
