@@ -48,6 +48,15 @@ import { uf2ToFlashBuffer } from '${relativeRoot}/assets/js/uf2.js';
 var connectBtn = document.getElementById('connectToggle');
 var pb = null;
 
+// Reveal a firmware's SHA256 beneath the tiles when its download is clicked.
+document.addEventListener('click', function(e) {
+  var a = e.target.closest('a.program-card-action--download[data-sha256]');
+  if (!a) return;
+  var main = a.closest('.program-card-hero__main');
+  var box = main && main.querySelector('[data-sha-display]');
+  if (box) { box.textContent = 'SHA256: ' + a.getAttribute('data-sha256'); box.hidden = false; }
+});
+
 function setConnected(on) {
   if (connectBtn) {
     connectBtn.setAttribute('aria-checked', String(on));
