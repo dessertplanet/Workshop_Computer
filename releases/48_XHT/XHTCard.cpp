@@ -57,9 +57,9 @@ inline int32_t __not_in_flash_func(clamp12)(int32_t x) {
 }
 }
 
-class THXCard final : public ComputerCard {
+class XHTCard final : public ComputerCard {
 public:
-    THXCard() {
+    XHTCard() {
         for (int32_t i = 0; i < kVoices; ++i) {
             phase_[i] = 0x9e3779b9u * uint32_t(i + 1);
             startInc_[i] = noteIncrement(45 + ((i * 7) & 15));
@@ -219,7 +219,7 @@ private:
 
 int main() {
     set_sys_clock_khz(192000, true);
-    static THXCard card;
+    static XHTCard card;
     card.EnableNormalisationProbe();
     card.Run();
 }

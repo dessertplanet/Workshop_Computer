@@ -60,9 +60,9 @@ constexpr int32_t positionToMillivolts(uint32_t position) {
 }
 }
 
-class THXCardMidi final : public ComputerCard {
+class XHTCardMidi final : public ComputerCard {
 public:
-    THXCardMidi() {
+    XHTCardMidi() {
         for (int32_t i = 0; i < kVoices; ++i) {
             phase_[i] = 0x9e3779b9u * uint32_t(i + 1);
             startInc_[i] = noteIncrement(kStartNotes[i]);
@@ -403,7 +403,7 @@ private:
     uint32_t usbRoleLedCounter_ = 0;
 };
 
-static THXCardMidi card;
+static XHTCardMidi card;
 static volatile uint8_t hostMidiDeviceAddress = 0;
 
 extern "C" void tuh_midi_mount_cb(uint8_t dev_addr, uint8_t in_ep, uint8_t out_ep, uint8_t num_cables_rx, uint16_t num_cables_tx) {

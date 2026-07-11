@@ -1,5 +1,5 @@
 draft: false
-Name: THX Card
+Name: XHT Card
 Description: A playable deep-note-inspired stereo chord swarm with manual scrubbing, one-shot movement, delay, reverb, CV, pulse, and optional MIDI control.
 Language: C++ (Pico SDK)
 Creator: Adrian Vos
@@ -20,7 +20,7 @@ tags:
   - workshop-computer
 
 manual: |
-  THX Card is a synthesised deep-note-style gesture rather than a bundled sample.
+  XHT Card is a synthesised deep-note-style gesture rather than a bundled sample.
   Main sets the note position and one-shot destination. The momentary down switch
   resets the note and launches a one-shot from the start toward the current
   destination. CV2 also participates in destination control. P2 can clock stepped

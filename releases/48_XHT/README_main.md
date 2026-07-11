@@ -1,6 +1,6 @@
-# THX Card Main
+# XHT Card Main
 
-Flash: [THXCard.uf2](/Users/adrianvos/coding/GitHub/XHT_card/uf2/THXCard.uf2)
+Flash: [XHTCard.uf2](/Users/adrianvos/coding/GitHub/XHT_card/uf2/XHTCard.uf2)
 
 This is the current recommended version.
 

@@ -1,12 +1,12 @@
-# THX Card MIDI
+# XHT Card MIDI
 
-Flash: [THXCardMidi.uf2](/Users/adrianvos/coding/GitHub/XHT_card/uf2/THXCardMidi.uf2)
+Flash: [XHTCardMidi.uf2](/Users/adrianvos/coding/GitHub/XHT_card/uf2/XHTCardMidi.uf2)
 
 This is the current tested MIDI build. It does not replace the main non-MIDI card.
 
 The matching tested MIDI fallback is:
 
-[THXCardMidi_fallback.uf2](/Users/adrianvos/coding/GitHub/XHT_card/uf2/THXCardMidi_fallback.uf2)
+[XHTCardMidi_fallback.uf2](/Users/adrianvos/coding/GitHub/XHT_card/uf2/XHTCardMidi_fallback.uf2)
 
 What it adds:
 
@@ -50,7 +50,7 @@ MIDI out gate behavior:
 Current MIDI behavior:
 
 - MIDI clock is not used
-- USB product name is `THX Card MIDI`
+- USB product name is `XHT Card MIDI`
 - USB host/device role detection follows the same boot pattern as CozmikC1zzl3
 - audible sound is gated by both MIDI note state and `P1` if `P1` is patched
 - analog `CV2` is scaled for full position travel from 0-5V controller/mod-wheel sources

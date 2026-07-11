@@ -1,13 +1,13 @@
-# THX Card
+# XHT Card
 
 This folder now contains the main and MIDI firmware builds, plus rollback-safe fallback UF2s, for the Music Thing Modular Workshop Computer.
 
-- `uf2/THXCard.uf2` — current main build
-- `uf2/THXCard_fallback.uf2` — last accepted rollback-safe build
-- `uf2/THXCardMidi.uf2` — current tested MIDI build
-- `uf2/THXCardMidi_fallback.uf2` — last accepted MIDI rollback-safe build
+- `uf2/XHTCard.uf2` — current main build
+- `uf2/XHTCard_fallback.uf2` — last accepted rollback-safe build
+- `uf2/XHTCardMidi.uf2` — current tested MIDI build
+- `uf2/XHTCardMidi_fallback.uf2` — last accepted MIDI rollback-safe build
 
-If you just want the current recommended build, flash `uf2/THXCard.uf2`.
+If you just want the current recommended build, flash `uf2/XHTCard.uf2`.
 
 ## Short Control Summary
 
@@ -45,7 +45,7 @@ MIDI build additions:
 
 ## Notes
 
-- The sound is a synthesised deep-note-style gesture, not a bundled THX sample.
+- The sound is a synthesised deep-note-style gesture, not a bundled sample.
 - The project runs at `192 MHz`.
 - The build uses the current authoritative `ComputerCard.h` from the Workshop Computer tree.
 - The synthesis idea was inspired by Tod E. Kurt's GPL-3.0 `derpnote2`, so this project remains GPL-3.0.
