@@ -1,10 +1,10 @@
 # COMET
 
-A clocked lo-fi **reverb and delay** program card for the [Music Thing Modular Workshop System Computer](https://www.musicthing.co.uk/workshopsystem/) Written in fixed-point C++ against the [ComputerCard](https://github.com/TomWhitwell/Workshop_Computer/tree/main/Demonstrations%2BHelloWorlds/PicoSDK/ComputerCard)
+A clocked lo-fi **reverb and delay** program card for the [Music Thing Modular Workshop System Computer](https://www.musicthing.co.uk/workshopsystem/) Written in fixed-point C++
 
 ## Quick start
 
-1. Download `moodcomputer.uf2`
+1. Download `17_COMET.UF2`
 2. Hold the Computer's boot button while powering on; it mounts as an `RPI-RP2` drive.
 3. Drag the UF2 onto the drive. The card reboots into MoodComputer.
 
@@ -36,7 +36,7 @@ Mode changes crossfade over ~13 ms and both engines keep running, so tails ring 
 
 5. Pulse In 1 External clock in (auto-detected; Main knob becomes mult/div)
 
-6. CV Out 1 Weird envelope follower of the wet signal: fast attack, release that gets *faster* the louder it is, plus a slow random wobble. Bouncy, saggy, alive. Unipolar 0–5-ish V.
+6. CV Out 1 Weird envelope follower of the wet signal: fast attack, release that gets *faster* the louder it is, plus a slow random wobble. Bouncy, saggy, alive. Unipolar 0-5-ish V.
 
 7. CV Out 2 Clocked LFO. One cycle per clock, hard-synced to each tick. Shape from X, phase from Y. Bipolar.
 
