@@ -4,7 +4,7 @@ A clocked lo-fi **reverb and delay** program card for the [Music Thing Modular W
 
 ## Quick start
 
-1. Download `moodcomputer.uf2` (or build from source, below).
+1. Download `moodcomputer.uf2`
 2. Hold the Computer's boot button while powering on; it mounts as an `RPI-RP2` drive.
 3. Drag the UF2 onto the drive. The card reboots into MoodComputer.
 
