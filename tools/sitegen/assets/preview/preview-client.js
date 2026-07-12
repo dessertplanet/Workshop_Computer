@@ -523,6 +523,16 @@ async function init() {
   els.editor.addEventListener('scroll', () => { hideSuggest(); syncGutter(); });
   els.download.addEventListener('click', downloadSource);
   els.preview.addEventListener('click', (e) => {
+    // In-page anchors (e.g. "Read more" -> README) must not touch the URL hash,
+    // which drives card deeplinking. Scroll within the preview instead.
+    const anchor = e.target.closest('a[href^="#"]');
+    if (anchor) {
+      e.preventDefault();
+      const id = (anchor.getAttribute('href') || '').slice(1);
+      const target = id && els.preview.querySelector(`#${CSS.escape(id)}`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
     const demo = e.target.closest('.program-card-demo a[data-youtube-id]');
     if (demo) {
       e.preventDefault();

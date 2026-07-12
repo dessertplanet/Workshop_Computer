@@ -95,7 +95,7 @@ function renderDocumentation(card, extraSections = '') {
   }
   const joined = blocks.join('') + (extraSections || '');
   if (!joined.trim()) return '';
-  return `<section class="program-card-documentation">${joined}</section>`;
+  return `<section class="program-card-documentation" id="card-documentation">${joined}</section>`;
 }
 
 /**
@@ -108,7 +108,7 @@ function renderDocumentation(card, extraSections = '') {
  */
 export function renderReadmeAndDocs({ readmeHtml = '', docs = [], inlinePdf = true } = {}) {
   const readmeSection = readmeHtml
-    ? `<div class="program-card-section"><h3>README</h3><div class="markdown-body">${readmeHtml}</div></div>`
+    ? `<div class="program-card-section" id="card-readme"><h3>README</h3><div class="markdown-body">${readmeHtml}</div></div>`
     : '';
   const list = Array.isArray(docs) ? docs : [];
   let pdfSection = '';
@@ -167,6 +167,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
   const summary = card.summary || card.description || '';
   const sourceUrl = card.source_url || '';
   const readmeUrl = card.readme_url || '';
+  const documentation = renderDocumentation(card, extraDocs);
   const discussionUrl = metadata.discussion_url || DEFAULT_DISCUSSION;
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
   const panel = card.panel || {};
@@ -228,7 +229,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
       <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${memoryMarkup}</div>
       <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>
       <div class="program-card-sha" data-sha-display role="status" aria-live="polite" hidden>SHA256: <code class="program-card-sha__value" data-sha-value></code> <button type="button" class="program-card-sha__verify" data-verify-open>How to verify</button></div>
-      <div class="program-card-hero__links" aria-label="Further card links">${readmeUrl ? `<a href="${esc(readmeUrl)}">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a></div>
+      <div class="program-card-hero__links" aria-label="Further card links">${documentation ? `<a href="#card-documentation">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a></div>
     </div>
   </header>`;
 
@@ -255,8 +256,6 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     </div>
   </div>
   </section>`;
-
-  const documentation = renderDocumentation(card, extraDocs);
 
   const notesMarkup = Array.isArray(card.notes) && card.notes.length
     ? `<section class="program-card-section"><h3>Notes</h3>${card.notes.map(note => `<p>${esc(truncate(note, 220))}</p>`).join('')}</section>`
