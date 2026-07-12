@@ -40,7 +40,7 @@ Mode changes crossfade over ~13 ms and both engines keep running, so tails ring 
 
 7. CV Out 2 Clocked LFO. One cycle per clock, hard-synced to each tick. Shape from X, phase from Y. Bipolar.
 
-8. Pulse Out 1 Clock through — mirrors an external clock, otherwise 10 ms internal clock ticks
+8. Pulse Out 1 Clock through mirrors an external clock, otherwise 10 ms internal clock ticks
 
 9. Pulse Out 2 Reverb: gate high while the tail is audible. Delay: 15 ms trigger whenever a repeat happens (a real onset detector with a refractory period, not a timer).
 
