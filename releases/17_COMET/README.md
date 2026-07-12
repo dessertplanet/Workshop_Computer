@@ -18,9 +18,9 @@ A clocked lo-fi **reverb and delay** program card for the [Music Thing Modular W
   
 4. Switch up = Reverb
   
-5. Switch middle = Delay (200 ms commit — a fast throw down through middle won't select it, and spring-return from down never selects it)
+5. Switch middle = Delay
    
-6. Switch down (momentary) = Freeze, while held. Input is cut and the active engine recirculates at exact unity: reverb holds as an infinite drone (the smear keeps it alive), delay repeats loop losslessly. Release and it decays back at whatever Y says. Freeze stacks with the crush — freeze something clean, then slow the clock and watch it pitch down.
+6. Switch down (momentary) = Freeze, while held. Input is cut and the active engine recirculates reverb holds as an infinite drone, delay repeats loop losslessly. Release and it decays back at whatever Y is set to. Freeze stacks with the crush eg freeze something clean, then slow the clock and watch it pitch down.
 
 Mode changes crossfade over ~13 ms and both engines keep running, so tails ring through a switch flip.
 
