@@ -47,7 +47,3 @@ Mode changes crossfade over ~13 ms and both engines keep running, so tails ring 
 ## LEDs
 
 The six LEDs are a stereo VU meter on the outputs: left column (top/mid/bottom-left) is the left channel, right column the right channel, rising from the bottom row.
-
-## The clock and the crush
-
-The wet engine — delay lines, reverb tanks, flutter, smear, damping, all of it — runs at 48 kHz divided by a decimation factor derived from the clock period. Between engine ticks the output is held (zero-order hold) and passed through a reconstruction one-pole that is transparent at full rate and progressively darker as the rate drops.
