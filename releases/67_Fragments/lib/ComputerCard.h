@@ -64,8 +64,6 @@ public:
 	void EnableNormalisationProbe() {useNormProbe = true;}
 	
 	static ComputerCard *ThisPtr() {return thisptr;}
-	static void (*audio_callback_ptr)(void*);
-	static void *audio_callback_inst;
 
 protected:
 
@@ -76,7 +74,7 @@ protected:
 		{
 			mix1 = mix2 = mixf1 = mixf2 = 0;
 		}
-		inline __attribute__((always_inline)) int32_t operator()(int32_t val)
+		int32_t operator()(int32_t val)
 		{
 			int32_t mixf = (ooa0 * (val + mix2) - a2oa0 * mixf2) >> 14;
 			mix2 = mix1;
@@ -96,9 +94,6 @@ protected:
 	
 	/// Callback, called once per sample at 48kHz
 	virtual void ProcessSample() = 0;
-
-	/// Optional background loop for USB tasks, MIDI RX, etc. Called from AudioWorker
-	// virtual void BackgroundLoop() {}
 
 
 
@@ -427,37 +422,23 @@ private:
 
 	void AudioWorker();
 	
-	static void __not_in_flash_func(AudioCallback)()
+	static void AudioCallback()
 	{
 		thisptr->BufferFull();
 	}
 	static ComputerCard *thisptr;
 
 	// 19-bit CV outputs
-	static void __not_in_flash_func(OnCVPWMWrap)()
+	static void OnCVPWMWrap()
 	{
 		static int32_t error1 = 0, error2 = 0;
 
 		pwm_clear_irq(pwm_gpio_to_slice_num(CV_OUT_1)); // clear the interrupt flag
-
-		int32_t cv1_target = (int32_t)cvValue[0] - error1;
-		int32_t truncated_cv1_val = cv1_target & 0xFFFFFF00;
-		if (truncated_cv1_val < 0) {
-			truncated_cv1_val = 0;
-		} else if (truncated_cv1_val > 511744) {
-			truncated_cv1_val = 511744; // 1999 * 256
-		}
-		error1 += truncated_cv1_val - (int32_t)cvValue[0];
+		uint32_t truncated_cv1_val = (cvValue[0]-error1) & 0xFFFFFF00;
+		error1 += truncated_cv1_val - cvValue[0];
 		pwm_set_gpio_level(CV_OUT_1, (truncated_cv1_val>>8));
-
-		int32_t cv2_target = (int32_t)cvValue[1] - error2;
-		int32_t truncated_cv2_val = cv2_target & 0xFFFFFF00;
-		if (truncated_cv2_val < 0) {
-			truncated_cv2_val = 0;
-		} else if (truncated_cv2_val > 511744) {
-			truncated_cv2_val = 511744;
-		}
-		error2 += truncated_cv2_val - (int32_t)cvValue[1];
+		uint32_t truncated_cv2_val = (cvValue[1]-error2) & 0xFFFFFF00;
+		error2 += truncated_cv2_val - cvValue[1];
 		pwm_set_gpio_level(CV_OUT_2, (truncated_cv2_val>>8));
 	}
 
@@ -555,13 +536,9 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 
 
 	// ADC clock runs at 48MHz
-	// 48MHz ÷ (clkdiv+1) / 8 channels = audio sample rate
-	// COMPUTERCARD_SAMPLE_RATE_DIV=1 → clkdiv=124 → 48kHz
-	// COMPUTERCARD_SAMPLE_RATE_DIV=2 → clkdiv=249 → 24kHz
-#ifndef COMPUTERCARD_SAMPLE_RATE_DIV
-#define COMPUTERCARD_SAMPLE_RATE_DIV 2
-#endif
-	adc_set_clkdiv(124 * COMPUTERCARD_SAMPLE_RATE_DIV + COMPUTERCARD_SAMPLE_RATE_DIV - 1);
+	// 48MHz ÷ (124+1) = 384kHz ADC sample rate
+	//                 = 8×48kHz audio sample rate
+	adc_set_clkdiv(124);
 
 	// claim and setup DMAs for reading to ADC, and writing to SPI DAC
 	adc_dma = dma_claim_unused_channel(true);
@@ -636,8 +613,8 @@ void __not_in_flash_func(ComputerCard::AudioWorker)()
 			irq_remove_handler(PWM_IRQ_WRAP, ComputerCard::OnCVPWMWrap);
 			break;
 		}
-		// Run background tasks (USB MIDI, MIDI RX, etc.) between ISR callbacks
-		// if (thisptr) thisptr->BackgroundLoop();
+		   
+
 	}
 }
 
@@ -677,24 +654,9 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	uint8_t cpuPhase = dmaPhase;
 	dmaPhase = 1 - dmaPhase;
 
-	// ADC round-robin resync: stop ADC BEFORE starting DMA so that any
-	// stale samples that accumulated in the FIFO during a ProcessSample()
-	// overrun cannot be scooped into the new buffer.  Without this, a single
-	// overrun shifts every channel by N slots (knobs read as CV, audio reads
-	// as knobs, etc.) for all subsequent ISR calls.
-	adc_run(false);
-	adc_fifo_drain(); // discard any samples that built up during overrun
-
 	dma_hw->ints0 = 1u << adc_dma; // reset adc interrupt flag
 	dma_channel_set_write_addr(adc_dma, ADC_Buffer[dmaPhase], true); // start writing into new buffer
 	dma_channel_set_read_addr(spi_dma, SPI_Buffer[dmaPhase], true); // start reading from new buffer
-
-	// Reset round-robin to channel 0 so the 8 DMA slots always map to:
-	// [0]=ADC0/audio, [1]=ADC1/audio, ..., [6]=ADC2/knob, [7]=ADC3/mux
-	adc_set_round_robin(0);
-	adc_select_input(0);
-	adc_set_round_robin(0b0001111U);
-	adc_run(true); // restart ADC with clean FIFO and known channel position
 
 	////////////////////////////////////////
 	// Collect various inputs and put them in variables for the DSP
@@ -728,11 +690,9 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	pulse[0] = !gpio_get(PULSE_1_INPUT);
 	pulse[1] = !gpio_get(PULSE_2_INPUT);
 
-	// Set knobs, with IIR LPF.
-	// 255/256 gives same steady-state gain as original 127/128 but stronger
-	// smoothing — halved LPF bandwidth suits both 48kHz and 24kHz operation.
+	// Set knobs, with ~60Hz LPF
 	int knob = mux_state;
-	knobssm[knob] = (255 * (knobssm[knob]) + 16 * ADC_Buffer[cpuPhase][6]) >> 8;
+	knobssm[knob] = (127 * (knobssm[knob]) + 16 * ADC_Buffer[cpuPhase][6]) >> 7;
 	knobs[knob] = knobssm[knob] >> 4;
 
 	// Set switch value
@@ -741,9 +701,7 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	{
 		// Don't detect switch changes in first few cycles
 		lastSwitchVal = switchVal;
-		// Initialise knob and CV smoothing filters immediately to avoid ramp-up
-		cvsm[cvi] = (16 * ADC_Buffer[cpuPhase][7]) * 16;
-		knobssm[knob] = (16 * ADC_Buffer[cpuPhase][6]) * 16;
+		// Should initialise knob and CV smoothing filters here too
 	}
 	
 	////////////////////////////
@@ -791,14 +749,7 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	
 	////////////////////////////////////////
 	// Run the DSP
-	if (audio_callback_ptr)
-	{
-		audio_callback_ptr(audio_callback_inst);
-	}
-	else
-	{
-		ProcessSample();
-	}
+	ProcessSample();
 
 	////////////////////////////////////////
 	// Collect DSP outputs and put them in the DAC SPI buffer
@@ -1197,7 +1148,7 @@ void ComputerCard::CalcCalCoeffs(int channel)
 }
 
 
-uint32_t __not_in_flash_func(ComputerCard::MIDIToDAC)(int midiNote, int channel)
+uint32_t ComputerCard::MIDIToDAC(int midiNote, int channel)
 {
 	int32_t dacValue = ((calCoeffs[channel].mi * (midiNote - 60)) >> 4) + calCoeffs[channel].bi;
 	if (dacValue > 524287) dacValue = 524287;
@@ -1209,7 +1160,7 @@ uint32_t __not_in_flash_func(ComputerCard::MIDIToDAC)(int midiNote, int channel)
 /// Returns true if requested voltage is outside of full range of DAC values
 /// millivolts should be in range -6000 to 6000.
 /// Accuracy is dependent, of course, on the calibration coefficients
-uint32_t __not_in_flash_func(ComputerCard::MillivoltsToDAC)(int millivolts, int channel, bool &limited)
+uint32_t ComputerCard::MillivoltsToDAC(int millivolts, int channel, bool &limited)
 {
 	limited = false;
 	int32_t dacValue = ((((calCoeffs[channel].mi * millivolts) >> 9) * 1573) >> 12) + calCoeffs[channel].bi;

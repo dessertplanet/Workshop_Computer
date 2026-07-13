@@ -14,7 +14,7 @@ tags:
   - utility
   - clock
 
-manual: |
+summary: |
   Stereo reverb card with configurable utility routing for CV, pulse, clocks, Turing Machine, and Bernoulli gate.
   Top audio jacks are fixed to reverb I/O; most other controls and jacks are assignable in the web editor.
   Z up passes input normally, Z middle enables input noise gate, Z down freezes the reverb.

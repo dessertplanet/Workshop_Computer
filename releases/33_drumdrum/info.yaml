@@ -15,7 +15,7 @@ tags:
   - usb-host
   - webmidi
 
-manual: |
+summary: |
   drumdrum is an 8-step DFAM-inspired sequencer card.
   Switch up is play (tempo, length, VCO2 offset), switch middle is edit (step pitch and velocity),
   and switch down supports short press cursor advance / long press play-pause.

@@ -12,7 +12,7 @@ tags:
   - progression
   - cv
 
-manual: |
+summary: |
   Chord voice generator with 16 chord types, root CV control, and selectable progression patterns.
   Main + CV1 select chord, X + CV2 set root pitch (1V/oct), and Y selects one of 9 progressions.
   PulseIn1 advances the progression and retriggers; PulseIn2 or Z-down cycles waveform.

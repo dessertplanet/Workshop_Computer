@@ -8,7 +8,7 @@ Status: Released
 License: MIT
 Repository: https://codeberg.org/johantv/motorik
 
-manual: |
+summary: |
   Generative motorik drum machine with synchronized two-voice bass CV/gate outputs.
   Z middle is main drum-performance mode (energy/transpose/fill), Z down is tilt and
   bass pattern shift, Z up is texture/decimation and variation/humanize. Pulse In 1

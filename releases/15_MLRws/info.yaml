@@ -16,7 +16,7 @@ tags:
   - usb-host
   - grid-controller
 
-manual: |
+summary: |
   MLRws is a six-track sample-cutting instrument with grid and gridless workflows. It supports on-card
   sample storage, recording/playback, and USB grid interaction. In gridless mode, Main/X/Y plus switch
   manage track selection, level/speed/start-position/radiate behavior, while pulse/CV I/O provides

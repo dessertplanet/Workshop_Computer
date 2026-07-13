@@ -13,7 +13,7 @@ tags:
   - utility
   - cv
 
-manual: |
+summary: |
   Four related LFO channels with cross-modulation and per-channel VCA behavior.
   Main sets global LFO rate from very slow to low audio range (AudioOut1 fastest, CVOut2 slowest).
   X sets cross-modulation intensity; Y crossfades each output with an inverted neighboring channel.

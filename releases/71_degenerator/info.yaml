@@ -9,7 +9,7 @@ License: MIT
 Editor: https://degenerator-web.netlify.app/
 Repository: https://codeberg.org/johantv/Degenerator
 
-manual: |
+summary: |
   Irreversible layered looper with additive MIX and subtractive DEGRADE workflows.
   Z down is RECORD (and slot workflows in SLOT mode), Z middle is MIX, Z up is
   DEGRADE. Main controls mix/commit amount (full left freezes state), X selects

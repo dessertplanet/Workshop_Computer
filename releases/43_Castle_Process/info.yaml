@@ -2,6 +2,11 @@ id: 43_Castle_Process
 title: Castle Process
 draft: false
 Description: Fort Processor-inspired harsh noise processor with chopped external audio and a bass pulse voice
+summary: >-
+  Castle Process is a performance card built around chopped external audio, crude
+  internal squarewave energy, aggressive switching between sources, and a separate
+  bass pulse layer. It is designed as a playable sound-destruction tool rather than
+  a clean effect or faithful clone.
 Language: C++
 Creator: Adrian Vos
 release: 43 / 0.9.0
@@ -133,11 +138,3 @@ metadata:
   language: C++
   version: 1.0
   status: Release Candidate
-documentation:
-  intro: >
-    Castle Process is a performance card built around chopped external audio,
-    crude internal squarewave energy, aggressive switching between sources,
-    and a separate bass pulse layer.
-
-    It is designed as a playable sound-destruction tool rather than a clean
-    effect or faithful clone.

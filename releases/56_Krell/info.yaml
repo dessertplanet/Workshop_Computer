@@ -13,7 +13,7 @@ tags:
   - envelopes
   - random-pitch
 
-manual: |
+summary: |
   Krell outputs two independent channels of random pitch CV and looping AD envelopes, each with pulse outputs
   at end of cycle. Main sets overall tendency toward longer/shorter envelopes, X sets left-channel envelope timing,
   and Y sets right-channel timing. Switch up quantizes pitch to octaves, middle uses chromatic quantization,

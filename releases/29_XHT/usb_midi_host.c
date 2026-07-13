@@ -32,10 +32,9 @@
 
 #include "usb_midi_host.h"
 #include <stdlib.h>
-#ifndef USBH_EPSIZE_BULK_MAX
-  #define USBH_EPSIZE_BULK_MAX 64
-#endif
-
+//--------------------------------------------------------------------+
+// MACRO CONSTANT TYPEDEF
+//--------------------------------------------------------------------+
 #ifndef CFG_TUH_MAX_CABLES
   #define CFG_TUH_MAX_CABLES 16
 #endif
@@ -200,8 +199,8 @@ bool midih_init(void)
     p_midi_host->stream_write = malloc(midih_limits.max_cables * sizeof(midi_stream_t));
     TU_ASSERT((p_midi_host->rx_ff_buf != NULL && p_midi_host->tx_ff_buf != NULL && p_midi_host->stream_write != NULL), 0);
     tu_memclr(p_midi_host->stream_write, sizeof(*(p_midi_host->stream_write))*midih_limits.max_cables);
-    tu_fifo_config(&p_midi_host->rx_ff, p_midi_host->rx_ff_buf, midih_limits.midi_rx_buf, false); // true, true
-    tu_fifo_config(&p_midi_host->tx_ff, p_midi_host->tx_ff_buf, midih_limits.midi_tx_buf, false); // OBVS.
+    tu_fifo_config(&p_midi_host->rx_ff, p_midi_host->rx_ff_buf, midih_limits.midi_rx_buf, 1, false); // true, true
+    tu_fifo_config(&p_midi_host->tx_ff, p_midi_host->tx_ff_buf, midih_limits.midi_tx_buf, 1, false); // OBVS.
 
   #if CFG_FIFO_MUTEX
     tu_fifo_config_mutex(&p_midi_host->rx_ff, NULL, osal_mutex_create(&p_midi_host->rx_ff_mutex));
@@ -307,7 +306,7 @@ void midih_close(uint8_t dev_addr)
 //--------------------------------------------------------------------+
 // Enumeration
 //--------------------------------------------------------------------+
-uint16_t midih_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const *desc_itf, uint16_t max_len)
+bool midih_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const *desc_itf, uint16_t max_len)
 {
   (void) rhport;
 
@@ -552,7 +551,7 @@ uint16_t midih_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t cons
   }
   p_midi_host->dev_addr = dev_addr;
 
-  return len_parsed;
+  return true;
 }
 
 bool tuh_midi_configured(uint8_t dev_addr)

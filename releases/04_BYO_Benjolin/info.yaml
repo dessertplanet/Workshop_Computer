@@ -23,7 +23,7 @@ tags:
   - turing-machine
   - quantizer
 
-manual: |
+summary: |
   Chaotic Benjolin-inspired program combining rungler-style modulation, quantized CV, and pulse generation.
   Forward/back clocks can be driven from Pulse In 1 and Pulse In 2.
   The card blends internal randomness with external modulation for probability, offset, and amplitude.

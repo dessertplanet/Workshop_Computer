@@ -14,7 +14,7 @@ tags:
   - scale
   - generative
 
-manual: |
+summary: |
   A bellringing methods sequencer: plays 12 traditional English change-ringing methods
   (Plain Hunt Minimus through Plain Bob Triples, 4-7 bells), sending each row of the
   method as a v/oct pitch sequence quantised to one of six scales, with a synchronised

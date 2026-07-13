@@ -18,7 +18,7 @@ tags:
 
 demo-link: https://www.youtube.com/watch?v=dQw4w9WgXcQ
 
-manual: |
+summary: |
   Grids-inspired trigger sequencer for the Workshop Computer. Control pattern map and fill with knobs,
   or per-lane density when switch Z is **up**. Internal clock with swing, or follow external clock on **PulseIn1**.
   Configure and save settings via the Web MIDI SysEx editor (Chrome recommended).

@@ -13,7 +13,7 @@ tags:
   - sample-and-hold
   - bitcrusher
 
-manual: |
+summary: |
   Noisebox selects among 13 noise algorithms with Main, with X/Y shaping the active algorithm.
   Main can be offset by `AudioIn1`, output level is VCA-controlled by `AudioIn2`, and switch down
   randomizes control offsets (hold to reset). `PulseIn1` clocks sample-and-hold behavior; switch up

@@ -14,7 +14,7 @@ tags:
   - live-processing
   - tape-mode
 
-manual: |
+summary: |
   Grains records and replays granular audio from a live buffer or stored sample slots. The interface is page-based:
   page 1 (position/density/size), page 2 (envelope/tone/pitch), page 3 (mix/spread/feedback-diffusion), and page 4
   (reverb). Flick/hold gestures control page changes, freeze, and load/save menus. Tape Mode is available at power-up

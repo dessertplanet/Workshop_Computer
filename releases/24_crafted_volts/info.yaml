@@ -13,7 +13,7 @@ tags:
   - attenuverter
   - voltage-source
 
-manual: |
+summary: |
   CV utility for generating manual voltages and attenuverting incoming control signals.
   Main, X, and Y knobs each drive a paired output; patching into corresponding inputs replaces knob value and applies attenuverting.
   Pulse outputs follow Z switch state as complementary high/low gates.

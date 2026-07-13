@@ -19,7 +19,7 @@
 | 16_the_bells | Bellringing methods sequencer — 12 change-ringing methods with tempo and jitter, quantised to six scales | 1.0.0<br>Released | C++ (ComputerCard) | James Saunders |
 | 18_chord_organ | Chord Organ-ish - 16 chords, 8 voices, 1V/oct root. Inspired by Music Thing Chord Organ. | 0.1<br>Working | Pico SDK (C++), ComputerCard | jkeyworth |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface.<br>[Web editor](https://www.musicthing.co.uk/web_config/reverb.html) | 1.5<br>Released | C (RPi Pico SDK) | Chris Johnson |
-| 21_resonator | Karplus-Strong based sympathetic resonator. Can be used for resonant droning as well as plucking sounds.<br>[Web editor](https://johaneklund.io/resonator) | 1.1.1<br>Released | C++ (ComputerCard) | Johan Eklund |
+| 21_resonator | Karplus-Strong sympathetic resonator for droning and plucked textures, with chord & tanpura tunings, arpeggiator, pitch tracking and web-configurable CV/pulse outputs.<br>[Web editor](https://johaneklund.io/resonator) | 1.2<br>Released | C++ (ComputerCard) | Johan Eklund |
 | 22_sheep | A time-stretching and pitch-shifting granular processor and digital degradation playground with 2 fidelity options. | 1.2<br>Released | Pico SDK | Dune Desormeaux |
 | 23_SlowMod | Chaotic quad-LFO with VCAs | 0.1<br>Released | C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE. | divmod |
 | 24_crafted_volts | Manually set control voltages (CV) with the input knobs and switch. It also attenuverts (attenuates and inverts) incoming voltages. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
@@ -27,6 +27,7 @@
 | 26_clockwork | 6-channel polyrhythmic clock, gate, and LFO/envelope generator inspired by Pamela's Workout.<br>[Web editor](https://vincentmaurer.de/clockwork/index.html) | 1.0.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
 | 27_Siren | Multi-algorithm drone oscillator. Inspired by the Forge TME Vhikk X. | 0.2<br>Functional but WIP | C++ (ComputerCard / Pico SDK) | Moses Hoyt |
 | 28_eighties_bass | Bass-oriented complete monosynth voice consisting of five detuned saw wave oscillators with mixable white noise and adjustable resonant filter. | 0.1<br>Functional but WIP | Arduino (arduino-pico) with Mozzi 2 | Tod Kurt (@todbot) |
+| 29_XHT | A playable deep-note-inspired stereo chord swarm with manual scrubbing, one-shot movement, delay, reverb, CV, pulse, and optional MIDI control. | 0.1.0<br>Beta | C++ (Pico SDK) | Adrian Vos |
 | 30_cirpy_wavetable | Wavetable oscillator that using wavetables from Plaits, Braids, and Microwave, | 0.1<br>Functional but WIP | CircuitPython | Tod Kurt (@todbot) |
 | 31_esp | A MS-20-style External Signal Processor that includes a preamp, bandpass filter, envelope follower, gate, and 1v/oct pitch outs. | 1.0<br>Released | C++ (ComputerCard) | Ben Regnier |
 | 32_vink | Dual delay loops with sigmoid saturation for Jaap Vink / Roland Kayn style feedback patching | 1.1<br>Functional | C++ (ComputerCard) | Ben Regnier |
@@ -40,9 +41,9 @@
 | 41_blackbird | A scriptable, live-codable, USB-serial-to-CV device implementing monome crow's protocol<br>[Web editor](https://dessertplanet.github.io/web-druid/) | 1.1<br>Released | Pico SDK + Lua | Dune Desormeaux |
 | 42_backyard_rain | Nature soundscape audio. A cozy rain ambience mix for background listening. You control the intensity. This card plays rain ambience which was recorded in my backyard. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
 | 43_Castle_Process | Fort Processor-inspired harsh noise processor with chopped external audio and a bass pulse voice | 1.0<br>Release Candidate | C++ | Adrian Vos |
-| 43_clockwork | 6-channel polyrhythmic clock, gate, and LFO/envelope generator inspired by Pamela's Workout.<br>[Web editor](https://vincentmaurer.de/clockwork/index.html) | 1.0.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
 | 44_Birds | Two birds sing to each other controlled by a Turing-style shift register sequencer with clock in and CV/pulse out. | 0.5.0<br>Beta | C++ (Pico SDK / ComputerCard) | Tom Whitwell |
 | 47_NZT | Grain Noise and Noise Tools | 1.0.0<br>Released | C++ (ComputerCard) | @kjnilsson |
+| 48_two_tracks | Two Tracks — Dual-read-head phase looper. Record a mono loop to flash (IMA-ADPCM) and play it through two independent heads with separately controllable positions and loop lengths for evolving phase patterns and interference textures. | 1.1<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 50_flux | Effects, Synthesizer and Utility<br>[Web editor](https://vincentmaurer.de/flux/flux_manager.html) | 1.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
 | 51_grains | Granular Sampler and Effect<br>[Web editor](https://vincentmaurer.de/grains/grains_manager.html) | 1.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
 | 53_glitter | Granular Looping Sampler | 0.1.2-beta<br>Beta | C++ (Pico SDK 2.1.1, UF2 release) | Steve Jones |
@@ -55,6 +56,7 @@
 | 60_markov | Dual generative Markov chain module — evolving melody (MarkoV) left side, rhythmic percussion patterns (MarkovPerc) right side, with internal synth voice | 1.0.0<br>Released | C++ (Pico SDK) | Andy Jenkinson (uglifruit) |
 | 64_voices_of_sid | Dual MOS 6581 SID emulation (reSID engine) with CV/gate control, stereo output, waveform selection, and randomize | 1.1<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 66_stretchcore | A card for playing and manipulating samples with tempo control, timestretch with browser-based audio loading (infinitedigits.com/stretchcore/)<br>[Web editor](https://infinitedigits.co/stretchcore/) | 1.0<br>Ready% | C++ (Pico SDK) | Infinite Digits |
+| 67_Fragments | Six-slot audio recorder and clocked fragment sequencer with browser librarian, MIDI pitch control, random CV outputs, and an alternate long-sample variation mode. | 1.0<br>Released | C++ (RPi Pico SDK) | Max Harnishfeger |
 | 69_trace | Oscillograph stereo oscillator | 0.1<br>Functional but WIP | C++ (ComputerCard) | Ruiyang Wang |
 | 71_degenerator | Degenerator — Disintegrating Looper. Capture audio loops and apply irreversible degradation with 6 algorithms (Saturation, Filter Drift, Tape Hiss, Oxide Shedding, Bit Crush, Bit Rot) via preview/apply workflow. Inspired by William Basinski's The Disintegration Loops.<br>[Web editor](https://degenerator-web.netlify.app/) | 1.3<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 72_motorik | Motorik drum machine — kick/snare/hihat with bass and melody CV, classic Krautrock grooves | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
