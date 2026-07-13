@@ -16,7 +16,7 @@ the toolchain and `make` behavior.
 3. Build a card:
 
    ```sh
-   cd releases/11_goldfish
+   cd releases/011_goldfish
    make            # configure + build into ./build/, and stage *.uf2 into ./UF2/
    ```
 
@@ -62,7 +62,7 @@ Start OpenOCD on the host:
 Then, inside the container:
 
 ```sh
-cd releases/11_goldfish
+cd releases/011_goldfish
 make flash
 ```
 

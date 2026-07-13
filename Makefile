@@ -7,7 +7,7 @@ DIR ?=
 
 help:
 	@echo "Usage: make <directory-with-CMakeLists.txt>"
-	@echo "Example: make releases/10_twists/src"
+	@echo "Example: make releases/010_twists/src"
 	@echo ""
 	@echo "Build all compatible releases:"
 	@echo "  make all                  # build every releases/* card with a CMakeLists.txt"

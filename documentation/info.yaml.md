@@ -72,7 +72,7 @@ contact:
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
-| `repository` | no | string (URL) | Upstream source repo when firmware or docs live outside this monorepo. Example: [64_voices_of_sid](https://github.com/TomWhitwell/Workshop_Computer/blob/main/releases/64_voices_of_sid/info.yaml) points at Codeberg. |
+| `repository` | no | string (URL) | Upstream source repo when firmware or docs live outside this monorepo. Example: [064_voices_of_sid](https://github.com/TomWhitwell/Workshop_Computer/blob/main/releases/064_voices_of_sid/info.yaml) points at Codeberg. |
 | `tags` | no | string[] | Labels for card type and function. Use lowercase kebab-case (e.g. `sequencer`, `midi-host`, `effect`, `synthesizer`, `polyphonic`, `utility`). Sitegen normalizes and deduplicates. A single comma-separated string is also accepted. |
 
 ## Media
@@ -96,7 +96,7 @@ These blocks document I/O, controls, and host connectivity. Author them in `info
 | `controls.leds` | object[] | LED meaning per context. Each row has `when`, `display` (e.g. `list`), and `items` with `id`, `name`, optional `description`. |
 | `host` | object | Host/USB connectivity (e.g. `usb` list with `name`, `role`, `description`) and optional `notes` (Markdown). |
 
-See [`releases/82_Computer_Grids/info.yaml`](../releases/82_Computer_Grids/info.yaml) for a full structured example.
+See [`releases/082_Computer_Grids/info.yaml`](../releases/082_Computer_Grids/info.yaml) for a full structured example.
 
 ### Switch and knobs relationship
 
@@ -141,7 +141,7 @@ When filling in structured metadata for a release folder:
 
 Only list jacks the firmware actually uses. Repurposed jacks (e.g. CV on `AudioOut1`) still use the real API id.
 
-**Placeholder folders** (`77_Placeholder`, `88_Blank`, `02_comingsoon`): core fields only — do not fabricate `panel` / `controls`.
+**Placeholder folders** (`077_Placeholder`, `088_Blank`, `002_comingsoon`): core fields only — do not fabricate `panel` / `controls`.
 
 **Low certainty:** when a block is inferred from code but not stated in README, add a YAML comment above it:
 

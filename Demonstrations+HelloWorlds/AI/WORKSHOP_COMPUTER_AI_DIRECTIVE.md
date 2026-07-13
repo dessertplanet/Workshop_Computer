@@ -337,11 +337,11 @@ For example:
 
 ### Repository layout
 
-Cards in `releases/NN_name/` (e.g. `20_reverb`, `69_trace`). Required: `info.yaml`, `README.md`, `.uf2` binary.
+Cards in `releases/NN_name/` (e.g. `020_reverb`, `069_trace`). Required: `info.yaml`, `README.md`, `.uf2` binary.
 
 **`info.yaml` schema:** [`documentation/info.yaml.md`](../../documentation/info.yaml.md) — canonical field reference (core metadata, web editor deploy, `repository` / `tags` / `audio-sample`, structured `panel` / `controls` / `host`, and what sitegen uses today). Do not duplicate that schema here; update the doc when fields change.
 
-Structured metadata and several optional fields are parsed but **not** rendered on program detail pages yet — still author them in yaml for tooling and future site UI. Full structured example: [`releases/82_Computer_Grids/info.yaml`](../../releases/82_Computer_Grids/info.yaml).
+Structured metadata and several optional fields are parsed but **not** rendered on program detail pages yet — still author them in yaml for tooling and future site UI. Full structured example: [`releases/082_Computer_Grids/info.yaml`](../../releases/082_Computer_Grids/info.yaml).
 
 ### Version control discipline
 

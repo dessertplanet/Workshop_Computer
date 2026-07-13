@@ -273,11 +273,25 @@ async function build() {
     }
   }
 
-  // 404 fallback
+  // 404 fallback. Also carries a back-compat redirect: legacy 2-digit program
+  // slugs (programs/26-clockwork/…) now live under zero-padded 3-digit slugs
+  // (programs/026-clockwork/…). GitHub Pages serves 404.html for unknown paths,
+  // so this bounces old links (card pages and deeper /web/ links) before paint.
+  const legacySlugRedirect = `<script>
+    (function () {
+      var m = location.pathname.match(/(.*\\/programs\\/)(\\d+)(-[^/]+)(\\/.*)?$/);
+      if (!m) return;
+      var padded = m[2].padStart(3, '0');
+      if (padded === m[2]) return;
+      location.replace(m[1] + padded + m[3] + (m[4] || '') + location.search + location.hash);
+    })();
+  </script>
+  `;
   await writeFileEnsured(path.join(OUT_DIR, '404.html'), renderLayout({
     title: 'Not found',
     relativeRoot: '.',
   repoUrl: `https://github.com/${REPO}`,
+    headExtra: legacySlugRedirect,
     content: '<h1>404</h1><p>Page not found.</p>'
   }));
 

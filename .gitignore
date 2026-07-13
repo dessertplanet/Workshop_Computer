@@ -25,8 +25,8 @@ tools/sitegen/node_modules/
 **/build/
 
 # Local-only upstream design references and experiments (not for the public repo)
-releases/97_alloy/warps/
-releases/97_alloy/stmlib/
+releases/097_alloy/warps/
+releases/097_alloy/stmlib/
 Demonstrations+HelloWorlds/PicoSDK/ComputerCard/examples/warps/
 Demonstrations+HelloWorlds/PicoSDK/ComputerCard/examples/fold_int/
 Demonstrations+HelloWorlds/PicoSDK/ComputerCard/examples/pico_sdk_import.cmake
