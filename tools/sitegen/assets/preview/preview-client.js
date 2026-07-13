@@ -300,18 +300,19 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Read the deeplinked card id from the URL hash. Supports both "#<id>" and
-// "#card=<id>" forms so links stay readable.
-function idFromHash() {
+// Read the deeplinked card slug from the URL hash. Supports both "#<slug>" and
+// "#card=<slug>" forms so links stay readable. The slug matches the detail-page
+// URL (e.g. /programs/78-talker/ <-> /preview/#78-talker).
+function slugFromHash() {
   const h = decodeURIComponent(String(location.hash || '').replace(/^#/, '')).trim();
   if (!h) return '';
   const m = h.match(/^card=(.*)$/);
   return (m ? m[1] : h).trim();
 }
 
-function findEntryIndexById(id) {
-  if (!id) return -1;
-  return index.findIndex((e) => String(e.id) === id);
+function findEntryIndexBySlug(slug) {
+  if (!slug) return -1;
+  return index.findIndex((e) => String(e.slug) === slug);
 }
 
 // Load the card named by the URL hash (falling back to the first card), and
@@ -320,13 +321,13 @@ function findEntryIndexById(id) {
 // the hash.
 function applyHash() {
   if (!index.length) return;
-  const id = idFromHash();
-  const i = id ? findEntryIndexById(id) : -1;
+  const slug = slugFromHash();
+  const i = slug ? findEntryIndexBySlug(slug) : -1;
   const entry = i >= 0 ? index[i] : index[0];
   // Normalize the URL so a bare /preview (or an unknown hash) reflects the card
-  // that actually loads, e.g. /preview/#00_Simple_MIDI. replaceState avoids a
+  // that actually loads, e.g. /preview/#78-talker. replaceState avoids a
   // spurious history entry and does not re-trigger hashchange.
-  const canonical = `#${encodeURIComponent(String(entry.id))}`;
+  const canonical = `#${encodeURIComponent(String(entry.slug))}`;
   if (location.hash !== canonical) {
     history.replaceState(null, '', canonical);
   }
@@ -509,7 +510,7 @@ async function init() {
     .join('');
   els.select.addEventListener('change', () => {
     const entry = index[Number(els.select.value)];
-    if (entry) location.hash = encodeURIComponent(String(entry.id));
+    if (entry) location.hash = encodeURIComponent(String(entry.slug));
   });
   els.editor.addEventListener('input', debounce(run, 250));
   els.editor.addEventListener('input', updateSuggest);
