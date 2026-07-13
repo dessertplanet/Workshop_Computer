@@ -6,10 +6,9 @@ A dual-read-head audio looper inspired by Steve Reich's phase music. Record a mo
 
 1. **Audio In** — plug your instrument or audio source into **CV/Audio 1** (leftmost jack). Recording is mono; only this input is sampled
 2. **Audio Out** — the card's main output carries the mixed playback of both read heads. Patch it to your mixer / module input
-3. **Power** — the card is powered through the 10-pin ribbon cable from the Workshop System backplane. No external power needed
-4. **First boot** — the card starts in PLAY with an empty (silent) loop. LED 0 glows dim as an "alive" indicator
-5. **Quick start** — press **Z Down** to arm recording. After the 3-second countdown, play your instrument. Press **Z Down** again to stop. Turn knobs to hear the two heads drift apart
-6. **Persistence** — the recorded loop is stored in flash memory. It survives restarting the card and powering off/on. To record a new loop, just press **Z Down** and record over it
+3. **First boot** — the card starts in PLAY with an empty (silent) loop. LED 0 glows dim as an "alive" indicator
+4. **Quick start** — press **Z Down** to arm recording. After the 3-second countdown, play your instrument. Press **Z Down** again to stop. Turn knobs to hear the two heads drift apart
+5. **Persistence** — the recorded loop is stored in flash memory. It survives restarting the card and powering off/on. To record a new loop, just press **Z Down** and record over it
 
 ## Recording Workflow
 
