@@ -11,7 +11,9 @@
 //   Audio Out 2 <- dry sum of both inputs (aux, as on original Warps);
 //                  in the stereo doppler zone, the RIGHT channel instead
 //   CV In 1     -> adds to Main knob (algorithm)
-//   CV In 2     -> adds to Knob X (timbre)
+//   CV In 2     -> adds to Knob X (timbre); while the internal oscillator
+//                  is on, it is the oscillator pitch CV instead
+//   Pulse In 1  -> vocoder freeze gate (spectral capture while high)
 //
 // Controls:
 //   Main knob -> algorithm sweep across 15 zones, crossfaded at boundaries:
@@ -30,9 +32,15 @@
 //                a zone (as in the original META sweep): fold bias,
 //                ring-morph character, bitcrusher quantization depth,
 //                delay feedback, doppler distance, vocoder release time.
-//   Switch    -> vocoder freeze (spectral capture): up = frozen (latched),
-//                down = frozen while held, middle = live tracking.
-//   Knob Y    -> input drive (10% floor so signal always flows)
+//   Switch    -> internal carrier oscillator control:
+//                up     = Knob Y sets oscillator pitch (drive holds)
+//                middle = Knob Y sets input drive (pitch holds)
+//                down   = momentary: each press cycles the oscillator shape
+//                         off -> sine -> triangle -> saw -> pulse -> noise
+//                When the oscillator is on it replaces Audio In 1 as the
+//                carrier.
+//   Knob Y    -> input drive (10% floor), or oscillator pitch when the
+//                switch is up
 //
 // LEDs:
 //   0/1/2/3 -> current algorithm zone (binary count, 0..14; LED 3 is the
@@ -46,6 +54,7 @@
 #include "pico/time.h"
 
 #include "dsp/cpu_meter.h"
+#include "dsp/oscillator.h"
 #include "dsp/xmod_engine.h"
 
 // Debug taps, readable over the debugger without halting for long.
@@ -61,15 +70,45 @@ public:
 	{
 		meter_.BeginSample();
 
-		// CV inputs add to the knobs (CV is bipolar, roughly -2048..2047).
-		int32_t algo = Clamp04095(KnobVal(Knob::Main) + CVIn1());
-		int32_t timbre = Clamp04095(KnobVal(Knob::X) + CVIn2());
-		engine_.SetControls(algo, timbre, KnobVal(Knob::Y));
-		// Switch: middle = normal, up = freeze latched, down = momentary
-		// (freeze while held).
-		engine_.SetFreeze(SwitchVal() != Switch::Middle);
+		// Switch: up = Knob Y sets oscillator pitch; middle = Knob Y sets
+		// drive; down (momentary) = cycle oscillator shape on each press
+		// (off -> sine -> triangle -> saw -> pulse -> noise -> off).
+		Switch sw = SwitchVal();
+		bool down = (sw == Switch::Down);
+		if (down && !switch_was_down_)
+		{
+			oscillator_.NextShape();
+		}
+		switch_was_down_ = down;
 
-		int32_t carrier = AudioIn1();
+		bool pitch_mode = (sw == Switch::Up);
+
+		// CV inputs add to the knobs (CV is bipolar, roughly -2048..2047).
+		// CV In 2 doubles as pitch CV while the internal oscillator is on.
+		int32_t algo = Clamp04095(KnobVal(Knob::Main) + CVIn1());
+		int32_t timbre_cv = oscillator_.enabled() ? 0 : CVIn2();
+		int32_t timbre = Clamp04095(KnobVal(Knob::X) + timbre_cv);
+
+		if (pitch_mode)
+		{
+			pitch_ = KnobVal(Knob::Y);
+		}
+		else
+		{
+			drive_ = KnobVal(Knob::Y);
+		}
+		if (oscillator_.enabled())
+		{
+			oscillator_.SetPitch(Clamp04095(pitch_ + CVIn2()));
+		}
+
+		engine_.SetControls(algo, timbre, drive_);
+		// Freeze (vocoder spectral capture): gate on Pulse In 1.
+		engine_.SetFreeze(PulseIn1());
+
+		// Internal oscillator replaces the external carrier when enabled.
+		int32_t carrier = oscillator_.enabled() ? oscillator_.Process()
+		                                        : AudioIn1();
 		int32_t modulator = AudioIn2();
 
 		int32_t out = DcBlock(engine_.Process(carrier, modulator));
@@ -130,7 +169,11 @@ private:
 	}
 
 	xmod::Engine engine_;
+	xmod::CarrierOscillator oscillator_;
 	xmod::CpuMeter meter_{20}; // 1/48kHz ~= 20.8us; 20 is a safe budget
+	bool switch_was_down_ = false;
+	int32_t pitch_ = 2048;   // held while not in pitch mode
+	int32_t drive_ = 2048;   // held while in pitch mode
 };
 
 int main()
