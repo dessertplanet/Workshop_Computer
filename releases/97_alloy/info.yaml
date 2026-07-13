@@ -16,6 +16,12 @@ tags:
   - vocoder
   - turing-machine
 
+summary: >
+  Two audio inputs fused through 15 crossfaded cross-modulation algorithms -
+  ring mods, wavefolder, comparators, bitcrusher, frequency shifter, delay,
+  binaural doppler, and a 20-band vocoder - with a clocked Turing machine
+  driving pitch, CV, and gates underneath.
+
 manual: |
   Audio In 1 is the external carrier and Audio In 2 is the modulator.
   Audio Out 1 is the processed output. Audio Out 2 is the dry sum except
