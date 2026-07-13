@@ -3,7 +3,7 @@ Name: Two Tracks
 Description: "Two Tracks — Dual-read-head phase looper. Record a mono loop to flash (IMA-ADPCM) and play it through two independent heads with separately controllable positions and loop lengths for evolving phase patterns and interference textures."
 Language: C++ (Pico SDK)
 Creator: Joep Vermaat
-Version: 1.0
+Version: 1.1
 Status: Released
 License: MIT
 Repository: https://codeberg.org/johantv/two-tracks
