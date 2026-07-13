@@ -23,21 +23,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 pico_sdk_init()
 
-# Warps DSP port. main.cpp wires the ComputerCard I/O to the (vendored) Mutable
-# Instruments "parasites" Warps Modulator. Only the DSP subset the Modulator
-# depends on is vendored here (see warps/ and stmlib/); the STM32/USB/hardware
-# tree from the original firmware is intentionally not included.
+# Warps-style cross-modulator, rewritten in fixed point for the FPU-less
+# RP2040. The original Mutable Instruments float DSP (warps/, stmlib/) is kept
+# on disk as reference only and is intentionally NOT built; the audio path is
+# the integer implementation in dsp/.
 add_executable(${CARD_NAME}
     main.cpp
-    warps/dsp/modulator.cc
-    warps/dsp/oscillator.cc
-    warps/dsp/vocoder.cc
-    warps/dsp/filter_bank.cc
-    warps/resources.cc
-    stmlib/utils/random.cc
 )
 
-# Include root so `#include "warps/..."` and `#include "stmlib/..."` resolve.
 target_include_directories(${CARD_NAME} PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
 target_link_libraries(${CARD_NAME}
@@ -52,6 +45,10 @@ target_link_libraries(${CARD_NAME}
 )
 
 pico_add_extra_outputs(${CARD_NAME})
+
+# Run entirely from RAM: XIP flash cache misses mid-ProcessSample can stall
+# for microseconds, which is fatal inside a ~20us/sample budget.
+pico_set_binary_type(${CARD_NAME} copy_to_ram)
 
 # Give the oscillator more time to start - some boards won't run without this.
 target_compile_definitions(${CARD_NAME} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
