@@ -129,8 +129,7 @@ metadata:
   version: 1.0.0
   status: Released
   license: MIT
-documentation:
-  intro: |
+manual: |
     Clockwork is a 6-channel polyrhythmic timing and modulation generator inspired by Pamela's Workout. It turns the Workshop Computer into a central clock, gate sequencer, and LFO generator.
 
     *   [Clockwork Tutorial Video](https://youtu.be/Pc0wPOAVZmw)

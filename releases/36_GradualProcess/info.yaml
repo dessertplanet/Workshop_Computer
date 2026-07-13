@@ -14,7 +14,7 @@ tags:
   - harmony
   - multi-mode
 
-manual: |
+summary: |
   A multi-process card: three independent generative composition processes live in one
   firmware image, and which one runs is chosen by the Main knob's position at power-on
   (or reset) — CCW third = Glass, middle third = Reich, CW third = Tintinnabuli. LEDs

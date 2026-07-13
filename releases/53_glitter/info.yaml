@@ -17,7 +17,7 @@ tags:
 
 demo-link: https://youtu.be/JW8Z_I-ub2A
 
-manual: |
+summary: |
   Glitter continuously plays a 2-second stereo loop while up to six grains read random snippets from it.
   Switch up/down records into the loop (up for continuous record, down for punch-in style). Main blends
   plain loop vs granulated output, X controls repitch behavior in play and overdub balance in record, and

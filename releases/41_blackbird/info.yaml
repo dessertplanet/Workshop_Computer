@@ -9,7 +9,7 @@ License: GPLv3 or later
 Editor: https://dessertplanet.github.io/web-druid/
 demo-link: https://youtu.be/V9HAspnpEWU
 
-manual: |
+summary: |
   Blackbird runs crow-compatible Lua scripts over USB serial and can also store scripts on card flash.
   Panel control behavior is script-defined: Lua code reads `bb.knob.*`, `bb.switch.position`, and inputs,
   then decides how outputs respond. LEDs always reflect positive output voltages on the six outputs.

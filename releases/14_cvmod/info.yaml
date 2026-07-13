@@ -13,7 +13,7 @@ tags:
   - modulation
   - looper
 
-manual: |
+summary: |
   CVMod records one CV stream into a loop and reads it out through four moving heads. X + `CVIn1`
   sets loop duration, Main + `AudioIn2` sets head speed, and Y + `CVIn2` sets head phase offset.
   Switch down (or `PulseIn1`) resets read-head position; switch up cycles motion function.

@@ -13,7 +13,7 @@ tags:
   - logic
   - utility
 
-manual: |
+summary: |
   DivCom combines a comparator and a clock divider. The comparator compares `AudioIn1` against
   `Offset + Scale * AudioIn2`, while the divider counts incoming clocks and emits divided gates,
   flip-flop, XOR, and counter CV outputs.

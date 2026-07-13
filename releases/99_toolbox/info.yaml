@@ -14,7 +14,7 @@ tags:
   - clock
   - noise
 
-manual: |
+summary: |
   Utility-focused card inspired by the 0-Coast utility section. Includes a mixer/VCA with
   attenuverter, secondary VCA, sample-and-hold, clock generation with probability, and selectable
   noise types.

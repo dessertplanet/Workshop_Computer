@@ -14,7 +14,7 @@ tags:
   - effect
   - generative
 
-manual: |
+summary: |
   Tune across a virtual shortwave band with the Main knob. Two Stations (live audio
   inputs, or baked recordings in baked-in audio mode) plus three interference signals
   are scattered across the dial and re-randomised on each band change. Approaching a

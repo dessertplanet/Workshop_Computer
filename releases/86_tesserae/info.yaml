@@ -14,7 +14,7 @@ tags:
   - cv
   - utility
 
-manual: |
+summary: |
   Variable-voice arpeggiated harmonic generator with 5 patterns and 10 scales. X sets melody
   position, Y sets chord spacing, and Main changes by Z mode (pattern select, root note, or held
   scale/voice selection). Supports tap tempo, external clock/reset, and dual transpose inputs.

@@ -7,7 +7,7 @@ Version: 1.0.0
 Status: Released
 Repository: https://github.com/kjnilsson/ws
 
-manual: |
+summary: |
   Grain-noise generator and noise utility card with density control, seed modulation, CV utilities,
   and optional audio-rate excitation via Pulse In 1. Audio Out 1/2 provide complementary dense/sparse textures.
 

@@ -14,7 +14,7 @@ tags:
   - clock
   - cv
 
-manual: |
+summary: |
   Dual Turing-style random sequencer with tap tempo or external clocking.
   Pulse In 1 overrides tap tempo as the main clock; Pulse In 2 can clock channel 2 independently.
   CV In 1 controls divide/multiply on channel 2, CV In 2 applies quantized pitch offset.

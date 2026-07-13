@@ -16,7 +16,7 @@ tags:
   - effects-processor
   - envelope-follower
 
-manual: |
+summary: |
   Hot Fuzz is a stereo fuzz/wah effects card. It combines a clipper (soft/hard/asymmetric/foldback)
   with a resonant state-variable filter for the wah sweep, and supports both manual
   and auto-wah modes.

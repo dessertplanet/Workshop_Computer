@@ -15,7 +15,7 @@ tags:
   - visualiser
   - performance
 
-manual: |
+summary: |
   Cathode Ray turns the Workshop Computer into a 1-bit composite video synthesiser.
   Wire a two-resistor DAC from Pulse Out 1 (1kΩ) and Pulse Out 2 (220Ω) into an RCA
   centre pin (grounds common) and connect to any composite-input TV/monitor. PAL by

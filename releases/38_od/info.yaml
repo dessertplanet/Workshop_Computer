@@ -8,6 +8,6 @@ Status: Released
 License: MIT
 Repository: https://github.com/MJLMills/mtmws_od
 
-manual: |
+summary: |
   Simulates a Lorenz attractor to generate loopable CV and pulse signals.
   This release folder is a stub; documentation and UF2 builds are maintained in the external repository.
