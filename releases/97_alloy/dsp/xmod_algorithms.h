@@ -8,8 +8,8 @@
 //   - All multiplies fit comfortably in 32 bits: |sample| <= 2^11 and
 //     parameters <= 2^12, so products stay below 2^24 before shifting.
 
-#ifndef WARPS_DSP_XMOD_ALGORITHMS_H_
-#define WARPS_DSP_XMOD_ALGORITHMS_H_
+#ifndef ALLOY_DSP_XMOD_ALGORITHMS_H_
+#define ALLOY_DSP_XMOD_ALGORITHMS_H_
 
 #include <cstdint>
 
@@ -304,4 +304,4 @@ inline int32_t Bitcrusher(int32_t carrier, int32_t modulator,
 
 } // namespace xmod
 
-#endif // WARPS_DSP_XMOD_ALGORITHMS_H_
+#endif // ALLOY_DSP_XMOD_ALGORITHMS_H_

@@ -17,16 +17,15 @@ set(PICO_BOARD pico CACHE STRING "Board type")
 cmake_minimum_required(VERSION 3.13)
 include(pico_sdk_import.cmake)
 
-set(CARD_NAME warps)
-project(warps C CXX ASM)
+set(CARD_NAME alloy)
+project(alloy C CXX ASM)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 pico_sdk_init()
 
-# Warps-style cross-modulator, rewritten in fixed point for the FPU-less
-# RP2040. The original Mutable Instruments float DSP (warps/, stmlib/) is kept
-# on disk as reference only and is intentionally NOT built; the audio path is
-# the integer implementation in dsp/.
+# Alloy: a cross-modulator in the spirit of Mutable Instruments Warps
+# (and its parasites firmware), rewritten in fixed point for the FPU-less
+# RP2040. The audio path is the integer implementation in dsp/.
 add_executable(${CARD_NAME}
     main.cpp
 )
@@ -54,8 +53,8 @@ pico_set_binary_type(${CARD_NAME} copy_to_ram)
 target_compile_definitions(${CARD_NAME} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
 pico_enable_stdio_usb(${CARD_NAME} 0)
 
-# Match the other cards' warning set. Warps' DSP is float-heavy; keep the
-# double-promotion / float-conversion warnings on to catch accidental doubles
-# (expensive without an FPU on RP2040).
+# Match the other cards' warning set. Keep the double-promotion /
+# float-conversion warnings on to catch accidental doubles (expensive
+# without an FPU on RP2040).
 target_compile_options(${CARD_NAME} PRIVATE -Wall -Wextra -O3)
 target_link_options(${CARD_NAME} PRIVATE -Wl,--print-memory-usage)

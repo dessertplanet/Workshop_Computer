@@ -1,12 +1,12 @@
 draft: false
-Name: Warps
+Name: Alloy
 Description: Fixed-point 15-zone cross-modulator with a clocked Turing CV and gate companion.
 Language: C++ (RP2040 Pico SDK)
 Creator: Eric Gao
 Version: 0.2.0
 Status: Beta
 License: MIT
-Repository: https://github.com/Ericxgao/Workshop_Computer/tree/eric/warps-port/releases/97_warps
+Repository: https://github.com/Ericxgao/Workshop_Computer/tree/eric/warps-port/releases/97_alloy
 
 tags:
   - dsp
@@ -92,10 +92,10 @@ controls:
   knobs:
     - id: Main
       name: Algorithm / Probability
-      description: Warps algorithm in middle; Turing feedback probability up
+      description: Algorithm in middle; Turing feedback probability up
     - id: X
       name: Timbre / Length
-      description: Warps timbre in middle; Turing loop length up
+      description: Timbre in middle; Turing loop length up
     - id: Y
       name: Drive / Zone Param / Spread
       description: Input drive in middle (sideband crossfade, bitcrush operator, or doppler depth in those zones); Turing CV spread up

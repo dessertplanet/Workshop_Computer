@@ -25,5 +25,5 @@ tools/sitegen/node_modules/
 **/build/
 
 # Local-only upstream design references (not for the public repo)
-releases/97_warps/warps/
-releases/97_warps/stmlib/
+releases/97_alloy/warps/
+releases/97_alloy/stmlib/

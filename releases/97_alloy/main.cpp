@@ -1,8 +1,8 @@
-// Warps-style cross-modulator for the Music Thing Workshop System Computer.
+// Alloy: a cross-modulator for the Music Thing Workshop System Computer,
+// in the spirit of Mutable Instruments Warps and its parasites firmware.
 //
-// Fixed-point rewrite of the basic Warps algorithms for the FPU-less RP2040.
-// The original Mutable Instruments float DSP (warps/, stmlib/) is vendored on
-// disk for reference but not built; see dsp/ for the integer implementation.
+// Fixed-point rewrite of the Warps/parasites algorithms for the FPU-less
+// RP2040; see dsp/ for the integer implementation.
 //
 // Signal flow:
 //   Audio In 1  -> carrier
@@ -40,10 +40,11 @@
 //   Switch up     -> Turing edit layer:
 //                    Main = feedback probability, X = loop length,
 //                    Y = pitch/CV spread
-//   Switch middle -> Warps controls; knobs use soft pickup after editing
+//   Switch middle -> cross-modulator controls; knobs use soft pickup after
+//                    editing
 //   Switch down   -> tap/clock the Turing sequence; two taps start or update
 //                    its internal clock, hold 750ms to stop it
-//   Knob Y        -> per-zone third parameter in Warps mode: sideband
+//   Knob Y        -> per-zone third parameter in cross-mod mode: sideband
 //                    crossfade (frequency shifter), operator morph
 //                    (bitcrusher), depth (doppler); input drive (10%
 //                    floor) in all other zones
@@ -72,10 +73,10 @@ volatile int32_t g_debug_out_peak = 0;
 volatile int32_t g_debug_in1_peak = 0;
 volatile int32_t g_debug_in2_peak = 0;
 
-class Warps : public ComputerCard
+class Alloy : public ComputerCard
 {
 public:
-	Warps()
+	Alloy()
 		: turing_(FoldSeed(UniqueCardID()))
 	{
 	}
@@ -95,17 +96,17 @@ public:
 
 		if (!controls_initialized_)
 		{
-			warps_main_ = main_knob;
-			warps_timbre_ = x_knob;
-			warps_drive_ = y_knob;
+			held_main_ = main_knob;
+			held_timbre_ = x_knob;
+			held_drive_ = y_knob;
 			controls_initialized_ = true;
 		}
 
 		if (previous_switch_ == Switch::Up && sw != Switch::Up)
 		{
-			main_pickup_.Arm(warps_main_, main_knob);
-			timbre_pickup_.Arm(warps_timbre_, x_knob);
-			drive_pickup_.Arm(warps_drive_, y_knob);
+			main_pickup_.Arm(held_main_, main_knob);
+			timbre_pickup_.Arm(held_timbre_, x_knob);
+			drive_pickup_.Arm(held_drive_, y_knob);
 		}
 
 		if (sw == Switch::Up)
@@ -125,9 +126,9 @@ public:
 		}
 		else
 		{
-			if (main_pickup_.Allows(main_knob)) warps_main_ = main_knob;
-			if (timbre_pickup_.Allows(x_knob)) warps_timbre_ = x_knob;
-			if (drive_pickup_.Allows(y_knob)) warps_drive_ = y_knob;
+			if (main_pickup_.Allows(main_knob)) held_main_ = main_knob;
+			if (timbre_pickup_.Allows(x_knob)) held_timbre_ = x_knob;
+			if (drive_pickup_.Allows(y_knob)) held_drive_ = y_knob;
 		}
 
 		bool manual_clock = false;
@@ -176,10 +177,10 @@ public:
 
 		UpdateTuringOutputs();
 
-		// CV remains live on top of the held Warps knob values in edit mode.
-		const int32_t algo = Clamp04095(warps_main_ + CVIn1());
-		const int32_t timbre = Clamp04095(warps_timbre_ + CVIn2());
-		engine_.SetControls(algo, timbre, warps_drive_);
+		// CV remains live on top of the held knob values in edit mode.
+		const int32_t algo = Clamp04095(held_main_ + CVIn1());
+		const int32_t timbre = Clamp04095(held_timbre_ + CVIn2());
+		engine_.SetControls(algo, timbre, held_drive_);
 
 		const int32_t carrier = AudioIn1();
 		const int32_t modulator = AudioIn2();
@@ -296,9 +297,9 @@ private:
 	xmod::SoftTakeover drive_pickup_;
 	xmod::CpuMeter meter_{20}; // 1/48kHz ~= 20.8us; 20 is a safe budget
 	Switch previous_switch_ = Switch::Middle;
-	uint16_t warps_main_ = 2048;
-	uint16_t warps_timbre_ = 2048;
-	uint16_t warps_drive_ = 2048;
+	uint16_t held_main_ = 2048;
+	uint16_t held_timbre_ = 2048;
+	uint16_t held_drive_ = 2048;
 	uint16_t turing_feedback_ = 2048;
 	uint16_t turing_spread_ = 2048;
 	uint32_t down_samples_ = 0;
@@ -317,7 +318,7 @@ int main()
     set_sys_clock_khz(240000, true);
 	// Static: the engine owns a ~32KB delay buffer, far too big for the
 	// 2KB core-0 stack.
-	static Warps card;
+	static Alloy card;
 	card.EnableNormalisationProbe();
 	card.StartVocoderWorker();
 	card.Run();

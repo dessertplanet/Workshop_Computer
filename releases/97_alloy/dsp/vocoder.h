@@ -29,8 +29,8 @@
 // construction time; the audio path is integer-only (Q14 filter
 // coefficients, Q15 follower coefficients, Q12 gains).
 
-#ifndef WARPS_DSP_VOCODER_H_
-#define WARPS_DSP_VOCODER_H_
+#ifndef ALLOY_DSP_VOCODER_H_
+#define ALLOY_DSP_VOCODER_H_
 
 #include <cmath>
 #include <cstdint>
@@ -505,4 +505,4 @@ private:
 
 } // namespace xmod
 
-#endif // WARPS_DSP_VOCODER_H_
+#endif // ALLOY_DSP_VOCODER_H_

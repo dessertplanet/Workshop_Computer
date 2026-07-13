@@ -17,8 +17,8 @@
 // NOTE: Engine owns two delay buffers (~64 KB); instances must live in
 // static storage, not on the (2 KB) RP2040 stack.
 
-#ifndef WARPS_DSP_XMOD_ENGINE_H_
-#define WARPS_DSP_XMOD_ENGINE_H_
+#ifndef ALLOY_DSP_XMOD_ENGINE_H_
+#define ALLOY_DSP_XMOD_ENGINE_H_
 
 #include <cstdint>
 
@@ -234,4 +234,4 @@ private:
 
 } // namespace xmod
 
-#endif // WARPS_DSP_XMOD_ENGINE_H_
+#endif // ALLOY_DSP_XMOD_ENGINE_H_

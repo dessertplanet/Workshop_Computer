@@ -9,8 +9,8 @@
 // on the peak sample duration over the last window. Overrun() latches true
 // forever once any single sample exceeds the sample period.
 
-#ifndef WARPS_DSP_CPU_METER_H_
-#define WARPS_DSP_CPU_METER_H_
+#ifndef ALLOY_DSP_CPU_METER_H_
+#define ALLOY_DSP_CPU_METER_H_
 
 #include <cstdint>
 
@@ -66,4 +66,4 @@ private:
 
 } // namespace xmod
 
-#endif // WARPS_DSP_CPU_METER_H_
+#endif // ALLOY_DSP_CPU_METER_H_

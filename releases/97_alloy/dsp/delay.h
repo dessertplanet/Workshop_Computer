@@ -14,8 +14,8 @@
 //
 // The buffers make these objects large; they must live in static storage.
 
-#ifndef WARPS_DSP_DELAY_H_
-#define WARPS_DSP_DELAY_H_
+#ifndef ALLOY_DSP_DELAY_H_
+#define ALLOY_DSP_DELAY_H_
 
 #include <cstdint>
 
@@ -211,4 +211,4 @@ private:
 
 } // namespace xmod
 
-#endif // WARPS_DSP_DELAY_H_
+#endif // ALLOY_DSP_DELAY_H_

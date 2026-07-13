@@ -20,8 +20,8 @@
 // quantised to Q14. Audio is Q12 throughout; no floats in the audio path
 // (the sine table is built once at construction).
 
-#ifndef WARPS_DSP_FREQUENCY_SHIFTER_H_
-#define WARPS_DSP_FREQUENCY_SHIFTER_H_
+#ifndef ALLOY_DSP_FREQUENCY_SHIFTER_H_
+#define ALLOY_DSP_FREQUENCY_SHIFTER_H_
 
 #include <cmath>
 #include <cstdint>
@@ -163,4 +163,4 @@ private:
 
 } // namespace xmod
 
-#endif // WARPS_DSP_FREQUENCY_SHIFTER_H_
+#endif // ALLOY_DSP_FREQUENCY_SHIFTER_H_

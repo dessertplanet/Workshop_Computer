@@ -1,6 +1,7 @@
-# Warps for Workshop System Computer
+# Alloy for Workshop System Computer
 
-A fixed-point Warps-style cross-modulator for the Music Thing Workshop System
+Alloy is a fixed-point cross-modulator, in the spirit of Mutable
+Instruments Warps and its parasites firmware, for the Music Thing Workshop System
 **Computer**. It combines 15 audio algorithms with a clocked Turing control
 layer that produces pitch, modulation CV, and two related gate patterns.
 
@@ -9,7 +10,7 @@ layer that produces pitch, modulation CV, and two related gate patterns.
 This card is self-contained and does not depend on anything outside its folder:
 
 ```
-releases/97_warps/
+releases/97_alloy/
 ├── main.cpp              # hardware, control layers, and signal routing
 ├── CMakeLists.txt        # Pico SDK firmware build
 ├── ComputerCard.h        # Workshop System hardware abstraction
@@ -31,16 +32,16 @@ references but are not part of this repository.
 From a configured Pico SDK environment:
 
 ```sh
-cd releases/97_warps
+cd releases/97_alloy
 cmake -S . -B build -G Ninja
 cmake --build build
 ```
 
-This produces `build/warps.uf2` and `build/warps.elf`. Flash either over SWD:
+This produces `build/alloy.uf2` and `build/alloy.elf`. Flash either over SWD:
 
 ```sh
 openocd -f interface/cmsis-dap.cfg -c "adapter speed 5000" \
-        -f target/rp2040.cfg -c "program build/warps.elf verify reset exit"
+        -f target/rp2040.cfg -c "program build/alloy.elf verify reset exit"
 ```
 
 or copy the UF2 to a module in BOOTSEL mode (`flash.ps1` waits for the
@@ -73,14 +74,14 @@ static because its delay buffers do not fit on the core-0 stack.
 
 ## Controls
 
-### Switch middle: Warps
+### Switch middle: cross-modulator
 
 - **Main:** sweep 15 crossfaded algorithm zones.
 - **X:** algorithm timbre.
 - **Y:** per-zone third parameter where one exists; input drive elsewhere.
 
 CV modulation remains live while these base values are held. After leaving the
-Turing layer, each knob uses soft pickup: its Warps value does not move until
+Turing layer, each knob uses soft pickup: its cross-mod value does not move until
 the physical knob reaches the value that was active before editing.
 
 ### Switch up: Turing edit
