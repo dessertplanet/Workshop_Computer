@@ -43,7 +43,7 @@
 | 43_Castle_Process | Fort Processor-inspired harsh noise processor with chopped external audio and a bass pulse voice | 1.0<br>Release Candidate | C++ | Adrian Vos |
 | 44_Birds | Two birds sing to each other controlled by a Turing-style shift register sequencer with clock in and CV/pulse out. | 0.5.0<br>Beta | C++ (Pico SDK / ComputerCard) | Tom Whitwell |
 | 47_NZT | Grain Noise and Noise Tools | 1.0.0<br>Released | C++ (ComputerCard) | @kjnilsson |
-| 48_two_tracks | Two Tracks — Dual-read-head phase looper. Record a mono loop to flash (IMA-ADPCM) and play it through two independent heads with separately controllable positions and loop lengths for evolving phase patterns and interference textures. | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
+| 48_two_tracks | Two Tracks — Dual-read-head phase looper. Record a mono loop to flash (IMA-ADPCM) and play it through two independent heads with separately controllable positions and loop lengths for evolving phase patterns and interference textures. | 1.1<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 50_flux | Effects, Synthesizer and Utility<br>[Web editor](https://vincentmaurer.de/flux/flux_manager.html) | 1.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
 | 51_grains | Granular Sampler and Effect<br>[Web editor](https://vincentmaurer.de/grains/grains_manager.html) | 1.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
 | 53_glitter | Granular Looping Sampler | 0.1.2-beta<br>Beta | C++ (Pico SDK 2.1.1, UF2 release) | Steve Jones |
