@@ -7,7 +7,7 @@ Version: 0.1
 Status: Functional but WIP
 Repository: https://github.com/indiepaleale/Trace-Workshop-Computer
 
-manual: |
+summary: |
   Oscillograph-focused dual-output oscillator bank for X/Y scope visuals. Main controls
   pitch (summed with CVIn1). X and Y control oscillator-specific modulation offsets in
   normal mode; with switch up they become attenuation controls for AudioIn1/AudioIn2

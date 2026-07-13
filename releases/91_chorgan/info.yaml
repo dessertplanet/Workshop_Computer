@@ -12,7 +12,7 @@ tags:
   - polyphonic
   - portamento
 
-manual: |
+summary: |
   Six-voice morphing chord synthesizer with built-in chord sequencer.
   Knob X and CV In 1 set root pitch; Knob Y selects interval above root (0–12 semitones).
   Main knob morphs all six voices through sine, triangle, saw, and narrow pulse; CV In 2 offsets timbre.

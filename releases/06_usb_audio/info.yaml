@@ -15,7 +15,7 @@ tags:
   - cv
   - gate
 
-manual: |
+summary: |
   Class-compliant USB composite firmware providing multichannel USB audio plus USB MIDI.
   Middle switch mode runs standard audio interface behavior; up switch mode enables configurable MIDI/CV/Gate mapping;
   down switch mode disables MIDI for audio-only operation.

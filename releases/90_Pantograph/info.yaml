@@ -14,7 +14,7 @@ tags:
   - envelope
   - modulation
 
-manual: |
+summary: |
   Pantograph lets you trace a performance on the X and Y knobs (e.g. oscillator pitch + filter
   cutoff), record it, then loop it back out the two CV outputs at variable speeds.
 

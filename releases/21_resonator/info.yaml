@@ -14,7 +14,7 @@ tags:
   - drone
   - plucked
 
-manual: |
+summary: |
   Four-string sympathetic resonator inspired by Rings/tanpura techniques.
   Feed audio to excite resonant strings, or trigger plucks with PulseIn1.
   X sets base pitch (or fine tune with CV1 connected), Y sets damping, Main sets wet/dry mix.

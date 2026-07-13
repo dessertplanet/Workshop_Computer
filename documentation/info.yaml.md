@@ -24,6 +24,7 @@ License: MIT
 | `draft` | no | boolean | When `true`, structured metadata in this file is still under author review. Set to `false` when `Name`, `contact`, `License`, `panel`, and related fields are confirmed. Not rendered on detail pages yet; parsed for tooling and future site UI. |
 | `Name` | yes | string | Display title on the site index and detail page (see sitegen). |
 | `Description` | yes | string | Short blurb shown on the index and detail aside. |
+| `summary` | no | string | Short operator summary shown in the card header. Falls back to `Description` when absent. |
 | `Language` | yes | string | Implementation language or stack (e.g. `C++ (Pico SDK)`, `Lua / Blackbird`). |
 | `Creator` | yes | string | Author or maintainer name. |
 | `Version` | yes | string | Semantic or project version string. |
@@ -87,7 +88,7 @@ These blocks document I/O, controls, and host connectivity. Author them in `info
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `manual` | string (Markdown) | Abbreviated operator summary (distinct from `README.md`). |
+| `manual` | string (Markdown) | Full operator manual. Intended to override the README section in card details (not yet rendered). |
 | `panel.inputs` | object[] | Panel jacks in. Each item: `id`, `name`, optional `description`, optional `type` (`audio` / `cv` / `pulse` / `other`). |
 | `panel.outputs` | object[] | Panel jacks out; same shape as inputs. |
 | `controls.knobs` | object[] | Knob metadata per context. Each row has `when` (`z`, `layer`, `gesture`) and `main` / `x` / `y` entries with `name` and optional `description`. Use `when.z` (`up` / `middle` / `down`, or `any` for every position) to give a knob **different metadata per switch position**. Describes knobs only — switch-position meaning lives in `controls.switch`. |

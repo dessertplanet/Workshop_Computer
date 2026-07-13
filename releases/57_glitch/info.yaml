@@ -15,7 +15,7 @@ tags:
   - clocked
   - lo-fi
 
-manual: |
+summary: |
   Glitch records into a shared 2.33-second circular buffer and runs in two power-on modes. Glitch mode loops
   ratcheted sub-slices with optional reverse, decimation, and bitcrush; Stutter mode slices beats, shuffles order,
   and can repeat slices before advancing. Pulse In 1 sets beat timing, CV In 1 freezes recording while playback

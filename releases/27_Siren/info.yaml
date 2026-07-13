@@ -16,7 +16,7 @@ tags:
 
 demo-link: https://youtu.be/DORHEYpUqWU
 
-manual: |
+summary: |
   Siren is a drone source with 6 oscillator banks (SINE, CLST, DTON, ANLG, WSHP, WAVE).
   Use switch up for WARP/SPAN/MORPH and switch middle for SEED/SCAN/BASIS.
   Switch down (momentary) cycles banks with a smoothed crossfade.

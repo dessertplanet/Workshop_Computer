@@ -15,7 +15,7 @@ tags:
   - glitch
 
 # certainty: low — structured behavior inferred from source comments in main.cpp; no local README
-manual: |
+summary: |
   Granular buffer processor with triggerable grains, reverse/forward playback, loop/glitch mode, and freeze.
   Main controls grain speed or CV2 pitch attenuation, X controls delay spread (or CV1 attenuation), Y sets grain size.
   PulseIn1 triggers grains; PulseIn2 acts as a grain gate. Z up freezes buffer, Z middle runs normal mode, Z down enables loop/glitch behavior.

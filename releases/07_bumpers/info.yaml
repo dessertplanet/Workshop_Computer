@@ -12,7 +12,7 @@ tags:
   - generative
   - utility
 
-manual: |
+summary: |
   Bouncing-ball trigger generator and multitap delay card.
   Trigger streams can be internally generated or externally clocked, with pulse outputs and related CV/audio outputs.
   Patching audio input enables the delay processor; otherwise outputs act as trigger/CV generators.

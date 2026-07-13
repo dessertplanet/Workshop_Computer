@@ -14,7 +14,7 @@ tags:
   - delay
   - dual-head
 
-manual: |
+summary: |
   A dual-read-head audio looper inspired by Steve Reich's phase music.
   Record a loop and play it through two independent outputs with separately
   controllable read positions and loop lengths, creating evolving phase

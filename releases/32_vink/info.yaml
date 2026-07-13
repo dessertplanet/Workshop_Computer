@@ -15,7 +15,7 @@ tags:
 
 demo-link: https://www.youtube.com/watch?v=X_Bcr_HS9XM
 
-manual: |
+summary: |
   Vink provides two independently time-modulated delay taps with optional sigmoid saturation blend.
   Main controls base delay time, X controls tap 2 offset, and Y crossfades dry to saturated output.
   In switch up, outputs are split per tap; in middle/down, taps are mixed to mono on both outputs.
