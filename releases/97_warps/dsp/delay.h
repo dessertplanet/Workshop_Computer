@@ -2,11 +2,15 @@
 // (Hermite) reads, used by two zones:
 //
 //   EchoDelay     - classic delay: timbre = time, zone fraction = feedback.
-//   StereoDoppler - 2D position panner (after parasites' doppler): timbre =
-//                   left/right position, zone fraction = distance. Produces
-//                   a true stereo pair (main = left, aux = right) via
-//                   inter-aural time difference, per-side gain, and a
-//                   distance delay whose slow slewing produces pitch bends.
+//   StereoDoppler - binaural 2D position panner (after parasites' doppler):
+//                   timbre = x position (left..right), y control = depth
+//                   (0..2 units in front of the head), zone fraction = room
+//                   size, a continuous sweep through the original's four
+//                   button presets (tiny room .. huge hall: longer distance
+//                   delays and steeper attenuation). Produces a true stereo
+//                   pair (main = left, aux = right) via inter-aural time
+//                   difference, distance attenuation, and a distance delay
+//                   whose slow slewing produces the doppler pitch bends.
 //
 // The buffers make these objects large; they must live in static storage.
 
@@ -92,50 +96,116 @@ private:
 	int32_t delay_q8_ = 48 << 8;
 };
 
-// 2D doppler panner. timbre = position (0 = hard left .. 4095 = hard right),
-// fraction = distance (near..far: longer delay, quieter, wider pitch bends
-// when moved). Main output = left ear, aux output = right ear.
+// Binaural 2D doppler panner, following the parasites doppler geometry:
+// the source sits at (x, y) relative to the listener's head, from which we
+// derive a distance (delay + attenuation) and an angle (inter-aural time
+// difference + equal-power pan). The room control sweeps continuously
+// through the original's four button presets, interpolating both the room
+// size (distance-delay scale) and the attenuation factor between anchors -
+// like the continuous Chebyschev order sweep.
+//
+//   pos_x: 0..4095 -> x in -1..1 (left..right)
+//   pos_y: 0..4095 -> y in 0..2 (at the head..far in front)
+//   room:  0..4095 -> tiny room .. huge hall
+//
+// Main output = left ear, aux output = right ear.
 class StereoDoppler
 {
 public:
 	// Returns the left channel; right is available via aux() afterwards.
 	int32_t Process(int32_t carrier, int32_t modulator,
-	                int32_t position, int32_t distance)
+	                int32_t pos_x, int32_t pos_y, int32_t room)
 	{
 		int32_t dry = Clip((carrier + modulator) >> 1);
 		line_.Write(dry);
 
-		// Distance delay: 24..~9600 samples (0.5ms..200ms), Q8.
-		int32_t base_q8 = (24 << 8) + distance * 600;
+		// Base position, Q11 units: x in -2048..2047, y in 0..4095. Small
+		// x offset avoids the discontinuity at the origin (the original's
+		// +0.05).
+		int32_t x = pos_x - 2048 + 102;
+		int32_t y = pos_y;
+		if (x > 2047) x = 2047;
 
-		// ITD: up to ~0.7ms (34 samples) between ears, Q8.
-		int32_t pan = position - 2048;              // -2048..2047
-		int32_t itd_q8 = (pan * (34 << 8)) >> 11;   // -34..+34 samples
+		// Continuous room sweep through the original's four presets:
+		// room size in delay samples and attenuation factor (Q11),
+		// piecewise-linear between anchors.
+		static constexpr int32_t kRoomSize[4] = {100, 1638, 3276, 8192};
+		static constexpr int32_t kAttenQ11[4] = {1024, 8192, 16384, 30720};
+		int32_t seg = (room * 3) >> 12;             // 0..2
+		int32_t t = (room * 3) & 4095;              // fraction within segment
+		int32_t room_samples = kRoomSize[seg] +
+			(((kRoomSize[seg + 1] - kRoomSize[seg]) * t) >> 12);
+		int32_t atten_k_q11 = kAttenQ11[seg] +
+			(((kAttenQ11[seg + 1] - kAttenQ11[seg]) * t) >> 12);
 
-		// Slow slew -> doppler pitch bends as position/distance move.
+		// Polar coordinates: distance (0..~1 Q11 after normalization by the
+		// maximum sqrt(1^2+2^2)=sqrt(5)) and pan = x/d in -2048..2047.
+		int32_t d_raw = SqrtU32(static_cast<uint32_t>(x * x + y * y));
+		int32_t pan_t = d_raw > 0 ? (x << 11) / d_raw : 0;
+		if (pan_t < -2048) pan_t = -2048;
+		if (pan_t > 2047) pan_t = 2047;
+		int32_t dist_t = (d_raw * 916) >> 12; // /sqrt(5): 0..~2048
+
+		// Slow slew (~0.001/sample as in the original) -> pitch bends.
+		pan_ += (pan_t - pan_) >> 10;
+		dist_ += (dist_t - dist_) >> 10;
+
+		// Delays: distance delay scaled by the room size (up to ~170ms in
+		// the largest room) plus ITD up to ~1.5ms (72 samples at 48kHz) on
+		// the far ear, Q8. dist_ (Q11) * room_samples >> 3 = Q8 samples.
+		int32_t base_q8 = (12 << 8) + ((dist_ * room_samples) >> 3);
+		int32_t itd_q8 = (pan_ * (72 << 8)) >> 11;
 		int32_t target_l = base_q8 + (itd_q8 > 0 ? itd_q8 : 0);
 		int32_t target_r = base_q8 + (itd_q8 < 0 ? -itd_q8 : 0);
 		delay_l_q8_ += (target_l - delay_l_q8_) >> 11;
 		delay_r_q8_ += (target_r - delay_r_q8_) >> 11;
 
-		// Per-side gain: constant-power-ish pan plus distance attenuation.
-		int32_t gl = 2048 - (pan >> 1);             // 1024..3071
-		int32_t gr = 2048 + (pan >> 1);
-		int32_t att = 4096 - ((distance * 2867) >> 12); // 1.0 .. ~0.3
-		gl = (gl * att) >> 12;
-		gr = (gr * att) >> 12;
+		// Distance attenuation 1/(1 + k*d^2), k from the room sweep
+		// (0.5 in the tiny room .. 15 in the hall), and equal-power pan.
+		int32_t d2_q11 = (dist_ * dist_) >> 11;
+		int32_t att_q12 = (2048 << 12) / (2048 + ((atten_k_q11 * d2_q11) >> 11));
+		int32_t p = (pan_ + 2048) & 4095; // 0..4095
+		int32_t fade_in = (p * (8190 - p)) >> 12;             // Q12, right
+		int32_t q = kParamMax - p;
+		int32_t fade_out = (q * (8190 - q)) >> 12;            // Q12, left
+		int32_t gl = (fade_out * att_q12) >> 12;
+		int32_t gr = (fade_in * att_q12) >> 12;
 
-		int32_t left = (line_.ReadHermite(delay_l_q8_) * gl) >> 11;
-		aux_ = Clip((line_.ReadHermite(delay_r_q8_) * gr) >> 11);
+		int32_t left = (line_.ReadHermite(delay_l_q8_) * gl) >> 12;
+		aux_ = Clip((line_.ReadHermite(delay_r_q8_) * gr) >> 12);
 		return Clip(left);
 	}
 
 	int32_t aux() const { return aux_; }
 
 private:
+	// Integer square root of a 32-bit value (result fits in 16 bits).
+	static int32_t SqrtU32(uint32_t v)
+	{
+		uint32_t res = 0;
+		uint32_t bit = 1u << 30;
+		while (bit > v) bit >>= 2;
+		while (bit)
+		{
+			if (v >= res + bit)
+			{
+				v -= res + bit;
+				res = (res >> 1) + bit;
+			}
+			else
+			{
+				res >>= 1;
+			}
+			bit >>= 2;
+		}
+		return static_cast<int32_t>(res);
+	}
+
 	DelayLine<14> line_;
-	int32_t delay_l_q8_ = 24 << 8;
-	int32_t delay_r_q8_ = 24 << 8;
+	int32_t pan_ = 0;
+	int32_t dist_ = 0;
+	int32_t delay_l_q8_ = 12 << 8;
+	int32_t delay_r_q8_ = 12 << 8;
 	int32_t aux_ = 0;
 };
 

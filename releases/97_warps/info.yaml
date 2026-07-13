@@ -1,10 +1,10 @@
-draft: true
+draft: false
 Name: Warps
-Description: Port of Mutable Instruments' "parasites" Warps meta-modulator (cross-modulation, ring mod, wavefolder, vocoder, frequency shifter) to the Workshop System Computer. Work in progress.
+Description: Fixed-point 15-zone cross-modulator with a clocked Turing CV and gate companion.
 Language: C++ (RP2040 Pico SDK)
 Creator: Eric Gao
-Version: 0.1.0
-Status: WIP
+Version: 0.2.0
+Status: Beta
 License: MIT
 Repository: https://github.com/Ericxgao/Workshop_Computer/tree/eric/warps-port/releases/97_warps
 
@@ -14,72 +14,98 @@ tags:
   - ring-modulation
   - wavefolder
   - vocoder
-  - port
+  - turing-machine
 
 manual: |
-  WORK IN PROGRESS — this is an early port of Mutable Instruments Warps
-  (parasites firmware) to the Workshop System Computer. Not all algorithms are
-  expected to run in real time on the FPU-less RP2040 yet; see README.md.
+  Audio In 1 is the external carrier and Audio In 2 is the modulator.
+  Audio Out 1 is the processed output. Audio Out 2 is the dry sum except
+  in three zones: doppler (right channel), frequency shifter (opposite
+  sideband), and bitcrusher (bit-degraded dry mix).
 
-  Classic (external carrier) patch:
-    Audio In 1  = carrier
-    Audio In 2  = modulator
-    Audio Out 1 = cross-modulated main output
-    Audio Out 2 = carrier + modulator (aux) output
+  SWITCH MIDDLE — WARPS
+    Main = algorithm, X = timbre, Y = drive in most zones.
+    Three zones repurpose Y as a third sound parameter: sideband
+    crossfade (frequency shifter), operator morph (bitcrusher), and
+    depth (doppler).
+    CV In 1 and 2 modulate algorithm and timbre.
 
-  Main knob sweeps the meta-algorithm (crossfade -> wavefolder -> ring mods ->
-  XOR -> comparator -> vocoder). Knob X sets the timbre / modulation depth.
-  Knob Y sets input drive (gain into the saturating input stage).
+  SWITCH UP — TURING EDIT
+    Main = feedback probability: right repeats, center is random, left inverts.
+    X = length (2, 3, 4, 5, 6, 8, 12, or 16).
+    Y = quantized pitch and bipolar CV spread.
+    The LEDs show six register bits. Returning to middle uses soft pickup.
+
+  SWITCH DOWN — CLOCK
+    Each press advances one step. Two taps start or update the internal clock
+    from 20–300 BPM. Hold for 750 ms to stop it.
+
+  Pulse In 1 is an external clock and overrides the internal clock while
+  patched. Pulse In 2 resets the sequence on a rising edge.
+
+  In the vocoder zone, pushing Main to the very top freezes the spectral
+  envelope (all four zone LEDs light); backing off resumes tracking.
+
+  CV Out 1 is C-minor-pentatonic Turing pitch. CV Out 2 is related bipolar
+  Turing CV. Pulse Outs 1 and 2 are two related register-bit gates.
 
 panel:
   inputs:
     - id: AudioIn1
       name: Carrier
-      description: Carrier input (Modulator channel 0)
+      description: External carrier input
     - id: AudioIn2
       name: Modulator
-      description: Modulator input (Modulator channel 1)
+      description: Modulator input
     - id: CVIn1
-      name: (unused)
-      description: Reserved for algorithm CV modulation
+      name: Algorithm CV
+      description: Bipolar modulation added to the held Main value
     - id: CVIn2
-      name: (unused)
-      description: Reserved for timbre CV modulation
+      name: Timbre CV
+      description: Bipolar modulation added to the held X value
     - id: PulseIn1
-      name: (unused)
-      description: Reserved
+      name: Clock
+      description: External Turing clock; overrides the internal clock
     - id: PulseIn2
-      name: (unused)
-      description: Reserved
+      name: Reset
+      description: Turing reset on rising edge
   outputs:
     - id: AudioOut1
       name: Main
-      description: Cross-modulated / vocoded main output
+      description: Cross-modulated output
     - id: AudioOut2
-      name: Aux
-      description: Carrier + modulator sum (aux output)
+      name: Aux / Right
+      description: Dry sum; doppler right channel, shifter opposite sideband, or bitcrushed dry mix in those zones
     - id: CVOut1
-      name: (unused)
-      description: Reserved
+      name: Turing Pitch
+      description: C-minor-pentatonic quantized pitch
     - id: CVOut2
-      name: (unused)
-      description: Reserved
+      name: Turing CV
+      description: Bipolar stepped modulation
+    - id: PulseOut1
+      name: Turing Gate A
+      description: First register bit gate
+    - id: PulseOut2
+      name: Turing Gate B
+      description: Length-aware second register bit gate
 
 controls:
   knobs:
     - id: Main
-      name: Algorithm
-      description: Sweep across the meta-modulation algorithms (0..8)
+      name: Algorithm / Probability
+      description: Warps algorithm in middle; Turing feedback probability up
     - id: X
-      name: Timbre
-      description: Modulation parameter / algorithm depth
+      name: Timbre / Length
+      description: Warps timbre in middle; Turing loop length up
     - id: Y
-      name: Drive
-      description: Input drive into the saturating amplifier stage
+      name: Drive / Zone Param / Spread
+      description: Input drive in middle (sideband crossfade, bitcrush operator, or doppler depth in those zones); Turing CV spread up
   leds:
-    - id: LED0
-      name: Algorithm position
-    - id: LED2
-      name: Timbre
+    - id: LED0-3
+      name: Algorithm / Register
+      description: Algorithm binary display in middle; register bits up
     - id: LED4
-      name: Drive
+      name: Overrun / Register
+      description: Latched CPU overrun in middle; register bit up
+    - id: LED5
+      name: Headroom / Register
+      description: CPU headroom in middle; register bit up

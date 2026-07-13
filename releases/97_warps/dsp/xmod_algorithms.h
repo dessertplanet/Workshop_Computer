@@ -250,13 +250,11 @@ inline int32_t ComparatorChebyschev(int32_t carrier, int32_t modulator, int32_t 
 	return Clip((x * 3277) >> 12); // * 0.8
 }
 
-// Bitcrusher: faithful port of ALGORITHM_BITCRUSHER. Both inputs are
-// OR-quantized against a stepped constant (37 steps, driven quadratically
-// by `quantize` = position within the zone), then combined by one of four
-// bitwise/arithmetic operators selected by `parameter` (the timbre knob):
-//   sum -> OR -> XOR -> shift
-inline int32_t Bitcrusher(int32_t carrier, int32_t modulator,
-                          int32_t parameter, int32_t quantize)
+// OR-quantization stage of the bitcrusher: degrades one Q12 sample against
+// a stepped constant (37 steps, driven quadratically by `quantize`),
+// interpolating between adjacent steps. Returns the degraded 16-bit word
+// (sample << 4); callers combine words and shift back to Q12.
+inline int32_t BitcrushWord(int32_t sample, int32_t quantize)
 {
 	// z = quantize^2 * 37 in Q12 steps.
 	int32_t z = ((quantize * quantize) >> 12) * 37;
@@ -265,16 +263,28 @@ inline int32_t Bitcrusher(int32_t carrier, int32_t modulator,
 	int16_t z_short_1 = static_cast<int16_t>(z_integral * 32768 / 37);
 	int16_t z_short_2 = static_cast<int16_t>((z_integral + 1) * 32768 / 37);
 
-	int16_t a16 = static_cast<int16_t>(Clip(carrier) << 4);
-	int16_t b16 = static_cast<int16_t>(Clip(modulator) << 4);
+	int16_t s16 = static_cast<int16_t>(Clip(sample) << 4);
+	int32_t s_1 = s16 | z_short_1, s_2 = s16 | z_short_2;
+	return s_1 + (((s_2 - s_1) * z_fraction) >> 12);
+}
 
-	int32_t a_1 = a16 | z_short_1, a_2 = a16 | z_short_2;
-	int32_t a = a_1 + (((a_2 - a_1) * z_fraction) >> 12);
-	int32_t b_1 = b16 | z_short_1, b_2 = b16 | z_short_2;
-	int32_t b = b_1 + (((b_2 - b_1) * z_fraction) >> 12);
+// Degrade one Q12 sample and return it in Q12 (for the bit-degraded aux
+// output, as in the parasites dual bit-mangler's stereo trick).
+inline int32_t BitcrushSample(int32_t sample, int32_t quantize)
+{
+	return Clip(static_cast<int16_t>(BitcrushWord(sample, quantize)) >> 4);
+}
 
-	int16_t as = static_cast<int16_t>(a);
-	int16_t bs = static_cast<int16_t>(b);
+// Bitcrusher: faithful port of ALGORITHM_BITCRUSHER. Both inputs are
+// OR-quantized against a stepped constant (37 steps, driven quadratically
+// by `quantize`), then combined by one of four bitwise/arithmetic operators
+// morphed by `parameter`:
+//   sum -> OR -> XOR -> shift
+inline int32_t Bitcrusher(int32_t carrier, int32_t modulator,
+                          int32_t parameter, int32_t quantize)
+{
+	int16_t as = static_cast<int16_t>(BitcrushWord(carrier, quantize));
+	int16_t bs = static_cast<int16_t>(BitcrushWord(modulator, quantize));
 
 	int32_t ops[4];
 	ops[0] = static_cast<int16_t>(as + bs);

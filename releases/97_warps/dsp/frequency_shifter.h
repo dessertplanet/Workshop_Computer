@@ -1,10 +1,19 @@
-// Fixed-point single-sideband frequency shifter.
+// Fixed-point single-sideband frequency shifter, after the parasites
+// FEATURE_MODE_FREQUENCY_SHIFTER.
 //
 // Structure: a phase-difference network (two cascades of four second-order
 // allpass sections whose outputs are 90 degrees apart across the audio band)
-// feeds a quadrature oscillator ring modulator:
+// feeds a quadrature oscillator ring modulator, producing BOTH sidebands:
 //
-//   out = I * cos(wt) -/+ Q * sin(wt)     (- = shift up, + = shift down)
+//   up   = I * cos(wt) - Q * sin(wt)
+//   down = I * cos(wt) + Q * sin(wt)
+//
+// The xfade control crossfades the main output between the down and up
+// sidebands (equal-power), and the aux output always carries the opposite
+// mix, like the parasites dual up/down outputs. Feedback (soft-clipped,
+// low-passed, xfade-dependent maximum as in the parasites "mic.w tweak")
+// re-injects the main output into the shifter input for barberpole-style
+// regeneration.
 //
 // Allpass coefficients are the classic Hilbert half-band pair (e.g. as used
 // in the Warps/parasites frequency shifter and many phase-vocoder designs),
@@ -57,9 +66,25 @@ public:
 
 	// parameter: 0..4095. Centre (2048) = no shift; below shifts down, above
 	// shifts up, with a quadratic curve out to roughly +/-1 kHz.
-	int32_t Process(int32_t carrier, int32_t modulator, int32_t parameter)
+	// xfade: 0..4095 crossfades the main output from the down sideband (0)
+	// to the up sideband (4095); the aux output gets the opposite mix.
+	// feedback: 0..4095 re-injects the main output into the input.
+	int32_t Process(int32_t carrier, int32_t modulator, int32_t parameter,
+	                int32_t xfade, int32_t feedback)
 	{
 		int32_t x = Clip((carrier + modulator) >> 1);
+
+		// Feedback, after the original: an expansive amount law
+		// (a = f*(2-f), applied twice) and a maximum that grows as the
+		// xfade leaves the centre (the parasites "mic.w tweak"), then
+		// x += a * (SoftClip(x + max_fb * fb * a) - x).
+		int32_t a = (feedback * (8190 - feedback)) >> 12;     // Q12
+		a = (a * (8190 - a)) >> 12;                           // Q12
+		int32_t t = xfade - 2048;                             // -2048..2047
+		int32_t max_fb_q12 = 4096 + ((t * t) >> 10);          // 1.0..~3.0
+		int32_t injected = x +
+			((((feedback_sample_ * max_fb_q12) >> 12) * a) >> 12);
+		x += (a * (SoftLimit(injected << 1) - x)) >> 12;
 
 		// Two allpass paths, 90 degrees apart. Path B is additionally
 		// delayed one sample to complete the quadrature relationship.
@@ -81,9 +106,26 @@ public:
 		int32_t sin_v = SineQ14(phase_);
 		int32_t cos_v = SineQ14(phase_ + 0x40000000u);
 
-		int32_t out = (i_path * cos_v - q_delayed * sin_v) >> 14;
-		return Clip(out);
+		int32_t ring_cos = (i_path * cos_v) >> 14;
+		int32_t ring_sin = (q_delayed * sin_v) >> 14;
+		int32_t up_band = ring_cos - ring_sin;
+		int32_t down_band = ring_cos + ring_sin;
+
+		// Equal-power sideband crossfade (same curve as Xfade()).
+		int32_t fade_in = (xfade * (8190 - xfade)) >> 12;     // Q12
+		int32_t u = kParamMax - xfade;
+		int32_t fade_out = (u * (8190 - u)) >> 12;            // Q12
+		int32_t main = (up_band * fade_in + down_band * fade_out) >> 12;
+		aux_ = Clip((down_band * fade_in + up_band * fade_out) >> 12);
+
+		// One-pole LP (~0.2) on the feedback tap to tame high frequencies.
+		feedback_sample_ += ((main - feedback_sample_) * 819) >> 12;
+
+		return Clip(main);
 	}
+
+	// Opposite sideband mix of the previous Process() call.
+	int32_t aux() const { return aux_; }
 
 private:
 	static constexpr int kSineSize = 1024;
@@ -113,6 +155,8 @@ private:
 	};
 
 	int32_t q_z1_ = 0;
+	int32_t feedback_sample_ = 0;
+	int32_t aux_ = 0;
 	uint32_t phase_ = 0;
 	int16_t sine_q14_[kSineSize];
 };

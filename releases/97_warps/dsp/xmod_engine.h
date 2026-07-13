@@ -4,8 +4,12 @@
 // like Warps' META mode the output crossfades between adjacent algorithms
 // around each zone boundary rather than hard-switching. The position WITHIN
 // a zone doubles as a secondary parameter for algorithms that have one
-// (fold bias, ring-mod character, bitcrusher quantize, delay feedback,
-// doppler distance, vocoder release), mirroring the original META sweep.
+// (fold bias, ring-mod character, freq-shifter feedback, delay feedback,
+// doppler room size, vocoder release), mirroring the original META sweep.
+//
+// The Y control is per-zone: the frequency shifter (sideband crossfade),
+// bitcrusher (operator morph), and doppler (depth) use it as a third
+// algorithm parameter; every other zone uses it as input drive.
 //
 // The waveshaping zones (fold, ring mods, xor) are processed 2x oversampled
 // to tame aliasing (the original runs them 6x oversampled).
@@ -48,10 +52,13 @@ enum Algorithm : int32_t
 class Engine
 {
 public:
-	// algorithm_control, parameter, drive: 0..4095 (knob values, possibly
+	// algorithm_control, parameter, y: 0..4095 (knob values, possibly
 	// CV-summed and clamped by the caller).
-	// Drive has a floor so signal always flows even with the knob at zero.
-	void SetControls(int32_t algorithm_control, int32_t parameter, int32_t drive)
+	// The Y control is per-zone: zones with a more interesting third
+	// parameter use it directly (frequency shifter sideband crossfade,
+	// bitcrusher operator morph, doppler depth); everywhere else it is
+	// input drive, with a floor so signal always flows at knob zero.
+	void SetControls(int32_t algorithm_control, int32_t parameter, int32_t y)
 	{
 		// Real pots rarely reach the full ADC range (observed max ~3725 of
 		// 4095 on hardware). Rescale by ~1.12 so a maxed knob lands solidly
@@ -66,28 +73,64 @@ public:
 		zone_fraction_ = scaled & 4095;
 
 		parameter_ = parameter;
+		y_ = y;
 
 		// Drive floor ~10%: Q12 gain 0.1x..2.0x.
-		drive_gain_q12_ = 410 + ((drive * (8192 - 410)) >> 12);
+		drive_gain_q12_ = 410 + ((y * (8192 - 410)) >> 12);
 	}
 
-	// Freeze (vocoder spectral capture), from the switch: latched when up,
-	// momentary when held down.
-	void SetFreeze(bool freeze) { freeze_ = freeze; }
+	// True for zones where the Y control is repurposed as a third algorithm
+	// parameter instead of input drive.
+	static bool UsesYAsParameter(int32_t algorithm)
+	{
+		return algorithm == kBitcrusher
+			|| algorithm == kFrequencyShifter
+			|| algorithm == kStereoDoppler;
+	}
+
+	// Launch the vocoder's core-1 band worker. Call once before audio
+	// starts; core 1 must not be used for anything else.
+	void StartVocoderWorker() { vocoder_.StartWorker(); }
 
 	// Zone index (0..kNumAlgorithms-1), for UI feedback.
 	int32_t zone() const { return zone_; }
 
-	// True when the current zone produces a true stereo pair; the right
-	// channel is then available from aux().
-	bool has_stereo_aux() const { return zone_ == kStereoDoppler; }
-	int32_t aux() const { return stereo_doppler_.aux(); }
+	// True while the vocoder is holding its captured spectral envelope
+	// (release knob at the end-stop), for UI feedback.
+	bool vocoder_frozen() const
+	{
+		return zone_ == kVocoder && vocoder_.frozen();
+	}
+
+	// True when the current zone produces its own aux/right output; the
+	// caller should then route aux() to Audio Out 2 instead of the dry sum.
+	bool has_stereo_aux() const
+	{
+		return zone_ == kStereoDoppler
+			|| zone_ == kFrequencyShifter
+			|| zone_ == kBitcrusher;
+	}
+
+	int32_t aux() const
+	{
+		switch (zone_)
+		{
+		case kFrequencyShifter: return frequency_shifter_.aux();
+		case kBitcrusher: return bitcrush_aux_;
+		case kStereoDoppler: return stereo_doppler_.aux();
+		default: return 0;
+		}
+	}
 
 	int32_t Process(int32_t carrier, int32_t modulator)
 	{
-		// Input drive with saturation (gain up to 2x, soft-limited).
-		carrier = SoftLimit((carrier * drive_gain_q12_) >> 11);
-		modulator = SoftLimit((modulator * drive_gain_q12_) >> 11);
+		// Input drive with saturation (gain up to 2x, soft-limited), except
+		// in zones where Y is an algorithm parameter (unity gain there).
+		if (!UsesYAsParameter(zone_))
+		{
+			carrier = SoftLimit((carrier * drive_gain_q12_) >> 11);
+			modulator = SoftLimit((modulator * drive_gain_q12_) >> 11);
+		}
 
 		int32_t out = RunAlgorithm(zone_, carrier, modulator);
 
@@ -153,15 +196,22 @@ private:
 		case kChebyschev:
 			return Chebyschev(carrier, modulator, p);
 		case kBitcrusher:
-			return Bitcrusher(carrier, modulator, p, f);
+			// X = degradation amount, Y = operator morph (parasites order);
+			// aux gets the degraded dry mix for the stereo trick.
+			bitcrush_aux_ =
+				BitcrushSample(Clip((carrier + modulator) >> 1), p);
+			return Bitcrusher(carrier, modulator, y_, p);
 		case kFrequencyShifter:
-			return frequency_shifter_.Process(carrier, modulator, p);
+			// X = shift, Y = up/down sideband crossfade, zone fraction =
+			// feedback; aux carries the opposite sideband mix.
+			return frequency_shifter_.Process(carrier, modulator, p, y_, f);
 		case kEchoDelay:
 			return echo_delay_.Process(carrier, modulator, p, f);
 		case kStereoDoppler:
-			return stereo_doppler_.Process(carrier, modulator, p, f);
+			// X = left/right, Y = depth, zone fraction = room size.
+			return stereo_doppler_.Process(carrier, modulator, p, y_, f);
 		case kVocoder:
-			return vocoder_.Process(carrier, modulator, p, f, freeze_);
+			return vocoder_.Process(carrier, modulator, p, f);
 		default:
 			return Clip((carrier + modulator) >> 1);
 		}
@@ -170,8 +220,9 @@ private:
 	int32_t zone_ = 0;
 	int32_t zone_fraction_ = 0;
 	int32_t parameter_ = 0;
+	int32_t y_ = 2048;
 	int32_t drive_gain_q12_ = 4096;
-	bool freeze_ = false;
+	int32_t bitcrush_aux_ = 0;
 	int32_t previous_carrier_ = 0;
 	int32_t previous_modulator_ = 0;
 

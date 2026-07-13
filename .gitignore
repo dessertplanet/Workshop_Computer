@@ -23,3 +23,7 @@ tools/sitegen/node_modules/
 
 # Build harness output (per-card CMake build dirs)
 **/build/
+
+# Local-only upstream design references (not for the public repo)
+releases/97_warps/warps/
+releases/97_warps/stmlib/
