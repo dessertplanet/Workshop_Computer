@@ -74,6 +74,7 @@ function detailPage(rel) {
     yamlUrl,
     uf2Url,
     extraDocs: renderReadmeAndDocs({ readmeHtml, docs }),
+    basic: !!card.draft,
   });
 
   return renderLayout({

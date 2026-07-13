@@ -80,18 +80,20 @@ function renderSocketList(title, sockets, positions) {
   return `<section class="program-card-section"><h3>${esc(title)}</h3><div class="program-card-socket-list">${items}</div></section>`;
 }
 
-function renderDocumentation(card, extraSections = '') {
+function renderDocumentation(card, extraSections = '', includeStructured = true) {
   const documentation = card.documentation || {};
   const blocks = [];
-  if (String(documentation.intro || '').trim()) {
-    blocks.push(`<div class="program-card-section"><h3>Documentation</h3>${markdownBlock(documentation.intro)}</div>`);
-  }
-  for (const section of (Array.isArray(documentation.sections) ? documentation.sections : [])) {
-    const title = inline(section?.title || '');
-    const body = String(section?.body || '').trim();
-    if (!body) continue;
-    const heading = title ? title.replace(/\b\w/g, c => c.toUpperCase()) : 'Documentation';
-    blocks.push(`<div class="program-card-section"><h3>${esc(heading)}</h3>${markdownBlock(body)}</div>`);
+  if (includeStructured) {
+    if (String(documentation.intro || '').trim()) {
+      blocks.push(`<div class="program-card-section"><h3>Documentation</h3>${markdownBlock(documentation.intro)}</div>`);
+    }
+    for (const section of (Array.isArray(documentation.sections) ? documentation.sections : [])) {
+      const title = inline(section?.title || '');
+      const body = String(section?.body || '').trim();
+      if (!body) continue;
+      const heading = title ? title.replace(/\b\w/g, c => c.toUpperCase()) : 'Documentation';
+      blocks.push(`<div class="program-card-section"><h3>${esc(heading)}</h3>${markdownBlock(body)}</div>`);
+    }
   }
   const joined = blocks.join('') + (extraSections || '');
   if (!joined.trim()) return '';
@@ -161,13 +163,14 @@ function renderAudio(samples) {
  * @param {string} opts.yamlUrl      GitHub URL to the source info.yaml
  * @param {string} [opts.uf2Url]     direct .uf2 download URL (enables WebUSB)
  * @param {string} [opts.extraDocs]  extra HTML appended into the documentation area (README/PDFs)
+ * @param {boolean} [opts.basic]    draft mode: render only basic fields + README/PDFs (skip the generated model sections)
  */
-export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs = '' }) {
+export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs = '', basic = false }) {
   const metadata = card.metadata || {};
   const summary = card.summary || card.description || '';
   const sourceUrl = card.source_url || '';
   const readmeUrl = card.readme_url || '';
-  const documentation = renderDocumentation(card, extraDocs);
+  const documentation = renderDocumentation(card, extraDocs, !basic);
   const discussionUrl = metadata.discussion_url || DEFAULT_DISCUSSION;
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
   const panel = card.panel || {};
@@ -186,7 +189,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
 
   const ledsMarkup = (card.leds || []).map(led => `<p>${esc(truncate(led, 260))}</p>`).join('');
 
-  const dataSources = Array.isArray(card.source) && card.source.length
+  const dataSources = !basic && Array.isArray(card.source) && card.source.length
     ? `<div class="program-card-data-sources"><details><summary>Data sources</summary><p>${card.source.map(item => `<code title="${esc(item)}">${esc(truncate(item, 56))}</code>`).join(', ')}</p></details></div>`
     : '';
 
@@ -223,27 +226,27 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
 
   const hero = `<header class="program-card-hero">
     <div class="program-card-hero__main">
-      ${renderTags(card)}
+      ${basic ? '' : renderTags(card)}
       <h1><span class="program-card-page__number">${esc(cardNumber(card))}</span> ${esc(inline(card.title || card.id || 'Untitled card'))}</h1>
       ${summary ? `<p>${esc(truncate(summary, 240))}</p>` : ''}
-      <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${memoryMarkup}</div>
+      <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${basic ? '' : memoryMarkup}</div>
       <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>
       <div class="program-card-sha" data-sha-display role="status" aria-live="polite" hidden>SHA256: <code class="program-card-sha__value" data-sha-value></code> <button type="button" class="program-card-sha__verify" data-verify-open>How to verify</button></div>
       <div class="program-card-hero__links" aria-label="Further card links">${documentation ? `<a href="#card-documentation">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a></div>
     </div>
   </header>`;
 
-  const demo = firstVideo
+  const demo = !basic && firstVideo
     ? `<section class="program-card-demo"><a href="${esc(firstVideo.url)}" data-youtube-id="${esc(firstVideo.id)}"><span class="program-card-demo__media" aria-hidden="true"><img src="https://img.youtube.com/vi/${esc(firstVideo.id)}/hqdefault.jpg" alt="" loading="lazy"></span><span class="program-card-demo__text"><span>Watch</span><strong>${esc(firstVideo.title || 'Demo video')}</strong></span></a></section>`
     : '';
 
-  const audio = renderAudio(card.audio_samples);
+  const audio = basic ? '' : renderAudio(card.audio_samples);
 
-  const quickStart = Array.isArray(card.quick_start) && card.quick_start.length
+  const quickStart = !basic && Array.isArray(card.quick_start) && card.quick_start.length
     ? `<section class="program-card-quick-start"><h2>Quick start</h2><ol>${card.quick_start.map(step => `<li>${esc(stripTags(step))}</li>`).join('')}</ol></section>`
     : '';
 
-  const use = `<section class="program-card-use-section">
+  const use = basic ? '' : `<section class="program-card-use-section">
     <h2 class="program-card-use__title">Panel</h2>
     <div class="program-card-use">
     <div class="program-card-use__panel">${renderPanel(card, panelImg)}</div>
@@ -257,7 +260,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
   </div>
   </section>`;
 
-  const notesMarkup = Array.isArray(card.notes) && card.notes.length
+  const notesMarkup = !basic && Array.isArray(card.notes) && card.notes.length
     ? `<section class="program-card-section"><h3>Notes</h3>${card.notes.map(note => `<p>${esc(truncate(note, 220))}</p>`).join('')}</section>`
     : '';
 

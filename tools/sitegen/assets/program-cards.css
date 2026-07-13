@@ -597,8 +597,22 @@
   padding-top: 2px;
 }
 
+/* On basic/draft pages the Documentation section follows the hero directly; the
+   hero already has a bottom rule, so drop the duplicate top border. */
+.program-card-hero + .program-card-documentation {
+  border-top: 0;
+  margin-top: 24px;
+  padding-top: 0;
+}
+
 .program-card-documentation .program-card-section {
   max-width: 48rem;
+}
+
+.program-card-documentation .program-card-section:first-child {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
 }
 
 .program-card-documentation .program-card-section h3 {
