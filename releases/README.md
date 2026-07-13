@@ -17,6 +17,7 @@
 | 14_cvmod | Quad CV delay inspired by Make Noise Multimod | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 15_MLRws | A remix of monome's classic MLR sample cutting platform (grid controller encouraged but optional). Diagrams here are for Gridless mode.<br>[Web editor](https://dessertplanet.github.io/MLRws-web/) | 1.1.5<br>Released | Pico SDK | Dune Desormeaux |
 | 16_the_bells | Bellringing methods sequencer — 12 change-ringing methods with tempo and jitter, quantised to six scales | 1.0.0<br>Released | C++ (ComputerCard) | James Saunders |
+| 17_COMET | Clocked lo-fi reverb and delay | 1.0<br>Released | C++ (Pico SDK, ComputerCard) | EME |
 | 18_chord_organ | Chord Organ-ish - 16 chords, 8 voices, 1V/oct root. Inspired by Music Thing Chord Organ. | 0.1<br>Working | Pico SDK (C++), ComputerCard | jkeyworth |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface.<br>[Web editor](https://www.musicthing.co.uk/web_config/reverb.html) | 1.5<br>Released | C (RPi Pico SDK) | Chris Johnson |
 | 21_resonator | Karplus-Strong sympathetic resonator for droning and plucked textures, with chord & tanpura tunings, arpeggiator, pitch tracking and web-configurable CV/pulse outputs.<br>[Web editor](https://johaneklund.io/resonator) | 1.2<br>Released | C++ (ComputerCard) | Johan Eklund |
