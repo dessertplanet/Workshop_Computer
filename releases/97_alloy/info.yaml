@@ -22,38 +22,6 @@ summary: >
   binaural doppler, and a 20-band vocoder - with a clocked Turing machine
   driving pitch, CV, and gates underneath.
 
-manual: |
-  Audio In 1 is the external carrier and Audio In 2 is the modulator.
-  Audio Out 1 is the processed output. Audio Out 2 is the dry sum except
-  in three zones: doppler (right channel), frequency shifter (opposite
-  sideband), and bitcrusher (bit-degraded dry mix).
-
-  SWITCH MIDDLE — WARPS
-    Main = algorithm, X = timbre, Y = drive in most zones.
-    Three zones repurpose Y as a third sound parameter: sideband
-    crossfade (frequency shifter), operator morph (bitcrusher), and
-    depth (doppler).
-    CV In 1 and 2 modulate algorithm and timbre.
-
-  SWITCH UP — TURING EDIT
-    Main = feedback probability: right repeats, center is random, left inverts.
-    X = length (2, 3, 4, 5, 6, 8, 12, or 16).
-    Y = quantized pitch and bipolar CV spread.
-    The LEDs show six register bits. Returning to middle uses soft pickup.
-
-  SWITCH DOWN — CLOCK
-    Each press advances one step. Two taps start or update the internal clock
-    from 20–300 BPM. Hold for 750 ms to stop it.
-
-  Pulse In 1 is an external clock and overrides the internal clock while
-  patched. Pulse In 2 resets the sequence on a rising edge.
-
-  In the vocoder zone, pushing Main to the very top freezes the spectral
-  envelope (all four zone LEDs light); backing off resumes tracking.
-
-  CV Out 1 is C-minor-pentatonic Turing pitch. CV Out 2 is related bipolar
-  Turing CV. Pulse Outs 1 and 2 are two related register-bit gates.
-
 panel:
   inputs:
     - id: AudioIn1
