@@ -11,22 +11,31 @@ ridiculous act of listening very hard.
 
 | Control | Function |
 |---------|----------|
-| Main | Reserved for future mischief |
+| Main | Performer restlessness: automatic fidgets from none to occasional |
 | X | Performance space, from small dry room to long cathedral |
 | Y | Reverb amount, from almost dry to fully washed |
 | Switch Up | Stop and arm the performance |
 | Switch Middle | Start from the beginning and play three loops |
 | Switch Down | Trigger musician-shifts-in-seat one-shot |
+| Pulse In 1 | Trigger musician-shifts-in-seat one-shot on rising edge |
 
 The card powers up armed rather than playing. Move the switch Up to stop, reset
 the audio position, clear the reverb tail, and relight the three countdown LEDs.
 Move the switch to Middle to begin a complete 4'33" performance: three passes
 through the 91 second ambience loop, then automatic stop and mute. Moving the
-switch Down during a performance triggers the chair/stool creak one-shot; returning
-to Middle does not restart the performance while it is already running.
+switch Down during a performance, or sending a rising edge to Pulse In 1, triggers
+the chair/stool creak one-shot; returning to Middle does not restart the performance
+while it is already running.
 
 The creak is intentionally quiet and sits behind the room ambience, as if the
 performer has shifted slightly rather than knocked over the furniture.
+
+Main adds a little unattended human presence. Fully anticlockwise keeps the card
+manual-only: creaks happen only from Switch Down or Pulse In 1. Turning Main up
+allows occasional automatic creaks during the three-loop performance, with shorter
+random waits as the knob is turned clockwise. Automatic creaks are quieter than
+manual/Pulse-triggered creaks, so they sit more like doubtful little movements in
+the room.
 
 ## Outputs
 
@@ -52,9 +61,9 @@ This development version has both 2 MB and 16 MB builds:
 | `UF2/433_sense_of_space_seat_creak_2mb.uf2` | 2 MB | 91 seconds, 10 kHz stereo signed 8-bit, sourced from 1:30-3:01 |
 | `UF2/433_sense_of_space_seat_creak_16mb.uf2` | 16 MB | 91 seconds, 12 kHz stereo signed 8-bit, sourced from 1:30-3:01 |
 
-The two builds use the same code, controls, LED countdown, reverb, loop length,
-2 second loop crossfade, and chair creak one-shot. The only intentional difference
-is the ambience sample rate:
+The two builds use the same code, controls, LED countdown, reverb, restlessness
+automation, loop length, 2 second loop crossfade, and chair creak one-shot. The only
+intentional difference is the ambience sample rate:
 
 | Version | Difference |
 |---------|------------|
@@ -64,12 +73,10 @@ is the ambience sample rate:
 The UF2 file for the 2 MB build is larger than 2 MB because UF2 adds block metadata.
 The flash payload inside it is the relevant storage size.
 
-## Possible Pulse Input
+## Pulse Input
 
-Pulse In 1 could also trigger the chair/stool creak on a rising edge. This is not
-implemented in the current UF2s, but there is enough storage for it: it would add
-only a few bytes of control code and no new audio data. The 2 MB build currently
-has about 218 KB of flash headroom.
+Pulse In 1 triggers the chair/stool creak on a rising edge. It retriggers the same
+one-shot used by Switch Down, with no extra audio data.
 
 ## Seat Creak Candidate
 

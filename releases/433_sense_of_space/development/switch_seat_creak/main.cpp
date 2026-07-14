@@ -24,6 +24,7 @@ public:
     void __not_in_flash_func(ProcessSample)() override
     {
         update_transport();
+        update_restlessness();
 
         const StereoFrame dry = next_frame();
         const StereoFrame seat_creak = next_seat_creak_frame();
@@ -72,13 +73,17 @@ private:
     static constexpr uint32_t kControlUpdateMask = 0xff;
     static constexpr uint32_t kLoopCount = 3;
     static constexpr uint32_t kLoopCrossfadeFrames = kSourceRate * 2u;
-    static constexpr int32_t kSeatCreakGain = 1024; // Q12, 25%. Keeps the foley behind the ambience.
+    static constexpr int32_t kManualSeatCreakGain = 1024; // Q12, 25%. Keeps the foley behind the ambience.
+    static constexpr int32_t kAutoSeatCreakGain = 512;    // Q12, 12.5%. Automatic fidgets should feel half-imagined.
 
     reverb *verb_ = nullptr;
     uint64_t phase_ = 0;
     uint32_t seat_creak_position_ = kSeatCreakNoPlayback;
     uint64_t seat_creak_phase_ = 0;
+    uint32_t restlessness_countdown_ = kOutputRate * 20u;
+    uint32_t random_state_ = 0x43300433u;
     uint32_t sample_tick_ = 0;
+    int32_t seat_creak_gain_ = kManualSeatCreakGain;
     int32_t smoothed_size_ = 8192;
     int32_t smoothed_wet_ = 0;
     Switch last_switch_ = Switch::Middle;
@@ -95,6 +100,19 @@ private:
     static uint32_t seat_creak_frames()
     {
         return static_cast<uint32_t>(seat_creak_data_end - seat_creak_data) / 2u;
+    }
+
+    uint32_t __not_in_flash_func(next_random)()
+    {
+        random_state_ = random_state_ * 1664525u + 1013904223u;
+        return random_state_;
+    }
+
+    void __not_in_flash_func(trigger_seat_creak)(int32_t gain)
+    {
+        seat_creak_position_ = 0;
+        seat_creak_phase_ = 0;
+        seat_creak_gain_ = gain;
     }
 
     static int16_t clamp12(int32_t value)
@@ -180,10 +198,33 @@ private:
             performance_running_ = true;
             loops_remaining_ = kLoopCount;
             phase_ = 0;
+            restlessness_countdown_ = kOutputRate * 20u;
             if (verb_) {
                 reverb_reset(verb_);
             }
         }
+    }
+
+    void __not_in_flash_func(update_restlessness)()
+    {
+        const int32_t restlessness = KnobVal(Knob::Main);
+        if (!performance_running_ || restlessness < 128) {
+            restlessness_countdown_ = kOutputRate * 20u;
+            return;
+        }
+
+        if (restlessness_countdown_ > 0) {
+            --restlessness_countdown_;
+            return;
+        }
+
+        trigger_seat_creak(kAutoSeatCreakGain);
+
+        const uint32_t min_seconds = 5u;
+        const uint32_t max_seconds = 90u - ((static_cast<uint32_t>(restlessness) * 75u) >> 12);
+        const uint32_t span_seconds = (max_seconds > min_seconds) ? max_seconds - min_seconds : 1u;
+        const uint32_t wait_seconds = min_seconds + (next_random() % span_seconds);
+        restlessness_countdown_ = wait_seconds * kOutputRate;
     }
 
     void __not_in_flash_func(update_reverb_from_knobs)()
@@ -213,9 +254,8 @@ private:
     StereoFrame __not_in_flash_func(next_seat_creak_frame)()
     {
         const Switch current = SwitchVal();
-        if (current == Switch::Down && last_switch_ != Switch::Down) {
-            seat_creak_position_ = 0;
-            seat_creak_phase_ = 0;
+        if ((current == Switch::Down && last_switch_ != Switch::Down) || PulseIn1RisingEdge()) {
+            trigger_seat_creak(kManualSeatCreakGain);
         }
         last_switch_ = current;
 
@@ -237,8 +277,8 @@ private:
         const int32_t left_b = seat_creak_data[next * 2u];
         const int32_t right_b = seat_creak_data[next * 2u + 1u];
 
-        const int32_t left = (((left_a << 4) + (((left_b - left_a) * frac) >> 8)) * kSeatCreakGain) >> 12;
-        const int32_t right = (((right_a << 4) + (((right_b - right_a) * frac) >> 8)) * kSeatCreakGain) >> 12;
+        const int32_t left = (((left_a << 4) + (((left_b - left_a) * frac) >> 8)) * seat_creak_gain_) >> 12;
+        const int32_t right = (((right_a << 4) + (((right_b - right_a) * frac) >> 8)) * seat_creak_gain_) >> 12;
 
         seat_creak_phase_ += kSeatCreakPhaseInc;
         seat_creak_position_ = frame_index;
