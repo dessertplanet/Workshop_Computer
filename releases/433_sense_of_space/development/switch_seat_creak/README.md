@@ -96,6 +96,8 @@ loop before the reverb, so it appears inside the selected performance space.
 
 ## Licence And Source Audio
 
+See `LICENSE` for the mixed-license terms covering this development folder.
+
 The embedded ambience is derived from BBC Sound Effects Archive item `07003043`
 (`bbc_theatres--_07003043`). BBC Sound Effects licensing allows archive sounds to be
 used "for non-commercial, personal or research purposes", or licensed separately for
