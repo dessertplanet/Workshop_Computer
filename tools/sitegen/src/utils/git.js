@@ -78,3 +78,51 @@ export function getCommitDates(relPath) {
     return { first: '', last: '' };
   }
 }
+
+/**
+ * "Phil's method": the OLDEST surviving per-line author date in a file, via
+ * `git blame`. A repo-wide bulk edit (e.g. a schema migration) rewrites most
+ * lines to a recent date and clobbers the folder's last-commit date, but the
+ * original lines keep their real author dates. Taking the minimum blame date is
+ * therefore a bulk-edit-resistant estimate of when a file's content first
+ * existed — a stable date floor for cards that don't declare one explicitly.
+ * Returns a YYYY-MM-DD string, or '' when unavailable (e.g. untracked file).
+ */
+export function getOldestBlameDate(relPath) {
+  try {
+    const out = execSync(`git blame --date=short -- "${relPath}"`, {
+      cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const dates = out.match(/\d{4}-\d{2}-\d{2}/g);
+    if (!dates || !dates.length) return '';
+    return dates.reduce((a, b) => (a < b ? a : b));
+  } catch (e) {
+    debugLog(`getOldestBlameDate failed for ${relPath}:`, e?.message || e);
+    return '';
+  }
+}
+
+/**
+ * The most recent commit date (YYYY-MM-DD) touching a card's release *content*
+ * — everything in its folder except the bulk-edited metadata/docs (info.yaml
+ * and README). Used as the "last updated" signal: a firmware or source commit
+ * is a real update, while repo-wide metadata bulk edits (which clobber the
+ * folder's last-commit date) only touch info.yaml/README and are excluded here.
+ * So this advances on real releases and is otherwise stable. Returns '' when
+ * the card has no content files (e.g. placeholder / external-only cards).
+ */
+export function getContentUpdatedDate(folderRel) {
+  const f = String(folderRel || '').replace(/\/+$/, '');
+  if (!f) return '';
+  try {
+    const out = execSync(
+      `git log -1 --format=%cs -- "${f}" ":(exclude)${f}/info.yaml" ":(exclude,icase)${f}/readme.md"`,
+      { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    ).trim();
+    return out || '';
+  } catch (e) {
+    debugLog(`getContentUpdatedDate failed for ${f}:`, e?.message || e);
+    return '';
+  }
+}

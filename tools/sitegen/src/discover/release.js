@@ -6,7 +6,7 @@ import { slugify, normalizeYamlKey } from '../utils/strings.js';
 import { toPosix } from '../utils/fs.js';
 import { discoverDocs } from './docs.js';
 import { discoverDownloads, curateUf2Downloads } from './downloads.js';
-import { getLastCommitDate, getCommitDates } from '../utils/git.js';
+import { getLastCommitDate, getCommitDates, getOldestBlameDate, getContentUpdatedDate } from '../utils/git.js';
 import { resolveWebConfig } from './webEditor.js';
 import { normalizeTags, normalizeRepository, normalizeContact, normalizeDraft, resolveAudioSample } from './infoFields.js';
 import { parseYoutubeId, youtubeEmbedHtml } from '../utils/youtube.js';
@@ -151,6 +151,16 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   const readmeRelPath = toPosix(path.join('releases', folderName, 'README.md'));
   const readmeUrl = `https://github.com/${repoSlug}/blob/${refName}/releases/${folderName}/README.md`;
   const { first: gitFirstDate, last: gitLastDate } = getCommitDates(path.join('releases', folderName));
+  // "Phil's method", two signals:
+  //  - created: oldest surviving blame date of info.yaml (bulk-edit-resistant
+  //    genesis of the card's metadata).
+  //  - updated: most recent commit touching the card's release *content*
+  //    (firmware, source, assets) — i.e. the folder minus the bulk-edited
+  //    info.yaml/README. A content commit is a real update, and metadata bulk
+  //    edits are excluded, so this advances on each release and survives the
+  //    bulk clobber that ruins the folder's last-commit date.
+  const blameDate = getOldestBlameDate(sourceFile);
+  const contentDate = getContentUpdatedDate(path.join('releases', folderName));
   const card = buildCanonicalCardModel({
     folderName,
     slug,
@@ -168,6 +178,8 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     readmeUrl,
     gitFirstDate,
     gitLastDate,
+    blameDate,
+    contentDate,
   });
 
   return {
