@@ -433,6 +433,8 @@ export function buildCanonicalCardModel({
   readmeUrl,
   gitFirstDate = '',
   gitLastDate = '',
+  blameDate = '',
+  contentDate = '',
 }) {
   const warnings = [];
   const info = isPlainObject(rawYaml) ? rawYaml : {};
@@ -447,11 +449,24 @@ export function buildCanonicalCardModel({
   const release = releaseText || (version ? `${number} / ${version}` : number);
 
   let created = normalizedDate(field(info, 'created', 'created_at'), warnings, 'created');
-  if (!created) created = gitFirstDate;
+  if (!created) {
+    // Earliest genesis signal: the folder's first commit and Phil's oldest
+    // blame date are both "early" markers (and use different date sources), so
+    // take whichever is earlier. This also keeps `created` <= derived `updated`.
+    const early = [gitFirstDate, blameDate].filter(Boolean).sort();
+    created = early[0] || '';
+  }
   if (!created) created = 'n/a';
   let updated = normalizedDate(field(info, 'date', 'updated', 'updated_at'), warnings, 'date');
-  if (!updated) updated = gitLastDate;
+  // "Last updated" = the card's most recent real change: the newest commit
+  // touching its release content (firmware/source/assets, i.e. the folder minus
+  // the bulk-edited info.yaml/README). This advances when a release ships and
+  // survives metadata bulk edits. Fall back to the genesis blame date, then the
+  // (clobber-prone) folder date, for cards with no content and no explicit date.
+  if (!updated) updated = contentDate || blameDate || gitLastDate;
   if (!updated) updated = 'n/a';
+  // Never present an "updated" older than "created".
+  if (created !== 'n/a' && updated !== 'n/a' && updated < created) updated = created;
 
   const demoLink = optionalText(field(info, 'demo-link'), warnings, 'demo-link');
   const videoId = demoLink ? parseYoutubeId(demoLink) : null;
