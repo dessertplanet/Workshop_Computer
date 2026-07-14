@@ -33,9 +33,13 @@ performer has shifted slightly rather than knocked over the furniture.
 Main adds a little unattended human presence. Fully anticlockwise keeps the card
 manual-only: creaks happen only from Switch Down or Pulse In 1. Turning Main up
 allows occasional automatic creaks during the three-loop performance, with shorter
-random waits as the knob is turned clockwise. Automatic creaks are quieter than
-manual/Pulse-triggered creaks, so they sit more like doubtful little movements in
-the room.
+random waits as the knob is turned clockwise.
+
+Automatic restlessness waits for about 20 seconds after the performance starts
+before the first possible fidget. At maximum restlessness, automatic creaks are
+spaced by roughly 5-15 seconds; lower settings stretch the random waits toward
+about 90 seconds. Automatic creaks are half the level of manual/Pulse-triggered
+creaks, so they sit more like doubtful little movements in the room.
 
 ## Outputs
 
@@ -76,7 +80,9 @@ The flash payload inside it is the relevant storage size.
 ## Pulse Input
 
 Pulse In 1 triggers the chair/stool creak on a rising edge. It retriggers the same
-one-shot used by Switch Down, with no extra audio data.
+one-shot used by Switch Down, with no extra audio data. Pulse-triggered creaks use
+the same level as Switch Down creaks, so they are more deliberate than the quieter
+automatic restlessness fidgets.
 
 ## Seat Creak Candidate
 
