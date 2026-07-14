@@ -7,6 +7,9 @@ seconds and placed in imaginary performance spaces.
 It is not silence. It is the room, the audience, the building, and the slightly
 ridiculous act of listening very hard.
 
+Please note, by using this card you are not performing 4'33" yourself, this is akin to an interactive recording. Should you wish to perform 4'33' on the Workshop System I would suggest you patch the sine wave oscilators to the filters and then to the mixer from the low pass output. Tune the oscilators to middle C in unison and turn the filters all the way down. Patch Slopes out to the fm input of the filters and turn the fm up to halfway. Patch an external contact microphone from your stool/chair to mic in and patch that to the mixer. make sure the mixer is turned up and the workshop system can output sound. Slopes pots should be set to approximately 9 o'clock. When you are ready to perform walk up to your WS and sit down, blip both slopes once to demonstrate the possibility of the sound from the device and follow the score to the letter.
+
+
 ## Controls
 
 | Control | Function |
