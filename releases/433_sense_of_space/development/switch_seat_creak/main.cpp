@@ -71,6 +71,8 @@ private:
     static constexpr uint32_t kLedUpdateMask = 0x7ff;
     static constexpr uint32_t kControlUpdateMask = 0xff;
     static constexpr uint32_t kLoopCount = 3;
+    static constexpr uint32_t kLoopCrossfadeFrames = kSourceRate * 2u;
+    static constexpr int32_t kSeatCreakGain = 1024; // Q12, 25%. Keeps the foley behind the ambience.
 
     reverb *verb_ = nullptr;
     uint64_t phase_ = 0;
@@ -121,8 +123,26 @@ private:
         const int32_t left_b = sample_data[next * 2u];
         const int32_t right_b = sample_data[next * 2u + 1u];
 
-        const int32_t left = (left_a << 4) + (((left_b - left_a) * frac) >> 8);
-        const int32_t right = (right_a << 4) + (((right_b - right_a) * frac) >> 8);
+        int32_t left = (left_a << 4) + (((left_b - left_a) * frac) >> 8);
+        int32_t right = (right_a << 4) + (((right_b - right_a) * frac) >> 8);
+
+        // The recording is quiet, but the room tone still changes character at the
+        // edit point. Crossfading the last two seconds into the start makes the
+        // repeated 91-second sections feel like one long performance space.
+        if (frame_index >= frames - kLoopCrossfadeFrames) {
+            const uint32_t fade_index = frame_index - (frames - kLoopCrossfadeFrames);
+            const uint32_t start_next = fade_index + 1u;
+            const int32_t start_left_a = sample_data[fade_index * 2u];
+            const int32_t start_right_a = sample_data[fade_index * 2u + 1u];
+            const int32_t start_left_b = sample_data[start_next * 2u];
+            const int32_t start_right_b = sample_data[start_next * 2u + 1u];
+            const int32_t start_left = (start_left_a << 4) + (((start_left_b - start_left_a) * frac) >> 8);
+            const int32_t start_right = (start_right_a << 4) + (((start_right_b - start_right_a) * frac) >> 8);
+            const int32_t fade = static_cast<int32_t>((static_cast<uint64_t>(fade_index) * 4096u) /
+                                                      kLoopCrossfadeFrames);
+            left = (((4096 - fade) * left) + (fade * start_left)) >> 12;
+            right = (((4096 - fade) * right) + (fade * start_right)) >> 12;
+        }
 
         phase_ += kPhaseInc;
         const uint64_t loop_len = static_cast<uint64_t>(frames) << 32u;
@@ -217,8 +237,8 @@ private:
         const int32_t left_b = seat_creak_data[next * 2u];
         const int32_t right_b = seat_creak_data[next * 2u + 1u];
 
-        const int32_t left = (left_a << 4) + (((left_b - left_a) * frac) >> 8);
-        const int32_t right = (right_a << 4) + (((right_b - right_a) * frac) >> 8);
+        const int32_t left = (((left_a << 4) + (((left_b - left_a) * frac) >> 8)) * kSeatCreakGain) >> 12;
+        const int32_t right = (((right_a << 4) + (((right_b - right_a) * frac) >> 8)) * kSeatCreakGain) >> 12;
 
         seat_creak_phase_ += kSeatCreakPhaseInc;
         seat_creak_position_ = frame_index;

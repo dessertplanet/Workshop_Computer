@@ -1,5 +1,5 @@
 Name: 433 Sense of Space - Seat Creak Development
-Description: "16 MB development variant with a three-loop 4'33\" transport, LED countdown, and Switch Down musician-shifts-in-seat chair creak one-shot."
+Description: "Development variant with 2 MB and 16 MB builds, a three-loop 4'33\" transport, LED countdown, and Switch Down musician-shifts-in-seat chair creak one-shot."
 Language: C++ (Pico SDK / ComputerCard)
 Creator: Music Thing Modular / AI-assisted
 Version: 0.1.0-seat-creak-dev
@@ -15,9 +15,10 @@ tags:
   - foley
 
 summary: |
-  16 MB development variant of 433 Sense of Space. Switch Up stops and arms the
-  performance, Switch Middle starts three 91 second loops, and the left column LEDs
-  count down from three loops to zero. Switch Down triggers a short chair/stool creak
+  Development variant of 433 Sense of Space, supplied as 2 MB and 16 MB builds.
+  Switch Up stops and arms the performance, Switch Middle starts three 91 second
+  loops sourced from 1:30-3:01 of the BBC recording, and the left column LEDs count
+  down from three loops to zero. Switch Down triggers a short chair/stool creak
   one-shot representing the musician shifting in their seat.
 
 panel:

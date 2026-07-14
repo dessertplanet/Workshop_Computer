@@ -50,4 +50,5 @@ function(add_433_sense_of_space_variant target sample_rate)
     pico_enable_stdio_uart(${target} 0)
 endfunction()
 
+add_433_sense_of_space_variant(433_sense_of_space_seat_creak_2mb 10000)
 add_433_sense_of_space_variant(433_sense_of_space_seat_creak_16mb 12000)
