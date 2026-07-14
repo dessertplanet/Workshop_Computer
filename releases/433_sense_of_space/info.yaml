@@ -1,0 +1,63 @@
+Name: 433 Sense of Space
+Description: "A whimsical 4'33\"-inspired ambience looper: about 91 seconds of theatre room tone, with X/Y shaping the imaginary performance space from a small room to a cathedral."
+Language: C++ (Pico SDK / ComputerCard)
+Creator: Music Thing Modular / AI-assisted
+Version: 0.1.0
+Status: beta
+License: Mixed - source code/reverb components follow their original project licences; embedded BBC Sound Effects audio is subject to BBC Sound Effects Archive licensing
+license-notes: Embedded BBC Sound Effects Archive audio is for non-commercial, personal or research purposes unless separately licensed from the BBC.
+
+tags:
+  - ambience
+  - reverb
+  - sampler
+  - experimental
+
+summary: |
+  433 Sense of Space loops a quiet theatre recording and lets the Workshop Computer place it
+  in different imaginary spaces. Knob X changes the room character from small and dry
+  to cathedral-like, while Knob Y controls the amount of reverberation. Audio Out 1
+  and 2 carry the stereo result. Two UF2 builds are supplied: a 2 MB card version and
+  a 16 MB card version with a slightly higher-rate baked sample. The embedded audio is
+  derived from BBC Sound Effects Archive item 07003043 and must be used under the BBC
+  Sound Effects licensing terms.
+
+panel:
+  outputs:
+    - id: AudioOut1
+      name: Left
+      type: audio
+      description: Left stereo output
+    - id: AudioOut2
+      name: Right
+      type: audio
+      description: Right stereo output
+
+controls:
+  knobs:
+    - when: { z: any }
+      main:
+        name: Reserved
+        description: Reserved for future variations
+      x:
+        name: Space
+        description: Reverb character, from small room to cathedral
+      y:
+        name: Amount
+        description: Dry/wet reverb amount
+  leds:
+    - when: { z: any }
+      display: list
+      items:
+        - id: LED0
+          name: Small room
+        - id: LED2
+          name: Larger room
+        - id: LED4
+          name: Cathedral
+        - id: LED1
+          name: Reverb amount low
+        - id: LED3
+          name: Reverb amount medium
+        - id: LED5
+          name: Reverb amount high

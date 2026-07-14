@@ -1,0 +1,65 @@
+Name: 433 Sense of Space - Seat Creak Development
+Description: "16 MB development variant with Switch Down reserved for a musician-shifts-in-seat chair creak one-shot."
+Language: C++ (Pico SDK / ComputerCard)
+Creator: Music Thing Modular / AI-assisted
+Version: 0.1.0-seat-creak-dev
+Status: development
+License: Mixed - source code/reverb components follow their original project licences; embedded BBC Sound Effects audio is subject to BBC Sound Effects Archive licensing
+license-notes: Embedded BBC Sound Effects Archive audio is for non-commercial, personal or research purposes unless separately licensed from the BBC.
+
+tags:
+  - ambience
+  - reverb
+  - sampler
+  - experimental
+  - foley
+
+summary: |
+  16 MB development variant of 433 Sense of Space. Switch Down is reserved for a
+  short chair/stool creak one-shot representing the musician shifting in their seat.
+  The selected candidate is Freesound sound 276473, licensed CC0, but the original WAV
+  still needs to be downloaded and baked into the firmware.
+
+panel:
+  outputs:
+    - id: AudioOut1
+      name: Left
+      type: audio
+      description: Left stereo output
+    - id: AudioOut2
+      name: Right
+      type: audio
+      description: Right stereo output
+
+controls:
+  knobs:
+    - when: { z: any }
+      main:
+        name: Reserved
+        description: Reserved for future variations
+      x:
+        name: Space
+        description: Reverb character, from small room to cathedral
+      y:
+        name: Amount
+        description: Dry/wet reverb amount
+    - when: { z: down, gesture: momentary }
+      main:
+        name: Seat Creak
+        description: Trigger a short chair/stool creak one-shot
+  leds:
+    - when: { z: any }
+      display: list
+      items:
+        - id: LED0
+          name: Small room
+        - id: LED2
+          name: Larger room
+        - id: LED4
+          name: Cathedral
+        - id: LED1
+          name: Reverb amount low
+        - id: LED3
+          name: Reverb amount medium
+        - id: LED5
+          name: Reverb amount high

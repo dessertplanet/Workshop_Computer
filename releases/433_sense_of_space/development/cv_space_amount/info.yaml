@@ -1,0 +1,71 @@
+Name: 433 Sense of Space - CV Development
+Description: "Development variant of 433 Sense of Space with CV In 1 controlling space/X and CV In 2 controlling reverb amount/Y."
+Language: C++ (Pico SDK / ComputerCard)
+Creator: Music Thing Modular / AI-assisted
+Version: 0.1.0-cv-dev
+Status: development
+License: Mixed - source code/reverb components follow their original project licences; embedded BBC Sound Effects audio is subject to BBC Sound Effects Archive licensing
+license-notes: Embedded BBC Sound Effects Archive audio is for non-commercial, personal or research purposes unless separately licensed from the BBC.
+
+tags:
+  - ambience
+  - reverb
+  - sampler
+  - experimental
+
+summary: |
+  Development variant of 433 Sense of Space. CV In 1 is summed with Knob X for room
+  size/character, and CV In 2 is summed with Knob Y for dry/wet reverb amount. Audio
+  Out 1 and 2 carry the stereo result. Two UF2 builds are supplied: a 2 MB card
+  version and a 16 MB card version with a slightly higher-rate baked sample. The
+  embedded audio is derived from BBC Sound Effects Archive item 07003043 and must be
+  used under the BBC Sound Effects licensing terms.
+
+panel:
+  inputs:
+    - id: CVIn1
+      name: Space CV
+      type: cv
+      description: Bipolar CV summed with Knob X to control performance space size/character
+    - id: CVIn2
+      name: Amount CV
+      type: cv
+      description: Bipolar CV summed with Knob Y to control reverb amount
+  outputs:
+    - id: AudioOut1
+      name: Left
+      type: audio
+      description: Left stereo output
+    - id: AudioOut2
+      name: Right
+      type: audio
+      description: Right stereo output
+
+controls:
+  knobs:
+    - when: { z: any }
+      main:
+        name: Reserved
+        description: Reserved for future variations
+      x:
+        name: Space Offset
+        description: Manual offset for the CV-controlled space character
+      y:
+        name: Amount Offset
+        description: Manual offset for the CV-controlled dry/wet reverb amount
+  leds:
+    - when: { z: any }
+      display: list
+      items:
+        - id: LED0
+          name: Small room
+        - id: LED2
+          name: Larger room
+        - id: LED4
+          name: Cathedral
+        - id: LED1
+          name: Reverb amount low
+        - id: LED3
+          name: Reverb amount medium
+        - id: LED5
+          name: Reverb amount high
