@@ -1,5 +1,5 @@
 Name: 433 Sense of Space - Seat Creak Development
-Description: "16 MB development variant with Switch Down reserved for a musician-shifts-in-seat chair creak one-shot."
+Description: "16 MB development variant with a three-loop 4'33\" transport, LED countdown, and Switch Down musician-shifts-in-seat chair creak one-shot."
 Language: C++ (Pico SDK / ComputerCard)
 Creator: Music Thing Modular / AI-assisted
 Version: 0.1.0-seat-creak-dev
@@ -15,10 +15,10 @@ tags:
   - foley
 
 summary: |
-  16 MB development variant of 433 Sense of Space. Switch Down is reserved for a
-  short chair/stool creak one-shot representing the musician shifting in their seat.
-  The selected candidate is Freesound sound 276473, licensed CC0, but the original WAV
-  still needs to be downloaded and baked into the firmware.
+  16 MB development variant of 433 Sense of Space. Switch Up stops and arms the
+  performance, Switch Middle starts three 91 second loops, and the left column LEDs
+  count down from three loops to zero. Switch Down triggers a short chair/stool creak
+  one-shot representing the musician shifting in their seat.
 
 panel:
   outputs:
@@ -47,19 +47,27 @@ controls:
       main:
         name: Seat Creak
         description: Trigger a short chair/stool creak one-shot
+    - when: { z: up }
+      main:
+        name: Stop / Arm
+        description: Stop playback, reset to the beginning, and light all three countdown LEDs
+    - when: { z: middle }
+      main:
+        name: Start
+        description: Start a three-loop 4'33" performance from the beginning
   leds:
     - when: { z: any }
       display: list
       items:
         - id: LED0
-          name: Small room
+          name: Loop 1 remaining
         - id: LED2
-          name: Larger room
+          name: Loop 2 remaining
         - id: LED4
-          name: Cathedral
+          name: Loop 3 remaining
         - id: LED1
-          name: Reverb amount low
+          name: Running indicator
         - id: LED3
-          name: Reverb amount medium
+          name: Running indicator
         - id: LED5
-          name: Reverb amount high
+          name: Running indicator

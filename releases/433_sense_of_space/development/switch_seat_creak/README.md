@@ -14,6 +14,8 @@ ridiculous act of listening very hard.
 | Main | Reserved for future mischief |
 | X | Performance space, from small dry room to long cathedral |
 | Y | Reverb amount, from almost dry to fully washed |
+| Switch Up | Stop and arm the performance |
+| Switch Middle | Start from the beginning and play three loops |
 | Switch Down | Trigger musician-shifts-in-seat one-shot |
 
 ## Outputs
@@ -25,8 +27,11 @@ ridiculous act of listening very hard.
 
 ## LEDs
 
-The left column shows the selected space size. The right column shows the reverb
-amount.
+The left column is a simple 4'33" countdown. Three LEDs are lit before playing and
+at the start of the performance. One LED goes out after each 91 second loop. After
+the third loop, the card stops and the audio mutes.
+
+The right column glows dimly while the performance is running.
 
 ## Builds
 

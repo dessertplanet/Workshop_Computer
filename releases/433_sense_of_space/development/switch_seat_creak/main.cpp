@@ -23,11 +23,13 @@ public:
 
     void __not_in_flash_func(ProcessSample)() override
     {
+        update_transport();
+
         const StereoFrame dry = next_frame();
         const StereoFrame seat_creak = next_seat_creak_frame();
         const StereoFrame performed = {
-            clamp12(static_cast<int32_t>(dry.left) + seat_creak.left),
-            clamp12(static_cast<int32_t>(dry.right) + seat_creak.right),
+            performance_running_ ? clamp12(static_cast<int32_t>(dry.left) + seat_creak.left) : static_cast<int16_t>(0),
+            performance_running_ ? clamp12(static_cast<int32_t>(dry.right) + seat_creak.right) : static_cast<int16_t>(0),
         };
 
         if (verb_) {
@@ -68,6 +70,7 @@ private:
         static_cast<uint32_t>((static_cast<uint64_t>(kSeatCreakSourceRate) << 32u) / kOutputRate);
     static constexpr uint32_t kLedUpdateMask = 0x7ff;
     static constexpr uint32_t kControlUpdateMask = 0xff;
+    static constexpr uint32_t kLoopCount = 3;
 
     reverb *verb_ = nullptr;
     uint64_t phase_ = 0;
@@ -77,6 +80,8 @@ private:
     int32_t smoothed_size_ = 8192;
     int32_t smoothed_wet_ = 0;
     Switch last_switch_ = Switch::Middle;
+    bool performance_running_ = false;
+    uint32_t loops_remaining_ = kLoopCount;
 
     static constexpr uint32_t kSeatCreakNoPlayback = 0xffffffffu;
 
@@ -123,10 +128,42 @@ private:
         const uint64_t loop_len = static_cast<uint64_t>(frames) << 32u;
         if (phase_ >= loop_len) {
             phase_ -= loop_len;
+            if (performance_running_ && loops_remaining_ > 0) {
+                --loops_remaining_;
+                if (loops_remaining_ == 0) {
+                    performance_running_ = false;
+                    phase_ = 0;
+                    if (verb_) {
+                        reverb_reset(verb_);
+                    }
+                }
+            }
         }
 
         ++sample_tick_;
         return {clamp12(left), clamp12(right)};
+    }
+
+    void __not_in_flash_func(update_transport)()
+    {
+        const Switch current = SwitchVal();
+
+        if (current == Switch::Up && last_switch_ != Switch::Up) {
+            performance_running_ = false;
+            loops_remaining_ = kLoopCount;
+            phase_ = 0;
+            if (verb_) {
+                reverb_reset(verb_);
+            }
+        } else if (current == Switch::Middle && last_switch_ != Switch::Middle &&
+                   !performance_running_ && loops_remaining_ == kLoopCount) {
+            performance_running_ = true;
+            loops_remaining_ = kLoopCount;
+            phase_ = 0;
+            if (verb_) {
+                reverb_reset(verb_);
+            }
+        }
     }
 
     void __not_in_flash_func(update_reverb_from_knobs)()
@@ -155,11 +192,12 @@ private:
 
     StereoFrame __not_in_flash_func(next_seat_creak_frame)()
     {
-        if (SwitchVal() == Switch::Down && last_switch_ != Switch::Down) {
+        const Switch current = SwitchVal();
+        if (current == Switch::Down && last_switch_ != Switch::Down) {
             seat_creak_position_ = 0;
             seat_creak_phase_ = 0;
         }
-        last_switch_ = SwitchVal();
+        last_switch_ = current;
 
         if (seat_creak_position_ == kSeatCreakNoPlayback) {
             return {0, 0};
@@ -204,14 +242,12 @@ private:
             return;
         }
 
-        const int32_t room = KnobVal(Knob::X);
-        const int32_t wet = shaped_wet_amount();
-        LedBrightness(0, 4095 - room);
-        LedBrightness(2, room > 1365 ? 2048 : 0);
-        LedBrightness(4, room > 2730 ? room : 0);
-        LedBrightness(1, wet);
-        LedBrightness(3, wet > 1365 ? wet : 0);
-        LedBrightness(5, wet > 2730 ? wet : 0);
+        LedBrightness(0, loops_remaining_ >= 1 ? 4095 : 0);
+        LedBrightness(2, loops_remaining_ >= 2 ? 4095 : 0);
+        LedBrightness(4, loops_remaining_ >= 3 ? 4095 : 0);
+        LedBrightness(1, performance_running_ ? 1024 : 0);
+        LedBrightness(3, performance_running_ ? 1024 : 0);
+        LedBrightness(5, performance_running_ ? 1024 : 0);
     }
 };
 
