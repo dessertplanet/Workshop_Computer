@@ -5,6 +5,7 @@ Language: C (RPi Pico SDK)
 Creator: Random Works
 Version: 0.1
 Status: Functional but WIP
+date: 2024-11-30
 
 tags:
   - synthesizer
