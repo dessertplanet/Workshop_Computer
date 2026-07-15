@@ -236,14 +236,16 @@ private:
         const int32_t x = KnobVal(Knob::X);
         const int32_t y = KnobVal(Knob::Y);
 
-        // X moves from a tight room toward a long, blooming cathedral.
+        // X moves from a tight room toward a large hall without pushing the
+        // reverb feedback into the noisy, near-freeze end of the algorithm.
         const int32_t curved_x = (x * x) >> 12;
-        const int32_t target_size = 4096 + ((curved_x * 61400) >> 12);
+        const int32_t target_size = 4096 + ((curved_x * 40960) >> 12);
         smoothed_size_ += (target_size - smoothed_size_) >> 4;
         reverb_set_size(verb_, smoothed_size_);
 
-        // Darker small rooms, brighter large spaces.
-        const int32_t tilt = 18000 + ((x * 36000) >> 12);
+        // Keep the largest space a little darker so the quiet source does not
+        // turn into brittle hiss at the cathedral end.
+        const int32_t tilt = 18000 + ((x * 22000) >> 12);
         reverb_set_tilt(verb_, tilt);
 
         // Y is wet amount. The curve keeps the first half subtle and playable.

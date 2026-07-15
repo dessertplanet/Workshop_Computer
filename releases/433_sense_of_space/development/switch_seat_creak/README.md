@@ -12,7 +12,7 @@ ridiculous act of listening very hard.
 | Control | Function |
 |---------|----------|
 | Main | Performer restlessness: automatic fidgets from none to occasional |
-| X | Performance space, from small dry room to long cathedral |
+| X | Performance space, from small dry room to a restrained cathedral-like hall |
 | Y | Reverb amount, from almost dry to fully washed |
 | Switch Up | Stop and arm the performance |
 | Switch Middle | Start from the beginning and play three loops |
@@ -114,4 +114,6 @@ licence.
 The source is baked into the firmware as a 91 second stereo signed 8-bit loop taken
 from 1:30-3:01 of BBC Sound Effects Archive item `07003043`. Playback is linearly
 interpolated to the Workshop Computer's 48 kHz audio rate, then sent through the
-integer Dattorro-style reverb from Reverb+.
+integer Dattorro-style reverb from Reverb+. The X control deliberately avoids the
+near-freeze end of the reverb algorithm so the largest setting remains musical
+rather than turning the quiet ambience into noise.
