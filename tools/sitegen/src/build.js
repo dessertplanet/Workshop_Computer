@@ -352,7 +352,7 @@ async function build() {
   // Author preview/editor (static, client-side; reuses the shared engine).
   await buildPreviewTool();
 
-  console.log(`Built site with ${releases.length} releases -> ${OUT_DIR}`);
+  console.log(`Built site with ${rawInfoIndex.length} metadata cards from ${releases.length} release folders -> ${OUT_DIR}`);
   reportValidation(validationResults);
 }
 
