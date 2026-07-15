@@ -3,6 +3,12 @@
 # `available_tags` defines the vocabulary; `assignments` maps card IDs to tag labels.
 
 available_tags:
+  - id: "included"
+    label: "Included"
+    description: "Ships with the Workshop Computer as an included Program Card."
+    color: "#27743a"
+    text_color: "#ffffff"
+
   - id: "new"
     label: "New"
     description: "Recently added or worth drawing attention to."
@@ -42,13 +48,15 @@ available_tags:
 
 assignments:
   # 00 Simple Midi
-  "00_Simple_MIDI": []
+  "00_Simple_MIDI":
+    - "Included"
 
   # 02 Comingsoon
   "02_comingsoon": []
 
   # 03 Turing Machine
-  "03_Turing_Machine": []
+  "03_Turing_Machine":
+    - "Included"
 
   # 04 Byo Benjolin
   "04_BYO_Benjolin":
@@ -94,7 +102,8 @@ assignments:
   "18_chord_organ": []
 
   # 20 Reverb+
-  "20_reverb": []
+  "20_reverb":
+    - "Included"
 
   # 21 Resonator
   "21_resonator":

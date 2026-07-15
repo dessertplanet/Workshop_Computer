@@ -6,6 +6,7 @@
 #
 # Hero:
 # - `hero.featured` is a short, fixed list of card IDs shown before shelves.
+# - `hero.layout` uses the same grid layout names documented for shelves below.
 # - Use `hero.text` for practical context only; leave blank if it feels like filler.
 #
 # Shelves:
@@ -36,6 +37,7 @@ embeds:
       - 82_Computer_Grids
 hero:
   title: Included cards
+  layout: grid
   featured:
     - 03_Turing_Machine
     - 20_reverb
