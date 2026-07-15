@@ -221,38 +221,43 @@ async function build() {
 <section class="filter-bar" aria-label="Filter programs">
     <div class="search-bar-row">
       <div class="search-wrapper">
-        <input type="text" id="filter-search" placeholder="Search programs..." class="search-input" aria-label="Search programs">
-        <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
+        <div class="search-control">
+          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 5 5"></path></svg>
+          <input type="text" id="filter-search" placeholder="Search by name, creator, function or tag…" class="search-input" aria-label="Search cards">
+          <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
+        </div>
       </div>
+    </div>
+    <div class="search-tools-row">
+      <details class="advanced-options">
+        <summary>Advanced search</summary>
+        <div class="filter-row">
+          <div class="filter-group">
+            <label for="filter-type">Release type</label>
+            <select id="filter-type">${typeOptions}</select>
+          </div>
+          <div class="filter-group">
+            <label for="filter-creator">Creator</label>
+            <select id="filter-creator">${creatorOptions}</select>
+          </div>
+          <div class="filter-group">
+            <label for="filter-language">Language</label>
+            <select id="filter-language">${languageOptions}</select>
+          </div>
+          <div class="filter-group">
+            <label for="filter-tag">Tag</label>
+            <select id="filter-tag">${tagOptions}</select>
+          </div>
+        </div>
+        <div class="filter-row" style="margin-top:12px;">
+          <div class="filter-group">
+            <label for="sort-mode">Sort</label>
+            <select id="sort-mode">${sortOptions}</select>
+          </div>
+        </div>
+      </details>
       <a class="filter-link" href="archive/">Browse all cards</a>
     </div>
-    <details class="advanced-options">
-      <summary>Advanced search</summary>
-      <div class="filter-row">
-        <div class="filter-group">
-          <label for="filter-type">Release type</label>
-          <select id="filter-type">${typeOptions}</select>
-        </div>
-        <div class="filter-group">
-          <label for="filter-creator">Creator</label>
-          <select id="filter-creator">${creatorOptions}</select>
-        </div>
-        <div class="filter-group">
-          <label for="filter-language">Language</label>
-          <select id="filter-language">${languageOptions}</select>
-        </div>
-        <div class="filter-group">
-          <label for="filter-tag">Tag</label>
-          <select id="filter-tag">${tagOptions}</select>
-        </div>
-      </div>
-      <div class="filter-row" style="margin-top:12px;">
-        <div class="filter-group">
-          <label for="sort-mode">Sort</label>
-          <select id="sort-mode">${sortOptions}</select>
-        </div>
-      </div>
-    </details>
 </section>
 <div class="program-cards program-cards--index">
   ${discoveryHtml}
@@ -283,8 +288,11 @@ async function build() {
   </header>
   <section class="filter-bar" aria-label="Search cards">
       <div class="search-wrapper">
-        <input type="text" id="filter-search" placeholder="Search cards..." class="search-input" aria-label="Search cards">
-        <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
+        <div class="search-control">
+          <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m15.5 15.5 5 5"></path></svg>
+          <input type="text" id="filter-search" placeholder="Search by name, creator, function or tag…" class="search-input" aria-label="Search cards">
+          <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
+        </div>
       </div>
       <div class="filter-actions">
         <div class="filter-group">
