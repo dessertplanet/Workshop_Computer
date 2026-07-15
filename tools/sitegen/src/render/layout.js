@@ -91,6 +91,19 @@ document.addEventListener('click', function(e) {
   a.replaceWith(wrap);
 });
 
+// Play videos shown on the landing page without leaving the card index. The
+// rest of each tile remains a link to the program's detail page.
+document.addEventListener('click', function(e) {
+  var media = e.target.closest('.program-card-tile__media[data-youtube-id]');
+  if (!media) return;
+  e.preventDefault();
+  var id = media.getAttribute('data-youtube-id');
+  media.classList.add('program-card-tile__media--playing');
+  media.removeAttribute('data-youtube-id');
+  media.removeAttribute('aria-hidden');
+  media.innerHTML = '<iframe src="https://www.youtube.com/embed/' + encodeURIComponent(id) + '?rel=0&autoplay=1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe>';
+});
+
 function setConnected(on) {
   if (connectBtn) {
     connectBtn.setAttribute('aria-checked', String(on));
