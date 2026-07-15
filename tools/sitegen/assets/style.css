@@ -48,7 +48,7 @@ a { color: var(--link); }
 .filter-bar select:focus { border-bottom-color: var(--text); outline: 0; }
 .filter-link { align-self: center; border-bottom: 2px solid var(--text); color: var(--text); font-size: 13px; line-height: 1; padding-bottom: 4px; text-decoration: none; text-transform: uppercase; white-space: nowrap; }
 .advanced-options { flex: 1 1 auto; margin-top: 9px; min-width: 0; }
-.advanced-options > summary { color: var(--muted); cursor: pointer; display: inline-block; font-size: 12px; list-style: none; text-transform: uppercase; }
+.advanced-options > summary { color: var(--muted); cursor: pointer; display: inline-block; font-size: 13px; list-style: none; text-transform: uppercase; }
 .advanced-options > summary::-webkit-details-marker { display: none; }
 .advanced-options > summary::before { content: "+ "; }
 .advanced-options[open] > summary::before { content: "− "; }
