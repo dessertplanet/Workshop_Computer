@@ -1,7 +1,6 @@
 import { fsAsync as fs, ensureDir, writeFileEnsured, listSubdirs, toPosix } from './utils/fs.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { detectRepoFromGit, detectRefFromGit } from './utils/git.js';
 import { makeRawUrl as makeRawUrlExternal } from './links.js';
 import { renderLayout } from './render/layout.js';
 import { discoverRelease as discoverReleaseMod } from './discover/release.js';
@@ -27,11 +26,12 @@ const DEFAULT_REPO = 'TomWhitwell/Workshop_Computer';
 const DEFAULT_BRANCH = 'main';
 
 
-/** Try to infer repo slug (owner/name) from local git */
-
-// On GitHub, prefer GITHUB_REPOSITORY and GITHUB_SHA (falls back to branch name). Locally, fall back to git.
-const REPO = process.env.GITHUB_REPOSITORY || detectRepoFromGit() || DEFAULT_REPO;
-const BRANCH = process.env.GITHUB_SHA || process.env.GITHUB_REF_NAME || detectRefFromGit() || DEFAULT_BRANCH;
+// GitHub Actions supplies the canonical repository and deployed commit. Local
+// builds deliberately use the upstream defaults rather than the origin remote,
+// which may point at a contributor's fork. SITE_REPOSITORY/SITE_REF remain
+// available for an explicit preview override.
+const REPO = process.env.SITE_REPOSITORY || process.env.GITHUB_REPOSITORY || DEFAULT_REPO;
+const BRANCH = process.env.SITE_REF || process.env.GITHUB_SHA || process.env.GITHUB_REF_NAME || DEFAULT_BRANCH;
 const PAGES_BASE = githubPagesBase(REPO);
 const schemaAdapter = getInfoYamlSchemaAdapter();
 
@@ -95,6 +95,9 @@ ${article}
 }
 
 async function build() {
+  // The output is fully generated. Clear it first so renamed/removed pages and
+  // assets cannot survive from an older build with stale repository links.
+  await fs.rm(OUT_DIR, { recursive: true, force: true });
   await ensureDir(OUT_DIR);
   await ensureDir(path.join(OUT_DIR, 'assets'));
   // Copy physical CSS asset
