@@ -165,6 +165,11 @@ export const mediaFields = {
       out.push({ severity: 'warning', path: 'demo-link', key: 'demo-link',
         message: `demo-link "${demo}" should be an http(s) URL.` });
     }
+    const discussion = ctx.get('discussion');
+    if (!isBlank(discussion) && !looksLikeUrl(discussion)) {
+      out.push({ severity: 'warning', path: 'discussion', key: 'discussion',
+        message: `discussion "${discussion}" should be an http(s) URL.` });
+    }
     return out;
   },
 };
