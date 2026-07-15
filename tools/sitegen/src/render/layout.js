@@ -15,11 +15,13 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
       <a class="site-wordmark" href="https://www.musicthing.co.uk/" aria-label="Music Thing Modular">
         <img src="https://www.musicthing.co.uk/images/MTM_Horiz.svg" alt="Music Thing Modular">
       </a>
-      <nav class="site-nav" aria-label="Music Thing Modular">
-        <a href="https://www.musicthing.co.uk/#writing">Talking &amp; Writing</a>
-        <a href="https://www.musicthing.co.uk/about/">About</a>
-        <a href="https://www.musicthing.co.uk/buy">Buy</a>
-      </nav>
+      <div class="site-header-actions">
+        <nav class="site-nav" aria-label="Music Thing Modular">
+          <a href="https://www.musicthing.co.uk/#writing">Talking &amp; Writing</a>
+          <a href="https://www.musicthing.co.uk/about/">About</a>
+          <a href="https://www.musicthing.co.uk/buy">Buy</a>
+        </nav>
+      </div>
     </div>
   </header>
   <main class="container">
@@ -32,9 +34,6 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
         <a href="${relativeRoot}/archive/">All cards</a>
         <a href="https://www.musicthing.co.uk/workshopsystem/program-cards/install/">Installation</a>
         <a href="${repoUrl}">Make a card</a>
-        <button id="connectToggle" class="connect-toggle" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting">
-          <span class="c-status" aria-hidden="true"></span><span class="c-label">Connect workshop computer</span>
-        </button>
       </nav>
     </header>` : ''}
     ${content}
