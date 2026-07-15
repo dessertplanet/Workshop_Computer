@@ -19,6 +19,25 @@
   color: var(--program-card-link);
 }
 
+.program-card-top-nav {
+  margin: 0 0 14px;
+}
+
+.program-card-top-nav a {
+  border-bottom: 2px solid var(--program-card-ink, #111);
+  color: var(--program-card-ink, #111);
+  font-size: 13px;
+  font-weight: 800;
+  padding-bottom: 4px;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.program-card-top-nav a:hover,
+.program-card-top-nav a:focus-visible {
+  color: var(--program-card-link, #878ed4);
+}
+
 /* Hero */
 .program-card-hero {
   border-bottom: 1px solid var(--program-card-ink);
@@ -216,8 +235,30 @@
   color: #fff;
 }
 
-.program-card-action--editor {
-  background: #1f1f1f;
+.program-card-page .program-card-action--download {
+  background: #27743a;
+  color: #fff;
+}
+
+.program-card-page .program-card-action--download:hover,
+.program-card-page .program-card-action--download:focus-visible {
+  background: #1d592c;
+  color: #fff;
+}
+
+.program-card-page .program-card-action--editor {
+  background: #d7ae3d;
+  color: #111;
+}
+
+.program-card-page .program-card-action--editor small {
+  color: rgba(17, 17, 17, 0.72);
+}
+
+.program-card-page .program-card-action--editor:hover,
+.program-card-page .program-card-action--editor:focus-visible {
+  background: #b98e1f;
+  color: #111;
 }
 
 .program-card-hero__links {
