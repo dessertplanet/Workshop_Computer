@@ -8,7 +8,7 @@ import { discoverDocs } from './docs.js';
 import { discoverDownloads, curateUf2Downloads } from './downloads.js';
 import { getLastCommitDate, getCommitDates, getOldestBlameDate, getContentUpdatedDate } from '../utils/git.js';
 import { resolveWebConfig } from './webEditor.js';
-import { normalizeTags, normalizeRepository, normalizeContact, normalizeDraft, resolveAudioSample } from './infoFields.js';
+import { normalizeTags, normalizeRepository, normalizeDiscussion, normalizeContact, normalizeDraft, resolveAudioSample } from './infoFields.js';
 import { parseYoutubeId, youtubeEmbedHtml } from '../utils/youtube.js';
 import { resolveAudioSamples, getAudioField } from '../utils/audio.js';
 import { buildCanonicalCardModel } from '../model/card.js';
@@ -40,6 +40,7 @@ export function normalizeInfo(raw, fallbackTitle) {
     audiosampleurl: '',
     tags: normalizeTags(out.tags),
     repository: normalizeRepository(out.repository),
+    discussion: normalizeDiscussion(out.discussion),
     contact: normalizeContact(out.contact),
   };
 }
