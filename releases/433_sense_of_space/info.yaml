@@ -2,7 +2,7 @@ Name: 433 Sense of Space
 Description: "Whimsical 4'33\"-inspired ambience looper with a three-loop transport, LED countdown, restlessness fidgets, Pulse In restart, and chair creak one-shot."
 Language: C++ (Pico SDK / ComputerCard)
 Creator: Music Thing Modular / AI-assisted
-Version: 0.2.0
+Version: 0.2.1
 Status: stable
 License: Mixed - source code/reverb components follow their original project licences; embedded BBC Sound Effects audio is subject to BBC Sound Effects Archive licensing
 license-notes: Embedded BBC Sound Effects Archive audio is for non-commercial, personal or research purposes unless separately licensed from the BBC.
@@ -15,7 +15,9 @@ tags:
   - foley
 
 summary: |
-  433 Sense of Space is supplied as 2 MB and 16 MB builds.
+  433 Sense of Space is supplied as 2 MB and 16 MB builds. The 2 MB build uses a
+  compact 10 kHz stereo 8-bit ambience asset, while the 16 MB build uses a cleaner
+  24 kHz stereo 16-bit ambience asset.
   Switch Up stops and arms the performance, Switch Middle starts three 91 second
   loops sourced from 1:30-3:01 of the BBC recording, and the left column LEDs count
   down from three loops to zero. Switch Down or Pulse In 1 triggers a short

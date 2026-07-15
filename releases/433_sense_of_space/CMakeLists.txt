@@ -51,4 +51,4 @@ function(add_433_sense_of_space_variant target sample_rate)
 endfunction()
 
 add_433_sense_of_space_variant(433_sense_of_space_2mb 10000)
-add_433_sense_of_space_variant(433_sense_of_space_16mb 12000)
+add_433_sense_of_space_variant(433_sense_of_space_16mb 24000)

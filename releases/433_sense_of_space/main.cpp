@@ -7,8 +7,8 @@ extern "C" {
 #include "hardware/clocks.h"
 
 extern "C" {
-extern const int8_t sample_data[];
-extern const int8_t sample_data_end[];
+extern const uint8_t sample_data[];
+extern const uint8_t sample_data_end[];
 extern const int8_t seat_creak_data[];
 extern const int8_t seat_creak_data_end[];
 }
@@ -94,7 +94,11 @@ private:
 
     static uint32_t sample_frames()
     {
-        return static_cast<uint32_t>(sample_data_end - sample_data) / 2u;
+        const uint32_t bytes = static_cast<uint32_t>(sample_data_end - sample_data);
+        if constexpr (kSourceRate == 24000) {
+            return bytes / 4u;
+        }
+        return bytes / 2u;
     }
 
     static uint32_t seat_creak_frames()
@@ -126,6 +130,30 @@ private:
         return static_cast<int16_t>(value);
     }
 
+    static int16_t read_sample16(uint32_t byte_offset)
+    {
+        const uint16_t lo = sample_data[byte_offset];
+        const uint16_t hi = sample_data[byte_offset + 1u];
+        return static_cast<int16_t>(lo | (hi << 8u));
+    }
+
+    static StereoFrame source_frame(uint32_t frame_index)
+    {
+        if constexpr (kSourceRate == 24000) {
+            const uint32_t offset = frame_index * 4u;
+            return {
+                static_cast<int16_t>(read_sample16(offset) >> 4),
+                static_cast<int16_t>(read_sample16(offset + 2u) >> 4),
+            };
+        }
+
+        const uint32_t offset = frame_index * 2u;
+        return {
+            static_cast<int16_t>(static_cast<int8_t>(sample_data[offset]) << 4),
+            static_cast<int16_t>(static_cast<int8_t>(sample_data[offset + 1u]) << 4),
+        };
+    }
+
     StereoFrame __not_in_flash_func(next_frame)()
     {
         const uint32_t frames = sample_frames();
@@ -136,13 +164,11 @@ private:
         const uint32_t frame_index = static_cast<uint32_t>(phase_ >> 32u);
         const uint32_t next = (frame_index + 1u == frames) ? 0u : frame_index + 1u;
         const int32_t frac = static_cast<int32_t>((phase_ >> 20u) & 0xfffu);
-        const int32_t left_a = sample_data[frame_index * 2u];
-        const int32_t right_a = sample_data[frame_index * 2u + 1u];
-        const int32_t left_b = sample_data[next * 2u];
-        const int32_t right_b = sample_data[next * 2u + 1u];
+        const StereoFrame a = source_frame(frame_index);
+        const StereoFrame b = source_frame(next);
 
-        int32_t left = (left_a << 4) + (((left_b - left_a) * frac) >> 8);
-        int32_t right = (right_a << 4) + (((right_b - right_a) * frac) >> 8);
+        int32_t left = a.left + (((b.left - a.left) * frac) >> 12);
+        int32_t right = a.right + (((b.right - a.right) * frac) >> 12);
 
         // The recording is quiet, but the room tone still changes character at the
         // edit point. Crossfading the last two seconds into the start makes the
@@ -150,12 +176,10 @@ private:
         if (frame_index >= frames - kLoopCrossfadeFrames) {
             const uint32_t fade_index = frame_index - (frames - kLoopCrossfadeFrames);
             const uint32_t start_next = fade_index + 1u;
-            const int32_t start_left_a = sample_data[fade_index * 2u];
-            const int32_t start_right_a = sample_data[fade_index * 2u + 1u];
-            const int32_t start_left_b = sample_data[start_next * 2u];
-            const int32_t start_right_b = sample_data[start_next * 2u + 1u];
-            const int32_t start_left = (start_left_a << 4) + (((start_left_b - start_left_a) * frac) >> 8);
-            const int32_t start_right = (start_right_a << 4) + (((start_right_b - start_right_a) * frac) >> 8);
+            const StereoFrame start_a = source_frame(fade_index);
+            const StereoFrame start_b = source_frame(start_next);
+            const int32_t start_left = start_a.left + (((start_b.left - start_a.left) * frac) >> 12);
+            const int32_t start_right = start_a.right + (((start_b.right - start_a.right) * frac) >> 12);
             const int32_t fade = static_cast<int32_t>((static_cast<uint64_t>(fade_index) * 4096u) /
                                                       kLoopCrossfadeFrames);
             left = (((4096 - fade) * left) + (fade * start_left)) >> 12;

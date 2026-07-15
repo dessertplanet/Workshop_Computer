@@ -12,6 +12,7 @@ The ambience loop assets:
 
 - `433_loop_10k_s8_stereo.bin`
 - `433_loop_12k_s8_stereo.bin`
+- `433_loop_24k_s16_stereo.bin`
 - the UF2 firmware images that embed those assets
 
 are derived from BBC Sound Effects Archive item `07003043`

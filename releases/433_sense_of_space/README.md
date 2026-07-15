@@ -67,19 +67,19 @@ This stable version has both 2 MB and 16 MB builds:
 | File | Card size | Audio asset |
 |------|-----------|-------------|
 | `UF2/433_sense_of_space_2mb.uf2` | 2 MB | 91 seconds, 10 kHz stereo signed 8-bit, sourced from 1:30-3:01 |
-| `UF2/433_sense_of_space_16mb.uf2` | 16 MB | 91 seconds, 12 kHz stereo signed 8-bit, sourced from 1:30-3:01 |
+| `UF2/433_sense_of_space_16mb.uf2` | 16 MB | 91 seconds, 24 kHz stereo signed 16-bit, sourced from 1:30-3:01 |
 
 The two builds use the same code, controls, LED countdown, reverb, restlessness
 automation, loop length, 2 second loop crossfade, and chair creak one-shot. The only
-intentional difference is the ambience sample rate:
+intentional difference is the ambience sample format:
 
 | Version | Difference |
 |---------|------------|
 | 2 MB | Uses a 10 kHz stereo ambience asset so the complete firmware fits on a 2 MB card. Current binary payload is about 1.88 MB, leaving roughly 218 KB spare. |
-| 16 MB | Uses a 12 kHz stereo ambience asset for slightly cleaner ambience and more high-frequency detail. Current binary payload is about 2.24 MB. |
+| 16 MB | Uses a 24 kHz stereo 16-bit ambience asset for much lower sample grain and cleaner room detail. Current binary payload is about 8.80 MB, leaving about 7.98 MB spare. |
 
-The UF2 file for the 2 MB build is larger than 2 MB because UF2 adds block metadata.
-The flash payload inside it is the relevant storage size.
+The UF2 files are larger than their flash payloads because UF2 adds block metadata.
+The flash payload inside each UF2 is the relevant storage size.
 
 ## Pulse Input
 
