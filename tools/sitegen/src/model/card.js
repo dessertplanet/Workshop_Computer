@@ -497,6 +497,7 @@ export function buildCanonicalCardModel({
     created,
     updated,
     repository: optionalText(field(info, 'repository'), warnings, 'repository'),
+    discussion_url: optionalText(field(info, 'discussion'), warnings, 'discussion'),
     contact: sanitizeValue(field(info, 'contact')),
   };
   if (editor) {

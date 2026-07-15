@@ -16,6 +16,7 @@ export const infoYamlSchema = {
     { path: 'Editor', type: 'string', required: false, description: 'Web editor mode or URL.' },
     { path: 'web-entry', type: 'string', required: false, description: 'Web editor entry HTML file.' },
     { path: 'repository', type: 'string', required: false, description: 'Upstream source repository.' },
+    { path: 'discussion', type: 'string', required: false, description: 'Card-specific feedback or discussion URL, such as a Discord thread.' },
     { path: 'tags', type: 'array|string', required: false, description: 'Discovery tags.' },
     { path: 'demo-link', type: 'string', required: false, description: 'Demo video URL.' },
     { path: 'audio-sample', type: 'array|string', required: false, description: 'Demo audio sample(s): a repo-relative file path, a SoundCloud URL, a Bandcamp EmbeddedPlayer URL, or a list of these.' },
