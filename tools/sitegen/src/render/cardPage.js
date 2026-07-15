@@ -122,15 +122,15 @@ export function renderReadmeAndDocs({ readmeHtml = '', docs = [], inlinePdf = tr
         <p>PDF preview not available.</p>
       </object>
       <div style="margin-top:16px;text-align:center">
-        <a class="btn download" href="${esc(list[0].url)}" download>📜 Download ${esc(list[0].name)}</a>
+        <a class="btn download" href="${esc(list[0].url)}" download>Download ${esc(list[0].name)}</a>
       </div>
-      ${list.length > 1 ? `<ul class="docs-list">${list.slice(1).map(d => `<li><a class="btn download" href="${esc(d.url)}" download>📄 ${esc(d.name)}</a></li>`).join('')}</ul>` : ''}
+      ${list.length > 1 ? `<ul class="docs-list">${list.slice(1).map(d => `<li><a class="btn download" href="${esc(d.url)}" download>${esc(d.name)}</a></li>`).join('')}</ul>` : ''}
     </div>`;
   } else if (list.length) {
     pdfSection = `
     <div class="program-card-section docs-section">
       <h3>Documentation PDF</h3>
-      <ul class="docs-list">${list.map(d => `<li><a class="btn download" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">📄 ${esc(d.name)}</a></li>`).join('')}</ul>
+      <ul class="docs-list">${list.map(d => `<li><a class="btn download" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">${esc(d.name)}</a></li>`).join('')}</ul>
       <p class="preview-note">An inline PDF preview appears on the published card page.</p>
     </div>`;
   }
@@ -232,7 +232,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
       <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${basic ? '' : memoryMarkup}</div>
       <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>
       <div class="program-card-sha" data-sha-display role="status" aria-live="polite" hidden>SHA256: <code class="program-card-sha__value" data-sha-value></code> <button type="button" class="program-card-sha__verify" data-verify-open>How to verify</button></div>
-      <div class="program-card-hero__links" aria-label="Further card links">${documentation ? `<a href="#card-documentation">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a></div>
+      <div class="program-card-hero__links" aria-label="Further card links">${documentation ? `<a href="#card-documentation">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a><button id="connectToggle" class="connect-toggle" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting"><span class="c-status" aria-hidden="true"></span><span class="c-label">Connect workshop computer</span></button></div>
     </div>
   </header>`;
 

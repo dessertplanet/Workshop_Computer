@@ -53,6 +53,9 @@ export function renderTile(card, opts = {}) {
   const summary = card.summary || card.description || '';
   const metadata = card.metadata || {};
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
+  const draftFlag = card.draft
+    ? '<span class="program-card-draft-flag program-card-draft-flag--tile">Draft</span>'
+    : '';
 
   const media = showVideo && firstVideo
     ? `<span class="program-card-tile__media" data-youtube-id="${esc(firstVideo.id)}" aria-hidden="true"><img src="https://img.youtube.com/vi/${esc(firstVideo.id)}/hqdefault.jpg" alt="" loading="lazy"></span>`
@@ -73,6 +76,7 @@ export function renderTile(card, opts = {}) {
     ` data-tags="${escapeAttr(tagFilter)}" data-search="${escapeAttr(searchText)}">
     ${media}
     <span class="program-card-tile__head"><span class="program-card-tile__title"><span class="program-card-tile__number">${esc(number)}</span><span class="program-card-tile__name">${esc(truncate(card.title || card.id || 'Untitled card', 48))}</span></span></span>
+    ${draftFlag}
     ${summary ? `<span class="program-card-tile__summary">${esc(truncate(summary, 190))}</span>` : ''}
     ${renderTagBadges(flair, hideTags)}
   </a>`;
@@ -131,10 +135,13 @@ function renderArchiveRow(card, root) {
   const searchText = [number, card.title, summary, card.metadata?.creator, ...flair.map(f => f.label)]
     .filter(Boolean).join(' ').toLowerCase();
   const date = card.metadata?.updated || '';
+  const draftFlag = card.draft
+    ? '<span class="program-card-draft-flag program-card-draft-flag--archive">Draft</span>'
+    : '';
   return `<a class="program-card-archive-row" href="${root}/programs/${card.slug}/" data-date="${escapeAttr(date)}" data-name="${escapeAttr(String(card.title || '').toLowerCase())}" data-num="${escapeAttr(String(parseInt(number, 10) || 0))}" data-search="${escapeAttr(searchText)}">
     <span class="program-card-archive-row__number">${esc(number)}</span>
     <span class="program-card-archive-row__main"><span class="program-card-archive-row__title">${esc(card.title)}</span>${summary ? `<span class="program-card-archive-row__summary">${esc(truncate(summary, 120))}</span>` : ''}</span>
-    <span class="program-card-archive-row__flags">${renderTagBadges(flair)}</span>
+    <span class="program-card-archive-row__flags">${draftFlag}${renderTagBadges(flair)}</span>
   </a>`;
 }
 
