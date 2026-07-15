@@ -1002,6 +1002,7 @@
 
 .program-card-tile__media {
   background: var(--program-card-soft);
+  cursor: pointer;
   display: block;
   margin-bottom: 10px;
   overflow: hidden;
@@ -1037,6 +1038,22 @@
   display: block;
   height: auto;
   object-fit: cover;
+  width: 100%;
+}
+
+.program-card-tile__media--playing {
+  cursor: default;
+}
+
+.program-card-tile__media--playing::before,
+.program-card-tile__media--playing::after {
+  content: none;
+}
+
+.program-card-tile__media iframe {
+  aspect-ratio: 16 / 9;
+  border: 0;
+  display: block;
   width: 100%;
 }
 
