@@ -81,6 +81,10 @@ intentional difference is the ambience sample format:
 The UF2 files are larger than their flash payloads because UF2 adds block metadata.
 The flash payload inside each UF2 is the relevant storage size.
 
+The 16 MB UF2 can take much longer to copy/flash than the 2 MB UF2. This is normal:
+the higher-quality 16-bit ambience makes the UF2 wrapper substantially larger even
+though the actual flash payload still fits comfortably on a 16 MB card.
+
 ## Pulse Input
 
 Pulse In 1 triggers the chair/stool creak on a rising edge. It retriggers the same
