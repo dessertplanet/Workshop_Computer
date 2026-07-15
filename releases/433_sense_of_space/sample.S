@@ -10,3 +10,11 @@ sample_data:
 #endif
 sample_data_end:
 .byte 0
+
+.balign 4
+.global seat_creak_data
+.global seat_creak_data_end
+seat_creak_data:
+    .incbin "seat_creak_12k_s8_stereo.bin"
+seat_creak_data_end:
+.byte 0

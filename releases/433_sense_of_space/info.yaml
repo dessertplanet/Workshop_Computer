@@ -1,9 +1,9 @@
 Name: 433 Sense of Space
-Description: "A whimsical 4'33\"-inspired ambience looper: about 91 seconds of theatre room tone, with X/Y shaping the imaginary performance space from a small room to a cathedral."
+Description: "Whimsical 4'33\"-inspired ambience looper with a three-loop transport, LED countdown, restlessness fidgets, Pulse In restart, and chair creak one-shot."
 Language: C++ (Pico SDK / ComputerCard)
 Creator: Music Thing Modular / AI-assisted
-Version: 0.1.0
-Status: beta
+Version: 0.2.0
+Status: stable
 License: Mixed - source code/reverb components follow their original project licences; embedded BBC Sound Effects audio is subject to BBC Sound Effects Archive licensing
 license-notes: Embedded BBC Sound Effects Archive audio is for non-commercial, personal or research purposes unless separately licensed from the BBC.
 
@@ -12,15 +12,15 @@ tags:
   - reverb
   - sampler
   - experimental
+  - foley
 
 summary: |
-  433 Sense of Space loops a quiet theatre recording and lets the Workshop Computer place it
-  in different imaginary spaces. Knob X changes the room character from small and dry
-  to cathedral-like, while Knob Y controls the amount of reverberation. Audio Out 1
-  and 2 carry the stereo result. Two UF2 builds are supplied: a 2 MB card version and
-  a 16 MB card version with a slightly higher-rate baked sample. The embedded audio is
-  derived from BBC Sound Effects Archive item 07003043 and must be used under the BBC
-  Sound Effects licensing terms.
+  433 Sense of Space is supplied as 2 MB and 16 MB builds.
+  Switch Up stops and arms the performance, Switch Middle starts three 91 second
+  loops sourced from 1:30-3:01 of the BBC recording, and the left column LEDs count
+  down from three loops to zero. Switch Down or Pulse In 1 triggers a short
+  chair/stool creak one-shot representing the musician shifting in their seat.
+  Pulse In 2 restarts the full performance from the beginning.
 
 panel:
   outputs:
@@ -37,27 +37,46 @@ controls:
   knobs:
     - when: { z: any }
       main:
-        name: Reserved
-        description: Reserved for future variations
+        name: Restlessness
+        description: Adds occasional quieter automatic chair/stool creaks
       x:
         name: Space
-        description: Reverb character, from small room to cathedral
+        description: Reverb character, from small room to a restrained cathedral-like hall
       y:
         name: Amount
         description: Dry/wet reverb amount
+    - when: { z: down, gesture: momentary }
+      main:
+        name: Seat Creak
+        description: Trigger a short chair/stool creak one-shot
+    - when: { z: up }
+      main:
+        name: Stop / Arm
+        description: Stop playback, reset to the beginning, and light all three countdown LEDs
+    - when: { z: middle }
+      main:
+        name: Start
+        description: Start a three-loop 4'33" performance from the beginning
+  pulse:
+    - input: Pulse1
+      name: Seat Creak
+      description: Trigger a chair/stool creak one-shot on rising edge
+    - input: Pulse2
+      name: Restart
+      description: Restart the three-loop performance from the beginning on rising edge
   leds:
     - when: { z: any }
       display: list
       items:
         - id: LED0
-          name: Small room
+          name: Loop 1 remaining
         - id: LED2
-          name: Larger room
+          name: Loop 2 remaining
         - id: LED4
-          name: Cathedral
+          name: Loop 3 remaining
         - id: LED1
-          name: Reverb amount low
+          name: Running indicator
         - id: LED3
-          name: Reverb amount medium
+          name: Running indicator
         - id: LED5
-          name: Reverb amount high
+          name: Running indicator

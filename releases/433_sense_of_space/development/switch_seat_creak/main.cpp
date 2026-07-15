@@ -73,8 +73,8 @@ private:
     static constexpr uint32_t kControlUpdateMask = 0xff;
     static constexpr uint32_t kLoopCount = 3;
     static constexpr uint32_t kLoopCrossfadeFrames = kSourceRate * 2u;
-    static constexpr int32_t kManualSeatCreakGain = 1024; // Q12, 25%. Keeps the foley behind the ambience.
-    static constexpr int32_t kAutoSeatCreakGain = 512;    // Q12, 12.5%. Automatic fidgets should feel half-imagined.
+    static constexpr int32_t kManualSeatCreakGain = 1536; // Q12, 37.5%. Deliberate fidgets should be audible.
+    static constexpr int32_t kAutoSeatCreakGain = 1024;   // Q12, 25%. Automatic fidgets stay behind manual triggers.
 
     reverb *verb_ = nullptr;
     uint64_t phase_ = 0;
@@ -193,15 +193,22 @@ private:
             if (verb_) {
                 reverb_reset(verb_);
             }
+        } else if (PulseIn2RisingEdge()) {
+            start_performance();
         } else if (current == Switch::Middle && last_switch_ != Switch::Middle &&
                    !performance_running_ && loops_remaining_ == kLoopCount) {
-            performance_running_ = true;
-            loops_remaining_ = kLoopCount;
-            phase_ = 0;
-            restlessness_countdown_ = kOutputRate * 20u;
-            if (verb_) {
-                reverb_reset(verb_);
-            }
+            start_performance();
+        }
+    }
+
+    void __not_in_flash_func(start_performance)()
+    {
+        performance_running_ = true;
+        loops_remaining_ = kLoopCount;
+        phase_ = 0;
+        restlessness_countdown_ = kOutputRate * 20u;
+        if (verb_) {
+            reverb_reset(verb_);
         }
     }
 

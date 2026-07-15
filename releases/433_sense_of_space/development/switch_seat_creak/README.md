@@ -18,6 +18,7 @@ ridiculous act of listening very hard.
 | Switch Middle | Start from the beginning and play three loops |
 | Switch Down | Trigger musician-shifts-in-seat one-shot |
 | Pulse In 1 | Trigger musician-shifts-in-seat one-shot on rising edge |
+| Pulse In 2 | Restart the three-loop performance from the beginning |
 
 The card powers up armed rather than playing. Move the switch Up to stop, reset
 the audio position, clear the reverb tail, and relight the three countdown LEDs.
@@ -25,7 +26,9 @@ Move the switch to Middle to begin a complete 4'33" performance: three passes
 through the 91 second ambience loop, then automatic stop and mute. Moving the
 switch Down during a performance, or sending a rising edge to Pulse In 1, triggers
 the chair/stool creak one-shot; returning to Middle does not restart the performance
-while it is already running.
+while it is already running. Sending a rising edge to Pulse In 2 restarts the
+three-loop performance immediately, as if the card had been stopped/armed and then
+started again.
 
 The creak is intentionally quiet and sits behind the room ambience, as if the
 performer has shifted slightly rather than knocked over the furniture.
@@ -38,8 +41,9 @@ random waits as the knob is turned clockwise.
 Automatic restlessness waits for about 20 seconds after the performance starts
 before the first possible fidget. At maximum restlessness, automatic creaks are
 spaced by roughly 5-15 seconds; lower settings stretch the random waits toward
-about 90 seconds. Automatic creaks are half the level of manual/Pulse-triggered
-creaks, so they sit more like doubtful little movements in the room.
+about 90 seconds. Automatic creaks play at 25% gain, while manual/Pulse-triggered
+creaks play at 37.5% gain, so the unattended fidgets still sit slightly farther
+back in the room.
 
 ## Outputs
 
@@ -83,6 +87,10 @@ Pulse In 1 triggers the chair/stool creak on a rising edge. It retriggers the sa
 one-shot used by Switch Down, with no extra audio data. Pulse-triggered creaks use
 the same level as Switch Down creaks, so they are more deliberate than the quieter
 automatic restlessness fidgets.
+
+Pulse In 2 restarts the full 4'33" performance from the beginning. It resets the
+loop position, relights the three countdown LEDs, clears the reverb tail, starts
+playback immediately, and restarts the 20 second restlessness grace period.
 
 ## Seat Creak Candidate
 
