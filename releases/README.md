@@ -19,6 +19,7 @@
 | 16_the_bells | Bellringing methods sequencer — 12 change-ringing methods with tempo and jitter, quantised to six scales | 1.0.0<br>Released | C++ (ComputerCard) | James Saunders |
 | 17_COMET | Clocked lo-fi reverb and delay | 1.0<br>Released | C++ (Pico SDK, ComputerCard) | EME |
 | 18_chord_organ | Chord Organ-ish - 16 chords, 8 voices, 1V/oct root. Inspired by Music Thing Chord Organ. | 0.1<br>Working | Pico SDK (C++), ComputerCard | jkeyworth |
+| 19_CA_Sequencer | 16-cell gate and quantized CV melody generator inspired by NLC Cellular Automata, using CA rules 90 & 150 on a 4x4 grid | 1.1<br>Released | C++ (Pico SDK) | Ainews |
 | 20_reverb | Reverb effect, plus pulse/CV generators and MIDI-to-CV, configurable using web interface.<br>[Web editor](https://www.musicthing.co.uk/web_config/reverb.html) | 1.5<br>Released | C (RPi Pico SDK) | Chris Johnson |
 | 21_resonator | Karplus-Strong sympathetic resonator for droning and plucked textures, with chord & tanpura tunings, arpeggiator, pitch tracking and web-configurable CV/pulse outputs.<br>[Web editor](https://johaneklund.io/resonator) | 1.2<br>Released | C++ (ComputerCard) | Johan Eklund |
 | 22_sheep | A time-stretching and pitch-shifting granular processor and digital degradation playground with 2 fidelity options. | 1.2<br>Released | Pico SDK | Dune Desormeaux |
@@ -62,6 +63,7 @@
 | 71_degenerator | Degenerator — Disintegrating Looper. Capture audio loops and apply irreversible degradation with 6 algorithms (Saturation, Filter Drift, Tape Hiss, Oxide Shedding, Bit Crush, Bit Rot) via preview/apply workflow. Inspired by William Basinski's The Disintegration Loops.<br>[Web editor](https://degenerator-web.netlify.app/) | 1.3<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 72_motorik | Motorik drum machine — kick/snare/hihat with bass and melody CV, classic Krautrock grooves | 1.0<br>Released | C++ (Pico SDK) | Joep Vermaat |
 | 74_Wild_Pebble | MIDI-clockable generative rhythm and melody organism inspired by Pet Rock | 1<br>Beta. USB MIDI clock input and sequencer note output tested | C++ | Adrian Vos with Vibecode support |
+| 75_Turing_Clouds | Turing Machine-driven granular texture generator and rhythmic delay for the Workshop Computer | 1.0<br>Released | C++ (Pico SDK) | Ainews |
 | 76_hot_fuzz | A stereo fuzz/distortion + resonant wah effects processor with manual and auto-wah modes, built on fixed-point DSP. | 1.0<br>Released | C++ (ComputerCard) | Joep Vermaat |
 | 77_Placeholder | Reserved for secret project | 0.0<br>None | None | None |
 | 78_Talker | Proof of concept speech synthesizer, based on TalkiePCM, inspired by 1970s LPC speech synths. | 0.1<br>Proof of concept | C++ (ComputerCard) | Chris Johnson |
