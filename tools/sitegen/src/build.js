@@ -82,6 +82,9 @@ function detailPage(rel) {
     relativeRoot: '../..',
     repoUrl: `https://github.com/${REPO}`,
     content: `
+<nav class="program-card-top-nav" aria-label="Card navigation">
+  <a href="../../index.html">← All cards</a>
+</nav>
 ${article}
 <div class="actions actions-duo">
   <a class="program-card-nav-link" href="../../index.html">Back to all programs</a>
@@ -142,8 +145,8 @@ async function build() {
     if (!hasFiles) continue;
     const rel = await discoverRelease(folder);
     releases.push(rel);
-    normalizedCards.push(rel.card);
     if (rel.rawInfoSource) {
+      normalizedCards.push(rel.card);
       rawInfoIndex.push({
         id: rel.folderName,
         slug: rel.slug,
@@ -171,16 +174,16 @@ async function build() {
       // non-fatal reporting pass: it never blocks the build.
       const source = parseSource(rel.rawInfoSource, `releases/${rel.folderName}/info.yaml`);
       validationResults.push(validateInfoYaml(source));
+      const meta = rel.card?.metadata || {};
+      const typeRaw = (meta.status || 'Unknown').toString();
+      const key = typeKey(typeRaw) || 'unknown';
+      const display = normalizeSpaces(typeRaw) || 'Unknown';
+      if (!typeMap.has(key)) typeMap.set(key, display);
+      const creatorVal = (meta.creator || 'Unknown').toString().trim() || 'Unknown';
+      const languageVal = (meta.language || 'Unknown').toString().trim() || 'Unknown';
+      creatorSet.add(creatorVal);
+      languageSet.add(languageVal);
     }
-    const meta = rel.card?.metadata || {};
-    const typeRaw = (meta.status || 'Unknown').toString();
-    const key = typeKey(typeRaw) || 'unknown';
-    const display = normalizeSpaces(typeRaw) || 'Unknown';
-    if (!typeMap.has(key)) typeMap.set(key, display);
-    const creatorVal = (meta.creator || 'Unknown').toString().trim() || 'Unknown';
-    const languageVal = (meta.language || 'Unknown').toString().trim() || 'Unknown';
-    creatorSet.add(creatorVal);
-    languageSet.add(languageVal);
   }
 
   // Index page

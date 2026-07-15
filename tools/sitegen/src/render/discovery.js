@@ -29,7 +29,9 @@ function truncate(value, length) {
 }
 
 function cardNumber(card) {
-  return String(card.release || card.id || '').split('/')[0].split('_')[0].trim();
+  const raw = String(card.release || card.id || '').split('/')[0].split('_')[0].trim();
+  const number = Number.parseInt(raw, 10);
+  return Number.isNaN(number) ? raw : String(number);
 }
 
 function renderTagBadges(flair, hideTags = []) {
@@ -148,7 +150,7 @@ function renderArchiveRow(card, root) {
 export function renderArchive(cards, root = '..') {
   const rows = cards.map(card => renderArchiveRow(card, root)).join('');
   return `<section class="program-card-archive">
-    <header class="program-card-shelf__header"><h2>Complete index</h2><p>One line each, for fast scanning.</p></header>
+    <header class="program-card-shelf__header"><h2>Complete index</h2></header>
     <div class="program-card-archive-list">${rows}</div>
   </section>`;
 }

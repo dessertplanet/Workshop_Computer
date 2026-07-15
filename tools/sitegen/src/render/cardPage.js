@@ -43,7 +43,9 @@ function markdownBlock(text) {
 
 function cardNumber(card) {
   const release = card.release || card.id || '';
-  return String(release).split('/')[0].split('_')[0].trim();
+  const raw = String(release).split('/')[0].split('_')[0].trim();
+  const number = Number.parseInt(raw, 10);
+  return Number.isNaN(number) ? raw : String(number);
 }
 
 function renderTags(card) {
