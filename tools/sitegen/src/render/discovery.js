@@ -55,7 +55,7 @@ export function renderTile(card, opts = {}) {
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
 
   const media = showVideo && firstVideo
-    ? `<span class="program-card-tile__media" aria-hidden="true"><img src="https://img.youtube.com/vi/${esc(firstVideo.id)}/hqdefault.jpg" alt="" loading="lazy"></span>`
+    ? `<span class="program-card-tile__media" data-youtube-id="${esc(firstVideo.id)}" aria-hidden="true"><img src="https://img.youtube.com/vi/${esc(firstVideo.id)}/hqdefault.jpg" alt="" loading="lazy"></span>`
     : '';
 
   const searchText = [
