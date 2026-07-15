@@ -1,6 +1,6 @@
 export const infoYamlSchema = {
   id: 'workshop-computer-info-yaml',
-  version: 1,
+  version: 2,
   source: 'documentation/info.yaml.md',
   fields: [
     { path: 'draft', type: 'boolean', required: false, description: 'Metadata review state.' },
@@ -21,6 +21,7 @@ export const infoYamlSchema = {
     { path: 'demo-link', type: 'string', required: false, description: 'Demo video URL.' },
     { path: 'audio-sample', type: 'array|string', required: false, description: 'Demo audio sample(s): a repo-relative file path, a SoundCloud URL, a Bandcamp EmbeddedPlayer URL, or a list of these.' },
     { path: 'manual', type: 'string', required: false, description: 'Abbreviated operator summary.' },
+    { path: 'modes', type: 'array', required: false, description: 'Optional named panel modes. Each mode has an id, name, and optional description, default, state, and activate metadata.' },
     { path: 'panel', type: 'object', required: false, description: 'Panel jack metadata.' },
     { path: 'controls', type: 'object', required: false, description: 'Control metadata.' },
     { path: 'host', type: 'object', required: false, description: 'Host connectivity metadata.' },
