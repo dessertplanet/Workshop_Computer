@@ -257,6 +257,9 @@ async function build() {
         </div>
       </details>
       <a class="filter-link" href="archive/">Browse all cards</a>
+      <button id="connectToggle" class="connect-toggle connect-toggle--search" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting">
+        <span class="c-status" aria-hidden="true"></span><span class="c-label">Connect workshop computer</span>
+      </button>
     </div>
 </section>
 <div class="program-cards program-cards--index">

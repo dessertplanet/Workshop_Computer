@@ -6,6 +6,12 @@
 
 import { curation, resolveFlair } from '../curation/index.js';
 
+const CARD_ARTWORK = {
+  '00_Simple_MIDI': '00-simple-midi.svg',
+  '03_Turing_Machine': '03-turing-machine.svg',
+  '20_reverb': '20-reverb.svg',
+};
+
 function esc(value) {
   return String(value == null ? '' : value)
     .replace(/&/g, '&amp;')
@@ -49,18 +55,19 @@ function renderTagBadges(flair, hideTags = []) {
 }
 
 export function renderTile(card, opts = {}) {
-  const { showVideo = false, hideTags = [], root = '.' } = opts;
+  const { showVideo = false, showArtwork = false, hideTags = [], root = '.' } = opts;
   const flair = resolveFlair(card.id);
   const number = cardNumber(card);
   const summary = card.summary || card.description || '';
   const metadata = card.metadata || {};
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
-  const draftFlag = card.draft
-    ? '<span class="program-card-draft-flag program-card-draft-flag--tile">Draft</span>'
-    : '';
 
   const media = showVideo && firstVideo
     ? `<span class="program-card-tile__media" data-youtube-id="${esc(firstVideo.id)}" aria-hidden="true"><img src="https://img.youtube.com/vi/${esc(firstVideo.id)}/hqdefault.jpg" alt="" loading="lazy"></span>`
+    : '';
+  const artworkFile = showArtwork ? CARD_ARTWORK[card.id] : '';
+  const artwork = artworkFile
+    ? `<span class="program-card-tile__artwork" aria-hidden="true"><img src="${root}/assets/program_cards/${artworkFile}" alt="" loading="lazy"></span>`
     : '';
 
   const searchText = [
@@ -71,14 +78,13 @@ export function renderTile(card, opts = {}) {
 
   const tagFilter = flair.map(f => f.id).join(' ');
 
-  return `<a class="program-card-tile${media ? ' program-card-tile--video' : ''}" href="${root}/programs/${card.slug}/"` +
+  return `<a class="program-card-tile${media ? ' program-card-tile--video' : ''}${artwork ? ' program-card-tile--artwork' : ''}" href="${root}/programs/${card.slug}/"` +
     ` data-creator="${escapeAttr(metadata.creator || '')}" data-language="${escapeAttr(metadata.language || '')}"` +
     ` data-type="${escapeAttr(metadata.status || '')}" data-date="${escapeAttr(metadata.updated || '')}"` +
     ` data-name="${escapeAttr(String(card.title || card.id || '').toLowerCase())}" data-num="${escapeAttr(String(parseInt(number, 10) || 0))}"` +
     ` data-tags="${escapeAttr(tagFilter)}" data-search="${escapeAttr(searchText)}">
     ${media}
-    <span class="program-card-tile__head"><span class="program-card-tile__title"><span class="program-card-tile__number">${esc(number)}</span><span class="program-card-tile__name">${esc(truncate(card.title || card.id || 'Untitled card', 48))}</span></span></span>
-    ${draftFlag}
+    <span class="program-card-tile__head"><span class="program-card-tile__title">${artwork || `<span class="program-card-tile__number">${esc(number)}</span>`}<span class="program-card-tile__name">${esc(truncate(card.title || card.id || 'Untitled card', 48))}</span></span></span>
     ${summary ? `<span class="program-card-tile__summary">${esc(truncate(summary, 190))}</span>` : ''}
     ${renderTagBadges(flair, hideTags)}
   </a>`;
@@ -115,7 +121,7 @@ export function renderShelf(shelf, cardsById, opts = {}) {
 
   return `<section class="${classes}">
     <header class="program-card-shelf__header"><h2>${esc(shelf.title || 'Shelf')}</h2>${shelf.intro ? `<p>${esc(shelf.intro)}</p>` : ''}</header>
-    <div class="${gridClasses}">${list.map(card => renderTile(card, { showVideo, hideTags: shelf.hide_tags, root })).join('')}</div>
+    <div class="${gridClasses}">${list.map(card => renderTile(card, { showVideo, showArtwork: featured, hideTags: shelf.hide_tags, root })).join('')}</div>
   </section>`;
 }
 
@@ -124,7 +130,7 @@ export function renderDiscovery(cards, root = '.') {
   const cfg = curation.discovery || {};
   const hero = cfg.hero || {};
   const heroShelf = Array.isArray(hero.featured) && hero.featured.length
-    ? renderShelf({ title: hero.title || 'Included cards', intro: hero.text, cards: hero.featured, layout: 'lead' }, cardsById, { featured: true, root })
+    ? renderShelf({ title: hero.title || 'Included cards', intro: hero.text, cards: hero.featured, layout: hero.layout || 'grid' }, cardsById, { featured: true, root })
     : '';
   const shelves = (cfg.shelves || []).map(shelf => renderShelf(shelf, cardsById, { root })).join('');
   return `<div id="discovery">${heroShelf}${shelves}</div>`;
@@ -137,13 +143,10 @@ function renderArchiveRow(card, root) {
   const searchText = [number, card.title, summary, card.metadata?.creator, ...flair.map(f => f.label)]
     .filter(Boolean).join(' ').toLowerCase();
   const date = card.metadata?.updated || '';
-  const draftFlag = card.draft
-    ? '<span class="program-card-draft-flag program-card-draft-flag--archive">Draft</span>'
-    : '';
   return `<a class="program-card-archive-row" href="${root}/programs/${card.slug}/" data-date="${escapeAttr(date)}" data-name="${escapeAttr(String(card.title || '').toLowerCase())}" data-num="${escapeAttr(String(parseInt(number, 10) || 0))}" data-search="${escapeAttr(searchText)}">
     <span class="program-card-archive-row__number">${esc(number)}</span>
     <span class="program-card-archive-row__main"><span class="program-card-archive-row__title">${esc(card.title)}</span>${summary ? `<span class="program-card-archive-row__summary">${esc(truncate(summary, 120))}</span>` : ''}</span>
-    <span class="program-card-archive-row__flags">${draftFlag}${renderTagBadges(flair)}</span>
+    <span class="program-card-archive-row__flags">${renderTagBadges(flair)}</span>
   </a>`;
 }
 
