@@ -84,8 +84,8 @@ function detailPage(rel) {
     content: `
 ${article}
 <div class="actions actions-duo">
-  <a class="btn" href="../../index.html">⬅️ Back to All Programs</a>
-  <a class="btn" href="#page-top">⬆️ Back to Top</a>
+  <a class="program-card-nav-link" href="../../index.html">Back to all programs</a>
+  <a class="program-card-nav-link" href="#page-top">Back to top</a>
 </div>
 `
   });
@@ -212,21 +212,16 @@ async function build() {
   const indexHtml = renderLayout({
     title: 'Workshop Computer Program Cards',
     relativeRoot: '.',
+    showProgramIdentity: true,
   repoUrl: `https://github.com/${REPO}`,
     content: `
-<article class="card intro-card">
-  <div class="card-body">
-    <p>The Workshop Computer is part of the <a href="https://www.musicthing.co.uk/workshopsystem/">Music Thing Workshop System</a>.  This site provides access to all the available program cards, their documentation, and downloadable firmware files (.uf2). On Chrome and some other browsers, cards can be programmed directly from this site.</p>
-  </div>
-</article>
-<div class="filter-bar card" aria-label="Filter programs">
-  <div class="card-body">
+<section class="filter-bar" aria-label="Filter programs">
     <div class="search-bar-row">
       <div class="search-wrapper">
         <input type="text" id="filter-search" placeholder="Search programs..." class="search-input" aria-label="Search programs">
         <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
       </div>
-      <a class="btn secondary" href="archive/">Browse all cards →</a>
+      <a class="filter-link" href="archive/">Browse all cards</a>
     </div>
     <details class="advanced-options">
       <summary>Advanced search</summary>
@@ -255,8 +250,7 @@ async function build() {
         </div>
       </div>
     </details>
-  </div>
-</div>
+</section>
 <div class="program-cards program-cards--index">
   ${discoveryHtml}
   <div id="search-results" hidden>
@@ -284,8 +278,7 @@ async function build() {
       <a href="https://github.com/${REPO}">Make a card</a>
     </nav>
   </header>
-  <div class="filter-bar card" aria-label="Search cards">
-    <div class="card-body">
+  <section class="filter-bar" aria-label="Search cards">
       <div class="search-wrapper">
         <input type="text" id="filter-search" placeholder="Search cards..." class="search-input" aria-label="Search cards">
         <button id="search-clear" class="search-clear" aria-label="Clear search" type="button">✕</button>
@@ -296,8 +289,7 @@ async function build() {
           <select id="sort-mode">${sortOptions}</select>
         </div>
       </div>
-    </div>
-  </div>
+  </section>
   ${renderArchive(normalizedCards, '..')}
 </div>`
   });

@@ -1,4 +1,4 @@
-export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'https://github.com/TomWhitwell/Workshop_Computer' }) {
+export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'https://github.com/TomWhitwell/Workshop_Computer', showProgramIdentity = false }) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -6,39 +6,47 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title ? String(title).replace(/</g, '&lt;') : 'Workshop Computer'}</title>
   <link rel="stylesheet" href="${relativeRoot}/assets/github-markdown.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="${relativeRoot}/assets/style.css" />
   <link rel="stylesheet" href="${relativeRoot}/assets/program-cards.css" />
-  <style>
-    .filter-bar{margin:0 0 16px 0}
-  .filter-row label{font-weight:600;color:var(--muted)}
-  .filter-row select{background:transparent;border:1px solid var(--border);color:var(--text);padding:8px;border-radius:8px;width:100%}
-  </style>
 </head>
 <body>
   <header class="site-header" id="page-top">
     <div class="container header-bar">
-      <h1 class="site-title"><a href="${relativeRoot}/index.html">Workshop Computer Program Cards</a></h1>
-      <div style="display:flex;align-items:center;gap:10px">
-        <button id="connectToggle" class="connect-toggle" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting">
-          <span class="c-label">Connect</span>
-          <span class="c-track"><span class="c-thumb"></span></span>
-        </button>
-      </div>
+      <a class="site-wordmark" href="https://www.musicthing.co.uk/" aria-label="Music Thing Modular">
+        <img src="https://www.musicthing.co.uk/images/MTM_Horiz.svg" alt="Music Thing Modular">
+      </a>
+      <nav class="site-nav" aria-label="Music Thing Modular">
+        <a href="https://www.musicthing.co.uk/#writing">Talking &amp; Writing</a>
+        <a href="https://www.musicthing.co.uk/about/">About</a>
+        <a href="https://www.musicthing.co.uk/buy">Buy</a>
+      </nav>
     </div>
   </header>
   <main class="container">
+    ${showProgramIdentity ? `<header class="program-cards__title program-cards__title--site">
+      <a class="program-cards__identity" href="${relativeRoot}/index.html">
+        <img class="program-cards__identity-mark" src="${relativeRoot}/assets/program_cards/ProgramCardGreen.svg" alt="">
+        <span class="program-cards__identity-name">Program Cards</span>
+      </a>
+      <nav class="program-cards__links" aria-label="Program card links">
+        <a href="${relativeRoot}/archive/">All cards</a>
+        <a href="https://www.musicthing.co.uk/workshopsystem/program-cards/install/">Installation</a>
+        <a href="${repoUrl}">Make a card</a>
+        <button id="connectToggle" class="connect-toggle" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting">
+          <span class="c-status" aria-hidden="true"></span><span class="c-label">Connect workshop computer</span>
+        </button>
+      </nav>
+    </header>` : ''}
     ${content}
   </main>
   <footer class="site-footer">
     <div class="container">
-      <p>
-        <a href="${repoUrl}" target="_blank" rel="noopener">View on GitHub</a>
-        <span aria-hidden="true">•</span>
-        <a href="https://www.musicthing.co.uk/workshopsystem/" target="_blank" rel="noopener">Music Thing Workshop System</a>
-      </p>
+      <h2>Music Thing Modular</h2>
+      <div class="footer-grid">
+        <p>Tom Whitwell<br><a href="mailto:tom@musicthing.co.uk">tom@musicthing.co.uk</a><br><a href="https://www.musicthing.co.uk/about/">About Music Thing Modular</a></p>
+        <p><a href="${repoUrl}">GitHub</a><br><a href="https://www.instagram.com/musicthingmodular/">Instagram</a><br><a href="https://workshopsystem.substack.com/">Newsletter</a></p>
+        <p>Open source electronic musical instruments. Designed in London, made in Brighton, built and used by musicians around the world.</p>
+      </div>
     </div>
   </footer>
   <script type="module">
