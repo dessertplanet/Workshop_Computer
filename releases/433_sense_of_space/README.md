@@ -85,6 +85,25 @@ The 16 MB UF2 can take much longer to copy/flash than the 2 MB UF2. This is norm
 the higher-quality 16-bit ambience makes the UF2 wrapper substantially larger even
 though the actual flash payload still fits comfortably on a 16 MB card.
 
+## CC0 Mayakovsky Version
+
+A separate copyright-clean version is included in `mayakovsky_cc0/`. It uses a
+Creative Commons 0 Mayakovsky Theatre audience recording from approximately
+4:45-6:16, avoiding speech heard around 6:25, while keeping the same controls,
+LED countdown, pulse inputs, restlessness behaviour, reverb, and chair creak.
+
+The main BBC-derived version remains the preferred sound for the card: its audience
+perspective is more intimate, as if heard from the stage during a performance. The
+Mayakovsky CC0 version is more spacious and public-sounding, but has simpler reuse
+terms because all embedded ambience and chair creak audio is CC0.
+
+Mayakovsky CC0 UF2s:
+
+| File | Card size | Audio asset |
+|------|-----------|-------------|
+| `mayakovsky_cc0/UF2/433_sense_of_space_2mb_mayakovsky_cc0.uf2` | 2 MB | 91 seconds, 10 kHz stereo signed 8-bit, sourced from 4:45-6:16 |
+| `mayakovsky_cc0/UF2/433_sense_of_space_16mb_mayakovsky_cc0.uf2` | 16 MB | 91 seconds, 24 kHz stereo signed 16-bit, sourced from 4:45-6:16 |
+
 ## Pulse Input
 
 Pulse In 1 triggers the chair/stool creak on a rising edge. It retriggers the same
