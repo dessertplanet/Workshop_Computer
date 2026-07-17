@@ -62,58 +62,13 @@ function renderPanelLabel(kind, pos, item) {
   return `<span class="program-card-panel__label program-card-panel__label--${kind}" style="left: ${esc(pos.left)}%; top: ${esc(pos.top)}%;">${label}</span>`;
 }
 
-function renderPanel(panel, panelImg) {
-  panel = panel || {};
+function renderPanel(card, panelImg) {
+  const panel = card.panel || {};
   const labels = [];
   for (const pos of panelPositions.controls) labels.push(renderPanelLabel('control', pos, (panel.controls || {})[pos.key]));
   for (const pos of panelPositions.inputs) labels.push(renderPanelLabel('input', pos, (panel.inputs || {})[pos.key]));
   for (const pos of panelPositions.outputs) labels.push(renderPanelLabel('output', pos, (panel.outputs || {})[pos.key]));
   return `<figure class="program-card-panel" aria-label="Workshop Computer panel"><img src="${esc(panelImg)}" alt="Workshop Computer panel">${labels.join('')}</figure>`;
-}
-
-function renderPanelReference(snapshot) {
-  const panel = snapshot.panel || {};
-  const controls = panel.controls || {};
-  const controlsMarkup = ['main', 'x', 'y', 'z'].map(key => {
-    const control = controls[key];
-    if (!control || !control.description) return '';
-    return `<p><strong>${esc(inline(control.label || key).toUpperCase())}</strong> ${esc(truncate(control.description, 220))}</p>`;
-  }).join('');
-  const switchEntries = snapshot.switch_modes ? Object.entries(snapshot.switch_modes).filter(entry => entry[1]) : [];
-  const switchMarkup = switchEntries
-    .map(([key, value]) => `<p><strong>${esc(key.charAt(0).toUpperCase() + key.slice(1))}</strong> ${esc(truncate(value, 240))}</p>`)
-    .join('');
-  const ledsMarkup = (snapshot.leds || []).map(led => `<p>${esc(truncate(led, 260))}</p>`).join('');
-  return `<div class="program-card-use">
-    <div class="program-card-use__panel">${renderPanel(panel, snapshot.panelImg)}</div>
-    <div class="program-card-use__reference">
-      ${controlsMarkup ? `<section class="program-card-section"><h3>Controls</h3>${controlsMarkup}</section>` : ''}
-      ${switchMarkup ? `<section class="program-card-section"><h3>Switch</h3>${switchMarkup}</section>` : ''}
-      ${renderSocketList('Inputs', panel.inputs, panelPositions.inputs)}
-      ${renderSocketList('Outputs', panel.outputs, panelPositions.outputs)}
-      ${ledsMarkup ? `<section class="program-card-section"><h3>LEDs</h3>${ledsMarkup}</section>` : ''}
-    </div>
-  </div>`;
-}
-
-function renderPanelModes(card, panelImg) {
-  const modes = Array.isArray(card.panel_modes) ? card.panel_modes : [];
-  if (modes.length <= 1) {
-    const snapshot = modes[0] || card;
-    return `${modes[0]?.description ? `<p class="program-card-mode-description">${esc(modes[0].description)}</p>` : ''}${renderPanelReference({ ...snapshot, panelImg })}`;
-  }
-  const selected = modes.find(mode => mode.default) || modes[0];
-  const selector = `<div class="program-card-mode-picker">
-    <label for="panel-mode-${esc(card.slug || card.id || 'card')}">Panel mode</label>
-    <select id="panel-mode-${esc(card.slug || card.id || 'card')}" data-panel-mode-select>
-      ${modes.map(mode => `<option value="${esc(mode.id)}"${mode.id === selected.id ? ' selected' : ''}>${esc(mode.name || mode.id)}</option>`).join('')}
-    </select>
-  </div>`;
-  const snapshots = modes.map(mode => `<div class="program-card-mode-view" data-panel-mode-view="${esc(mode.id)}"${mode.id === selected.id ? '' : ' hidden aria-hidden="true"'}>
-    ${mode.description ? `<p class="program-card-mode-description">${esc(mode.description)}</p>` : ''}
-    ${renderPanelReference({ ...mode, panelImg })}
-  </div>`).join('');
-  return `<div class="program-card-panel-modes" data-panel-modes>${selector}${snapshots}</div>`;
 }
 
 function renderSocketList(title, sockets, positions) {
@@ -220,6 +175,21 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
   const documentation = renderDocumentation(card, extraDocs, !basic);
   const discussionUrl = metadata.discussion_url || DEFAULT_DISCUSSION;
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
+  const panel = card.panel || {};
+  const controls = panel.controls || {};
+
+  const controlsMarkup = ['main', 'x', 'y', 'z'].map(key => {
+    const control = controls[key];
+    if (!control || !control.description) return '';
+    return `<p><strong>${esc(inline(control.label || key).toUpperCase())}</strong> ${esc(truncate(control.description, 220))}</p>`;
+  }).join('');
+
+  const switchEntries = card.switch_modes ? Object.entries(card.switch_modes).filter(entry => entry[1]) : [];
+  const switchMarkup = switchEntries
+    .map(([key, value]) => `<p><strong>${esc(key.charAt(0).toUpperCase() + key.slice(1))}</strong> ${esc(truncate(value, 240))}</p>`)
+    .join('');
+
+  const ledsMarkup = (card.leds || []).map(led => `<p>${esc(truncate(led, 260))}</p>`).join('');
 
   const dataSources = !basic && Array.isArray(card.source) && card.source.length
     ? `<div class="program-card-data-sources"><details><summary>Data sources</summary><p>${card.source.map(item => `<code title="${esc(item)}">${esc(truncate(item, 56))}</code>`).join(', ')}</p></details></div>`
@@ -280,7 +250,16 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
 
   const use = basic ? '' : `<section class="program-card-use-section">
     <h2 class="program-card-use__title">Panel</h2>
-    ${renderPanelModes(card, panelImg)}
+    <div class="program-card-use">
+    <div class="program-card-use__panel">${renderPanel(card, panelImg)}</div>
+    <div class="program-card-use__reference">
+      ${controlsMarkup ? `<section class="program-card-section"><h3>Controls</h3>${controlsMarkup}</section>` : ''}
+      ${switchMarkup ? `<section class="program-card-section"><h3>Switch</h3>${switchMarkup}</section>` : ''}
+      ${renderSocketList('Inputs', panel.inputs, panelPositions.inputs)}
+      ${renderSocketList('Outputs', panel.outputs, panelPositions.outputs)}
+      ${ledsMarkup ? `<section class="program-card-section"><h3>LEDs</h3>${ledsMarkup}</section>` : ''}
+    </div>
+  </div>
   </section>`;
 
   const notesMarkup = !basic && Array.isArray(card.notes) && card.notes.length

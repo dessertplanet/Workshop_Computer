@@ -28,20 +28,6 @@ const els = {
   gutter: document.getElementById('gutter-inner'),
 };
 
-// The preview article is replaced after every YAML edit, so use one delegated
-// listener rather than attaching handlers to each newly rendered mode picker.
-document.addEventListener('change', (event) => {
-  const select = event.target.closest('[data-panel-mode-select]');
-  if (!select) return;
-  const root = select.closest('[data-panel-modes]');
-  if (!root) return;
-  root.querySelectorAll('[data-panel-mode-view]').forEach((view) => {
-    const active = view.getAttribute('data-panel-mode-view') === select.value;
-    view.hidden = !active;
-    view.setAttribute('aria-hidden', String(!active));
-  });
-});
-
 // Reveal the editor once the index + first source have loaded, hiding the
 // initial loading spinner.
 function clearLoading() {
