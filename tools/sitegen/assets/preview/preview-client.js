@@ -524,6 +524,27 @@ async function init() {
   els.editor.addEventListener('scroll', () => { hideSuggest(); syncGutter(); });
   els.download.addEventListener('click', downloadSource);
   els.preview.addEventListener('click', (e) => {
+    const button = e.target.closest('[data-panel-position-button]');
+    if (button) {
+      const root = button.closest('[data-panel-views]');
+      if (root) {
+        const selected = button.getAttribute('data-panel-position-button');
+        root.querySelectorAll('[data-panel-position-button]').forEach((candidate) => {
+          candidate.setAttribute('aria-pressed', String(candidate.getAttribute('data-panel-position-button') === selected));
+        });
+        root.querySelectorAll('[data-panel-position-view]').forEach((view) => {
+          const active = view.getAttribute('data-panel-position-view') === selected;
+          view.hidden = !active;
+          view.setAttribute('aria-hidden', String(!active));
+        });
+        root.querySelectorAll('[data-panel-position-panel]').forEach((panel) => {
+          const active = panel.getAttribute('data-panel-position-panel') === selected;
+          panel.hidden = !active;
+          panel.setAttribute('aria-hidden', String(!active));
+        });
+      }
+      return;
+    }
     // In-page anchors (e.g. "Read more" -> README) must not touch the URL hash,
     // which drives card deeplinking. Scroll within the preview instead.
     const anchor = e.target.closest('a[href^="#"]');

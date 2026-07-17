@@ -218,11 +218,33 @@ export const panelStructure = {
           out.push({ severity: 'warning', path: `panel.${side}[${i}]`, key: 'panel',
             message: `panel.${side}[${i}] should have an "id" (ComputerCard API jack) or "name".` });
         }
+        if (isPlainObject(jack)) validateWhen(jack.when, `panel.${side}[${i}].when`, 'panel', out);
       });
     }
     return out;
   },
 };
+
+function validateWhen(when, path, key, out) {
+  if (when === undefined || when === null) return;
+  if (!isPlainObject(when)) {
+    out.push({ severity: 'warning', path, key, message: `${path} should be an object.` });
+    return;
+  }
+  if (when.z !== undefined) {
+    if (when.z === 'any') {
+      out.push({ severity: 'warning', path: `${path}.z`, key,
+        message: `${path}.z "any" is legacy syntax; omit "when" for metadata shared by every switch position.` });
+    } else if (!['up', 'middle', 'down'].includes(when.z)) {
+      out.push({ severity: 'warning', path: `${path}.z`, key,
+        message: `${path}.z should be up, middle, or down; tap is switch action metadata and hold is the down position.` });
+    }
+  }
+  if (when.gesture !== undefined) {
+    out.push({ severity: 'warning', path: `${path}.gesture`, key,
+      message: `${path}.gesture is legacy syntax; describe a tap in controls.switch.tap, and use when.z: down for the held-down panel state.` });
+  }
+}
 
 export const controlsStructure = {
   id: 'controls-structure',
@@ -237,13 +259,20 @@ export const controlsStructure = {
     if (controls.switch !== undefined) {
       if (!isPlainObject(controls.switch)) {
         out.push({ severity: 'warning', path: 'controls.switch', key: 'controls',
-          message: 'controls.switch should be an object keyed by up/middle/down.' });
+          message: 'controls.switch should be an object keyed by up/middle/down/tap.' });
       } else {
         for (const pos of Object.keys(controls.switch)) {
-          if (!['up', 'middle', 'down'].includes(pos)) {
+          if (!['up', 'middle', 'down', 'tap'].includes(pos)) {
             out.push({ severity: 'warning', path: `controls.switch.${pos}`, key: 'controls',
-              message: `controls.switch key "${pos}" should be up, middle, or down.` });
+              message: `controls.switch key "${pos}" should be up, middle, down, or tap.` });
+          } else if (!isPlainObject(controls.switch[pos]) && typeof controls.switch[pos] !== 'string') {
+            out.push({ severity: 'warning', path: `controls.switch.${pos}`, key: 'controls',
+              message: `controls.switch.${pos} should be text or an object with name/description.` });
           }
+        }
+        if (controls.switch.tap !== undefined && controls.switch.down === undefined) {
+          out.push({ severity: 'warning', path: 'controls.switch.tap', key: 'controls',
+            message: 'controls.switch.tap describes a Down-switch action, so controls.switch.down should also be documented.' });
         }
       }
     }
@@ -251,6 +280,11 @@ export const controlsStructure = {
       if (controls[listKey] !== undefined && !Array.isArray(controls[listKey])) {
         out.push({ severity: 'warning', path: `controls.${listKey}`, key: 'controls',
           message: `controls.${listKey} should be a list.` });
+      } else if (Array.isArray(controls[listKey])) {
+        controls[listKey].forEach((row, i) => {
+          if (!isPlainObject(row)) return;
+          validateWhen(row.when, `controls.${listKey}[${i}].when`, 'controls', out);
+        });
       }
     }
     return out;
