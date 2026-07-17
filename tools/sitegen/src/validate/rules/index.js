@@ -235,10 +235,10 @@ export const controlsStructure = {
     }
     const out = [];
     if (controls.switch !== undefined) {
-      if (!isPlainObject(controls.switch) && !Array.isArray(controls.switch)) {
+      if (!isPlainObject(controls.switch)) {
         out.push({ severity: 'warning', path: 'controls.switch', key: 'controls',
-          message: 'controls.switch should be an object keyed by up/middle/down, or a list of conditional switch rows.' });
-      } else if (isPlainObject(controls.switch)) {
+          message: 'controls.switch should be an object keyed by up/middle/down.' });
+      } else {
         for (const pos of Object.keys(controls.switch)) {
           if (!['up', 'middle', 'down'].includes(pos)) {
             out.push({ severity: 'warning', path: `controls.switch.${pos}`, key: 'controls',
@@ -251,96 +251,6 @@ export const controlsStructure = {
       if (controls[listKey] !== undefined && !Array.isArray(controls[listKey])) {
         out.push({ severity: 'warning', path: `controls.${listKey}`, key: 'controls',
           message: `controls.${listKey} should be a list.` });
-      }
-    }
-    return out;
-  },
-};
-
-function collectWhenClauses(value, path = '', out = []) {
-  if (Array.isArray(value)) {
-    value.forEach((item, i) => collectWhenClauses(item, `${path}[${i}]`, out));
-    return out;
-  }
-  if (!isPlainObject(value)) return out;
-  for (const [key, child] of Object.entries(value)) {
-    const childPath = path ? `${path}.${key}` : key;
-    if (key.toLowerCase() === 'when') out.push({ value: child, path: childPath });
-    else collectWhenClauses(child, childPath, out);
-  }
-  return out;
-}
-
-export const modesStructure = {
-  id: 'modes-structure',
-  check(ctx) {
-    const rawModes = ctx.get('modes');
-    const out = [];
-    const ids = new Set();
-    let defaultCount = 0;
-    if (rawModes !== undefined && rawModes !== null) {
-      if (!Array.isArray(rawModes)) {
-        out.push({ severity: 'warning', path: 'modes', key: 'modes',
-          message: 'Field "modes" should be a list of named panel modes.' });
-      } else {
-        rawModes.forEach((mode, i) => {
-          const at = `modes[${i}]`;
-          if (!isPlainObject(mode)) {
-            out.push({ severity: 'warning', path: at, key: 'modes', message: `${at} should be an object.` });
-            return;
-          }
-          const id = typeof mode.id === 'string' ? mode.id.trim() : '';
-          if (!id) {
-            out.push({ severity: 'error', path: `${at}.id`, key: 'modes', message: `${at} needs an "id".` });
-          } else {
-            if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) {
-              out.push({ severity: 'warning', path: `${at}.id`, key: 'modes',
-                message: `Mode id "${id}" should be lowercase kebab-case.` });
-            }
-            if (ids.has(id)) {
-              out.push({ severity: 'error', path: `${at}.id`, key: 'modes', message: `Duplicate mode id "${id}".` });
-            }
-            ids.add(id);
-          }
-          if (isBlank(mode.name)) {
-            out.push({ severity: 'warning', path: `${at}.name`, key: 'modes', message: `${at} should have a display "name".` });
-          }
-          if (mode.default !== undefined) {
-            if (typeof mode.default !== 'boolean') {
-              out.push({ severity: 'warning', path: `${at}.default`, key: 'modes', message: `${at}.default should be boolean.` });
-            } else if (mode.default) defaultCount++;
-          }
-          if (mode.state !== undefined && !isPlainObject(mode.state)) {
-            out.push({ severity: 'warning', path: `${at}.state`, key: 'modes', message: `${at}.state should be an object.` });
-          }
-          if (mode.activate !== undefined) {
-            const methods = Array.isArray(mode.activate) ? mode.activate : [mode.activate];
-            if (!methods.length || methods.some(method => !isPlainObject(method))) {
-              out.push({ severity: 'warning', path: `${at}.activate`, key: 'modes',
-                message: `${at}.activate should be an object or list of condition objects.` });
-            }
-          }
-        });
-      }
-    }
-    if (defaultCount > 1) {
-      out.push({ severity: 'error', path: 'modes', key: 'modes', message: 'Only one mode may have default: true.' });
-    }
-
-    for (const clause of collectWhenClauses({ panel: ctx.get('panel'), controls: ctx.get('controls') })) {
-      if (!isPlainObject(clause.value)) {
-        out.push({ severity: 'warning', path: clause.path, key: clause.path.split('.')[0],
-          message: `${clause.path} should be an object.` });
-        continue;
-      }
-      if (!Object.prototype.hasOwnProperty.call(clause.value, 'mode')) continue;
-      const referenced = typeof clause.value.mode === 'string' ? clause.value.mode.trim() : '';
-      if (!referenced) {
-        out.push({ severity: 'error', path: `${clause.path}.mode`, key: clause.path.split('.')[0],
-          message: `${clause.path}.mode should be a mode id string.` });
-      } else if (!ids.has(referenced)) {
-        out.push({ severity: 'error', path: `${clause.path}.mode`, key: clause.path.split('.')[0],
-          message: `Unknown mode id "${referenced}"; declare it in modes before referencing it.` });
       }
     }
     return out;
@@ -435,7 +345,6 @@ export const allRules = [
   draftCompleteness,
   panelStructure,
   controlsStructure,
-  modesStructure,
   uf2Entries,
   generatedModelShape,
 ];
