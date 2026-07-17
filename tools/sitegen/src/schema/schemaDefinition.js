@@ -1,6 +1,6 @@
 export const infoYamlSchema = {
   id: 'workshop-computer-info-yaml',
-  version: 1,
+  version: 2,
   source: 'documentation/info.yaml.md',
   fields: [
     { path: 'draft', type: 'boolean', required: false, description: 'Metadata review state.' },
@@ -21,8 +21,8 @@ export const infoYamlSchema = {
     { path: 'demo-link', type: 'string', required: false, description: 'Demo video URL.' },
     { path: 'audio-sample', type: 'array|string', required: false, description: 'Demo audio sample(s): a repo-relative file path, a SoundCloud URL, a Bandcamp EmbeddedPlayer URL, or a list of these.' },
     { path: 'manual', type: 'string', required: false, description: 'Abbreviated operator summary.' },
-    { path: 'panel', type: 'object', required: false, description: 'Panel jack metadata.' },
-    { path: 'controls', type: 'object', required: false, description: 'Control metadata.' },
+    { path: 'panel', type: 'object', required: false, description: 'Panel jack metadata. Unconditioned entries form the base; when.z up/middle/down entries override it for that switch position.' },
+    { path: 'controls', type: 'object', required: false, description: 'Control metadata. Switch keys are up/middle/down plus the tap action; when.z supports only up/middle/down.' },
     { path: 'host', type: 'object', required: false, description: 'Host connectivity metadata.' },
     { path: 'switch_modes', type: 'object', required: false, description: 'Legacy switch mode descriptions.' },
     { path: 'notes', type: 'array|string', required: false, description: 'Supplementary notes.' },
