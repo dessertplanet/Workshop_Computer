@@ -517,45 +517,6 @@
   margin: 0 0 16px;
 }
 
-.program-card-mode-picker {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-  margin: 0 0 18px;
-}
-
-.program-card-mode-picker label {
-  color: var(--program-card-muted);
-  font-size: 13px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.program-card-mode-picker select {
-  background: #fff;
-  border: 1px solid var(--program-card-rule);
-  border-radius: 7px;
-  color: var(--program-card-ink);
-  font: inherit;
-  min-width: 190px;
-  padding: 8px 34px 8px 10px;
-}
-
-.program-card-mode-picker select:focus-visible {
-  outline: 3px solid rgba(9, 105, 218, 0.3);
-  outline-offset: 2px;
-}
-
-.program-card-mode-description {
-  color: var(--program-card-muted);
-  font-size: 14px;
-  margin: -6px 0 14px;
-}
-
-.program-card-mode-view[hidden] {
-  display: none;
-}
-
 .program-card-use__panel {
   position: sticky;
   top: 18px;

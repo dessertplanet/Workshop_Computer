@@ -111,20 +111,6 @@ document.addEventListener('click', function(e) {
   media.innerHTML = '<iframe src="https://www.youtube.com/embed/' + encodeURIComponent(id) + '?rel=0&autoplay=1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe>';
 });
 
-// Swap the complete panel diagram + reference when a card declares multiple
-// named modes. The default snapshot remains visible without JavaScript.
-document.addEventListener('change', function(e) {
-  var select = e.target.closest('[data-panel-mode-select]');
-  if (!select) return;
-  var root = select.closest('[data-panel-modes]');
-  if (!root) return;
-  root.querySelectorAll('[data-panel-mode-view]').forEach(function(view) {
-    var active = view.getAttribute('data-panel-mode-view') === select.value;
-    view.hidden = !active;
-    view.setAttribute('aria-hidden', String(!active));
-  });
-});
-
 function setConnected(on) {
   if (connectBtn) {
     connectBtn.setAttribute('aria-checked', String(on));
