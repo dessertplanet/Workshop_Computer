@@ -43,6 +43,7 @@ const SLOT_KEY_ALIASES = {
 
 const KNOB_KEYS = ['main', 'x', 'y'];
 const Z_MODES = ['up', 'middle', 'down'];
+const SWITCH_KEYS = [...Z_MODES, 'tap'];
 
 // ---------- generic helpers (ported from the importer) ----------
 
@@ -264,6 +265,60 @@ function normalizeSocketList(items, mapping, warnings, fieldName = 'panel socket
   return result;
 }
 
+function normalizedWhenValue(row, key) {
+  return textValue(field(rowWhen(row), key)).toLowerCase();
+}
+
+function rowAppliesToPosition(row, position) {
+  const when = rowWhen(row);
+  const keys = Object.keys(when);
+  if (!keys.length) return true;
+  if (keys.some(key => !['z', 'gesture'].includes(normalizeKey(key)))) return false;
+
+  const z = normalizedWhenValue(row, 'z');
+  const gesture = normalizedWhenValue(row, 'gesture');
+  if ((!z || z === 'any') && !gesture) return true;
+  if (z !== position) return false;
+  if (!gesture) return true;
+
+  // Compatibility while existing metadata is migrated: holding Down is the
+  // Down panel state. Tap/short-press rows are actions, never panel overlays.
+  return position === 'down' && ['hold', 'long-press'].includes(gesture);
+}
+
+function rowDeclaresPosition(row, position) {
+  return normalizedWhenValue(row, 'z') === position && rowAppliesToPosition(row, position);
+}
+
+function matchingRows(rows, position) {
+  const applicable = rows.filter(row => isPlainObject(row) && rowAppliesToPosition(row, position));
+  return [
+    ...applicable.filter(row => {
+      const z = normalizedWhenValue(row, 'z');
+      return !z || z === 'any';
+    }),
+    ...applicable.filter(row => normalizedWhenValue(row, 'z') === position),
+  ];
+}
+
+function normalizeSocketListForPosition(items, mapping, warnings, fieldName, position) {
+  if (!Array.isArray(items)) return normalizeSocketList(items, mapping, warnings, fieldName);
+
+  const resolved = new Map();
+  for (const item of matchingRows(items, position)) {
+    const apiId = textValue(field(item, 'id'));
+    const slot = mappedSlot(mapping, apiId);
+    if (!slot) {
+      if (apiId) warnings.push(`Unknown ${fieldName} socket id ${JSON.stringify(apiId)}; ignored.`);
+      continue;
+    }
+    resolved.set(slot, { ...(resolved.get(slot) || {}), ...item });
+  }
+  return Object.fromEntries(
+    [...resolved.entries()].map(([slot, item]) => [slot, normalizeSocket(item, 'info.yaml')])
+  );
+}
+
 // ---------- controls / switch / leds ----------
 
 function rowWhen(row) {
@@ -293,76 +348,67 @@ function summarizeKnobRow(row) {
   }).filter(Boolean).join('; ');
 }
 
-function normalizeControls(info, warnings) {
+function normalizedControl(item, warnings, fieldName, fallbackLabel = '') {
+  if (!isPlainObject(item)) return null;
+  const label = textValue(field(item, 'label', 'name')) || fallbackLabel;
+  const control = {
+    label: compactPanelLabel(label),
+    description: optionalText(field(item, 'description'), warnings, `${fieldName}.description`),
+    source: textValue(field(item, 'source')) || 'info.yaml',
+  };
+  if (!control.label) delete control.label;
+  if (!control.description) delete control.description;
+  return control;
+}
+
+function switchItem(info, key) {
+  const controlsSwitch = field(field(info, 'controls'), 'switch');
+  return isPlainObject(controlsSwitch) ? field(controlsSwitch, key) : undefined;
+}
+
+function normalizeControls(info, warnings, position) {
+  const controls = {};
   const directControls = field(field(info, 'panel'), 'controls');
   if (isPlainObject(directControls)) {
-    const controls = {};
     for (const key of ['main', 'x', 'y', 'z']) {
-      const control = directControls[key];
-      if (!isPlainObject(control)) continue;
-      const label = textValue(field(control, 'label', 'name')) || key;
-      controls[key] = {
-        label: compactPanelLabel(label),
-        description: optionalText(field(control, 'description'), warnings, `panel.controls.${key}.description`),
-        source: textValue(field(control, 'source')) || 'info.yaml',
-      };
-      if (!controls[key].description) delete controls[key].description;
+      const control = normalizedControl(field(directControls, key), warnings, `panel.controls.${key}`, key);
+      if (control) controls[key] = control;
     }
-    if (Object.keys(controls).length) return controls;
   }
 
   const rows = listValue(field(field(info, 'controls'), 'knobs'), warnings, 'controls.knobs');
-  const primary = rows.find(row => {
-    const context = rowWhen(row);
-    return textValue(field(context, 'z')) === 'middle' && !field(context, 'layer') && !field(context, 'gesture');
-  }) || rows.find(row => KNOB_KEYS.some(key => isPlainObject(field(row, key))));
-
-  const controls = {};
-  if (primary) {
+  for (const row of matchingRows(rows, position)) {
     for (const key of KNOB_KEYS) {
-      const knob = field(primary, key);
-      if (!isPlainObject(knob)) continue;
-      const name = textValue(field(knob, 'name'));
-      if (!name) continue;
-      controls[key] = {
-        label: compactPanelLabel(name),
-        description: optionalText(field(knob, 'description'), warnings, `controls.knobs.${key}.description`),
-        source: 'info.yaml',
-      };
-      if (!controls[key].description) delete controls[key].description;
+      const knob = normalizedControl(field(row, key), warnings, `controls.knobs.${key}`);
+      if (knob) controls[key] = { ...(controls[key] || {}), ...knob };
     }
   }
 
-  const zRows = rows.filter(row => field(rowWhen(row), 'z'));
-  const downAction = zRows.find(row => textValue(field(rowWhen(row), 'z')) === 'down' && isPlainObject(field(row, 'main')));
-  if (downAction) {
-    const knob = field(downAction, 'main');
-    const name = textValue(field(knob, 'name'));
-    controls.z = {
-      label: compactPanelLabel(name),
-      description: optionalText(field(knob, 'description'), warnings, 'controls.knobs.z.description'),
-      source: 'info.yaml',
-    };
-    if (!controls.z.description) delete controls.z.description;
-  } else if (zRows.length) {
-    controls.z = { label: 'Mode', description: 'Selects alternate control modes.', source: 'info.yaml' };
+  const item = switchItem(info, position);
+  if (item !== undefined) {
+    const zControl = isPlainObject(item)
+      ? normalizedControl(item, warnings, `controls.switch.${position}`, position)
+      : { label: compactPanelLabel(textValue(item) || position), source: 'info.yaml' };
+    if (zControl) controls.z = { ...(controls.z || {}), ...zControl };
+  } else if (position && rows.some(row => rowDeclaresPosition(row, position))) {
+    controls.z = { label: position, description: `Switch Z ${position}.`, source: 'info.yaml' };
   }
 
   return controls;
 }
 
 function normalizeSwitchModes(info, warnings) {
-  const modes = { up: '', middle: '', down: '' };
+  const modes = { up: '', middle: '', down: '', tap: '' };
 
   const directModes = field(info, 'switch_modes');
   if (isPlainObject(directModes)) {
-    for (const mode of Z_MODES) modes[mode] = optionalText(field(directModes, mode), warnings, `switch_modes.${mode}`);
+    for (const mode of SWITCH_KEYS) modes[mode] = optionalText(field(directModes, mode), warnings, `switch_modes.${mode}`);
     return modes;
   }
 
   const controlsSwitch = field(field(info, 'controls'), 'switch');
   if (isPlainObject(controlsSwitch)) {
-    for (const mode of Z_MODES) {
+    for (const mode of SWITCH_KEYS) {
       const item = field(controlsSwitch, mode);
       if (isPlainObject(item)) {
         const name = optionalText(field(item, 'name'), warnings, `controls.switch.${mode}.name`);
@@ -378,7 +424,7 @@ function normalizeSwitchModes(info, warnings) {
   const rows = listValue(field(field(info, 'controls'), 'knobs'), warnings, 'controls.knobs');
   for (const mode of Z_MODES) {
     const summaries = rows
-      .filter(row => textValue(field(rowWhen(row), 'z')) === mode)
+      .filter(row => rowDeclaresPosition(row, mode))
       .map(row => {
         const summary = summarizeKnobRow(row);
         return summary ? `${rowContextLabel(row)}: ${summary}.` : null;
@@ -386,26 +432,84 @@ function normalizeSwitchModes(info, warnings) {
       .filter(Boolean);
     modes[mode] = summaries.join(' ');
   }
+  const tapSummaries = rows
+    .filter(row => normalizedWhenValue(row, 'z') === 'down'
+      && ['momentary', 'short-press'].includes(normalizedWhenValue(row, 'gesture')))
+    .map(summarizeKnobRow)
+    .filter(Boolean);
+  modes.tap = tapSummaries.join('; ');
   return modes;
 }
 
-function normalizeLeds(info, warnings) {
+function normalizeLeds(info, warnings, position) {
   const directLeds = field(info, 'leds');
   if (directLeds != null) {
     if (typeof directLeds === 'string') {
-      return directLeds.split('\n').map(s => s.trim()).filter(Boolean);
+      return directLeds.split('\n').map(s => s.trim()).filter(Boolean).map(label => ({ label }));
     }
-    return listValue(directLeds, warnings, 'leds').map(led => textValue(led)).filter(Boolean);
+    return listValue(directLeds, warnings, 'leds').map(led => {
+      if (!isPlainObject(led)) {
+        const label = textValue(led);
+        return label ? { label } : null;
+      }
+      const normalized = {
+        id: textValue(field(led, 'id')),
+        label: textValue(field(led, 'name', 'label')),
+        description: textValue(field(led, 'description')),
+      };
+      return normalized.id || normalized.label || normalized.description ? normalized : null;
+    }).filter(Boolean);
   }
 
   const rows = listValue(field(field(info, 'controls'), 'leds'), warnings, 'controls.leds');
-  return rows.map(row => {
-    const items = listValue(field(row, 'items'), warnings, 'controls.leds.items');
-    if (!items.length) return null;
-    const names = items.map(item => textValue(field(item, 'name'))).filter(Boolean).join('; ');
-    if (!names) return null;
-    return `${rowContextLabel(row)}: ${names}.`;
-  }).filter(Boolean);
+  const resolved = new Map();
+  let anonymousId = 0;
+  for (const row of matchingRows(rows, position)) {
+    for (const item of listValue(field(row, 'items'), warnings, 'controls.leds.items')) {
+      if (!isPlainObject(item)) continue;
+      const id = textValue(field(item, 'id')) || `anonymous-${anonymousId++}`;
+      resolved.set(id, { ...(resolved.get(id) || {}), ...item });
+    }
+  }
+  return [...resolved.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(([id, item]) => ({
+      id,
+      label: textValue(field(item, 'name', 'label')),
+      description: textValue(field(item, 'description')),
+    }))
+    .filter(item => item.id || item.label || item.description);
+}
+
+function hasPositionMetadata(info, position) {
+  if (switchItem(info, position) !== undefined || field(field(info, 'switch_modes'), position) !== undefined) return true;
+  const controls = field(info, 'controls');
+  const panel = field(info, 'panel');
+  return [
+    ...listValue(field(controls, 'knobs')),
+    ...listValue(field(controls, 'leds')),
+    ...listValue(field(panel, 'inputs')),
+    ...listValue(field(panel, 'outputs')),
+  ].some(row => isPlainObject(row) && rowDeclaresPosition(row, position));
+}
+
+function resolvePanelView(info, warnings, position, switchModes) {
+  const panelInfo = hashValue(field(info, 'panel'), warnings, 'panel');
+  const panel = {
+    controls: normalizeControls(info, warnings, position),
+    inputs: normalizeSocketListForPosition(field(panelInfo, 'inputs'), API_INPUT_KEYS, warnings, 'panel.inputs', position),
+    outputs: normalizeSocketListForPosition(field(panelInfo, 'outputs'), API_OUTPUT_KEYS, warnings, 'panel.outputs', position),
+  };
+  if (!Object.keys(panel.controls).length) delete panel.controls;
+  if (!Object.keys(panel.inputs).length) delete panel.inputs;
+  if (!Object.keys(panel.outputs).length) delete panel.outputs;
+  return {
+    id: position,
+    name: position.charAt(0).toUpperCase() + position.slice(1),
+    panel,
+    switch_modes: switchModes,
+    leds: normalizeLeds(info, warnings, position),
+  };
 }
 
 function isEmptyContainer(value) {
@@ -473,15 +577,21 @@ export function buildCanonicalCardModel({
   const editor = (web && web.editorUrl) || (normalizedInfo && normalizedInfo.editor) || '';
   const downloadUrl = latestUf2?.url || sourceUrl;
 
+  const switchModes = normalizeSwitchModes(info, warnings);
+  const panelViews = Z_MODES
+    .filter(position => hasPositionMetadata(info, position))
+    .map(position => resolvePanelView(info, warnings, position, switchModes));
+  const defaultPanelView = panelViews.find(view => view.id === 'middle') || panelViews[0];
+
   const panelInfo = hashValue(field(info, 'panel'), warnings, 'panel');
-  const panel = {
-    controls: normalizeControls(info, warnings),
-    inputs: normalizeSocketList(field(panelInfo, 'inputs'), API_INPUT_KEYS, warnings, 'panel.inputs'),
-    outputs: normalizeSocketList(field(panelInfo, 'outputs'), API_OUTPUT_KEYS, warnings, 'panel.outputs'),
+  const panel = defaultPanelView?.panel || {
+    controls: normalizeControls(info, warnings, 'middle'),
+    inputs: normalizeSocketListForPosition(field(panelInfo, 'inputs'), API_INPUT_KEYS, warnings, 'panel.inputs', 'middle'),
+    outputs: normalizeSocketListForPosition(field(panelInfo, 'outputs'), API_OUTPUT_KEYS, warnings, 'panel.outputs', 'middle'),
   };
-  if (!Object.keys(panel.controls).length) delete panel.controls;
-  if (!Object.keys(panel.inputs).length) delete panel.inputs;
-  if (!Object.keys(panel.outputs).length) delete panel.outputs;
+  if (panel.controls && !Object.keys(panel.controls).length) delete panel.controls;
+  if (panel.inputs && !Object.keys(panel.inputs).length) delete panel.inputs;
+  if (panel.outputs && !Object.keys(panel.outputs).length) delete panel.outputs;
 
   const tags = listValue(field(info, 'tags'), warnings, 'tags')
     .flatMap(tag => textValue(tag).split(','))
@@ -535,8 +645,8 @@ export function buildCanonicalCardModel({
     summary: description,
     description,
     panel,
-    switch_modes: normalizeSwitchModes(info, warnings),
-    leds: normalizeLeds(info, warnings),
+    switch_modes: switchModes,
+    leds: defaultPanelView?.leds || normalizeLeds(info, warnings, 'middle'),
     tags,
     source: [`releases/${id}/info.yaml`, `releases/${id}/README.md`],
     url: `programs/${slug}/`,
@@ -547,6 +657,13 @@ export function buildCanonicalCardModel({
     download_url: downloadUrl,
     metadata,
   };
+
+  if (panelViews.length) {
+    card.panel_views = {
+      default: defaultPanelView.id,
+      items: panelViews,
+    };
+  }
 
   if (notes.length) card.notes = notes;
 
