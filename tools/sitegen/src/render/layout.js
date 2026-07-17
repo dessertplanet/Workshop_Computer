@@ -111,6 +111,69 @@ document.addEventListener('click', function(e) {
   media.innerHTML = '<iframe src="https://www.youtube.com/embed/' + encodeURIComponent(id) + '?rel=0&autoplay=1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe>';
 });
 
+document.addEventListener('click', function(e) {
+  var button = e.target.closest('[data-panel-position-button]');
+  if (!button) return;
+  var root = button.closest('[data-panel-views]');
+  if (!root) return;
+  var selected = button.getAttribute('data-panel-position-button');
+  root.querySelectorAll('[data-panel-position-button]').forEach(function(candidate) {
+    candidate.setAttribute('aria-pressed', String(candidate.getAttribute('data-panel-position-button') === selected));
+  });
+  root.querySelectorAll('[data-panel-position-view]').forEach(function(view) {
+    var active = view.getAttribute('data-panel-position-view') === selected;
+    view.hidden = !active;
+    view.setAttribute('aria-hidden', String(!active));
+  });
+  root.querySelectorAll('[data-panel-position-panel]').forEach(function(panel) {
+    var active = panel.getAttribute('data-panel-position-panel') === selected;
+    panel.hidden = !active;
+    panel.setAttribute('aria-hidden', String(!active));
+  });
+});
+
+// On wide layouts, keep the panel visualization visible for the entire card:
+// card-title aligned at the top, viewport-centered through the middle, and
+// bottom-aligned with the Back to all programs action at the end.
+var panelRailFrame = 0;
+function updatePanelRails() {
+  panelRailFrame = 0;
+  document.querySelectorAll('.program-card-panel-rail').forEach(function(rail) {
+    var article = rail.closest('.program-card-page');
+    var title = article && article.querySelector('.program-card-hero h1');
+    if (!article || !title || window.innerWidth <= 1450) {
+      rail.classList.remove('is-viewport-tracked');
+      rail.style.removeProperty('--program-card-panel-left');
+      rail.style.removeProperty('--program-card-panel-top');
+      return;
+    }
+
+    var actions = article.nextElementSibling && article.nextElementSibling.classList.contains('actions-duo')
+      ? article.nextElementSibling
+      : null;
+    var articleRect = article.getBoundingClientRect();
+    var titleTop = title.getBoundingClientRect().top + window.scrollY;
+    var endBottom = (actions || article).getBoundingClientRect().bottom + window.scrollY;
+    var panelHeight = rail.getBoundingClientRect().height;
+    var centeredTop = Math.max(18, (window.innerHeight - panelHeight) / 2);
+    var startingTop = titleTop + window.scrollY;
+    var endingTop = endBottom - panelHeight - window.scrollY;
+    var top = Math.min(endingTop, centeredTop, startingTop);
+
+    rail.style.setProperty('--program-card-panel-left', (articleRect.left - 306) + 'px');
+    rail.style.setProperty('--program-card-panel-top', Math.max(0, top) + 'px');
+    rail.classList.add('is-viewport-tracked');
+  });
+}
+
+function schedulePanelRails() {
+  if (!panelRailFrame) panelRailFrame = requestAnimationFrame(updatePanelRails);
+}
+
+window.addEventListener('scroll', schedulePanelRails, { passive: true });
+window.addEventListener('resize', schedulePanelRails);
+schedulePanelRails();
+
 function setConnected(on) {
   if (connectBtn) {
     connectBtn.setAttribute('aria-checked', String(on));
