@@ -130,7 +130,7 @@ export function renderAuthorPage({ documentKind = 'new' } = {}) {
     </form>
   </dialog>
 
-  <script type="module" src="./author-client.js?v=29"></script>
+  <script type="module" src="./author-client.js?v=30"></script>
 </body>
 </html>`;
 }
