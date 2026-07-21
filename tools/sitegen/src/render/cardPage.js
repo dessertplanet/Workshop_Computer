@@ -56,10 +56,25 @@ function renderTags(card) {
     .join('')}</span>`;
 }
 
+// At the panel label's 11px type and narrow socket width, roughly 15 visible
+// characters (counting normalized whitespace) fit across three word-wrapped
+// lines. No unbroken token longer than eight characters is allowed to overrun
+// its background, even when the complete label is otherwise short.
+const PANEL_MIDWORD_BREAK_THRESHOLD = 15;
+const PANEL_UNBROKEN_TOKEN_THRESHOLD = 8;
+
+function panelWrapClass(value) {
+  const text = stripTags(value || '').replace(/\s+/g, ' ').trim();
+  const longestToken = text.split(/[\s\-/]+/).reduce((length, token) => Math.max(length, token.length), 0);
+  return text.length > PANEL_MIDWORD_BREAK_THRESHOLD || longestToken > PANEL_UNBROKEN_TOKEN_THRESHOLD
+    ? ' program-card-panel-text--long'
+    : '';
+}
+
 function renderPanelLabel(kind, pos, item) {
   if (!item || !item.label) return '';
   const label = esc(stripTags(item.label)).replace(/\n/g, '<br>');
-  return `<span class="program-card-panel__label program-card-panel__label--${kind}" style="left: ${esc(pos.left)}%; top: ${esc(pos.top)}%;">${label}</span>`;
+  return `<span class="program-card-panel__label program-card-panel__label--${kind}${panelWrapClass(item.label)}" style="left: ${esc(pos.left)}%; top: ${esc(pos.top)}%;">${label}</span>`;
 }
 
 function switchModeName(value) {
@@ -76,7 +91,7 @@ function renderPanelSwitchPositions(switchModes = {}, positionControl = null) {
     const selectAttrs = selectable.has(position)
       ? ` data-panel-position-button="${position}" aria-pressed="${position === selected}" title="Select ${position} switch position"`
       : ` aria-pressed="false" title="${role ? 'Edit' : 'Add'} ${position} switch position"`;
-    return `<button type="button" class="program-card-panel-switch-position program-card-panel-switch-position--${position}${role ? ' has-value' : ''}" data-panel-switch-position="${position}" aria-label="${position} switch position${role ? `: ${esc(role)}` : ''}"${selectAttrs}>${role ? `<strong>${esc(role)}</strong>` : ''}</button>`;
+    return `<button type="button" class="program-card-panel-switch-position program-card-panel-switch-position--${position}${role ? ' has-value' : ''}${panelWrapClass(role)}" data-panel-switch-position="${position}" aria-label="${position} switch position${role ? `: ${esc(role)}` : ''}"${selectAttrs}>${role ? `<strong>${esc(role)}</strong>` : ''}</button>`;
   }).join('');
   return `<span class="program-card-panel-switch-positions">${positions}</span>`;
 }
