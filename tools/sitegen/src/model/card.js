@@ -400,12 +400,6 @@ function normalizeControls(info, warnings, position) {
 function normalizeSwitchModes(info, warnings) {
   const modes = { up: '', middle: '', down: '', tap: '' };
 
-  const directModes = field(info, 'switch_modes');
-  if (isPlainObject(directModes)) {
-    for (const mode of SWITCH_KEYS) modes[mode] = optionalText(field(directModes, mode), warnings, `switch_modes.${mode}`);
-    return modes;
-  }
-
   const controlsSwitch = field(field(info, 'controls'), 'switch');
   if (isPlainObject(controlsSwitch)) {
     for (const mode of SWITCH_KEYS) {
@@ -671,35 +665,11 @@ export function buildCanonicalCardModel({
   const documentation = {};
   const manual = optionalText(field(info, 'manual'), warnings, 'manual');
   if (manual) documentation.intro = manual;
-  const structuredDocs = field(info, 'documentation');
-  if (isPlainObject(structuredDocs)) {
-    for (const [key, value] of Object.entries(structuredDocs)) {
-      const text = textValue(value);
-      if (!text) continue;
-      if (key === 'intro') {
-        if (!documentation.intro) documentation.intro = text;
-      } else {
-        documentation.sections = documentation.sections || [];
-        documentation.sections.push({ title: key.replace(/[_-]/g, ' '), body: text });
-      }
-    }
-  }
   if (Object.keys(documentation).length) card.documentation = documentation;
 
-  const structuredVideos = field(info, 'videos');
-  if (Array.isArray(structuredVideos) && structuredVideos.length) {
-    card.videos = sanitizeValue(structuredVideos);
-  } else if (demoLink && videoId) {
+  if (demoLink && videoId) {
     card.videos = [{ title: 'Demo video', url: demoLink, id: videoId }];
   }
-
-  const quickStart = listValue(field(info, 'quick_start'), warnings, 'quick_start')
-    .map(step => textValue(step))
-    .filter(Boolean);
-  if (quickStart.length) card.quick_start = quickStart;
-
-  const memory = field(info, 'memory');
-  if (isPlainObject(memory)) card.memory = sanitizeValue(memory);
 
   // Presentation extras the site build needs but the importer did not carry.
   if (Array.isArray(docs) && docs.length) card.docs = sanitizeValue(docs);

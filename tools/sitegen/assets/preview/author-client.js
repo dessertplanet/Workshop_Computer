@@ -1,0 +1,902 @@
+import YAML from 'yaml';
+import { parseSource } from './lib/validate/parseSource.js';
+import { validateInfoYaml } from './lib/validate/validateInfoYaml.js';
+import { buildCanonicalCardModel } from './lib/model/card.js';
+import { renderCardArticle } from './lib/render/cardPage.js';
+import { panelPositions } from './lib/render/panelPositions.js';
+
+const REQUIRED = ['Name', 'Description', 'Language', 'Creator', 'Version', 'Status'];
+const STORAGE_KEY = 'workshop-computer-author-new';
+const DIFFERENTIAL_STORAGE_KEY = 'workshop-computer-author-differential-controls';
+const SWITCH_POSITIONS = ['up', 'middle', 'down'];
+const OPTIONAL_KEYS = ['summary', 'tags', 'manual', 'demo-link', 'contact'];
+const INITIAL = {
+  draft: false,
+  Name: '',
+  Description: '',
+  Language: '',
+  Creator: '',
+  Version: '',
+  Status: '',
+};
+
+const inputIds = {
+  audio_l: 'AudioIn1', audio_r: 'AudioIn2', cv_1: 'CVIn1', cv_2: 'CVIn2',
+  pulse_1: 'PulseIn1', pulse_2: 'PulseIn2',
+};
+const outputIds = {
+  audio_out_l: 'AudioOut1', audio_out_r: 'AudioOut2', cv_out_1: 'CVOut1', cv_out_2: 'CVOut2',
+  pulse_out_1: 'PulseOut1', pulse_out_2: 'PulseOut2',
+};
+const componentDefs = [
+  ...panelPositions.controls.map(p => ({ ...p, kind: p.key === 'z' ? 'switch' : 'control', label: p.name })),
+  ...panelPositions.inputs.map(p => ({ ...p, kind: 'input', id: inputIds[p.key], label: `Input · ${p.name}` })),
+  ...panelPositions.outputs.map(p => ({ ...p, kind: 'output', id: outputIds[p.key], label: `Output · ${p.name}` })),
+];
+
+const els = {
+  editor: document.getElementById('author-editor'),
+  yamlPanel: document.getElementById('yaml-editor'),
+  yaml: document.getElementById('yaml-source'),
+  yamlStatus: document.getElementById('yaml-status'),
+  diagnostics: document.getElementById('diagnostics'),
+  preview: document.getElementById('card-preview'),
+  progress: document.getElementById('required-progress'),
+  status: document.getElementById('author-status'),
+  download: document.getElementById('download-source'),
+  licenseDialog: document.getElementById('license-dialog'),
+  licenseValue: document.getElementById('license-value'),
+  licenseHelp: document.getElementById('license-help'),
+  licenseResult: document.getElementById('license-result'),
+  useLicense: document.getElementById('use-license'),
+};
+
+let data = loadDraft();
+let selectedLicense = '';
+let licenseWasManuallySelected = false;
+let differentControls = localStorage.getItem(DIFFERENTIAL_STORAGE_KEY) === 'true';
+let activePosition = 'middle';
+let currentMode = 'author';
+const openOptionals = new Set(OPTIONAL_KEYS.filter(key => hasOptionalValue(key)));
+let yamlTimer;
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function loadDraft() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) return { ...clone(INITIAL), ...YAML.parse(saved) };
+  } catch {}
+  return clone(INITIAL);
+}
+
+function saveDraft() {
+  try { localStorage.setItem(STORAGE_KEY, sourceText()); } catch {}
+}
+
+function sourceText() {
+  return YAML.stringify(data, { lineWidth: 0 });
+}
+
+function cleanText(value) {
+  return String(value ?? '').trim();
+}
+
+function getNested(path) {
+  return path.split('.').reduce((value, key) => value && value[key], data);
+}
+
+function setNested(path, value) {
+  const keys = path.split('.');
+  let target = data;
+  for (const key of keys.slice(0, -1)) target = target[key] ||= {};
+  const last = keys.at(-1);
+  if (cleanText(value)) target[last] = value;
+  else delete target[last];
+  prune(data);
+}
+
+function prune(value) {
+  if (!value || typeof value !== 'object') return;
+  for (const key of Object.keys(value)) {
+    const child = value[key];
+    if (child && typeof child === 'object') prune(child);
+    if (Array.isArray(child) && child.length === 0) delete value[key];
+    else if (child && typeof child === 'object' && !Array.isArray(child) && Object.keys(child).length === 0) delete value[key];
+  }
+}
+
+function renderDiagnostics(result) {
+  if (!result.diagnostics.length) {
+    els.diagnostics.innerHTML = '<p class="diag-clean">✓ No schema issues.</p>';
+    return;
+  }
+  els.diagnostics.innerHTML = `<p class="diag-summary">${result.errorCount} error(s), ${result.warningCount} warning(s)</p><ul class="diag-list">${result.diagnostics.map(d => `<li class="diag--${escapeHtml(d.severity)}"><strong>${d.severity === 'error' ? 'Error' : 'Warning'}:</strong> ${escapeHtml(d.path || '')} ${escapeHtml(d.message)}</li>`).join('')}</ul>`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function previewData() {
+  if (!differentControls) return data;
+  const preview = clone(data);
+  const knobs = ((preview.controls ||= {}).knobs ||= []);
+  for (const position of SWITCH_POSITIONS) {
+    if (!knobs.some(row => row?.when?.z === position)) knobs.push({ when: { z: position } });
+  }
+  return preview;
+}
+
+function buildCard() {
+  return buildCanonicalCardModel({
+    folderName: 'new_card', slug: 'new-card', info: {}, rawYaml: previewData(),
+    docs: [], downloads: [], latestUf2: null, uf2Downloads: [], web: {}, audioSamples: [],
+    readmePath: '', sourceFile: 'info.yaml', sourceUrl: '', readmeUrl: '',
+    gitFirstDate: '', gitLastDate: '',
+  });
+}
+
+function renderPreview() {
+  try {
+    const card = buildCard();
+    if (card.panel_views?.items.some(item => item.id === activePosition)) {
+      card.panel_views.default = activePosition;
+    }
+    els.preview.innerHTML = renderCardArticle({
+      card,
+      panelImg: '../assets/program_cards/Standalone_computer_rev1.svg',
+      yamlUrl: '#', uf2Url: '', extraDocs: '',
+    });
+    if (!cleanText(data.Description)) {
+      const summary = els.preview.querySelector('.program-card-hero__main > p');
+      if (summary) summary.textContent = 'Add a short description to introduce this card.';
+    }
+    renderAuthorControlReference();
+    addPanelHitTargets();
+    addDifferentControlsToggle();
+  } catch (error) {
+    els.preview.innerHTML = `<p class="author-status is-error">Preview could not render: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function referenceItem(def) {
+  const value = componentValue(def);
+  if (def.kind === 'switch') {
+    const rows = ['up', 'middle', 'down', 'tap'].map(position => {
+      const name = cleanText(data.controls?.switch?.[position]?.name);
+      const description = cleanText(data.controls?.switch?.[position]?.description);
+      const label = position === 'tap' ? 'Tap down' : position[0].toUpperCase() + position.slice(1);
+      return `<div class="author-switch-inline-row${name ? ' has-value' : ''}"><span>${label}</span><button type="button" class="author-switch-label" data-component="switch:${def.key}:${position}">${name ? `<strong>${escapeHtml(name)}</strong>` : '<em>Add label</em><b aria-hidden="true">+</b>'}</button><button type="button" class="author-reference-description" data-component="switch:${def.key}:${position}" data-edit-description>${description ? escapeHtml(description) : '+ Add description'}</button></div>`;
+    }).join('');
+    return `<div class="author-reference-component author-reference-switch"><span class="author-reference-key">${escapeHtml(def.label)}</span><div>${rows}</div></div>`;
+  }
+  const name = cleanText(value.name);
+  const description = cleanText(value.description);
+  const content = name
+    ? `<span class="author-reference-copy"><strong>${escapeHtml(name)}</strong></span><span class="author-reference-edit">Edit label</span>`
+    : '<span class="author-reference-empty">Add label</span><b aria-hidden="true">+</b>';
+  return `<div class="author-reference-component${name ? ' has-value' : ''}"><span class="author-reference-key">${escapeHtml(def.label.replace(/^(Input|Output) · /, ''))}</span><button type="button" class="author-reference-label" data-component="${def.kind}:${def.key}">${content}</button><button type="button" class="author-reference-description" data-component="${def.kind}:${def.key}" data-edit-description>${description ? escapeHtml(description) : '+ Add description'}</button></div>`;
+}
+
+function renderAuthorControlReference() {
+  const controls = componentDefs.filter(def => def.kind === 'control' || def.kind === 'switch');
+  const inputs = componentDefs.filter(def => def.kind === 'input');
+  const outputs = componentDefs.filter(def => def.kind === 'output');
+  const markup = `<details class="program-card-section program-card-collapsible author-reference-section" open>
+    <summary><h3>Controls</h3></summary><p class="author-reference-note">${differentControls ? `Editing ${activePosition}. Shared labels are inherited until overridden.` : 'Labels apply to all switch positions in basic mode.'}</p>
+    <div class="author-reference-grid author-reference-grid--controls">${controls.map(referenceItem).join('')}</div>
+  </details>
+  <details class="program-card-section program-card-collapsible author-reference-section" open>
+    <summary><span class="program-card-io-headings"><h3>Inputs</h3><h3>Outputs</h3></span></summary>
+    <div class="author-reference-io"><div class="author-reference-grid">${inputs.map(referenceItem).join('')}</div><div class="author-reference-grid">${outputs.map(referenceItem).join('')}</div></div>
+  </details>`;
+  for (const reference of els.preview.querySelectorAll('.program-card-use__reference')) reference.innerHTML = markup;
+}
+
+function addPanelHitTargets() {
+  const panels = els.preview.querySelectorAll('.program-card-use__panel .program-card-panel');
+  for (const panel of panels) {
+    for (const label of panel.querySelectorAll('[data-panel-switch-position]')) {
+      const position = label.dataset.panelSwitchPosition;
+      if (!differentControls) {
+        label.removeAttribute('data-panel-position-button');
+        label.setAttribute('aria-pressed', 'false');
+      }
+      label.dataset.component = `switch:z:${position}`;
+      label.classList.add('author-panel-value');
+      label.setAttribute('role', 'button');
+      label.setAttribute('tabindex', '0');
+      label.setAttribute('aria-label', `Edit Z switch ${position} label`);
+      if (!label.classList.contains('has-value')) {
+        const circle = document.createElement('span');
+        circle.className = 'author-switch-add-circle';
+        circle.setAttribute('aria-hidden', 'true');
+        label.appendChild(circle);
+      }
+    }
+    for (const def of componentDefs) {
+      if (def.kind === 'switch') continue;
+      const label = [...panel.querySelectorAll('.program-card-panel__label')].find(candidate =>
+        Math.abs(Number.parseFloat(candidate.style.left) - def.left) < 0.2
+        && Math.abs(Number.parseFloat(candidate.style.top) - def.top) < 0.2);
+      if (label) {
+        label.dataset.component = `${def.kind}:${def.key}`;
+        label.classList.add('author-panel-value');
+        label.setAttribute('role', 'button');
+        label.setAttribute('tabindex', '0');
+        label.setAttribute('aria-label', `Edit ${def.label}`);
+      }
+      if (componentHasVisibleValue(def)) continue;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'author-panel-hit';
+      button.dataset.component = `${def.kind}:${def.key}`;
+      button.setAttribute('aria-label', `Edit ${def.label}`);
+      button.title = `Edit ${def.label}`;
+      button.style.left = `${def.left}%`;
+      button.style.top = `${def.top}%`;
+      panel.appendChild(button);
+    }
+  }
+}
+
+function addDifferentControlsToggle() {
+  if (currentMode !== 'author') return;
+  for (const panelArea of els.preview.querySelectorAll('.program-card-use__panel')) {
+    const label = document.createElement('label');
+    label.className = 'author-different-controls-toggle';
+    label.innerHTML = `<input type="checkbox" data-different-controls-toggle${differentControls ? ' checked' : ''}><span>Different controls based on switch position</span>`;
+    panelArea.appendChild(label);
+  }
+}
+
+function validateAndRender({ syncYaml = true, syncForm = false } = {}) {
+  const source = parseSource(sourceText(), 'info.yaml');
+  const result = validateInfoYaml(source);
+  renderDiagnostics(result);
+  if (syncYaml) els.yaml.value = sourceText();
+  if (syncForm) syncFormFromData();
+  updateProgress();
+  updateLicenseDisplay();
+  renderPreview();
+  saveDraft();
+}
+
+function updateProgress() {
+  const complete = REQUIRED.filter(key => cleanText(data[key])).length;
+  els.progress.textContent = `${complete} of ${REQUIRED.length} required fields complete`;
+  for (const input of els.editor.querySelectorAll('[required]')) {
+    input.closest('.author-field')?.classList.toggle('is-missing', !cleanText(input.value));
+  }
+}
+
+function syncFormFromData() {
+  for (const input of els.editor.querySelectorAll('[data-field]')) input.value = data[input.dataset.field] ?? '';
+  for (const input of els.editor.querySelectorAll('[data-list-field]')) input.value = Array.isArray(data[input.dataset.listField]) ? data[input.dataset.listField].join(', ') : (data[input.dataset.listField] ?? '');
+  for (const input of els.editor.querySelectorAll('[data-lines-field]')) input.value = Array.isArray(data[input.dataset.linesField]) ? data[input.dataset.linesField].join('\n') : '';
+  for (const input of els.editor.querySelectorAll('[data-nested-field]')) input.value = getNested(input.dataset.nestedField) ?? '';
+  syncOptionalEditors();
+}
+
+function hasOptionalValue(key) {
+  const value = data[key];
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === 'object') return Object.keys(value).length > 0;
+  return cleanText(value) !== '';
+}
+
+function setOptionalOpen(key, open) {
+  const editor = document.querySelector(`[data-optional="${CSS.escape(key)}"]`);
+  const add = document.querySelector(`[data-add-optional="${CSS.escape(key)}"]`);
+  if (editor) editor.hidden = !open;
+  if (add) add.hidden = open;
+}
+
+function syncOptionalEditors() {
+  for (const key of OPTIONAL_KEYS) {
+    if (hasOptionalValue(key)) openOptionals.add(key);
+    setOptionalOpen(key, openOptionals.has(key));
+  }
+}
+
+function addOptional(key) {
+  openOptionals.add(key);
+  setOptionalOpen(key, true);
+  const editor = document.querySelector(`[data-optional="${CSS.escape(key)}"]`);
+  editor?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  const focusTarget = editor?.querySelector('input,textarea,button');
+  if (key === 'License') document.getElementById('open-license').click();
+  else setTimeout(() => focusTarget?.focus(), 180);
+}
+
+function removeOptional(key) {
+  openOptionals.delete(key);
+  delete data[key];
+  prune(data);
+  syncFormFromData();
+  validateAndRender();
+}
+
+function componentDefinition(component) {
+  const [kind, key] = component.split(':');
+  return componentDefs.find(def => def.kind === kind && def.key === key);
+}
+
+function isUnconditioned(item) {
+  return !item?.when || !Object.keys(item.when).length;
+}
+
+function isSimplePosition(item, position) {
+  const when = item?.when;
+  return when && Object.keys(when).length === 1 && when.z === position;
+}
+
+function componentValueAt(def, position = '') {
+  if (!def) return {};
+  if (def.kind === 'control') {
+    const rows = data.controls?.knobs || [];
+    const base = rows.find(isUnconditioned)?.[def.key] || {};
+    const override = position ? rows.find(row => isSimplePosition(row, position))?.[def.key] || {} : {};
+    return { ...base, ...override };
+  }
+  if (def.kind === 'input') {
+    const items = data.panel?.inputs || [];
+    const base = items.find(item => item.id === def.id && isUnconditioned(item)) || {};
+    const override = position ? items.find(item => item.id === def.id && isSimplePosition(item, position)) || {} : {};
+    return { ...base, ...override };
+  }
+  if (def.kind === 'output') {
+    const items = data.panel?.outputs || [];
+    const base = items.find(item => item.id === def.id && isUnconditioned(item)) || {};
+    const override = position ? items.find(item => item.id === def.id && isSimplePosition(item, position)) || {} : {};
+    return { ...base, ...override };
+  }
+  return {};
+}
+
+function componentValue(def) {
+  return componentValueAt(def, differentControls ? activePosition : '');
+}
+
+function componentHasVisibleValue(def) {
+  if (!def) return false;
+  if (def.kind === 'switch') {
+    return Object.values(data.controls?.switch || {}).some(mode => cleanText(mode?.name));
+  }
+  return cleanText(componentValue(def).name) !== '';
+}
+
+function setBaseComponent(def, name, description) {
+  if (!def || def.kind === 'switch') return;
+  name = cleanText(name); description = cleanText(description);
+  if (def.kind === 'control') {
+    const rows = (data.controls ||= {}).knobs ||= [];
+    let row = rows.find(isUnconditioned);
+    if (!row && (name || description)) {
+      row = {};
+      rows.unshift(row);
+    }
+    if (row) {
+      if (name || description) row[def.key] = { ...(name ? { name } : {}), ...(description ? { description } : {}) };
+      else delete row[def.key];
+      if (!Object.keys(row).length) rows.splice(rows.indexOf(row), 1);
+    }
+    if (!rows.length) delete data.controls.knobs;
+  } else {
+    const side = def.kind === 'input' ? 'inputs' : 'outputs';
+    const list = (data.panel ||= {})[side] ||= [];
+    const index = list.findIndex(item => item.id === def.id && isUnconditioned(item));
+    if (name || description) {
+      const item = { id: def.id, ...(name ? { name } : {}), ...(description ? { description } : {}) };
+      if (index >= 0) list[index] = item; else list.push(item);
+    } else if (index >= 0) list.splice(index, 1);
+  }
+  prune(data);
+}
+
+function setPositionOverride(def, position, name) {
+  const baseName = cleanText(componentValueAt(def).name);
+  name = cleanText(name);
+  if (def.kind === 'control') {
+    const rows = (data.controls ||= {}).knobs ||= [];
+    let row = rows.find(item => isSimplePosition(item, position));
+    if (name && name !== baseName) {
+      if (!row) { row = { when: { z: position } }; rows.push(row); }
+      row[def.key] = { ...(row[def.key] || {}), name };
+    } else if (row?.[def.key]) {
+      delete row[def.key].name;
+      if (!Object.keys(row[def.key]).length) delete row[def.key];
+      if (Object.keys(row).length === 1) rows.splice(rows.indexOf(row), 1);
+    }
+  } else {
+    const side = def.kind === 'input' ? 'inputs' : 'outputs';
+    const list = (data.panel ||= {})[side] ||= [];
+    let item = list.find(entry => entry.id === def.id && isSimplePosition(entry, position));
+    if (name && name !== baseName) {
+      if (!item) { item = { id: def.id, when: { z: position } }; list.push(item); }
+      item.name = name;
+    } else if (item) {
+      delete item.name;
+      if (Object.keys(item).every(key => key === 'id' || key === 'when')) list.splice(list.indexOf(item), 1);
+    }
+  }
+  prune(data);
+}
+
+function normalizeSharedPositionValues(def) {
+  const values = Object.fromEntries(SWITCH_POSITIONS.map(position => [position, cleanText(componentValueAt(def, position).name)]));
+  const counts = new Map();
+  for (const value of Object.values(values)) if (value) counts.set(value, (counts.get(value) || 0) + 1);
+  const shared = [...counts.entries()].find(([, count]) => count >= 2)?.[0];
+  if (!shared) return;
+  const description = componentValueAt(def).description || '';
+  setBaseComponent(def, shared, description);
+  for (const position of SWITCH_POSITIONS) setPositionOverride(def, position, values[position]);
+}
+
+function hasAuthoredComponentValue(def) {
+  if (def.kind === 'control') {
+    return (data.controls?.knobs || []).some(row => cleanText(row?.[def.key]?.name));
+  }
+  const side = def.kind === 'input' ? 'inputs' : 'outputs';
+  return (data.panel?.[side] || []).some(item => item.id === def.id && cleanText(item.name));
+}
+
+function setComponent(def, name, description) {
+  if (!differentControls) {
+    setBaseComponent(def, name, description);
+    return;
+  }
+  // A lone value is shared by default. Position-specific YAML is introduced
+  // only when the author subsequently gives another position a different value.
+  if (!hasAuthoredComponentValue(def)) {
+    setBaseComponent(def, name, description);
+    return;
+  }
+  setPositionOverride(def, activePosition, name);
+  normalizeSharedPositionValues(def);
+}
+
+function hasAuthoredComponentDescription(def) {
+  if (def.kind === 'control') {
+    return (data.controls?.knobs || []).some(row => cleanText(row?.[def.key]?.description));
+  }
+  const side = def.kind === 'input' ? 'inputs' : 'outputs';
+  return (data.panel?.[side] || []).some(item => item.id === def.id && cleanText(item.description));
+}
+
+function setPositionDescription(def, position, description) {
+  const baseDescription = cleanText(componentValueAt(def).description);
+  description = cleanText(description);
+  if (def.kind === 'control') {
+    const rows = (data.controls ||= {}).knobs ||= [];
+    let row = rows.find(item => isSimplePosition(item, position));
+    if (description && description !== baseDescription) {
+      if (!row) { row = { when: { z: position } }; rows.push(row); }
+      row[def.key] = { ...(row[def.key] || {}), description };
+    } else if (row?.[def.key]) {
+      delete row[def.key].description;
+      if (!Object.keys(row[def.key]).length) delete row[def.key];
+      if (Object.keys(row).length === 1) rows.splice(rows.indexOf(row), 1);
+    }
+  } else {
+    const side = def.kind === 'input' ? 'inputs' : 'outputs';
+    const list = (data.panel ||= {})[side] ||= [];
+    let item = list.find(entry => entry.id === def.id && isSimplePosition(entry, position));
+    if (description && description !== baseDescription) {
+      if (!item) { item = { id: def.id, when: { z: position } }; list.push(item); }
+      item.description = description;
+    } else if (item) {
+      delete item.description;
+      if (Object.keys(item).every(key => key === 'id' || key === 'when')) list.splice(list.indexOf(item), 1);
+    }
+  }
+  prune(data);
+}
+
+function normalizeSharedPositionDescriptions(def) {
+  const values = Object.fromEntries(SWITCH_POSITIONS.map(position => [position, cleanText(componentValueAt(def, position).description)]));
+  const counts = new Map();
+  for (const value of Object.values(values)) if (value) counts.set(value, (counts.get(value) || 0) + 1);
+  const shared = [...counts.entries()].find(([, count]) => count >= 2)?.[0];
+  if (!shared) return;
+  setBaseComponent(def, componentValueAt(def).name || '', shared);
+  for (const position of SWITCH_POSITIONS) setPositionDescription(def, position, values[position]);
+}
+
+function setComponentDescription(def, description) {
+  if (!differentControls || !hasAuthoredComponentDescription(def)) {
+    setBaseComponent(def, componentValueAt(def).name || '', description);
+    return;
+  }
+  setPositionDescription(def, activePosition, description);
+  normalizeSharedPositionDescriptions(def);
+}
+
+function updateSwitchDescription(position, description) {
+  description = cleanText(description);
+  const controls = data.controls ||= {};
+  const modes = controls.switch ||= {};
+  const mode = modes[position] ||= {};
+  if (description) mode.description = description;
+  else delete mode.description;
+  if (!Object.keys(mode).length) delete modes[position];
+  prune(data);
+}
+
+function beginInlineComponentEdit(component, anchor) {
+  if (anchor.querySelector?.('.author-inline-label-input')) return;
+  const def = componentDefinition(component);
+  if (!def) return;
+  const [, , requestedPosition] = component.split(':');
+  const position = def.kind === 'switch' ? (requestedPosition || 'middle') : '';
+  const current = def.kind === 'switch'
+    ? cleanText(data.controls?.switch?.[position]?.name)
+    : cleanText(componentValue(def).name);
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'author-inline-label-input';
+  input.value = current;
+  input.placeholder = 'Type label…';
+  input.setAttribute('aria-label', `${def.label}${position ? ` ${position}` : ''} label`);
+
+  if (anchor.classList.contains('author-reference-component') || anchor.classList.contains('author-switch-inline-row')) {
+    const wrapper = document.createElement('div');
+    wrapper.className = anchor.className;
+    wrapper.dataset.component = component;
+    if (anchor.classList.contains('author-switch-inline-row')) {
+      const positionLabel = anchor.querySelector('span')?.textContent || position;
+      wrapper.innerHTML = `<span>${escapeHtml(positionLabel)}</span>`;
+    } else {
+      const key = anchor.querySelector('.author-reference-key')?.textContent || def.label;
+      wrapper.innerHTML = `<span class="author-reference-key">${escapeHtml(key)}</span>`;
+    }
+    wrapper.appendChild(input);
+    anchor.replaceWith(wrapper);
+  } else if (anchor.classList.contains('program-card-panel-switch-position')) {
+    const label = document.createElement('span');
+    label.className = `${anchor.className} author-inline-switch-position`;
+    label.dataset.panelSwitchPosition = position;
+    label.dataset.component = component;
+    label.style.cssText = anchor.style.cssText;
+    label.appendChild(input);
+    anchor.replaceWith(label);
+  } else {
+    const label = document.createElement('span');
+    label.className = 'program-card-panel__label author-inline-panel-label';
+    label.style.left = `${def.left}%`;
+    label.style.top = `${def.top}%`;
+    label.appendChild(input);
+    anchor.replaceWith(label);
+  }
+
+  let finished = false;
+  const finish = (commit) => {
+    if (finished) return;
+    finished = true;
+    if (commit) {
+      if (def.kind === 'switch') updateSwitch(position, input.value);
+      else setComponent(def, input.value, componentValue(def).description || '');
+      validateAndRender();
+    } else {
+      renderPreview();
+    }
+  };
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); input.blur(); }
+    if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+  });
+  input.focus();
+  input.select();
+}
+
+function beginInlineDescriptionEdit(component, anchor) {
+  if (anchor.querySelector?.('.author-inline-description-input')) return;
+  const def = componentDefinition(component);
+  if (!def) return;
+  const [, , requestedPosition] = component.split(':');
+  const position = def.kind === 'switch' ? (requestedPosition || 'middle') : '';
+  const current = def.kind === 'switch'
+    ? cleanText(data.controls?.switch?.[position]?.description)
+    : cleanText(componentValue(def).description);
+  const textarea = document.createElement('textarea');
+  textarea.className = 'author-inline-description-input';
+  textarea.rows = 3;
+  textarea.value = current;
+  textarea.placeholder = 'Describe how this control is used…';
+  textarea.setAttribute('aria-label', `${def.label}${position ? ` ${position}` : ''} description`);
+  anchor.replaceWith(textarea);
+
+  let finished = false;
+  const finish = (commit) => {
+    if (finished) return;
+    finished = true;
+    if (commit) {
+      if (def.kind === 'switch') updateSwitchDescription(position, textarea.value);
+      else setComponentDescription(def, textarea.value);
+      validateAndRender();
+    } else {
+      renderPreview();
+    }
+  };
+  textarea.addEventListener('blur', () => finish(true));
+  textarea.addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); textarea.blur(); }
+    if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+  });
+  textarea.focus();
+  textarea.select();
+}
+
+function updateSwitch(position, value) {
+  value = cleanText(value);
+  const controls = data.controls ||= {};
+  const modes = controls.switch ||= {};
+  if (value) modes[position] = { name: value };
+  else delete modes[position];
+  prune(data);
+}
+
+function updateLicenseDisplay() {
+  if (data.License) {
+    els.licenseValue.textContent = data.License;
+    els.licenseHelp.textContent = 'Recorded in the generated info.yaml.';
+    document.getElementById('open-license').textContent = 'Review license';
+  } else {
+    els.licenseValue.textContent = 'No license selected';
+    els.licenseHelp.textContent = 'Choose how other people may use and adapt your work.';
+    document.getElementById('open-license').textContent = 'Add license';
+  }
+}
+
+function setManualLicenseHighlight(id = '') {
+  document.querySelectorAll('[data-license]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.license === id));
+  });
+}
+
+function licenseFileGuidance(id) {
+  const guidance = {
+    MIT: {
+      url: 'https://choosealicense.com/licenses/mit/',
+      text: 'Add a file named LICENSE beside info.yaml. Copy the full MIT text, then replace the copyright year and holder with the correct details.',
+    },
+    'GPL-3.0-or-later': {
+      url: 'https://choosealicense.com/licenses/gpl-3.0/',
+      text: 'Add a file named LICENSE beside info.yaml containing the complete GPLv3 text. State “GPL-3.0-or-later” in source or README notices and preserve dependency notices.',
+    },
+    'CC0-1.0': {
+      url: 'https://choosealicense.com/licenses/cc0-1.0/',
+      text: 'Add a file named LICENSE beside info.yaml containing the complete CC0 1.0 legal text. Confirm that all included material can be dedicated this broadly.',
+    },
+  };
+  const item = guidance[id];
+  if (!item) {
+    return `<div class="author-license-file-guidance"><strong>Include the license file</strong><p>Add the complete authoritative license text as <code>LICENSE</code> beside <code>info.yaml</code>, and preserve all third-party notices.</p><a href="https://choosealicense.com/licenses/" target="_blank" rel="noopener noreferrer">Find official license text ↗</a></div>`;
+  }
+  return `<div class="author-license-file-guidance"><strong>Include the license file</strong><p>${escapeHtml(item.text)}</p><a href="${item.url}" target="_blank" rel="noopener noreferrer">Get the ${escapeHtml(id)} license text ↗</a></div>`;
+}
+
+function chooseLicense(id, explanation, { manual = false, provisional = false } = {}) {
+  selectedLicense = id;
+  licenseWasManuallySelected = manual;
+  setManualLicenseHighlight(manual ? id : '');
+  const label = manual ? 'Selected license' : 'Suggested license';
+  const provisionalNote = provisional ? '<p class="author-license-provisional"><strong>Provisional:</strong> answer the remaining legal questions to confirm this suggestion.</p>' : '';
+  els.licenseResult.innerHTML = `<span class="author-license-result-label">${label}</span><strong>${escapeHtml(id)}</strong><p>${escapeHtml(explanation)}</p>${provisionalNote}${licenseFileGuidance(id)}`;
+  els.useLicense.disabled = !selectedLicense;
+}
+
+function recommendLicense() {
+  licenseWasManuallySelected = false;
+  setManualLicenseHighlight();
+  const scenarios = [...document.querySelectorAll('[data-scenario]')].map(select => select.value);
+  const inherited = document.getElementById('license-inherited').value;
+  if (inherited === 'yes') {
+    selectedLicense = '';
+    els.useLicense.disabled = true;
+    els.licenseResult.innerHTML = '<span class="author-license-result-label">Suggested license</span><strong>Check the upstream license first.</strong><p>Derived and third-party work may already determine which licenses are compatible.</p>';
+    return;
+  }
+  const legalAnswers = ['license-inherited', 'license-closed', 'license-public', 'license-commercial']
+    .map(id => document.getElementById(id).value);
+  const provisional = legalAnswers.some(answer => !answer);
+  if (scenarios.includes('never')) {
+    selectedLicense = '';
+    els.useLicense.disabled = true;
+    els.licenseResult.innerHTML = '<span class="author-license-result-label">Suggested license</span><strong>No automatic open-source recommendation.</strong><p>Standard open-source licenses permit public adaptations. Discuss a source-available or unpublished approach with a maintainer.</p>';
+    return;
+  }
+  if (document.getElementById('license-commercial').value === 'no') {
+    selectedLicense = '';
+    els.useLicense.disabled = true;
+    els.licenseResult.innerHTML = '<span class="author-license-result-label">Suggested license</span><strong>No automatic open-source recommendation.</strong><p>A non-commercial or permission-only condition is not compatible with standard open-source licenses. Ask a maintainer before publishing.</p>';
+    return;
+  }
+  if (document.getElementById('license-public').value === 'yes') {
+    chooseLicense('CC0-1.0', 'A broad public-domain-style dedication. Review software patent implications before choosing it for code.', { provisional });
+  } else if (document.getElementById('license-closed').value === 'no') {
+    chooseLicense('GPL-3.0-or-later', 'Distributed derivatives must remain available under the same open-source terms.', { provisional });
+  } else if (document.getElementById('license-closed').value === 'yes') {
+    chooseLicense('MIT', 'Permissive reuse, including commercial and closed-source derivatives, with the copyright and license notice retained.', { provisional });
+  } else {
+    selectedLicense = '';
+    els.useLicense.disabled = true;
+    els.licenseResult.innerHTML = '<span class="author-license-result-label">Suggested license</span><strong>Keep answering the legal questions.</strong><p>The suggestion will narrow as each answer is provided. You may also choose a license directly.</p>';
+    return;
+  }
+  if (scenarios.includes('ask') && selectedLicense) {
+    els.licenseResult.insertAdjacentHTML('beforeend', '<p><strong>Courtesy note:</strong> this license does not require advance permission. “Please contact me first” remains a community request.</p>');
+  }
+}
+
+function openLicenseAssistant() {
+  if (data.License) {
+    const descriptions = {
+      MIT: 'Permissive reuse with copyright and license notices retained.',
+      'GPL-3.0-or-later': 'Derivatives distributed to others must remain open under compatible GPL terms.',
+      'CC0-1.0': 'A broad public-domain-style dedication; review its suitability for software.',
+    };
+    chooseLicense(data.License, descriptions[data.License] || 'Current license recorded in info.yaml.', { manual: true });
+  } else {
+    recommendLicense();
+  }
+  els.licenseDialog.showModal();
+}
+
+function setMode(mode) {
+  const yamlMode = mode === 'yaml';
+  currentMode = mode;
+  els.editor.hidden = yamlMode;
+  els.yamlPanel.hidden = !yamlMode;
+  for (const button of document.querySelectorAll('[data-mode]')) {
+    const active = button.dataset.mode === mode;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
+  if (yamlMode) {
+    els.yaml.value = sourceText();
+    els.yaml.focus();
+  }
+  renderPreview();
+}
+
+function downloadSource() {
+  const missing = REQUIRED.filter(key => !cleanText(data[key]));
+  if (missing.length && !confirm(`This draft is missing: ${missing.join(', ')}. Download it anyway?`)) return;
+  const blob = new Blob([sourceText()], { type: 'text/yaml' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = 'info.yaml'; document.body.appendChild(link); link.click(); link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function handleAuthorInput(event) {
+  const target = event.target;
+  if (target.matches('[data-field]')) {
+    const key = target.dataset.field;
+    if (cleanText(target.value) || REQUIRED.includes(key)) data[key] = target.value;
+    else delete data[key];
+  } else if (target.matches('[data-list-field]')) {
+    const list = target.value.split(',').map(item => item.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean);
+    if (list.length) data[target.dataset.listField] = [...new Set(list)]; else delete data[target.dataset.listField];
+  } else if (target.matches('[data-lines-field]')) {
+    const list = target.value.split('\n').map(item => item.trim()).filter(Boolean);
+    if (list.length) data[target.dataset.linesField] = list; else delete data[target.dataset.linesField];
+  } else if (target.matches('[data-nested-field]')) {
+    setNested(target.dataset.nestedField, target.value);
+  }
+  validateAndRender();
+}
+
+function init() {
+  syncFormFromData();
+  validateAndRender();
+
+  els.editor.addEventListener('input', handleAuthorInput);
+
+  els.preview.addEventListener('click', event => {
+    const descriptionButton = event.target.closest('[data-edit-description]');
+    if (descriptionButton) {
+      beginInlineDescriptionEdit(descriptionButton.dataset.component, descriptionButton);
+      return;
+    }
+    const positionButton = event.target.closest('[data-panel-position-button]');
+    if (positionButton) {
+      if (positionButton.matches('[data-panel-switch-position][data-component]')
+        && positionButton.getAttribute('aria-pressed') === 'true') {
+        beginInlineComponentEdit(positionButton.dataset.component, positionButton);
+        return;
+      }
+      activePosition = positionButton.dataset.panelPositionButton;
+      renderPreview();
+      return;
+    }
+    const hit = event.target.closest('.author-panel-hit,.author-panel-value,.author-reference-component,.author-switch-inline-row');
+    if (hit) {
+      beginInlineComponentEdit(hit.dataset.component, hit);
+      return;
+    }
+    let editorId = '';
+    if (event.target.closest('.program-card-hero')) editorId = 'card-details-editor';
+    else if (event.target.closest('.program-card-quick-start,.program-card-documentation,.program-card-about')) editorId = 'optional-fields-editor';
+    if (editorId) {
+      document.getElementById(editorId).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+
+  els.preview.addEventListener('keydown', event => {
+    if ((event.key === 'Enter' || event.key === ' ') && event.target.matches('.author-panel-value,.author-reference-label,.author-switch-label,.author-reference-description')) {
+      event.preventDefault();
+      event.target.click();
+    }
+  });
+  els.preview.addEventListener('change', event => {
+    if (!event.target.matches('[data-different-controls-toggle]')) return;
+    differentControls = event.target.checked;
+    localStorage.setItem(DIFFERENTIAL_STORAGE_KEY, String(differentControls));
+    activePosition = 'middle';
+    renderPreview();
+  });
+
+  document.getElementById('optional-catalog').addEventListener('click', event => {
+    const button = event.target.closest('[data-add-optional]');
+    if (button) addOptional(button.dataset.addOptional);
+  });
+  document.getElementById('optional-editors').addEventListener('click', event => {
+    const button = event.target.closest('[data-remove-optional]');
+    if (button) removeOptional(button.dataset.removeOptional);
+  });
+
+  els.yaml.addEventListener('input', () => {
+    clearTimeout(yamlTimer);
+    yamlTimer = setTimeout(() => {
+      const source = parseSource(els.yaml.value, 'info.yaml');
+      if (source.error || !source.data) {
+        els.yamlStatus.textContent = 'YAML syntax error';
+        els.status.textContent = 'Fix the YAML syntax error before returning to visual editing.';
+        els.status.className = 'author-status is-error';
+        renderDiagnostics(validateInfoYaml(source));
+        return;
+      }
+      data = source.data;
+      els.yamlStatus.textContent = 'Valid YAML';
+      els.status.textContent = '';
+      els.status.className = 'author-status';
+      validateAndRender({ syncYaml: false, syncForm: true });
+    }, 250);
+  });
+
+  document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => {
+    if (button.dataset.mode === 'author') {
+      const source = parseSource(els.yaml.value, 'info.yaml');
+      if (!els.yamlPanel.hidden && (source.error || !source.data)) return;
+    }
+    setMode(button.dataset.mode);
+  }));
+
+  els.download.addEventListener('click', downloadSource);
+  document.getElementById('open-license').addEventListener('click', openLicenseAssistant);
+  document.querySelectorAll('[data-license]').forEach(button => button.addEventListener('click', () => {
+    const descriptions = {
+      MIT: 'Permissive reuse with copyright and license notices retained.',
+      'GPL-3.0-or-later': 'Derivatives distributed to others must remain open under compatible GPL terms.',
+      'CC0-1.0': 'A broad public-domain-style dedication; review its suitability for software.',
+    };
+    chooseLicense(button.dataset.license, descriptions[button.dataset.license], { manual: true });
+  }));
+  document.querySelectorAll('#license-inherited, #license-closed, #license-public, #license-commercial, [data-scenario]')
+    .forEach(control => control.addEventListener('change', recommendLicense));
+  els.useLicense.addEventListener('click', event => {
+    if (!selectedLicense) { event.preventDefault(); return; }
+    data.License = selectedLicense;
+    validateAndRender({ syncForm: true });
+    els.licenseDialog.close();
+  });
+}
+
+init();

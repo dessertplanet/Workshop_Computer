@@ -12,6 +12,7 @@ import { curation } from './curation/index.js';
 import { parseSource } from './validate/parseSource.js';
 import { validateInfoYaml } from './validate/validateInfoYaml.js';
 import { renderPreviewPage } from './render/previewPage.js';
+import { renderAuthorPage } from './render/authorPage.js';
 
 // ========== Path & Globals ==========
 const __filename = fileURLToPath(import.meta.url);
@@ -410,7 +411,16 @@ async function buildPreviewTool() {
     path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'preview-client.js'),
     path.join(previewDir, 'preview-client.js')
   );
+  await fs.copyFile(
+    path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'author-client.js'),
+    path.join(previewDir, 'author-client.js')
+  );
+  await fs.copyFile(
+    path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'author.css'),
+    path.join(previewDir, 'author.css')
+  );
   await writeFileEnsured(path.join(previewDir, 'index.html'), renderPreviewPage());
+  await writeFileEnsured(path.join(previewDir, 'new', 'index.html'), renderAuthorPage());
 }
 
 /** Print a concise, non-fatal summary of the info.yaml conformance pass. */
