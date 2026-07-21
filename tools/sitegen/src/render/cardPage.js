@@ -62,18 +62,33 @@ function renderPanelLabel(kind, pos, item) {
   return `<span class="program-card-panel__label program-card-panel__label--${kind}" style="left: ${esc(pos.left)}%; top: ${esc(pos.top)}%;">${label}</span>`;
 }
 
-function renderPanelPositionButtons(positionControl) {
-  if (!positionControl?.items?.length) return '';
-  const buttons = positionControl.items.slice(0, 3).map(item => `<button type="button" class="program-card-panel-position-button" data-panel-position-button="${esc(item.id)}" aria-controls="${esc(positionControl.groupId)}-${esc(item.id)}" aria-pressed="${item.id === positionControl.activeId}" title="${esc(item.name)} switch position">${esc(item.name)}</button>`).join('');
-  return `<div class="program-card-panel-position-control" role="group" aria-label="Switch position"><span class="program-card-panel-position-label">Switch<br>position</span><span class="program-card-panel-position-buttons">${buttons}</span></div>`;
+function switchModeName(value) {
+  const text = inline(value || '');
+  if (!text) return '';
+  return text.split(': ')[0].trim();
 }
 
-function renderPanel(panel, panelImg, positionControl = null) {
+function renderPanelSwitchPositions(switchModes = {}, positionControl = null) {
+  const selected = positionControl?.activeId || 'middle';
+  const selectable = new Set((positionControl?.items || []).map(item => item.id));
+  const positions = ['up', 'middle', 'down'].map(position => {
+    const role = switchModeName(switchModes[position]);
+    const selectAttrs = selectable.has(position)
+      ? ` data-panel-position-button="${position}" aria-pressed="${position === selected}" title="Select ${position} switch position"`
+      : ` aria-pressed="false" title="${role ? 'Edit' : 'Add'} ${position} switch position"`;
+    return `<button type="button" class="program-card-panel-switch-position program-card-panel-switch-position--${position}${role ? ' has-value' : ''}" data-panel-switch-position="${position}" aria-label="${position} switch position${role ? `: ${esc(role)}` : ''}"${selectAttrs}>${role ? `<strong>${esc(role)}</strong>` : ''}</button>`;
+  }).join('');
+  return `<span class="program-card-panel-switch-positions">${positions}</span>`;
+}
+
+function renderPanel(panel, panelImg, positionControl = null, switchModes = {}) {
   const labels = [];
-  for (const pos of panelPositions.controls) labels.push(renderPanelLabel('control', pos, (panel.controls || {})[pos.key]));
+  for (const pos of panelPositions.controls) {
+    if (pos.key !== 'z') labels.push(renderPanelLabel('control', pos, (panel.controls || {})[pos.key]));
+  }
   for (const pos of panelPositions.inputs) labels.push(renderPanelLabel('input', pos, (panel.inputs || {})[pos.key]));
   for (const pos of panelPositions.outputs) labels.push(renderPanelLabel('output', pos, (panel.outputs || {})[pos.key]));
-  return `<figure class="program-card-panel" aria-label="Workshop Computer panel"><img src="${esc(panelImg)}" alt="Workshop Computer panel">${labels.join('')}${renderPanelPositionButtons(positionControl)}</figure>`;
+  return `<figure class="program-card-panel" aria-label="Workshop Computer panel"><img src="${esc(panelImg)}" alt="Workshop Computer panel">${labels.join('')}${renderPanelSwitchPositions(switchModes, positionControl)}</figure>`;
 }
 
 function renderSwitchSection(snapshot, positionControl = null) {
@@ -126,7 +141,7 @@ function renderPanelReference(snapshot, panelImg, positionControl = null) {
   const ledsMarkup = renderLedList(snapshot.leds);
 
   return `<div class="program-card-use">
-    <div class="program-card-use__panel">${renderPanel(panel, panelImg, positionControl)}</div>
+    <div class="program-card-use__panel">${renderPanel(panel, panelImg, positionControl, snapshot.switch_modes)}</div>
     <div class="program-card-use__reference">
       ${controlsMarkup || switchMarkup ? `<details class="program-card-section program-card-collapsible program-card-controls-section" open><summary><h3>Controls</h3></summary><div class="program-card-control-list">${controlsMarkup}${switchMarkup}</div></details>` : ''}
       ${inputsMarkup || outputsMarkup ? `<details class="program-card-section program-card-collapsible program-card-io-section" open><summary class="program-card-io-summary"><span class="program-card-io-headings">${inputsMarkup ? '<h3>Inputs</h3>' : '<span></span>'}${outputsMarkup ? '<h3>Outputs</h3>' : ''}</span></summary><div class="program-card-io-columns">${inputsMarkup}${outputsMarkup}</div></details>` : ''}
@@ -152,12 +167,12 @@ function renderPanelViews(card, panelImg) {
 function renderPanelRail(card, panelImg) {
   const items = Array.isArray(card.panel_views?.items) ? card.panel_views.items : [];
   if (!items.length) {
-    return `<aside class="program-card-panel-rail" aria-label="Panel visualization">${renderPanel(card.panel || {}, panelImg)}</aside>`;
+    return `<aside class="program-card-panel-rail" aria-label="Panel visualization">${renderPanel(card.panel || {}, panelImg, null, card.switch_modes)}</aside>`;
   }
 
   const selected = items.find(item => item.id === card.panel_views.default) || items[0];
   const groupId = `panel-positions-${card.slug || card.id || 'card'}`;
-  const panels = items.map(item => `<div class="program-card-rail-view" data-panel-position-panel="${esc(item.id)}"${item.id === selected.id ? '' : ' hidden aria-hidden="true"'}>${renderPanel(item.panel || {}, panelImg, { items, groupId, activeId: item.id })}</div>`).join('');
+  const panels = items.map(item => `<div class="program-card-rail-view" data-panel-position-panel="${esc(item.id)}"${item.id === selected.id ? '' : ' hidden aria-hidden="true"'}>${renderPanel(item.panel || {}, panelImg, { items, groupId, activeId: item.id }, item.switch_modes)}</div>`).join('');
   return `<aside class="program-card-panel-rail" aria-label="Panel visualization">${panels}</aside>`;
 }
 

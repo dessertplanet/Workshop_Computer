@@ -71,6 +71,7 @@ export function renderPreviewPage() {
     <header class="author-head">
       <h1>Card author preview</h1>
       <p class="author-note">Edit the raw <code>info.yaml</code> (the author schema in <code>documentation/info.yaml.md</code>). Diagnostics and the card preview update live from your source. The preview is generated for display only — your <code>info.yaml</code> is the source of truth.</p>
+      <p><a class="btn secondary" href="./new/">Create a new card visually</a></p>
     </header>
     <div class="author-loading" role="status" aria-live="polite">
       <span class="author-spinner" aria-hidden="true"></span>

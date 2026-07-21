@@ -4,9 +4,15 @@
 
 Make card authoring possible without editing YAML while preserving the existing raw `info.yaml` workflow for advanced users.
 
-The central path is a visual **Author page**. It starts as a recognizable card page, lets an author enter Edit mode, and turns card components and documentation sections into direct editing affordances. The output remains a canonical `info.yaml` that can be downloaded and submitted in a pull request.
+The central path is a visual **Author page**. It starts as a recognizable card page, lets an author enter Edit mode, and turns card components and documented optional fields into direct editing affordances. The output remains a canonical `info.yaml` that can be downloaded and submitted in a pull request.
 
 This is an authoring tool, not a second metadata format. `releases/*/info.yaml` remains the source of truth.
+
+## Implementation status
+
+**MVP implemented:** `/preview/new/` now provides visual editing for required card metadata, distinct summary/description, tags, panel controls and sockets, switch actions, the documented `manual`, contact, and licensing. It renders through the shared canonical model and card renderer, supports direct panel-component selection, persists a local draft, generates live schema diagnostics, downloads `info.yaml`, and retains an Advanced YAML mode. The existing `/preview/` YAML workflow remains available and links to the new author page.
+
+**Still planned:** visual editing of existing cards, YAML AST/comment-preserving round trips, undo/redo, richer documentation-section ordering, visual media/UF2 editors, explicit draft restore/discard UI, and optional pull-request integration.
 
 ## Product principles
 
@@ -15,7 +21,7 @@ This is an authoring tool, not a second metadata format. `releases/*/info.yaml` 
 3. **Progressive disclosure.** Ask for required identity fields first; expose structured and uncommon fields only when relevant.
 4. **One source, two editing modes.** Visual Author mode and Advanced YAML mode edit the same in-memory YAML document.
 5. **Never hide the panel.** The physical panel remains visible while editing every panel-related field.
-6. **Draft by default.** New cards begin with `draft: true`; readiness is explicit.
+6. **Publishable by default.** New Basic-mode cards begin with `draft: false`; required-field validation makes incomplete work explicit.
 7. **No silent data loss.** Switching modes must retain unknown fields, comments, and ordering where possible.
 8. **Licensing and etiquette are distinct.** A license grants legal permissions. Community requests such as “please ask before publishing a port” are displayed separately and must not be presented as license restrictions.
 
@@ -62,13 +68,13 @@ Do not introduce a server dependency. The site is static today, and all state co
 The initial document should be equivalent to:
 
 ```yaml
-draft: true
+draft: false
 Name: ""
 Description: ""
 Language: ""
 Creator: ""
 Version: ""
-Status: WIP
+Status: ""
 ```
 
 Empty optional structures should not be serialized. Required empty values may remain in the working document but the download action should warn before exporting an incomplete file.
@@ -142,12 +148,10 @@ The Advanced YAML preview needs a local layout override:
 | Inputs | `panel.inputs[]` | Select physical jack, edit name/description/type |
 | Outputs | `panel.outputs[]` | Select physical jack, edit name/description/type |
 | LEDs | `controls.leds[]` | LED list editor with switch-position context |
-| Quick start | `quick_start[]` | Ordered step editor |
-| Documentation | `documentation` | Add/reorder titled sections |
-| Notes | `notes[]` | Repeatable text blocks |
+| Manual | `manual` | Markdown editor |
 | Video/audio | `demo-link`, `audio-sample` | URL/file-path fields with preview |
 | Downloads | `uf2[]` | Repository path or external-download editor |
-| About | core metadata, `contact`, `License`, `memory` | Metadata inspector |
+| About | core metadata, `contact`, `License` | Metadata inspector |
 
 ### Panel component interaction
 
@@ -160,18 +164,15 @@ The Advanced YAML preview needs a local layout override:
 
 Only expose Up/Middle/Down. `tap` belongs to switch actions and must never appear as a panel view.
 
-### Documentation section tiles
+### Optional detail tiles
 
 At the end of each logical area, show an **Add section** tile. Its menu offers only schema-supported sections:
 
-- Quick start
-- Documentation section
-- Notes
+- Manual
 - Demo video
 - Audio sample
 - Host/USB notes
 - Contact details
-- Memory requirement
 - Firmware download
 
 Added sections can be reordered where order is meaningful. Removing a populated section requires confirmation and supports undo.
@@ -185,7 +186,7 @@ The schema adapter is the authority; do not duplicate the required-field list in
 - Toolbar status: **3 of 6 required fields complete**.
 - Completion drawer groups findings into:
   - Required before download
-  - Recommended before publishing (`License`, `contact`, `panel` when ending draft)
+  - Recommended before publishing (`License`, `contact`, and `panel` when ending draft)
   - Optional enhancements
 - Validation messages link to and focus the corresponding visual editor.
 - **Download anyway** remains available for drafts after a confirmation; drafts are legitimate work in progress.
@@ -371,7 +372,6 @@ Suggested source organization:
 
 ### Prerequisites
 
-- Update the `License` documentation: the schema guide says it is not rendered, while the current card renderer includes it in About.
 - Add browser-level coverage for author routes and responsive panel visibility; the current preview has no dedicated automated UI tests.
 
 ### Phase 1 — layout and parity
