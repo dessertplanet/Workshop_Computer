@@ -224,10 +224,10 @@ function renderLedList(leds) {
 function renderDocumentation(card, extraSections = '', includeStructured = true) {
   const documentation = card.documentation || {};
   const blocks = [];
+  if (String(documentation.intro || '').trim()) {
+    blocks.push(`<details class="program-card-section program-card-collapsible" id="card-readme" open><summary><h3>README</h3></summary><div class="markdown-body">${markdownBlock(documentation.intro)}</div></details>`);
+  }
   if (includeStructured) {
-    if (String(documentation.intro || '').trim()) {
-      blocks.push(`<details class="program-card-section program-card-collapsible" open><summary><h3>Documentation</h3></summary><div>${markdownBlock(documentation.intro)}</div></details>`);
-    }
     for (const section of (Array.isArray(documentation.sections) ? documentation.sections : [])) {
       const title = inline(section?.title || '');
       const body = String(section?.body || '').trim();
@@ -249,8 +249,8 @@ function renderDocumentation(card, extraSections = '', includeStructured = true)
  * `inlinePdf` embeds an inline `<object>` preview of the first PDF; disable it
  * for the preview, where raw-GitHub PDF URLs would trigger a download.
  */
-export function renderReadmeAndDocs({ readmeHtml = '', docs = [], inlinePdf = true } = {}) {
-  const readmeSection = readmeHtml
+export function renderReadmeAndDocs({ readmeHtml = '', docs = [], inlinePdf = true, includeReadme = true } = {}) {
+  const readmeSection = includeReadme && readmeHtml
     ? `<details class="program-card-section program-card-collapsible" id="card-readme" open><summary><h3>README</h3></summary><div class="markdown-body">${readmeHtml}</div></details>`
     : '';
   const list = Array.isArray(docs) ? docs : [];
