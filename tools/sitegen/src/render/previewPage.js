@@ -53,6 +53,9 @@ export function renderPreviewPage() {
     .diag-line{color:var(--muted,#888);font-size:12px}
     .preview-note{color:var(--muted,#666);padding:12px;border:1px dashed var(--border,#ccc);border-radius:8px}
     #card-preview{border:1px solid var(--border,#eee);border-radius:10px;padding:8px;overflow:auto}
+    #card-preview .program-card-panel-rail{display:none}
+    #card-preview .program-card-use__panel{display:block;grid-area:auto;justify-self:start;margin:0 0 22px;position:static;width:100%}
+    #card-preview .program-card-use__reference{grid-area:auto}
     @keyframes author-spin{to{transform:rotate(360deg)}}
     .author-loading{display:none;align-items:center;justify-content:center;gap:10px;padding:64px 0;color:var(--muted,#666);font-size:14px}
     .author-tool.is-loading .author-loading{display:flex}
