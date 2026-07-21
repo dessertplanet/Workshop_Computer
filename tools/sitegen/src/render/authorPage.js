@@ -11,7 +11,7 @@ export function renderAuthorPage() {
   <link rel="stylesheet" href="../assets/style.css">
   <link rel="stylesheet" href="../assets/program-cards.css">
   <link rel="stylesheet" href="../assets/github-markdown.css">
-  <link rel="stylesheet" href="./author.css?v=12">
+  <link rel="stylesheet" href="./author.css?v=13">
   <script type="importmap">
   {
     "imports": {
@@ -48,7 +48,7 @@ export function renderAuthorPage() {
             <label class="author-field author-field--wide"><span>Name <strong>Required</strong></span><input data-field="Name" required placeholder="Card display name"></label>
             <label class="author-field author-field--wide"><span>Description <strong>Required</strong></span><textarea data-field="Description" required rows="3" placeholder="A short description for discovery and fallback text"></textarea></label>
             <label class="author-field"><span>Creator <strong>Required</strong></span><input data-field="Creator" required placeholder="Your name or handle"></label>
-            <label class="author-field"><span>Language <strong>Required</strong></span><input data-field="Language" required placeholder="C++ (Pico SDK)"></label>
+            <label class="author-field"><span>Language <strong>Required</strong></span><input data-field="Language" required placeholder="ie. Pico SDK"></label>
             <label class="author-field"><span>Version <strong>Required</strong></span><input data-field="Version" required placeholder="For example, 1.0.0"></label>
             <label class="author-field"><span>Status <strong>Required</strong></span><select data-field="Status" required><option value="" selected disabled>Choose status…</option><option>WIP</option><option>Beta</option><option>Released</option></select></label>
             <div id="license-recommended-field" class="author-field author-field--wide"><span>License <em class="author-recommended-label">Recommended</em></span><div class="author-license-row"><div><strong id="license-value">No license selected</strong><p id="license-help">Choose how other people may use and adapt your work. The validator will warn if this is omitted.</p></div><button id="open-license" class="btn secondary" type="button">Choose license</button></div></div>
