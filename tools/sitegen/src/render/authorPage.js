@@ -13,7 +13,7 @@ export function renderAuthorPage({ documentKind = 'new' } = {}) {
   <link rel="stylesheet" href="../assets/style.css">
   <link rel="stylesheet" href="../assets/program-cards.css">
   <link rel="stylesheet" href="../assets/github-markdown.css">
-  <link rel="stylesheet" href="./author.css?v=20">
+  <link rel="stylesheet" href="./author.css?v=23">
   <script type="importmap">
   {
     "imports": {
@@ -31,14 +31,19 @@ export function renderAuthorPage({ documentKind = 'new' } = {}) {
         <p>${existing ? 'Inspect and edit an existing card, with a production-matched live preview.' : 'Create a card page visually, then download the generated <code>info.yaml</code>.'}</p>
       </div>
       <div class="author-toolbar__actions">
-        ${existing ? '<label class="author-document-picker">Card <select id="card-select" aria-label="Existing card"></select></label><a id="production-card-link" class="author-production-link" href="#" target="_blank" rel="noopener noreferrer">View card page ↗</a><span id="editor-status" class="author-progress" aria-live="polite"></span>' : ''}
-        <span id="required-progress" class="author-progress" aria-live="polite"></span>
-        <div class="author-mode-switch" role="group" aria-label="Editing mode">
-          <button type="button"${existing ? ' disabled title="Basic availability is checked after the card loads"' : ' class="is-active"'} data-mode="author" aria-pressed="${existing ? 'false' : 'true'}">Basic</button>
-          <button type="button"${existing ? ' class="is-active"' : ''} data-mode="yaml" aria-pressed="${existing ? 'true' : 'false'}">Advanced</button>
+        <div class="author-toolbar__primary">
+          <label class="author-document-picker">Card <select id="card-select" aria-label="Card"><option value="new">＋ NEW</option></select></label>${existing ? '<a id="production-card-link" class="author-production-link" href="#" target="_blank" rel="noopener noreferrer">View card page ↗</a><span id="editor-status" class="author-progress" aria-live="polite"></span>' : ''}
+          <span id="required-progress" class="author-progress" aria-live="polite"></span>
+          <div class="author-mode-switch" role="group" aria-label="Editing mode">
+            <button type="button"${existing ? ' disabled title="Basic availability is checked after the card loads"' : ' class="is-active"'} data-mode="author" aria-pressed="${existing ? 'false' : 'true'}">Basic</button>
+            <button type="button"${existing ? ' class="is-active"' : ''} data-mode="yaml" aria-pressed="${existing ? 'true' : 'false'}">Advanced</button>
+          </div>
         </div>
-        <button id="download-source" class="btn download" type="button">Download info.yaml</button>
-        <button id="start-fresh" class="btn secondary" type="button">Start fresh</button>
+        <div class="author-toolbar__downloads">
+          <button id="download-source" class="btn download" type="button">Download info.yaml</button>
+          <button id="download-panel-image" class="btn secondary" type="button">Download panel image</button>
+          <button id="start-fresh" class="btn secondary" type="button">Start fresh</button>
+        </div>
       </div>
     </header>
 
@@ -89,7 +94,7 @@ export function renderAuthorPage({ documentKind = 'new' } = {}) {
       <div id="author-splitter" class="author-splitter" role="separator" aria-label="Resize editor and preview" aria-orientation="vertical" aria-valuemin="320" aria-valuemax="1000" aria-valuenow="560" tabindex="0"><span aria-hidden="true"></span></div>
 
       <section class="author-preview-column" aria-label="Live card preview">
-        <div class="author-preview-heading"><h2>Live preview</h2><span>Click a panel component to edit it</span></div>
+        <div class="author-preview-heading"><div class="author-preview-heading__copy"><h2>Live preview</h2><span>Click a panel component to edit it</span></div><div class="author-preview-heading__actions"><button id="preview-fullscreen" class="author-icon-button" type="button" aria-label="Enter preview full screen" title="Enter preview full screen" aria-pressed="false"><span class="author-fullscreen-expand" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg></span><span class="author-fullscreen-close" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 5 14 14M19 5 5 19"/></svg></span></button></div></div>
         <div id="card-preview"></div>
       </section>
     </div>
@@ -125,7 +130,7 @@ export function renderAuthorPage({ documentKind = 'new' } = {}) {
     </form>
   </dialog>
 
-  <script type="module" src="./author-client.js?v=25"></script>
+  <script type="module" src="./author-client.js?v=29"></script>
 </body>
 </html>`;
 }

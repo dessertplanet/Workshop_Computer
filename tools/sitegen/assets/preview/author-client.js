@@ -49,6 +49,7 @@ const els = {
   progress: document.getElementById('required-progress'),
   status: document.getElementById('author-status'),
   download: document.getElementById('download-source'),
+  panelDownload: document.getElementById('download-panel-image'),
   startFresh: document.getElementById('start-fresh'),
   licenseDialog: document.getElementById('license-dialog'),
   licenseValue: document.getElementById('license-value'),
@@ -63,6 +64,8 @@ const els = {
   workspace: document.querySelector('.author-workspace'),
   splitter: document.getElementById('author-splitter'),
   yamlFullscreen: document.getElementById('yaml-fullscreen'),
+  previewColumn: document.querySelector('.author-preview-column'),
+  previewFullscreen: document.getElementById('preview-fullscreen'),
 };
 
 let data = IS_EXISTING ? clone(INITIAL) : loadDraft();
@@ -236,12 +239,21 @@ async function toggleYamlFullscreen() {
   else await els.yamlPanel.requestFullscreen();
 }
 
-function updateFullscreenButton() {
-  const active = document.fullscreenElement === els.yamlPanel;
-  els.yamlFullscreen.setAttribute('aria-pressed', String(active));
-  els.yamlFullscreen.setAttribute('aria-label', active ? 'Exit full screen' : 'Enter full screen');
-  els.yamlFullscreen.title = active ? 'Exit full screen' : 'Enter full screen';
-  if (active) els.yaml.focus();
+async function togglePreviewFullscreen() {
+  if (document.fullscreenElement === els.previewColumn) await document.exitFullscreen();
+  else await els.previewColumn.requestFullscreen();
+}
+
+function updateFullscreenButtons() {
+  const yamlActive = document.fullscreenElement === els.yamlPanel;
+  els.yamlFullscreen.setAttribute('aria-pressed', String(yamlActive));
+  els.yamlFullscreen.setAttribute('aria-label', yamlActive ? 'Exit full screen' : 'Enter full screen');
+  els.yamlFullscreen.title = yamlActive ? 'Exit full screen' : 'Enter full screen';
+  const previewActive = document.fullscreenElement === els.previewColumn;
+  els.previewFullscreen.setAttribute('aria-pressed', String(previewActive));
+  els.previewFullscreen.setAttribute('aria-label', previewActive ? 'Exit preview full screen' : 'Enter preview full screen');
+  els.previewFullscreen.title = previewActive ? 'Exit preview full screen' : 'Enter preview full screen';
+  if (yamlActive) els.yaml.focus();
 }
 
 function getNested(path) {
@@ -1066,6 +1078,152 @@ function downloadSource() {
   URL.revokeObjectURL(url);
 }
 
+async function loadExportImage(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Could not load panel artwork (HTTP ${response.status}).`);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const image = new Image();
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error('The browser could not render the panel artwork.'));
+      image.src = objectUrl;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function wrapCanvasText(context, text, maxWidth, breakAnywhere) {
+  const lines = [];
+  const appendCharacters = value => {
+    let line = '';
+    for (const character of value) {
+      const candidate = line + character;
+      if (line && context.measureText(candidate).width > maxWidth) {
+        lines.push(line.trimEnd());
+        line = character.trimStart();
+      } else {
+        line = candidate;
+      }
+    }
+    if (line) lines.push(line.trim());
+  };
+  for (const paragraph of String(text).split('\n')) {
+    if (breakAnywhere) {
+      appendCharacters(paragraph);
+      continue;
+    }
+    let line = '';
+    for (const word of paragraph.trim().split(/\s+/).filter(Boolean)) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && context.measureText(candidate).width > maxWidth) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+      if (context.measureText(line).width > maxWidth) {
+        const oversized = line;
+        line = '';
+        appendCharacters(oversized);
+      }
+    }
+    if (line) lines.push(line);
+  }
+  return lines.filter(Boolean);
+}
+
+function drawPanelLabel(context, panelRect, element) {
+  const rect = element.getBoundingClientRect();
+  const textElement = element.matches('.program-card-panel-switch-position') ? element.querySelector('strong') : element;
+  if (!textElement) return;
+  const style = getComputedStyle(element);
+  const textStyle = getComputedStyle(textElement);
+  const x = rect.left - panelRect.left;
+  const y = rect.top - panelRect.top;
+  if (style.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+    context.fillStyle = style.backgroundColor;
+    context.fillRect(x, y, rect.width, rect.height);
+  }
+  const borderWidth = Number.parseFloat(style.borderTopWidth) || 0;
+  if (borderWidth && style.borderTopColor !== 'rgba(0, 0, 0, 0)') {
+    context.strokeStyle = style.borderTopColor;
+    context.lineWidth = borderWidth;
+    context.strokeRect(x + borderWidth / 2, y + borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth);
+  }
+  const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+  const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+  const maxWidth = Math.max(1, rect.width - paddingLeft - paddingRight);
+  context.font = `${textStyle.fontWeight} ${textStyle.fontSize} ${textStyle.fontFamily}`;
+  context.fillStyle = textStyle.color;
+  context.textAlign = 'center';
+  context.textBaseline = 'alphabetic';
+  const rawText = textElement.innerText || textElement.textContent || '';
+  const text = textStyle.textTransform === 'uppercase' ? rawText.toUpperCase() : rawText;
+  const lines = wrapCanvasText(context, text, maxWidth, element.classList.contains('program-card-panel-text--long'));
+  const lineHeight = Number.parseFloat(textStyle.lineHeight) || Number.parseFloat(textStyle.fontSize) || 11;
+  const totalHeight = lines.length * lineHeight;
+  const firstBaseline = y + (rect.height - totalHeight) / 2 + lineHeight * 0.82;
+  lines.forEach((line, index) => context.fillText(line, x + rect.width / 2, firstBaseline + index * lineHeight));
+}
+
+function canvasBlob(canvas) {
+  return new Promise((resolve, reject) => canvas.toBlob(blob => {
+    if (blob) resolve(blob);
+    else reject(new Error('The browser could not create the panel image.'));
+  }, 'image/png'));
+}
+
+async function downloadPanelImage() {
+  const panel = [...els.preview.querySelectorAll('.program-card-use__panel .program-card-panel')]
+    .find(element => element.offsetParent !== null);
+  if (!panel) {
+    els.status.textContent = 'No visible generated panel is available to download.';
+    els.status.className = 'author-status is-error';
+    return;
+  }
+  const originalLabel = els.panelDownload.textContent;
+  els.panelDownload.disabled = true;
+  els.panelDownload.textContent = 'Preparing image…';
+  try {
+    const rect = panel.getBoundingClientRect();
+    const panelArtwork = panel.querySelector('img');
+    if (!panelArtwork) throw new Error('The panel artwork is missing.');
+    const image = await loadExportImage(panelArtwork.currentSrc || panelArtwork.src);
+    const scale = 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(rect.width * scale);
+    canvas.height = Math.ceil(rect.height * scale);
+    const context = canvas.getContext('2d');
+    context.scale(scale, scale);
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, rect.width, rect.height);
+    context.drawImage(image, 0, 0, rect.width, rect.height);
+    for (const label of panel.querySelectorAll('.program-card-panel__label,.program-card-panel-switch-position.has-value')) {
+      drawPanelLabel(context, rect, label);
+    }
+    const pngUrl = URL.createObjectURL(await canvasBlob(canvas));
+    const filename = cleanText(currentEntry?.id || data.Name || 'new-card').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'new-card';
+    const link = document.createElement('a');
+    link.href = pngUrl;
+    link.download = `${filename}-panel.png`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(pngUrl), 1000);
+    els.status.textContent = '';
+    els.status.className = 'author-status';
+  } catch (error) {
+    els.status.textContent = `Panel image could not be created: ${error.message}`;
+    els.status.className = 'author-status is-error';
+  } finally {
+    els.panelDownload.disabled = false;
+    els.panelDownload.textContent = originalLabel;
+  }
+}
+
 function startFresh() {
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(DIFFERENTIAL_STORAGE_KEY);
@@ -1154,23 +1312,29 @@ function autoIndentOnEnter(event) {
   els.yaml.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-async function initExisting() {
+async function initCardPicker() {
   try {
     index = await fetch('../raw-info/index.json', { cache: 'no-store' }).then(response => response.json());
     index.sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
-    els.select.innerHTML = `<option value="new">＋ NEW CARD — start fresh</option>${index.map((entry, position) => `<option value="${position}">${escapeHtml(entry.id)}</option>`).join('')}`;
+    els.select.innerHTML = `<option value="new">＋ NEW</option>${index.map((entry, position) => `<option value="${position}">${escapeHtml(entry.id)}</option>`).join('')}`;
     els.select.addEventListener('change', () => {
       if (els.select.value === 'new') {
         startFresh();
         return;
       }
       const entry = index[Number(els.select.value)];
-      if (entry) location.hash = encodeURIComponent(entry.slug);
+      if (!entry) return;
+      if (IS_EXISTING) location.hash = encodeURIComponent(entry.slug);
+      else location.href = new URL(`./#${encodeURIComponent(entry.slug)}`, document.baseURI).href;
     });
-    window.addEventListener('hashchange', applyExistingHash);
-    applyExistingHash();
+    if (IS_EXISTING) {
+      window.addEventListener('hashchange', applyExistingHash);
+      applyExistingHash();
+    } else {
+      els.select.value = 'new';
+    }
   } catch (error) {
-    els.editorStatus.textContent = 'Could not load card index';
+    if (els.editorStatus) els.editorStatus.textContent = 'Could not load card index';
     els.status.textContent = error.message;
     els.status.className = 'author-status is-error';
     els.page.classList.remove('is-loading');
@@ -1197,7 +1361,7 @@ function handleAuthorInput(event) {
 
 function init() {
   initWorkspaceSplitter();
-  if (IS_EXISTING) initExisting();
+  initCardPicker();
   syncFormFromData();
   if (!IS_EXISTING) validateAndRender();
 
@@ -1304,9 +1468,11 @@ function init() {
   }));
 
   els.download.addEventListener('click', downloadSource);
+  els.panelDownload.addEventListener('click', downloadPanelImage);
   els.startFresh.addEventListener('click', startFresh);
   els.yamlFullscreen.addEventListener('click', toggleYamlFullscreen);
-  document.addEventListener('fullscreenchange', updateFullscreenButton);
+  els.previewFullscreen.addEventListener('click', togglePreviewFullscreen);
+  document.addEventListener('fullscreenchange', updateFullscreenButtons);
   document.getElementById('open-license').addEventListener('click', openLicenseAssistant);
   document.querySelectorAll('[data-license]').forEach(button => button.addEventListener('click', () => {
     const descriptions = {
