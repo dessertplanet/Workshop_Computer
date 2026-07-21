@@ -1141,13 +1141,15 @@ function drawPanelLabel(context, panelRect, element) {
   if (!textElement) return;
   const style = getComputedStyle(element);
   const textStyle = getComputedStyle(textElement);
+  const neutralSwitchPosition = element.matches('.program-card-panel-switch-position[aria-pressed="true"]');
   const x = rect.left - panelRect.left;
   const y = rect.top - panelRect.top;
-  if (style.backgroundColor !== 'rgba(0, 0, 0, 0)') {
-    context.fillStyle = style.backgroundColor;
+  const backgroundColor = neutralSwitchPosition ? '#fdfdfd' : style.backgroundColor;
+  if (backgroundColor !== 'rgba(0, 0, 0, 0)') {
+    context.fillStyle = backgroundColor;
     context.fillRect(x, y, rect.width, rect.height);
   }
-  const borderWidth = Number.parseFloat(style.borderTopWidth) || 0;
+  const borderWidth = neutralSwitchPosition ? 0 : Number.parseFloat(style.borderTopWidth) || 0;
   if (borderWidth && style.borderTopColor !== 'rgba(0, 0, 0, 0)') {
     context.strokeStyle = style.borderTopColor;
     context.lineWidth = borderWidth;
