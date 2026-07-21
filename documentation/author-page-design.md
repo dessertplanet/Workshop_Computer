@@ -10,7 +10,7 @@ This is an authoring tool, not a second metadata format. `releases/*/info.yaml` 
 
 ## Implementation status
 
-**MVP implemented:** `/preview/new/` now provides visual editing for required card metadata, distinct summary/description, tags, panel controls and sockets, switch actions, the documented `manual`, contact, and licensing. It renders through the shared canonical model and card renderer, supports direct panel-component selection, persists a local draft, generates live schema diagnostics, downloads `info.yaml`, and retains an Advanced YAML mode. The existing `/preview/` YAML workflow remains available and links to the new author page.
+**MVP implemented:** `/preview/new/` now provides visual editing for required card metadata, distinct summary/description, tags, panel controls and sockets, switch actions, the documented inline `readme`, contact, and licensing. It renders through the shared canonical model and card renderer, supports direct panel-component selection, persists a local draft, generates live schema diagnostics, downloads `info.yaml`, and retains an Advanced YAML mode. The existing `/preview/` YAML workflow remains available and links to the new author page.
 
 **Still planned:** visual editing of existing cards, YAML AST/comment-preserving round trips, undo/redo, richer documentation-section ordering, visual media/UF2 editors, explicit draft restore/discard UI, and optional pull-request integration.
 
@@ -148,7 +148,7 @@ The Advanced YAML preview needs a local layout override:
 | Inputs | `panel.inputs[]` | Select physical jack, edit name/description/type |
 | Outputs | `panel.outputs[]` | Select physical jack, edit name/description/type |
 | LEDs | `controls.leds[]` | LED list editor with switch-position context |
-| Manual | `manual` | Markdown editor |
+| Inline README | `readme` | Markdown editor; replaces rendered README.md |
 | Video/audio | `demo-link`, `audio-sample` | URL/file-path fields with preview |
 | Downloads | `uf2[]` | Repository path or external-download editor |
 | About | core metadata, `contact`, `License` | Metadata inspector |
@@ -168,7 +168,7 @@ Only expose Up/Middle/Down. `tap` belongs to switch actions and must never appea
 
 At the end of each logical area, show an **Add section** tile. Its menu offers only schema-supported sections:
 
-- Manual
+- Inline README
 - Demo video
 - Audio sample
 - Host/USB notes

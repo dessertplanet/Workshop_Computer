@@ -21,7 +21,7 @@ export const infoYamlSchema = {
     { path: 'tags', type: 'array|string', required: false, description: 'Discovery tags.' },
     { path: 'demo-link', type: 'string', required: false, description: 'Demo video URL.' },
     { path: 'audio-sample', type: 'array|string', required: false, description: 'Demo audio sample(s): a repo-relative file path, a SoundCloud URL, a Bandcamp EmbeddedPlayer URL, or a list of these.' },
-    { path: 'manual', type: 'string', required: false, description: 'Full operator manual in Markdown.' },
+    { path: 'readme', type: 'string', required: false, description: 'Full inline README in Markdown; replaces the rendered README.md section.' },
     { path: 'panel', type: 'object', required: false, description: 'Panel jack metadata. Unconditioned entries form the base; when.z up/middle/down entries override it for that switch position.' },
     { path: 'controls', type: 'object', required: false, description: 'Control metadata. Switch keys are up/middle/down plus the tap action; when.z supports only up/middle/down.' },
     { path: 'host', type: 'object', required: false, description: 'Host connectivity metadata.' },

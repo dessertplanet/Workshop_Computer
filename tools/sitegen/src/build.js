@@ -73,7 +73,7 @@ function detailPage(rel) {
     panelImg: '../../assets/program_cards/Standalone_computer_rev1.svg',
     yamlUrl,
     uf2Url,
-    extraDocs: renderReadmeAndDocs({ readmeHtml, docs }),
+    extraDocs: renderReadmeAndDocs({ readmeHtml, docs, includeReadme: !card.documentation?.intro }),
     basic: !!card.draft,
   });
 
