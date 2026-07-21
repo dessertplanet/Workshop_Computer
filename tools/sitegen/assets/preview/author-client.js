@@ -3,13 +3,18 @@ import { parseSource } from './lib/validate/parseSource.js';
 import { validateInfoYaml } from './lib/validate/validateInfoYaml.js';
 import { buildCanonicalCardModel } from './lib/model/card.js';
 import { renderCardArticle } from './lib/render/cardPage.js';
+import { renderReadmeAndDocs } from './lib/render/cardPage.js';
 import { panelPositions } from './lib/render/panelPositions.js';
+import { resolveAudioSamples, getAudioField } from './lib/utils/audio.js';
 
 const REQUIRED = ['Name', 'Description', 'Language', 'Creator', 'Version', 'Status'];
 const STORAGE_KEY = 'workshop-computer-author-new';
 const DIFFERENTIAL_STORAGE_KEY = 'workshop-computer-author-differential-controls';
 const SWITCH_POSITIONS = ['up', 'middle', 'down'];
 const OPTIONAL_KEYS = ['summary', 'tags', 'manual', 'demo-link', 'contact'];
+const SPLIT_STORAGE_KEY = 'workshop-computer-author-editor-width';
+const DOCUMENT_KIND = document.querySelector('.author-page')?.dataset.documentKind || 'new';
+const IS_EXISTING = DOCUMENT_KIND === 'existing';
 const INITIAL = {
   draft: false,
   Name: '',
@@ -38,27 +43,41 @@ const els = {
   editor: document.getElementById('author-editor'),
   yamlPanel: document.getElementById('yaml-editor'),
   yaml: document.getElementById('yaml-source'),
-  yamlStatus: document.getElementById('yaml-status'),
+  sourcePathTitle: document.getElementById('source-path-title'),
   diagnostics: document.getElementById('diagnostics'),
   preview: document.getElementById('card-preview'),
   progress: document.getElementById('required-progress'),
   status: document.getElementById('author-status'),
   download: document.getElementById('download-source'),
+  startFresh: document.getElementById('start-fresh'),
   licenseDialog: document.getElementById('license-dialog'),
   licenseValue: document.getElementById('license-value'),
   licenseHelp: document.getElementById('license-help'),
   licenseResult: document.getElementById('license-result'),
   useLicense: document.getElementById('use-license'),
+  select: document.getElementById('card-select'),
+  editorStatus: document.getElementById('editor-status'),
+  page: document.querySelector('.author-page'),
+  gutter: document.getElementById('gutter-inner'),
+  productionLink: document.getElementById('production-card-link'),
+  workspace: document.querySelector('.author-workspace'),
+  splitter: document.getElementById('author-splitter'),
+  yamlFullscreen: document.getElementById('yaml-fullscreen'),
 };
 
-let data = loadDraft();
+let data = IS_EXISTING ? clone(INITIAL) : loadDraft();
+let index = [];
+let currentEntry = null;
 let selectedLicense = '';
 let licenseWasManuallySelected = false;
 let differentControls = localStorage.getItem(DIFFERENTIAL_STORAGE_KEY) === 'true';
 let activePosition = 'middle';
-let currentMode = 'author';
+let currentMode = IS_EXISTING ? 'yaml' : 'author';
 const openOptionals = new Set(OPTIONAL_KEYS.filter(key => hasOptionalValue(key)));
 let yamlTimer;
+let positionClickTimer;
+let yamlTargetCacheSource = '';
+let yamlTargetCacheDocument = null;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -73,6 +92,7 @@ function loadDraft() {
 }
 
 function saveDraft() {
+  if (IS_EXISTING) return;
   try { localStorage.setItem(STORAGE_KEY, sourceText()); } catch {}
 }
 
@@ -82,6 +102,146 @@ function sourceText() {
 
 function cleanText(value) {
   return String(value ?? '').trim();
+}
+
+function isObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function basicCompatibility(source, parsed) {
+  const reasons = [];
+  const top = new Set(['draft', 'Name', 'Description', 'Language', 'Creator', 'Version', 'Status', 'License', 'summary', 'tags', 'manual', 'demo-link', 'contact', 'panel', 'controls']);
+  const textFields = ['Name', 'Description', 'Language', 'Creator', 'Version', 'Status', 'License', 'summary', 'manual', 'demo-link'];
+  const positions = new Set(SWITCH_POSITIONS);
+  const inputs = new Set(Object.values(inputIds));
+  const outputs = new Set(Object.values(outputIds));
+  const keysOnly = (value, allowed) => isObject(value) && Object.keys(value).every(key => allowed.has(key));
+  const conditionOk = value => value == null || (keysOnly(value, new Set(['z'])) && positions.has(value.z));
+  const partOk = value => keysOnly(value, new Set(['name', 'description'])) && Object.values(value).every(item => typeof item === 'string');
+  if (!isObject(parsed)) return { compatible: false, reasons: ['The YAML root must be a mapping.'] };
+  if (/^\s*#|\s+#|(^|\s)[&*!][\w-]+|^\s*<<\s*:/m.test(source)) reasons.push('YAML comments, anchors, aliases, tags, or merge keys cannot be preserved.');
+  for (const key of Object.keys(parsed)) if (!top.has(key)) reasons.push(`Unsupported field: ${key}`);
+  for (const key of textFields) if (parsed[key] != null && typeof parsed[key] !== 'string') reasons.push(`${key} must be text.`);
+  if (parsed.draft != null && typeof parsed.draft !== 'boolean') reasons.push('draft must be true or false.');
+  if (parsed.tags != null && (!Array.isArray(parsed.tags) || parsed.tags.some(item => typeof item !== 'string'))) reasons.push('tags must be a list of text values.');
+  if (parsed.contact != null && (!keysOnly(parsed.contact, new Set(['website'])) || (parsed.contact.website != null && typeof parsed.contact.website !== 'string'))) reasons.push('contact contains fields Basic mode cannot edit.');
+  const controls = parsed.controls;
+  if (controls != null) {
+    if (!keysOnly(controls, new Set(['knobs', 'switch']))) reasons.push('controls contains unsupported sections.');
+    if (controls?.switch != null) {
+      if (!keysOnly(controls.switch, new Set(['up', 'middle', 'down', 'tap']))) reasons.push('controls.switch contains unsupported positions.');
+      else for (const [position, value] of Object.entries(controls.switch)) if (!partOk(value)) reasons.push(`controls.switch.${position} has unsupported data.`);
+    }
+    if (controls?.knobs != null) {
+      if (!Array.isArray(controls.knobs)) reasons.push('controls.knobs must be a list.');
+      else {
+        const seen = new Set();
+        for (const row of controls.knobs) {
+          if (!keysOnly(row, new Set(['when', 'main', 'x', 'y'])) || !conditionOk(row.when)) reasons.push('A knob row has unsupported fields or conditions.');
+          for (const key of ['main', 'x', 'y']) if (row?.[key] != null && !partOk(row[key])) reasons.push(`A ${key} knob has unsupported data.`);
+          const context = row?.when?.z || 'shared';
+          if (seen.has(context)) reasons.push(`Multiple knob rows use the ${context} context.`);
+          seen.add(context);
+        }
+      }
+    }
+  }
+  const panel = parsed.panel;
+  if (panel != null) {
+    if (!keysOnly(panel, new Set(['inputs', 'outputs']))) reasons.push('panel contains unsupported sections.');
+    for (const [side, ids] of [['inputs', inputs], ['outputs', outputs]]) {
+      if (panel?.[side] == null) continue;
+      if (!Array.isArray(panel[side])) { reasons.push(`panel.${side} must be a list.`); continue; }
+      const seen = new Set();
+      for (const item of panel[side]) {
+        if (!keysOnly(item, new Set(['id', 'name', 'description', 'when'])) || !ids.has(item?.id) || !conditionOk(item?.when)
+          || (item.name != null && typeof item.name !== 'string') || (item.description != null && typeof item.description !== 'string')) reasons.push(`panel.${side} contains an unsupported jack.`);
+        const identity = `${item?.id}:${item?.when?.z || 'shared'}`;
+        if (seen.has(identity)) reasons.push(`panel.${side} repeats ${identity}.`);
+        seen.add(identity);
+      }
+    }
+  }
+  return { compatible: reasons.length === 0, reasons: [...new Set(reasons)] };
+}
+
+function updateBasicAvailability(source = els.yaml.value, parsed = data) {
+  const button = document.querySelector('[data-mode="author"]');
+  if (!IS_EXISTING || !button) return;
+  const result = basicCompatibility(source, parsed);
+  button.disabled = !result.compatible;
+  button.title = result.compatible ? 'Edit this card visually' : `Basic mode unavailable: ${result.reasons.join(' ')}`;
+  button.setAttribute('aria-description', button.title);
+  if (!result.compatible && currentMode === 'author') setMode('yaml');
+}
+
+function updateGutter() {
+  if (!els.gutter) return;
+  els.gutter.textContent = Array.from({ length: els.yaml.value.split('\n').length }, (_, index) => index + 1).join('\n');
+  els.gutter.style.transform = `translateY(${-els.yaml.scrollTop}px)`;
+}
+
+function splitBounds() {
+  const width = els.workspace.getBoundingClientRect().width || Math.max(780, window.innerWidth - 36);
+  return { min: 320, max: Math.max(320, width - 460) };
+}
+
+function setEditorWidth(width, { persist = true } = {}) {
+  const { min, max } = splitBounds();
+  const next = Math.round(Math.min(max, Math.max(min, Number(width) || 560)));
+  els.workspace.style.setProperty('--author-editor-width', `${next}px`);
+  els.splitter.setAttribute('aria-valuemin', String(min));
+  els.splitter.setAttribute('aria-valuemax', String(max));
+  els.splitter.setAttribute('aria-valuenow', String(next));
+  if (persist) localStorage.setItem(SPLIT_STORAGE_KEY, String(next));
+}
+
+function initWorkspaceSplitter() {
+  setEditorWidth(localStorage.getItem(SPLIT_STORAGE_KEY) || 560, { persist: false });
+  let dragging = false;
+  const finish = () => {
+    if (!dragging) return;
+    dragging = false;
+    els.workspace.classList.remove('is-resizing');
+    localStorage.setItem(SPLIT_STORAGE_KEY, els.splitter.getAttribute('aria-valuenow'));
+  };
+  els.splitter.addEventListener('pointerdown', event => {
+    if (matchMedia('(max-width: 1050px)').matches) return;
+    dragging = true;
+    els.splitter.setPointerCapture(event.pointerId);
+    els.workspace.classList.add('is-resizing');
+    event.preventDefault();
+  });
+  els.splitter.addEventListener('pointermove', event => {
+    if (!dragging) return;
+    const left = els.workspace.getBoundingClientRect().left;
+    setEditorWidth(event.clientX - left, { persist: false });
+  });
+  els.splitter.addEventListener('pointerup', finish);
+  els.splitter.addEventListener('pointercancel', finish);
+  els.splitter.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const { min, max } = splitBounds();
+    const current = Number(els.splitter.getAttribute('aria-valuenow')) || 560;
+    if (event.key === 'Home') setEditorWidth(min);
+    else if (event.key === 'End') setEditorWidth(max);
+    else setEditorWidth(current + (event.key === 'ArrowLeft' ? -24 : 24));
+  });
+  window.addEventListener('resize', () => setEditorWidth(els.splitter.getAttribute('aria-valuenow'), { persist: false }));
+}
+
+async function toggleYamlFullscreen() {
+  if (document.fullscreenElement === els.yamlPanel) await document.exitFullscreen();
+  else await els.yamlPanel.requestFullscreen();
+}
+
+function updateFullscreenButton() {
+  const active = document.fullscreenElement === els.yamlPanel;
+  els.yamlFullscreen.setAttribute('aria-pressed', String(active));
+  els.yamlFullscreen.setAttribute('aria-label', active ? 'Exit full screen' : 'Enter full screen');
+  els.yamlFullscreen.title = active ? 'Exit full screen' : 'Enter full screen';
+  if (active) els.yaml.focus();
 }
 
 function getNested(path) {
@@ -131,10 +291,12 @@ function previewData() {
 }
 
 function buildCard() {
+  const base = rawBaseForCurrent();
+  const audioSamples = resolveAudioSamples(getAudioField(data), rel => base ? base + rel.split('/').filter(Boolean).map(encodeURIComponent).join('/') : '');
   return buildCanonicalCardModel({
-    folderName: 'new_card', slug: 'new-card', info: {}, rawYaml: previewData(),
-    docs: [], downloads: [], latestUf2: null, uf2Downloads: [], web: {}, audioSamples: [],
-    readmePath: '', sourceFile: 'info.yaml', sourceUrl: '', readmeUrl: '',
+    folderName: currentEntry?.id || 'new_card', slug: currentEntry?.slug || 'new-card', info: {}, rawYaml: previewData(),
+    docs: [], downloads: [], latestUf2: currentEntry?.uf2Url ? { url: currentEntry.uf2Url } : null, uf2Downloads: currentEntry?.uf2Downloads || [], web: {}, audioSamples,
+    readmePath: '', sourceFile: currentEntry?.sourceFile || 'info.yaml', sourceUrl: currentEntry?.sourceUrl || '', readmeUrl: currentEntry?.readmeUrl || '',
     gitFirstDate: '', gitLastDate: '',
   });
 }
@@ -148,18 +310,31 @@ function renderPreview() {
     els.preview.innerHTML = renderCardArticle({
       card,
       panelImg: '../assets/program_cards/Standalone_computer_rev1.svg',
-      yamlUrl: '#', uf2Url: '', extraDocs: '',
+      yamlUrl: currentEntry?.yamlUrl || '#', uf2Url: currentEntry?.uf2Url || '',
+      extraDocs: currentEntry?.extras ? renderReadmeAndDocs({ ...currentEntry.extras, inlinePdf: false }) : '',
     });
     if (!cleanText(data.Description)) {
       const summary = els.preview.querySelector('.program-card-hero__main > p');
       if (summary) summary.textContent = 'Add a short description to introduce this card.';
     }
-    renderAuthorControlReference();
-    addPanelHitTargets();
+    if (currentMode === 'author') {
+      renderAuthorControlReference();
+      addPanelHitTargets();
+    } else {
+      decorateAdvancedPreviewTargets();
+    }
     addDifferentControlsToggle();
   } catch (error) {
     els.preview.innerHTML = `<p class="author-status is-error">Preview could not render: ${escapeHtml(error.message)}</p>`;
   }
+}
+
+function rawBaseForCurrent() {
+  if (!currentEntry) return '';
+  const sample = currentEntry.uf2Url || currentEntry.uf2Downloads?.[0]?.url || '';
+  const marker = `/releases/${currentEntry.id}/`;
+  const index = sample.indexOf(marker);
+  return index >= 0 ? sample.slice(0, index + marker.length) : '';
 }
 
 function referenceItem(def) {
@@ -244,13 +419,126 @@ function addPanelHitTargets() {
 }
 
 function addDifferentControlsToggle() {
-  if (currentMode !== 'author') return;
   for (const panelArea of els.preview.querySelectorAll('.program-card-use__panel')) {
     const label = document.createElement('label');
     label.className = 'author-different-controls-toggle';
-    label.innerHTML = `<input type="checkbox" data-different-controls-toggle${differentControls ? ' checked' : ''}><span>Different controls based on switch position</span>`;
+    const advanced = currentMode === 'yaml';
+    label.title = advanced ? 'This indicator follows the conditions in info.yaml.' : '';
+    label.innerHTML = `<input type="checkbox" data-different-controls-toggle${differentControls ? ' checked' : ''}${advanced ? ' disabled aria-readonly="true"' : ''}><span>Different panel based on switch position</span>`;
     panelArea.appendChild(label);
   }
+}
+
+function markYamlTarget(element, target, label) {
+  if (!element) return;
+  if (currentMode === 'yaml' && !yamlNodeForTarget(target)) return;
+  element.dataset.yamlTarget = target;
+  element.classList.add('author-yaml-jump-target');
+  element.title = `Double-click to find ${label} in info.yaml`;
+}
+
+function decorateAdvancedPreviewTargets() {
+  for (const panel of els.preview.querySelectorAll('.program-card-use__panel .program-card-panel')) {
+    for (const label of panel.querySelectorAll('[data-panel-switch-position]')) {
+      markYamlTarget(label, `switch:${label.dataset.panelSwitchPosition}`, `the ${label.dataset.panelSwitchPosition} switch position`);
+    }
+    for (const def of componentDefs) {
+      if (def.kind === 'switch') continue;
+      const label = [...panel.querySelectorAll('.program-card-panel__label')].find(candidate =>
+        Math.abs(Number.parseFloat(candidate.style.left) - def.left) < 0.2
+        && Math.abs(Number.parseFloat(candidate.style.top) - def.top) < 0.2);
+      markYamlTarget(label, `component:${def.kind}:${def.key}`, def.label);
+    }
+  }
+
+  for (const key of ['main', 'x', 'y']) {
+    for (const card of els.preview.querySelectorAll(`.program-card-control--${key}`)) markYamlTarget(card, `component:control:${key}`, `${key} control`);
+  }
+  for (const card of els.preview.querySelectorAll('.program-card-control--switch')) markYamlTarget(card, 'section:controls', 'switch controls');
+  for (const [side, definitions] of [['input', componentDefs.filter(def => def.kind === 'input')], ['output', componentDefs.filter(def => def.kind === 'output')]]) {
+    for (const section of els.preview.querySelectorAll(`.program-card-socket-section--${side}s`)) {
+      for (const card of section.querySelectorAll('.program-card-socket')) {
+        const key = cleanText(card.querySelector('.program-card-component-key')?.textContent).toLowerCase();
+        const def = definitions.find(item => cleanText(item.name || item.label.replace(/^(Input|Output) · /, '')).toLowerCase() === key);
+        if (def) markYamlTarget(card, `component:${side}:${def.key}`, def.label);
+      }
+    }
+  }
+
+  markYamlTarget(els.preview.querySelector('.program-card-hero'), 'field:Name', 'card details');
+  for (const section of els.preview.querySelectorAll('.program-card-controls-section')) markYamlTarget(section, 'section:controls', 'controls');
+  for (const section of els.preview.querySelectorAll('.program-card-io-section')) markYamlTarget(section, 'section:panel', 'panel connections');
+  markYamlTarget(els.preview.querySelector('.program-card-documentation'), 'field:manual', 'manual');
+  markYamlTarget(els.preview.querySelector('.program-card-demo'), 'field:demo-link', 'demo link');
+  markYamlTarget(els.preview.querySelector('.program-card-about'), 'field:Creator', 'creator details');
+}
+
+function yamlNodeForTarget(target) {
+  let document = yamlTargetCacheDocument;
+  if (yamlTargetCacheSource !== els.yaml.value || !document) {
+    try { document = YAML.parseDocument(els.yaml.value); } catch { return null; }
+    yamlTargetCacheSource = els.yaml.value;
+    yamlTargetCacheDocument = document;
+  }
+  if (document.errors?.length) return null;
+  const [type, kind, key] = target.split(':');
+  const keyNode = path => {
+    const parent = path.length === 1 ? document.contents : document.getIn(path.slice(0, -1), true);
+    return parent?.items?.find(pair => String(pair?.key?.value) === path.at(-1))?.key || null;
+  };
+  const rowKeyNode = (row, name) => row?.items?.find(pair => String(pair?.key?.value) === name)?.key || null;
+  if (type === 'field') return keyNode([kind]);
+  if (type === 'section') return keyNode(kind.split('.'));
+  if (type === 'switch') {
+    const explicit = keyNode(['controls', 'switch', kind]);
+    if (explicit) return explicit;
+    const rows = document.getIn(['controls', 'knobs'], true)?.items || [];
+    const row = rows.find(item => item.getIn?.(['when', 'z']) === kind);
+    return rowKeyNode(row, 'when');
+  }
+  if (type !== 'component') return null;
+  if (kind === 'control') {
+    const rows = document.getIn(['controls', 'knobs'], true)?.items || [];
+    const preferred = rows.find(row => row.getIn?.(['when', 'z']) === activePosition && row.get?.(key, true));
+    const shared = rows.find(row => !row.get?.('when', true) && row.get?.(key, true));
+    return rowKeyNode(preferred || shared || rows.find(row => row.get?.(key, true)), key);
+  }
+  const def = componentDefs.find(item => item.kind === kind && item.key === key);
+  if (!def) return null;
+  const rows = document.getIn(['panel', `${kind}s`], true)?.items || [];
+  const aliases = kind === 'input' ? {
+    cv_1: ['CVIn1', 'CV1'], cv_2: ['CVIn2', 'CV2'],
+    pulse_1: ['PulseIn1', 'Pulse1'], pulse_2: ['PulseIn2', 'Pulse2'],
+  }[key] : null;
+  const sourceIds = new Set(aliases || [def.id]);
+  const matching = rows.filter(row => sourceIds.has(row.get?.('id')));
+  const row = matching.find(row => row.getIn?.(['when', 'z']) === activePosition)
+    || matching.find(row => !row.get?.('when', true))
+    || matching[0]
+    || null;
+  return rowKeyNode(row, 'id');
+}
+
+function jumpToYamlTarget(target) {
+  const node = yamlNodeForTarget(target);
+  const offset = node?.range?.[0];
+  if (!Number.isInteger(offset)) {
+    els.status.textContent = 'That preview item is generated or is not explicitly present in info.yaml.';
+    els.status.className = 'author-status';
+    return;
+  }
+  const start = els.yaml.value.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+  let end = els.yaml.value.indexOf('\n', offset);
+  if (end < 0) end = els.yaml.value.length;
+  els.yaml.focus();
+  els.yaml.setSelectionRange(start, end);
+  const line = els.yaml.value.slice(0, start).split('\n').length - 1;
+  const lineHeight = Number.parseFloat(getComputedStyle(els.yaml).lineHeight) || 20;
+  els.yaml.scrollTop = Math.max(0, line * lineHeight - els.yaml.clientHeight / 3);
+  updateGutter();
+  els.yaml.classList.remove('author-yaml-target-flash');
+  requestAnimationFrame(() => els.yaml.classList.add('author-yaml-target-flash'));
+  setTimeout(() => els.yaml.classList.remove('author-yaml-target-flash'), 900);
 }
 
 function validateAndRender({ syncYaml = true, syncForm = false } = {}) {
@@ -636,7 +924,7 @@ function updateSwitch(position, value) {
   value = cleanText(value);
   const controls = data.controls ||= {};
   const modes = controls.switch ||= {};
-  if (value) modes[position] = { name: value };
+  if (value) modes[position] = { ...modes[position], name: value };
   else delete modes[position];
   prune(data);
 }
@@ -749,7 +1037,10 @@ function openLicenseAssistant() {
 }
 
 function setMode(mode) {
+  const requested = document.querySelector(`[data-mode="${CSS.escape(mode)}"]`);
+  if (requested?.disabled) return;
   const yamlMode = mode === 'yaml';
+  if (yamlMode) differentControls = hasPositionSpecificData();
   currentMode = mode;
   els.editor.hidden = yamlMode;
   els.yamlPanel.hidden = !yamlMode;
@@ -768,11 +1059,122 @@ function setMode(mode) {
 function downloadSource() {
   const missing = REQUIRED.filter(key => !cleanText(data[key]));
   if (missing.length && !confirm(`This draft is missing: ${missing.join(', ')}. Download it anyway?`)) return;
-  const blob = new Blob([sourceText()], { type: 'text/yaml' });
+  const blob = new Blob([currentMode === 'yaml' ? els.yaml.value : sourceText()], { type: 'text/yaml' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url; link.download = 'info.yaml'; document.body.appendChild(link); link.click(); link.remove();
   URL.revokeObjectURL(url);
+}
+
+function startFresh() {
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(DIFFERENTIAL_STORAGE_KEY);
+  const newCardUrl = new URL('new/', document.baseURI);
+  if (location.origin === newCardUrl.origin && location.pathname === newCardUrl.pathname) {
+    location.reload();
+  } else {
+    location.href = newCardUrl.href;
+  }
+}
+
+function slugFromHash() {
+  const hash = decodeURIComponent(String(location.hash || '').replace(/^#/, '')).trim();
+  const match = hash.match(/^card=(.*)$/);
+  return (match ? match[1] : hash).trim();
+}
+
+async function loadExistingCard(entry) {
+  currentEntry = entry;
+  els.editorStatus.textContent = 'Loading…';
+  els.sourcePathTitle.textContent = `${entry.id}/info.yaml`;
+  if (els.productionLink) {
+    els.productionLink.href = `../programs/${encodeURIComponent(entry.slug)}/`;
+    els.productionLink.setAttribute('aria-label', `View the published card page for ${entry.id}`);
+  }
+  try {
+    const raw = await fetch(`../${entry.path}`, { cache: 'no-store' }).then(response => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.text();
+    });
+    entry.extras = await fetch(`../raw-info/${entry.id}/extras.json`, { cache: 'no-store' })
+      .then(response => response.ok ? response.json() : null).catch(() => null);
+    const source = parseSource(raw, entry.sourceFile || 'info.yaml');
+    els.yaml.value = raw;
+    if (source.error || !source.data) {
+      renderDiagnostics(validateInfoYaml(source));
+      updateBasicAvailability(raw, null);
+    } else {
+      data = source.data;
+      differentControls = hasPositionSpecificData();
+      syncFormFromData();
+      const result = validateInfoYaml(source);
+      renderDiagnostics(result);
+      renderPreview();
+      updateProgress();
+      updateLicenseDisplay();
+      updateBasicAvailability(raw, data);
+      els.editorStatus.textContent = `${result.errorCount} error(s), ${result.warningCount} warning(s)`;
+    }
+    updateGutter();
+  } catch (error) {
+    els.editorStatus.textContent = 'Load failed';
+    els.status.textContent = `Could not load ${entry.path}: ${error.message}`;
+    els.status.className = 'author-status is-error';
+  } finally {
+    els.page.classList.remove('is-loading');
+  }
+}
+
+function hasPositionSpecificData() {
+  const conditional = item => SWITCH_POSITIONS.includes(item?.when?.z);
+  return (data.controls?.knobs || []).some(conditional)
+    || (data.panel?.inputs || []).some(conditional)
+    || (data.panel?.outputs || []).some(conditional);
+}
+
+function applyExistingHash() {
+  if (!index.length) return;
+  const requested = slugFromHash();
+  const entry = index.find(item => item.slug === requested) || index[0];
+  const hash = `#${encodeURIComponent(entry.slug)}`;
+  if (location.hash !== hash) history.replaceState(null, '', hash);
+  els.select.value = String(index.indexOf(entry));
+  setMode('yaml');
+  loadExistingCard(entry);
+}
+
+function autoIndentOnEnter(event) {
+  if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+  const start = els.yaml.selectionStart;
+  const lineStart = els.yaml.value.lastIndexOf('\n', start - 1) + 1;
+  const indent = (els.yaml.value.slice(lineStart, start).match(/^[ \t]*/) || [''])[0];
+  if (!indent) return;
+  event.preventDefault();
+  els.yaml.setRangeText(`\n${indent}`, els.yaml.selectionStart, els.yaml.selectionEnd, 'end');
+  els.yaml.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+async function initExisting() {
+  try {
+    index = await fetch('../raw-info/index.json', { cache: 'no-store' }).then(response => response.json());
+    index.sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+    els.select.innerHTML = `<option value="new">＋ NEW CARD — start fresh</option>${index.map((entry, position) => `<option value="${position}">${escapeHtml(entry.id)}</option>`).join('')}`;
+    els.select.addEventListener('change', () => {
+      if (els.select.value === 'new') {
+        startFresh();
+        return;
+      }
+      const entry = index[Number(els.select.value)];
+      if (entry) location.hash = encodeURIComponent(entry.slug);
+    });
+    window.addEventListener('hashchange', applyExistingHash);
+    applyExistingHash();
+  } catch (error) {
+    els.editorStatus.textContent = 'Could not load card index';
+    els.status.textContent = error.message;
+    els.status.className = 'author-status is-error';
+    els.page.classList.remove('is-loading');
+  }
 }
 
 function handleAuthorInput(event) {
@@ -794,8 +1196,10 @@ function handleAuthorInput(event) {
 }
 
 function init() {
+  initWorkspaceSplitter();
+  if (IS_EXISTING) initExisting();
   syncFormFromData();
-  validateAndRender();
+  if (!IS_EXISTING) validateAndRender();
 
   els.editor.addEventListener('input', handleAuthorInput);
 
@@ -812,8 +1216,16 @@ function init() {
         beginInlineComponentEdit(positionButton.dataset.component, positionButton);
         return;
       }
-      activePosition = positionButton.dataset.panelPositionButton;
-      renderPreview();
+      const selectPosition = () => {
+        activePosition = positionButton.dataset.panelPositionButton;
+        renderPreview();
+      };
+      if (currentMode === 'yaml') {
+        clearTimeout(positionClickTimer);
+        positionClickTimer = setTimeout(selectPosition, 240);
+      } else {
+        selectPosition();
+      }
       return;
     }
     const hit = event.target.closest('.author-panel-hit,.author-panel-value,.author-reference-component,.author-switch-inline-row');
@@ -835,6 +1247,14 @@ function init() {
       event.target.click();
     }
   });
+  els.preview.addEventListener('dblclick', event => {
+    if (currentMode !== 'yaml') return;
+    const target = event.target.closest('[data-yaml-target]');
+    if (!target) return;
+    event.preventDefault();
+    clearTimeout(positionClickTimer);
+    jumpToYamlTarget(target.dataset.yamlTarget);
+  });
   els.preview.addEventListener('change', event => {
     if (!event.target.matches('[data-different-controls-toggle]')) return;
     differentControls = event.target.checked;
@@ -853,23 +1273,27 @@ function init() {
   });
 
   els.yaml.addEventListener('input', () => {
+    updateGutter();
     clearTimeout(yamlTimer);
     yamlTimer = setTimeout(() => {
       const source = parseSource(els.yaml.value, 'info.yaml');
       if (source.error || !source.data) {
-        els.yamlStatus.textContent = 'YAML syntax error';
         els.status.textContent = 'Fix the YAML syntax error before returning to visual editing.';
         els.status.className = 'author-status is-error';
         renderDiagnostics(validateInfoYaml(source));
+        updateBasicAvailability(els.yaml.value, null);
         return;
       }
       data = source.data;
-      els.yamlStatus.textContent = 'Valid YAML';
+      if (IS_EXISTING) differentControls = hasPositionSpecificData();
       els.status.textContent = '';
       els.status.className = 'author-status';
       validateAndRender({ syncYaml: false, syncForm: true });
+      updateBasicAvailability(els.yaml.value, data);
     }, 250);
   });
+  els.yaml.addEventListener('scroll', updateGutter);
+  els.yaml.addEventListener('keydown', autoIndentOnEnter);
 
   document.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => {
     if (button.dataset.mode === 'author') {
@@ -880,6 +1304,9 @@ function init() {
   }));
 
   els.download.addEventListener('click', downloadSource);
+  els.startFresh.addEventListener('click', startFresh);
+  els.yamlFullscreen.addEventListener('click', toggleYamlFullscreen);
+  document.addEventListener('fullscreenchange', updateFullscreenButton);
   document.getElementById('open-license').addEventListener('click', openLicenseAssistant);
   document.querySelectorAll('[data-license]').forEach(button => button.addEventListener('click', () => {
     const descriptions = {

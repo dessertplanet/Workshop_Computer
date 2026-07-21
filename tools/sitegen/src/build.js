@@ -11,7 +11,6 @@ import { renderDiscovery, renderArchive, renderTile } from './render/discovery.j
 import { curation } from './curation/index.js';
 import { parseSource } from './validate/parseSource.js';
 import { validateInfoYaml } from './validate/validateInfoYaml.js';
-import { renderPreviewPage } from './render/previewPage.js';
 import { renderAuthorPage } from './render/authorPage.js';
 
 // ========== Path & Globals ==========
@@ -85,6 +84,7 @@ function detailPage(rel) {
     content: `
 <nav class="program-card-top-nav" aria-label="Card navigation">
   <a href="../../index.html">← All cards</a>
+  <a class="program-card-author-link" href="../../preview/#${encodeURIComponent(rel.slug)}">Author preview/editor ↗</a>
 </nav>
 ${article}
 <div class="actions actions-duo">
@@ -408,10 +408,6 @@ async function buildPreviewTool() {
 
   // Client script + page.
   await fs.copyFile(
-    path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'preview-client.js'),
-    path.join(previewDir, 'preview-client.js')
-  );
-  await fs.copyFile(
     path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'author-client.js'),
     path.join(previewDir, 'author-client.js')
   );
@@ -419,8 +415,8 @@ async function buildPreviewTool() {
     path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'author.css'),
     path.join(previewDir, 'author.css')
   );
-  await writeFileEnsured(path.join(previewDir, 'index.html'), renderPreviewPage());
-  await writeFileEnsured(path.join(previewDir, 'new', 'index.html'), renderAuthorPage());
+  await writeFileEnsured(path.join(previewDir, 'index.html'), renderAuthorPage({ documentKind: 'existing' }));
+  await writeFileEnsured(path.join(previewDir, 'new', 'index.html'), renderAuthorPage({ documentKind: 'new' }));
 }
 
 /** Print a concise, non-fatal summary of the info.yaml conformance pass. */

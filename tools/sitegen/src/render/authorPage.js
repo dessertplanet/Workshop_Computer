@@ -1,17 +1,19 @@
-// No-code author page for creating a new card's info.yaml.
+// Unified visual/YAML author page for new and existing cards.
 
-export function renderAuthorPage() {
+export function renderAuthorPage({ documentKind = 'new' } = {}) {
+  const existing = documentKind === 'existing';
+  const baseHref = existing ? './' : '../';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <base href="../">
+  <base href="${baseHref}">
   <title>Author page – Workshop Computer</title>
   <link rel="stylesheet" href="../assets/style.css">
   <link rel="stylesheet" href="../assets/program-cards.css">
   <link rel="stylesheet" href="../assets/github-markdown.css">
-  <link rel="stylesheet" href="./author.css?v=13">
+  <link rel="stylesheet" href="./author.css?v=20">
   <script type="importmap">
   {
     "imports": {
@@ -22,26 +24,29 @@ export function renderAuthorPage() {
   </script>
 </head>
 <body class="theme-light">
-  <main class="author-page">
+  <main class="author-page${existing ? ' is-loading' : ''}" data-document-kind="${documentKind}">
     <header class="author-toolbar">
       <div>
-        <h1>Author page</h1>
-        <p>Create a card page visually, then download the generated <code>info.yaml</code>.</p>
+        <h1>Card metadata author</h1>
+        <p>${existing ? 'Inspect and edit an existing card, with a production-matched live preview.' : 'Create a card page visually, then download the generated <code>info.yaml</code>.'}</p>
       </div>
       <div class="author-toolbar__actions">
+        ${existing ? '<label class="author-document-picker">Card <select id="card-select" aria-label="Existing card"></select></label><a id="production-card-link" class="author-production-link" href="#" target="_blank" rel="noopener noreferrer">View card page ↗</a><span id="editor-status" class="author-progress" aria-live="polite"></span>' : ''}
         <span id="required-progress" class="author-progress" aria-live="polite"></span>
         <div class="author-mode-switch" role="group" aria-label="Editing mode">
-          <button type="button" class="is-active" data-mode="author" aria-pressed="true">Basic</button>
-          <button type="button" data-mode="yaml" aria-pressed="false">Advanced</button>
+          <button type="button"${existing ? ' disabled title="Basic availability is checked after the card loads"' : ' class="is-active"'} data-mode="author" aria-pressed="${existing ? 'false' : 'true'}">Basic</button>
+          <button type="button"${existing ? ' class="is-active"' : ''} data-mode="yaml" aria-pressed="${existing ? 'true' : 'false'}">Advanced</button>
         </div>
         <button id="download-source" class="btn download" type="button">Download info.yaml</button>
+        <button id="start-fresh" class="btn secondary" type="button">Start fresh</button>
       </div>
     </header>
 
     <div id="author-status" class="author-status" role="status" aria-live="polite"></div>
+    ${existing ? '<div class="author-loading" role="status" aria-live="polite"><span class="author-spinner" aria-hidden="true"></span><span>Loading cards…</span></div>' : ''}
 
     <div class="author-workspace">
-      <section id="author-editor" class="author-editor" aria-label="Card fields">
+      <section id="author-editor" class="author-editor" aria-label="Card fields"${existing ? ' hidden' : ''}>
         <section class="author-form-card" id="card-details-editor">
           <header><div><span class="author-step">Start here</span><h2>Card details</h2></div><span class="author-required-key">Required</span></header>
           <div class="author-form-grid">
@@ -75,11 +80,13 @@ export function renderAuthorPage() {
         </section>
       </section>
 
-      <section id="yaml-editor" class="author-yaml" aria-label="Advanced YAML editor" hidden>
-        <div class="author-yaml__head"><div><h2>Advanced YAML</h2><p>Edit the source directly. Visual editing resumes when the YAML is valid.</p></div><span id="yaml-status"></span></div>
-        <textarea id="yaml-source" spellcheck="false" aria-label="Raw info.yaml source"></textarea>
-        <div><h3>Diagnostics</h3><div id="diagnostics"></div></div>
+      <section id="yaml-editor" class="author-yaml" aria-label="Advanced YAML editor"${existing ? '' : ' hidden'}>
+        <div class="author-yaml__diagnostics"><h2>Diagnostics</h2><div id="diagnostics"></div></div>
+        <div class="author-yaml__head"><div><h2 id="source-path-title">${existing ? 'info.yaml' : 'new_card/info.yaml'}</h2><p>Edit the source directly. Diagnostics and the preview update as you type.</p></div><button id="yaml-fullscreen" class="author-icon-button" type="button" aria-label="Enter full screen" title="Enter full screen" aria-pressed="false"><span class="author-fullscreen-expand" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg></span><span class="author-fullscreen-close" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 5 14 14M19 5 5 19"/></svg></span></button></div>
+        <div class="author-editor-wrap"><div class="author-editor-gutter" aria-hidden="true"><div id="gutter-inner">1</div></div><textarea id="yaml-source" spellcheck="false" aria-label="Raw info.yaml source"></textarea></div>
       </section>
+
+      <div id="author-splitter" class="author-splitter" role="separator" aria-label="Resize editor and preview" aria-orientation="vertical" aria-valuemin="320" aria-valuemax="1000" aria-valuenow="560" tabindex="0"><span aria-hidden="true"></span></div>
 
       <section class="author-preview-column" aria-label="Live card preview">
         <div class="author-preview-heading"><h2>Live preview</h2><span>Click a panel component to edit it</span></div>
@@ -118,7 +125,7 @@ export function renderAuthorPage() {
     </form>
   </dialog>
 
-  <script type="module" src="./author-client.js?v=12"></script>
+  <script type="module" src="./author-client.js?v=25"></script>
 </body>
 </html>`;
 }

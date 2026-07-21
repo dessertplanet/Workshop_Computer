@@ -20,7 +20,16 @@
 }
 
 .program-card-top-nav {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
   margin: 0 0 14px;
+}
+
+.program-card-top-nav .program-card-author-link {
+  border-bottom-width: 1px;
+  color: var(--muted, #666);
+  font-size: 11px;
 }
 
 .program-card-top-nav a {
@@ -637,7 +646,7 @@
   line-height: 0.9;
   max-width: 20%;
   min-height: 18px;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
   padding: 4px 4px 3px;
   position: absolute;
   text-align: center;
@@ -645,6 +654,11 @@
   transform: translate(-50%, -50%);
   white-space: normal;
   width: 20%;
+  word-break: normal;
+}
+
+.program-card-panel-text--long {
+  overflow-wrap: anywhere;
   word-break: break-all;
 }
 
@@ -654,7 +668,7 @@
 }
 
 .program-card-panel__label--output {
-  background: #d4af37;
+  background: #f7d738;
 }
 
 .program-card-panel-switch-positions {
@@ -711,9 +725,14 @@
   font-size: 11px;
   line-height: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
   width: 100%;
   white-space: normal;
+  word-break: normal;
+}
+
+.program-card-panel-switch-position.program-card-panel-text--long strong {
+  overflow-wrap: anywhere;
   word-break: break-all;
 }
 
