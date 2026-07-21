@@ -11,7 +11,7 @@ const REQUIRED = ['Name', 'Description', 'Language', 'Creator', 'Version', 'Stat
 const STORAGE_KEY = 'workshop-computer-author-new';
 const DIFFERENTIAL_STORAGE_KEY = 'workshop-computer-author-differential-controls';
 const SWITCH_POSITIONS = ['up', 'middle', 'down'];
-const OPTIONAL_KEYS = ['summary', 'tags', 'manual', 'demo-link', 'contact'];
+const OPTIONAL_KEYS = ['summary', 'tags', 'readme', 'demo-link', 'contact'];
 const SPLIT_STORAGE_KEY = 'workshop-computer-author-editor-width';
 const DOCUMENT_KIND = document.querySelector('.author-page')?.dataset.documentKind || 'new';
 const IS_EXISTING = DOCUMENT_KIND === 'existing';
@@ -113,8 +113,8 @@ function isObject(value) {
 
 function basicCompatibility(source, parsed) {
   const reasons = [];
-  const top = new Set(['draft', 'Name', 'Description', 'Language', 'Creator', 'Version', 'Status', 'License', 'summary', 'tags', 'manual', 'demo-link', 'contact', 'panel', 'controls']);
-  const textFields = ['Name', 'Description', 'Language', 'Creator', 'Version', 'Status', 'License', 'summary', 'manual', 'demo-link'];
+  const top = new Set(['draft', 'Name', 'Description', 'Language', 'Creator', 'Version', 'Status', 'License', 'summary', 'tags', 'readme', 'demo-link', 'contact', 'panel', 'controls']);
+  const textFields = ['Name', 'Description', 'Language', 'Creator', 'Version', 'Status', 'License', 'summary', 'readme', 'demo-link'];
   const positions = new Set(SWITCH_POSITIONS);
   const inputs = new Set(Object.values(inputIds));
   const outputs = new Set(Object.values(outputIds));
@@ -323,7 +323,7 @@ function renderPreview() {
       card,
       panelImg: '../assets/program_cards/Standalone_computer_rev1.svg',
       yamlUrl: currentEntry?.yamlUrl || '#', uf2Url: currentEntry?.uf2Url || '',
-      extraDocs: currentEntry?.extras ? renderReadmeAndDocs({ ...currentEntry.extras, inlinePdf: false }) : '',
+      extraDocs: currentEntry?.extras ? renderReadmeAndDocs({ ...currentEntry.extras, inlinePdf: false, includeReadme: !card.documentation?.intro }) : '',
     });
     if (!cleanText(data.Description)) {
       const summary = els.preview.querySelector('.program-card-hero__main > p');
@@ -480,7 +480,7 @@ function decorateAdvancedPreviewTargets() {
   markYamlTarget(els.preview.querySelector('.program-card-hero'), 'field:Name', 'card details');
   for (const section of els.preview.querySelectorAll('.program-card-controls-section')) markYamlTarget(section, 'section:controls', 'controls');
   for (const section of els.preview.querySelectorAll('.program-card-io-section')) markYamlTarget(section, 'section:panel', 'panel connections');
-  markYamlTarget(els.preview.querySelector('.program-card-documentation'), 'field:manual', 'manual');
+  markYamlTarget(els.preview.querySelector('.program-card-documentation'), 'field:readme', 'inline README');
   markYamlTarget(els.preview.querySelector('.program-card-demo'), 'field:demo-link', 'demo link');
   markYamlTarget(els.preview.querySelector('.program-card-about'), 'field:Creator', 'creator details');
 }

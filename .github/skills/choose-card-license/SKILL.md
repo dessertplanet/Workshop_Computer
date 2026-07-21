@@ -61,5 +61,5 @@ Return:
 
 `License: <SPDX identifier or approved short name>`
 
-Do not serialize community preferences into `notes`, `manual`, or another undocumented field.
+Do not serialize community preferences into `notes`, `readme`, or another unrelated field.
 Do not invent or paraphrase the legal text; direct the author to copy the complete authoritative text and preserve third-party notices.

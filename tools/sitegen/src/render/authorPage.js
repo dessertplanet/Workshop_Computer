@@ -71,14 +71,14 @@ export function renderAuthorPage({ documentKind = 'new' } = {}) {
           <div id="optional-catalog" class="author-add-list" aria-label="Available optional fields">
             <button type="button" data-add-optional="summary"><span><strong>Operator summary</strong><small>A player-focused explanation used in cards and search.</small></span><b aria-hidden="true">+</b></button>
             <button type="button" data-add-optional="tags"><span><strong>Tags</strong><small>Help people discover the card.</small></span><b aria-hidden="true">+</b></button>
-            <button type="button" data-add-optional="manual"><span><strong>Manual</strong><small>Full operator documentation in Markdown.</small></span><b aria-hidden="true">+</b></button>
+            <button type="button" data-add-optional="readme"><span><strong>Inline README</strong><small>Full Markdown documentation that replaces README.md.</small></span><b aria-hidden="true">+</b></button>
             <button type="button" data-add-optional="demo-link"><span><strong>Demo video</strong><small>Add a YouTube demonstration.</small></span><b aria-hidden="true">+</b></button>
             <button type="button" data-add-optional="contact"><span><strong>Contact website</strong><small>Point readers to the creator or project.</small></span><b aria-hidden="true">+</b></button>
           </div>
           <div id="optional-editors" class="author-optional-editors">
             <div class="author-optional-editor" data-optional="summary" hidden><header><h3>Operator summary</h3><button type="button" data-remove-optional="summary" aria-label="Remove operator summary">×</button></header><label class="author-field"><textarea data-field="summary" rows="4" placeholder="What it does and how a player uses it"></textarea><small>Falls back to Description when omitted.</small></label></div>
             <div class="author-optional-editor" data-optional="tags" hidden><header><h3>Tags</h3><button type="button" data-remove-optional="tags" aria-label="Remove tags">×</button></header><label class="author-field"><input data-list-field="tags" placeholder="synthesizer, sequencer, utility"><small>Comma-separated, lowercase tags.</small></label></div>
-            <div class="author-optional-editor" data-optional="manual" hidden><header><h3>Manual</h3><button type="button" data-remove-optional="manual" aria-label="Remove manual">×</button></header><label class="author-field"><textarea data-field="manual" rows="7" placeholder="Full operating instructions; Markdown is supported"></textarea></label></div>
+            <div class="author-optional-editor" data-optional="readme" hidden><header><h3>Inline README</h3><button type="button" data-remove-optional="readme" aria-label="Remove inline README">×</button></header><label class="author-field"><textarea data-field="readme" rows="7" placeholder="Full operating instructions; Markdown is supported"></textarea><small>When present, this replaces the rendered README.md section. Documentation PDFs remain visible.</small></label></div>
             <div class="author-optional-editor" data-optional="demo-link" hidden><header><h3>Demo video</h3><button type="button" data-remove-optional="demo-link" aria-label="Remove demo video">×</button></header><label class="author-field"><input data-field="demo-link" type="url" placeholder="https://www.youtube.com/..."></label></div>
             <div class="author-optional-editor" data-optional="contact" hidden><header><h3>Contact website</h3><button type="button" data-remove-optional="contact" aria-label="Remove contact website">×</button></header><label class="author-field"><input data-nested-field="contact.website" type="url" placeholder="https://..."></label></div>
           </div>
@@ -130,7 +130,7 @@ export function renderAuthorPage({ documentKind = 'new' } = {}) {
     </form>
   </dialog>
 
-  <script type="module" src="./author-client.js?v=30"></script>
+  <script type="module" src="./author-client.js?v=31"></script>
 </body>
 </html>`;
 }

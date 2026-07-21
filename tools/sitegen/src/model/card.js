@@ -663,8 +663,8 @@ export function buildCanonicalCardModel({
   if (notes.length) card.notes = notes;
 
   const documentation = {};
-  const manual = optionalText(field(info, 'manual'), warnings, 'manual');
-  if (manual) documentation.intro = manual;
+  const inlineReadme = optionalText(field(info, 'readme'), warnings, 'readme');
+  if (inlineReadme) documentation.intro = inlineReadme;
   if (Object.keys(documentation).length) card.documentation = documentation;
 
   if (demoLink && videoId) {
