@@ -402,8 +402,9 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     <div class="program-card-hero__main">
       ${basic ? '' : renderTags(card, curatedTags)}
       <h1><span class="program-card-page__number">${esc(cardNumber(card))}</span> ${esc(inline(card.title || card.id || 'Untitled card'))}</h1>
+      ${metadata.creator ? `<div class="program-card-hero__byline">By ${esc(metadata.creator)}</div>` : ''}
       ${summary ? `<p class="program-card-hero__summary">${markdownInline(summary)}</p>` : ''}
-      <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${basic ? '' : memoryMarkup}</div>
+      ${basic || !memoryMarkup ? '' : `<div class="program-card-hero__meta">${memoryMarkup}</div>`}
       <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>
       <div class="program-card-sha" data-sha-display role="status" aria-live="polite" hidden>SHA256: <code class="program-card-sha__value" data-sha-value></code> <button type="button" class="program-card-sha__verify" data-verify-open>How to verify</button></div>
       <div class="program-card-hero__links" aria-label="Further card links">${documentation ? `<a href="#card-documentation">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a><button id="connectToggle" class="connect-toggle" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting"><span class="c-status" aria-hidden="true"></span><span class="c-label">Connect workshop computer</span></button></div>
