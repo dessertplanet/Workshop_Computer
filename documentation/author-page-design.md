@@ -10,7 +10,7 @@ This is an authoring tool, not a second metadata format. `releases/*/info.yaml` 
 
 ## Implementation status
 
-**MVP implemented:** `/preview/new/` now provides visual editing for required card metadata, distinct summary/description, tags, panel controls and sockets, switch actions, the documented inline `readme`, contact, and licensing. It renders through the shared canonical model and card renderer, supports direct panel-component selection, persists a local draft, generates live schema diagnostics, downloads `info.yaml`, and retains an Advanced YAML mode. The existing `/preview/` YAML workflow remains available and links to the new author page.
+**MVP implemented:** `/preview/new/` now provides visual editing for required card metadata, distinct short-description/summary fields, tags, panel controls and sockets, switch actions, the documented inline `readme`, contact, and licensing. It renders through the shared canonical model and card renderer, supports direct panel-component selection, persists a local draft, generates live schema diagnostics, downloads `info.yaml`, and retains an Advanced YAML mode. The existing `/preview/` YAML workflow remains available and links to the new author page.
 
 **Still planned:** visual editing of existing cards, YAML AST/comment-preserving round trips, undo/redo, richer documentation-section ordering, visual media/UF2 editors, explicit draft restore/discard UI, and optional pull-request integration.
 
@@ -51,9 +51,10 @@ Do not introduce a server dependency. The site is static today, and all state co
 
 1. Open `/preview/new/`.
 2. See a blank card page with the Workshop Computer panel and placeholder content.
-3. A compact setup card asks for the six required schema fields:
+3. A compact setup card asks for the seven required schema fields:
    - Name
-   - Description
+  - Short description
+  - Summary
    - Language
    - Creator
    - Version
@@ -70,7 +71,8 @@ The initial document should be equivalent to:
 ```yaml
 draft: false
 Name: ""
-Description: ""
+short-description: ""
+summary: ""
 Language: ""
 Creator: ""
 Version: ""
@@ -140,7 +142,8 @@ The Advanced YAML preview needs a local layout override:
 
 | Visual region | YAML target | Interaction |
 | --- | --- | --- |
-| Title/summary hero | `Name`, `Description`, `summary` | Inline text fields |
+| Title/summary hero | `Name`, `summary` | Inline text fields |
+| Discovery tagline | `short-description` | Inline text field |
 | Creator and facts | `Creator`, `Language`, `Version`, `Status` | Compact metadata inspector |
 | Tags | `tags[]` | Token picker/free entry |
 | Main/X/Y knobs | `controls.knobs[]` | Component inspector |
@@ -158,7 +161,7 @@ The Advanced YAML preview needs a local layout override:
 1. Hover/focus reveals the physical component name and current authored role.
 2. Select a component to open its inspector.
 3. Choose whether the meaning applies to **All positions**, **Up**, **Middle**, or **Down**.
-4. Enter display name and optional description.
+4. Enter display name, short description, and operator summary.
 5. The state layer writes an unconditioned base entry for All positions or a `when: { z: ... }` override for a position.
 6. The preview updates immediately and retains the selected switch position.
 
@@ -183,7 +186,7 @@ The schema adapter is the authority; do not duplicate the required-field list in
 
 - Render a `Required` badge next to required fields.
 - Empty required values use a clear but non-alarming incomplete state.
-- Toolbar status: **3 of 6 required fields complete**.
+- Toolbar status: **3 of 7 required fields complete**.
 - Completion drawer groups findings into:
   - Required before download
   - Recommended before publishing (`License`, `contact`, and `panel` when ending draft)
