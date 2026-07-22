@@ -59,7 +59,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
           <div class="author-form-grid">
             <label class="author-field author-field--wide"><span>Name <strong>Required</strong></span><input data-field="Name" required placeholder="Card display name"></label>
             <label class="author-field author-field--wide"><span>Short description <strong>Required</strong></span><textarea data-field="short-description" required rows="2" placeholder="A concise tagline for indexes, shelves, and archive rows"></textarea></label>
-            <label class="author-field author-field--wide"><span>Summary <strong>Required</strong></span><textarea data-field="summary" required rows="4" placeholder="A longer operator overview for the card detail page"></textarea></label>
+            <label class="author-field author-field--wide"><span>Summary <strong>Required</strong></span><textarea data-field="summary" required rows="4" placeholder="A longer operator overview for the card detail page"></textarea><small>Markdown is supported, including links, emphasis, and inline code.</small></label>
             <label class="author-field"><span>Creator <strong>Required</strong></span><input data-field="Creator" required list="creator-suggestions" placeholder="Your name or handle"></label>
             <label class="author-field"><span>Language <strong>Required</strong></span><input data-field="Language" required list="language-suggestions" placeholder="ie. Pico SDK"></label>
             <label class="author-field"><span>Version <strong>Required</strong></span><input data-field="Version" required placeholder="For example, 1.0.0"></label>
@@ -136,7 +136,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
     </form>
   </dialog>
 
-  <script type="module" src="./author-client.js?v=39"></script>
+  <script type="module" src="./author-client.js?v=40"></script>
 </body>
 </html>`;
 }
