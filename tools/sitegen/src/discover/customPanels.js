@@ -6,6 +6,7 @@ import { fsAsync as fs, ensureDir, encodePathSegments } from '../utils/fs.js';
 export const CUSTOM_PANEL_WIDTH = 560;
 export const CUSTOM_PANEL_HEIGHT = 1785;
 const PANEL_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const CANONICAL_VIEW_BOX = `0 0 ${CUSTOM_PANEL_WIDTH} ${CUSTOM_PANEL_HEIGHT}`;
 
 function diagnostic(severity, pathName, message) {
   return { severity, path: pathName, message };
@@ -18,17 +19,21 @@ function safeRelativePath(value) {
   return normalized;
 }
 
-async function pngDimensions(file) {
-  const handle = await fs.open(file, 'r');
-  try {
-    const header = Buffer.alloc(24);
-    const { bytesRead } = await handle.read(header, 0, header.length, 0);
-    const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-    if (bytesRead < 24 || !header.subarray(0, 8).equals(signature) || header.toString('ascii', 12, 16) !== 'IHDR') return null;
-    return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
-  } finally {
-    await handle.close();
-  }
+async function svgMetadata(file) {
+  const source = await fs.readFile(file, 'utf8');
+  const open = source.match(/<svg\b([^>]*)>/i);
+  if (!open) return { error: 'is not a valid SVG document.' };
+  const viewBox = open[1].match(/\bviewBox\s*=\s*(["'])(.*?)\1/i)?.[2]?.trim().replace(/\s+/g, ' ');
+  if (viewBox !== CANONICAL_VIEW_BOX) return { error: `must use viewBox="${CANONICAL_VIEW_BOX}".` };
+  const forbidden = [
+    [/<\s*(?:script|foreignObject|iframe|object|embed)\b/i, 'contains forbidden active content.'],
+    [/\son[a-z]+\s*=/i, 'contains a forbidden event handler.'],
+    [/@import\b/i, 'contains a forbidden external stylesheet import.'],
+    [/\b(?:href|xlink:href)\s*=\s*(["'])(?!(?:#|data:))/i, 'contains a non-self-contained resource reference.'],
+    [/url\(\s*(["']?)(?:https?:|\/\/)/i, 'contains an external resource URL.'],
+  ];
+  for (const [pattern, message] of forbidden) if (pattern.test(source)) return { error: message };
+  return { width: CUSTOM_PANEL_WIDTH, height: CUSTOM_PANEL_HEIGHT, source };
 }
 
 async function regularFileInside(root, relative) {
@@ -59,24 +64,21 @@ function rewritePanelHtmlLinks(html, markdownPath) {
 }
 
 /**
- * Discover an optional release-local panels/ presentation override.
- * Directory presence is authoritative: even an invalid manifest suppresses
- * generated Up/Middle/Down presentation views.
+ * Read and validate panel declarations separately from the referenced files.
+ * Publishing discovery adds file, SVG-safety, and Markdown validation below.
  */
-export async function discoverCustomPanels(absReleaseDir, outProgramDir) {
+export async function readCustomPanelManifest(absReleaseDir) {
   const panelsDir = path.join(absReleaseDir, 'panels');
+  const diagnostics = [];
   let stat;
   try {
     stat = await fs.lstat(panelsDir);
   } catch {
-    return { present: false, panels: null, diagnostics: [] };
+    return { present: false, panelsDir, manifest: null, items: [], diagnostics };
   }
-
-  const diagnostics = [];
-  const empty = { source: 'custom', default: '', items: [] };
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     diagnostics.push(diagnostic('error', 'panels', 'panels must be a real directory, not a file or symbolic link.'));
-    return { present: true, panels: empty, diagnostics };
+    return { present: true, panelsDir, manifest: null, items: [], diagnostics };
   }
 
   const manifestPath = path.join(panelsDir, 'manifest.yaml');
@@ -85,17 +87,16 @@ export async function discoverCustomPanels(absReleaseDir, outProgramDir) {
     manifest = YAML.parse(await fs.readFile(manifestPath, 'utf8')) || {};
   } catch (error) {
     diagnostics.push(diagnostic('error', 'panels/manifest.yaml', `Could not read the custom-panel manifest: ${error.message}`));
-    return { present: true, panels: empty, diagnostics };
+    return { present: true, panelsDir, manifest: null, items: [], diagnostics };
   }
-
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
     diagnostics.push(diagnostic('error', 'panels/manifest.yaml', 'The manifest root must be a mapping.'));
-    return { present: true, panels: empty, diagnostics };
+    return { present: true, panelsDir, manifest: null, items: [], diagnostics };
   }
   if (manifest.version !== 1) diagnostics.push(diagnostic('error', 'panels/manifest.yaml', 'version must be 1.'));
   if (!Array.isArray(manifest.panels) || !manifest.panels.length) {
     diagnostics.push(diagnostic('error', 'panels/manifest.yaml', 'panels must be a non-empty list.'));
-    return { present: true, panels: empty, diagnostics };
+    return { present: true, panelsDir, manifest, items: [], diagnostics };
   }
 
   const ids = new Set();
@@ -109,32 +110,54 @@ export async function discoverCustomPanels(absReleaseDir, outProgramDir) {
     }
     const id = typeof raw.id === 'string' ? raw.id.trim() : '';
     const name = typeof raw.name === 'string' ? raw.name.trim() : '';
-    const imagePath = safeRelativePath(raw.image);
-    const contentPath = safeRelativePath(raw.content);
+    const image = safeRelativePath(raw.image);
+    const content = safeRelativePath(raw.content);
     let valid = true;
     if (!PANEL_ID.test(id)) { diagnostics.push(diagnostic('error', `${at}.id`, 'id must be unique lowercase kebab-case.')); valid = false; }
     if (ids.has(id.toLowerCase())) { diagnostics.push(diagnostic('error', `${at}.id`, `Duplicate panel id "${id}".`)); valid = false; }
     if (!name) { diagnostics.push(diagnostic('error', `${at}.name`, 'name must be non-empty text.')); valid = false; }
-    if (!imagePath) { diagnostics.push(diagnostic('error', `${at}.image`, 'image must be a safe relative PNG path.')); valid = false; }
-    if (!contentPath) { diagnostics.push(diagnostic('error', `${at}.content`, 'content must be a safe relative Markdown path.')); valid = false; }
-    if (imagePath && path.posix.extname(imagePath).toLowerCase() !== '.png') { diagnostics.push(diagnostic('error', `${at}.image`, 'image must be a PNG file.')); valid = false; }
-    if (contentPath && path.posix.extname(contentPath).toLowerCase() !== '.md') { diagnostics.push(diagnostic('error', `${at}.content`, 'content must be a Markdown file.')); valid = false; }
+    if (!image) { diagnostics.push(diagnostic('error', `${at}.image`, 'image must be a safe relative SVG path.')); valid = false; }
+    if (!content) { diagnostics.push(diagnostic('error', `${at}.content`, 'content must be a safe relative Markdown path.')); valid = false; }
+    if (image && path.posix.extname(image).toLowerCase() !== '.svg') { diagnostics.push(diagnostic('error', `${at}.image`, 'image must be an SVG file.')); valid = false; }
+    if (content && path.posix.extname(content).toLowerCase() !== '.md') { diagnostics.push(diagnostic('error', `${at}.content`, 'content must be a Markdown file.')); valid = false; }
     if (id) ids.add(id.toLowerCase());
-    if (!valid) continue;
+    if (valid) items.push({ id, name, image, content, index, at });
+  }
 
+  const requestedDefault = typeof manifest.default === 'string' ? manifest.default.trim() : '';
+  if (!requestedDefault) diagnostics.push(diagnostic('error', 'panels/manifest.yaml default', 'default must name one panel id.'));
+  else if (!items.some(item => item.id === requestedDefault)) diagnostics.push(diagnostic('error', 'panels/manifest.yaml default', `default references missing panel "${requestedDefault}".`));
+
+  return { present: true, panelsDir, manifest, default: requestedDefault, items, diagnostics };
+}
+
+/**
+ * Discover an optional release-local panels/ presentation override.
+ * Directory presence is authoritative: even an invalid manifest suppresses
+ * generated Up/Middle/Down presentation views.
+ */
+export async function discoverCustomPanels(absReleaseDir, outProgramDir) {
+  const source = await readCustomPanelManifest(absReleaseDir);
+  const { panelsDir } = source;
+  if (!source.present) return { present: false, panels: null, diagnostics: [] };
+  const diagnostics = [...source.diagnostics];
+  const empty = { source: 'custom', default: '', items: [] };
+  if (!source.manifest || !source.items.length) return { present: true, panels: empty, diagnostics };
+  const items = [];
+  for (const declared of source.items) {
+    const { id, name, at } = declared;
+    const imagePath = declared.image;
+    const contentPath = declared.content;
+    let valid = true;
     const imageFile = await regularFileInside(panelsDir, imagePath);
     const contentFile = await regularFileInside(panelsDir, contentPath);
     if (!imageFile) { diagnostics.push(diagnostic('error', `${at}.image`, `Missing or unsafe file "${imagePath}".`)); valid = false; }
     if (!contentFile) { diagnostics.push(diagnostic('error', `${at}.content`, `Missing or unsafe file "${contentPath}".`)); valid = false; }
     if (!valid) continue;
 
-    const dimensions = await pngDimensions(imageFile);
-    if (!dimensions) {
-      diagnostics.push(diagnostic('error', `${at}.image`, `"${imagePath}" is not a valid PNG.`));
-      continue;
-    }
-    if (dimensions.width !== CUSTOM_PANEL_WIDTH || dimensions.height !== CUSTOM_PANEL_HEIGHT) {
-      diagnostics.push(diagnostic('error', `${at}.image`, `"${imagePath}" must be ${CUSTOM_PANEL_WIDTH} × ${CUSTOM_PANEL_HEIGHT} px; found ${dimensions.width} × ${dimensions.height}.`));
+    const metadata = await svgMetadata(imageFile);
+    if (metadata.error) {
+      diagnostics.push(diagnostic('error', `${at}.image`, `"${imagePath}" ${metadata.error}`));
       continue;
     }
     const markdown = await fs.readFile(contentFile, 'utf8');
@@ -143,16 +166,15 @@ export async function discoverCustomPanels(absReleaseDir, outProgramDir) {
       id,
       name,
       kind: 'custom',
-      image: { url: assetUrl(imagePath), width: dimensions.width, height: dimensions.height },
+      image: { url: assetUrl(imagePath), format: 'svg', width: metadata.width, height: metadata.height },
       content_html: rewritePanelHtmlLinks(marked.parse(markdown), contentPath),
       source: { image: `panels/${imagePath}`, content: `panels/${contentPath}` },
     });
   }
 
-  const requestedDefault = typeof manifest.default === 'string' ? manifest.default.trim() : '';
+  const requestedDefault = source.default;
   const defaultItem = items.find(item => item.id === requestedDefault);
-  if (!requestedDefault) diagnostics.push(diagnostic('error', 'panels/manifest.yaml default', 'default must name one panel id.'));
-  else if (!defaultItem) diagnostics.push(diagnostic('error', 'panels/manifest.yaml default', `default references missing or invalid panel "${requestedDefault}".`));
+  if (requestedDefault && !defaultItem) diagnostics.push(diagnostic('error', 'panels/manifest.yaml default', `default references missing or invalid panel "${requestedDefault}".`));
 
   // Preserve the complete authored directory so Markdown can use supplementary
   // relative images. Referenced primary files were checked above; symlinks are
