@@ -165,29 +165,54 @@ function renderPanelReference(snapshot, panelImg, positionControl = null) {
   </div>`;
 }
 
+function renderCustomPanelImage(item) {
+  const image = item?.image || {};
+  if (!image.url) return '';
+  const width = Number(image.width) || 560;
+  const height = Number(image.height) || 1785;
+  return `<figure class="program-card-panel program-card-panel--custom"><img src="${esc(image.url)}" width="${width}" height="${height}" alt="${esc(item.name || 'Custom panel')} panel"></figure>`;
+}
+
+function renderCustomPanelReference(item) {
+  return `<div class="program-card-use program-card-use--custom">
+    <div class="program-card-use__panel">${renderCustomPanelImage(item)}</div>
+    <div class="program-card-use__reference program-card-custom-panel-copy markdown-body">${item.content_html || ''}</div>
+  </div>`;
+}
+
+function renderCustomPanelSelector(items, selected, groupId) {
+  if (items.length < 2) return '';
+  const buttons = items.map(item => `<button type="button" class="program-card-panel-choice" role="tab" data-panel-position-button="${esc(item.id)}" aria-controls="${esc(groupId)}-${esc(item.id)}" aria-selected="${item.id === selected.id}" aria-pressed="${item.id === selected.id}">${esc(item.name)}</button>`).join('');
+  return `<div class="program-card-panel-selector" role="tablist" aria-label="Panel view">${buttons}</div>`;
+}
+
 function renderPanelViews(card, panelImg) {
   const items = Array.isArray(card.panel_views?.items) ? card.panel_views.items : [];
+  const custom = card.panel_views?.source === 'custom';
   if (!items.length) {
+    if (custom) return '<div class="program-card-panel-error" role="alert">Custom panel files are present, but no valid panel presentations could be built.</div>';
     return renderPanelReference({ panel: card.panel || {}, switch_modes: card.switch_modes, leds: card.leds }, panelImg);
   }
 
   const selected = items.find(item => item.id === card.panel_views.default) || items[0];
-  const groupId = `panel-positions-${card.slug || card.id || 'card'}`;
+  const groupId = `panel-views-${card.slug || card.id || 'card'}`;
   const views = items.map(item => `<div id="${esc(groupId)}-${esc(item.id)}" class="program-card-position-view" data-panel-position-view="${esc(item.id)}"${item.id === selected.id ? '' : ' hidden aria-hidden="true"'}>
-    ${renderPanelReference(item, panelImg, { items, groupId, activeId: item.id })}
+    ${custom ? renderCustomPanelReference(item) : renderPanelReference(item, panelImg, { items, groupId, activeId: item.id })}
   </div>`).join('');
-  return `<div class="program-card-panel-views">${views}</div>`;
+  return `<div class="program-card-panel-views${custom ? ' program-card-panel-views--custom' : ''}">${custom ? renderCustomPanelSelector(items, selected, groupId) : ''}${views}</div>`;
 }
 
 function renderPanelRail(card, panelImg) {
   const items = Array.isArray(card.panel_views?.items) ? card.panel_views.items : [];
+  const custom = card.panel_views?.source === 'custom';
   if (!items.length) {
+    if (custom) return '';
     return `<aside class="program-card-panel-rail" aria-label="Panel visualization">${renderPanel(card.panel || {}, panelImg, null, card.switch_modes)}</aside>`;
   }
 
   const selected = items.find(item => item.id === card.panel_views.default) || items[0];
-  const groupId = `panel-positions-${card.slug || card.id || 'card'}`;
-  const panels = items.map(item => `<div class="program-card-rail-view" data-panel-position-panel="${esc(item.id)}"${item.id === selected.id ? '' : ' hidden aria-hidden="true"'}>${renderPanel(item.panel || {}, panelImg, { items, groupId, activeId: item.id }, item.switch_modes)}</div>`).join('');
+  const groupId = `panel-views-${card.slug || card.id || 'card'}`;
+  const panels = items.map(item => `<div class="program-card-rail-view" data-panel-position-panel="${esc(item.id)}"${item.id === selected.id ? '' : ' hidden aria-hidden="true"'}>${custom ? renderCustomPanelImage(item) : renderPanel(item.panel || {}, panelImg, { items, groupId, activeId: item.id }, item.switch_modes)}</div>`).join('');
   return `<aside class="program-card-panel-rail" aria-label="Panel visualization">${panels}</aside>`;
 }
 

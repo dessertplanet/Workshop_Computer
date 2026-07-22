@@ -5,6 +5,7 @@ import { fsAsync as fs, fileExists } from '../utils/fs.js';
 import { slugify, normalizeYamlKey } from '../utils/strings.js';
 import { toPosix } from '../utils/fs.js';
 import { discoverDocs } from './docs.js';
+import { discoverCustomPanels, validateCustomPanelReferences } from './customPanels.js';
 import { discoverDownloads, curateUf2Downloads } from './downloads.js';
 import { getLastCommitDate, getCommitDates, getOldestBlameDate, getContentUpdatedDate } from '../utils/git.js';
 import { resolveWebConfig } from './webEditor.js';
@@ -117,6 +118,8 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   // docs
   const outProgramDir = path.join(outDirPrograms, slug);
   const { docs } = await discoverDocs(abs, outProgramDir);
+  const customPanels = await discoverCustomPanels(abs, outProgramDir);
+  customPanels.diagnostics.push(...validateCustomPanelReferences(rawYaml, customPanels.present ? customPanels.panels : null));
 
   // downloads and README asset link rewriting base
   const repoRelBase = path.join('releases', folderName);
@@ -182,6 +185,7 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     gitLastDate,
     blameDate,
     contentDate,
+    customPanels: customPanels.present ? customPanels.panels : null,
   });
 
   return {
@@ -191,6 +195,7 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     rawYaml,
     readmeHtml,
     docs,
+    panelDiagnostics: customPanels.diagnostics,
     downloads,
     latestUf2: primaryUf2,
     uf2Downloads: effectiveUf2Downloads,
