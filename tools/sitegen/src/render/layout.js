@@ -333,9 +333,25 @@ async function flash(url, el) {
     for (var i = 0; i < parsed.data.length; i++) {
       if (readback[i] !== parsed.data[i]) throw new Error('Verify failed at byte ' + i);
     }
-    setFirmwareActionLabel(el, 'Reset to use');
-    // try { await pb.getConnection().reboot(500); } catch(_) {}
-    setTimeout(function() { delete el.dataset.busy; setFirmwareActionLabel(el, 'Program'); }, 3000);
+    setFirmwareActionLabel(el, 'Starting card…');
+    var rebooted = false;
+    try {
+      var connection = pb && pb.getConnection();
+      if (!connection) throw new Error('Picoboot connection was lost before reboot');
+      await connection.reboot(500);
+      rebooted = true;
+    } catch (rebootError) {
+      // Some browsers report the expected USB disappearance as an error even
+      // after the reboot command was accepted. Preserve a manual-reset fallback.
+      console.warn('Automatic reboot after programming was not confirmed:', rebootError);
+    }
+    pb = null;
+    setConnected(false);
+    setFirmwareActionLabel(el, rebooted ? 'Card started' : 'Flashed; reset to use');
+    setTimeout(function() {
+      delete el.dataset.busy;
+      setFirmwareActionLabel(el, 'Download');
+    }, 3000);
   } catch(e) {
     setFirmwareActionLabel(el, 'Error');
     delete el.dataset.busy;
