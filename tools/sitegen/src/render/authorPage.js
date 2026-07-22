@@ -20,7 +20,8 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
   {
     "imports": {
       "yaml": "./vendor/yaml/index.js",
-      "marked": "./vendor/marked.esm.js"
+      "marked": "./vendor/marked.esm.js",
+      "ajv": "./vendor/ajv.esm.js"
     }
   }
   </script>
