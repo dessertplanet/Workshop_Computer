@@ -51,16 +51,6 @@ function escapeAttr(s) {
   return String(s ?? '').replaceAll('"', '&quot;');
 }
 
-// Helpers for Release Type: preserve original YAML text, but dedupe case/space-insensitively
-function normalizeSpaces(s) {
-  return String(s || '').trim().replace(/\s+/g, ' ');
-}
-function typeKey(raw) {
-  // Lowercase, remove punctuation/symbols, collapse spaces
-  const s = normalizeSpaces(raw).toLowerCase().replace(/[^a-z0-9\s]+/g, ' ');
-  return s.replace(/\s+/g, ' ').trim();
-}
-
 function detailPage(rel) {
   const { docs, readmeHtml, card } = rel;
   const uf2Url = rel.latestUf2?.url || '';
@@ -70,6 +60,7 @@ function detailPage(rel) {
 
   const article = renderCardArticle({
     card,
+    curatedTags: curation.resolveFlair(card.id),
     panelImg: '../../assets/program_cards/Standalone_computer_rev1.svg',
     yamlUrl,
     uf2Url,
@@ -84,7 +75,7 @@ function detailPage(rel) {
     content: `
 <nav class="program-card-top-nav" aria-label="Card navigation">
   <a href="../../index.html">← All cards</a>
-  <a class="program-card-author-link" href="../../preview/#${encodeURIComponent(rel.slug)}">Author preview/editor ↗</a>
+  <a class="program-card-author-link" href="../../preview/#${encodeURIComponent(rel.slug)}">Author Metadata ↗</a>
 </nav>
 ${article}
 <div class="actions actions-duo">
@@ -146,9 +137,7 @@ async function build() {
   const rawInfoIndex = [];
   const validationResults = []; // non-fatal info.yaml conformance pass
   const panelValidationResults = [];
-  const typeMap = new Map(); // key -> display (original YAML text, normalized spacing)
   const creatorSet = new Set();
-  const languageSet = new Set();
   for (const folder of releaseFolders) {
     const relPath = path.join(RELEASES_DIR, folder);
     const hasFiles = (await fs.readdir(relPath)).length > 0;
@@ -188,41 +177,51 @@ async function build() {
       const source = parseSource(rel.rawInfoSource, `releases/${rel.folderName}/info.yaml`);
       validationResults.push(validateInfoYaml(source));
       const meta = rel.card?.metadata || {};
-      const typeRaw = (meta.status || 'Unknown').toString();
-      const key = typeKey(typeRaw) || 'unknown';
-      const display = normalizeSpaces(typeRaw) || 'Unknown';
-      if (!typeMap.has(key)) typeMap.set(key, display);
       const creatorVal = (meta.creator || 'Unknown').toString().trim() || 'Unknown';
-      const languageVal = (meta.language || 'Unknown').toString().trim() || 'Unknown';
       creatorSet.add(creatorVal);
-      languageSet.add(languageVal);
     }
   }
 
+  // Canonical index order is numeric by card number, not lexical folder name,
+  // so 12 appears before 100 (and 100 before 303/433).
+  normalizedCards.sort((a, b) => {
+    const number = card => Number.parseInt(String(card.release || card.id || '').split('/')[0].split('_')[0], 10);
+    const aNumber = number(a);
+    const bNumber = number(b);
+    if (Number.isNaN(aNumber) && Number.isNaN(bNumber)) return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+    if (Number.isNaN(aNumber)) return 1;
+    if (Number.isNaN(bNumber)) return -1;
+    return aNumber - bNumber || String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+  });
+
   // Index page
   const discoveryHtml = renderDiscovery(normalizedCards, '.');
-  const resultsTiles = normalizedCards.map(card => renderTile(card, { root: '.' })).join('');
-  const typeOptions = ['<option value="">All</option>'].concat(
-    Array.from(typeMap.entries())
-      .sort((a,b)=>a[1].toLowerCase().localeCompare(b[1].toLowerCase()))
-      .map(([,v])=>`<option value="${escapeAttr(v)}">${v}</option>`)
-  ).join('');
+  const resultsTiles = normalizedCards.map(card => renderTile(card, { root: '.', showAllTags: true, showCreator: true })).join('');
   const creatorOptions = ['<option value="">All</option>'].concat(
     Array.from(creatorSet).sort((a,b)=>a.localeCompare(b)).map(v=>`<option value="${escapeAttr(v)}">${v}</option>`)
   ).join('');
-  const languageOptions = ['<option value="">All</option>'].concat(
-    Array.from(languageSet).sort((a,b)=>a.localeCompare(b)).map(v=>`<option value="${escapeAttr(v)}">${v}</option>`)
-  ).join('');
-  const tagOptions = ['<option value="">All</option>'].concat(
-    curation.availableTags.map(t=>`<option value="${escapeAttr(t.id)}">${escapeAttr(t.label)}</option>`)
-  ).join('');
+  const curatedTagIds = new Set(curation.availableTags.map(tag => tag.id));
+  const filterTags = new Map(curation.availableTags.map(tag => [tag.id, tag.label]));
+  for (const tag of normalizedCards.flatMap(card => Array.isArray(card.tags) ? card.tags : [])) {
+    const id = curation.slugify(tag);
+    if (id && !filterTags.has(id)) filterTags.set(id, tag);
+  }
+  const tagOptions = [...filterTags.entries()]
+    .sort((a, b) => {
+      const sourceOrder = Number(curatedTagIds.has(b[0])) - Number(curatedTagIds.has(a[0]));
+      return sourceOrder || a[1].localeCompare(b[1]);
+    })
+    .map(([id, label])=>{
+      const curated = curation.availableTags.find(tag => tag.id === id);
+      const style = curated?.color ? ` style="--tag-selected-bg:${escapeAttr(curated.color)}"` : '';
+      return `<label class="tag-filter-option" data-tag-option data-tag-label="${escapeAttr(label.toLowerCase())}" data-tag-source="${curated ? 'curated' : 'author'}"${curated ? '' : ' hidden'}${style}><input type="checkbox" name="filter-tag" value="${escapeAttr(id)}"> <span>${escapeAttr(label)}</span></label>`;
+    }).join('');
   const sortOptions = [
-    ['', 'Default order'],
+    ['', 'Card number'],
     ['updated-desc', 'Recently updated'],
     ['updated-asc', 'Oldest updated'],
     ['name-asc', 'Name A\u2013Z'],
     ['name-desc', 'Name Z\u2013A'],
-    ['number-asc', 'Number (low to high)'],
     ['number-desc', 'Number (high to low)'],
   ].map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
   const indexHtml = renderLayout({
@@ -246,27 +245,18 @@ async function build() {
         <summary>Advanced search</summary>
         <div class="filter-row">
           <div class="filter-group">
-            <label for="filter-type">Release type</label>
-            <select id="filter-type">${typeOptions}</select>
-          </div>
-          <div class="filter-group">
             <label for="filter-creator">Creator</label>
             <select id="filter-creator">${creatorOptions}</select>
           </div>
           <div class="filter-group">
-            <label for="filter-language">Language</label>
-            <select id="filter-language">${languageOptions}</select>
-          </div>
-          <div class="filter-group">
-            <label for="filter-tag">Tag</label>
-            <select id="filter-tag">${tagOptions}</select>
-          </div>
-        </div>
-        <div class="filter-row" style="margin-top:12px;">
-          <div class="filter-group">
             <label for="sort-mode">Sort</label>
             <select id="sort-mode">${sortOptions}</select>
           </div>
+          <fieldset class="filter-group tag-filter-group">
+            <legend class="tag-filter-heading"><span>Tags</span><span class="tag-filter-heading__actions"><button id="clear-tags" type="button" hidden>Clear</button><button id="toggle-all-tags" type="button" aria-pressed="false">Show all</button></span></legend>
+            <input id="filter-tag-search" class="tag-filter-search" type="search" placeholder="Search all tags…" aria-label="Search all tags" autocomplete="off">
+            <div id="filter-tags" class="tag-filter-options">${tagOptions}</div>
+          </fieldset>
         </div>
       </details>
       <a class="filter-link" href="archive/">Browse all cards</a>
@@ -369,7 +359,17 @@ async function build() {
   }));
 
   // Author preview/editor (static, client-side; reuses the shared engine).
-  await buildPreviewTool();
+  const suggestionValues = key => [...new Set(normalizedCards.map(card => card.metadata?.[key]).filter(Boolean).map(String))]
+    .sort((a, b) => a.localeCompare(b));
+  await buildPreviewTool({
+    creators: suggestionValues('creator'),
+    languages: suggestionValues('language'),
+    statuses: [...new Set(['WIP', 'Beta', 'Released', ...suggestionValues('status')])].sort((a, b) => a.localeCompare(b)),
+    tags: [...new Set([
+      ...curation.availableTags.map(tag => tag.label),
+      ...normalizedCards.flatMap(card => Array.isArray(card.tags) ? card.tags : []),
+    ])].sort((a, b) => a.localeCompare(b)),
+  });
 
   console.log(`Built site with ${rawInfoIndex.length} metadata cards from ${releases.length} release folders -> ${OUT_DIR}`);
   reportValidation(validationResults);
@@ -394,7 +394,7 @@ const PREVIEW_LIB_FILES = [
 ];
 
 /** Build the static author preview/editor under site/preview/. */
-async function buildPreviewTool() {
+async function buildPreviewTool(suggestions = {}) {
   const previewDir = path.join(OUT_DIR, 'preview');
   const libDir = path.join(previewDir, 'lib');
   const vendorDir = path.join(previewDir, 'vendor');
@@ -425,8 +425,8 @@ async function buildPreviewTool() {
     path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'author.css'),
     path.join(previewDir, 'author.css')
   );
-  await writeFileEnsured(path.join(previewDir, 'index.html'), renderAuthorPage({ documentKind: 'existing' }));
-  await writeFileEnsured(path.join(previewDir, 'new', 'index.html'), renderAuthorPage({ documentKind: 'new' }));
+  await writeFileEnsured(path.join(previewDir, 'index.html'), renderAuthorPage({ documentKind: 'existing', suggestions }));
+  await writeFileEnsured(path.join(previewDir, 'new', 'index.html'), renderAuthorPage({ documentKind: 'new', suggestions }));
 }
 
 /** Print a concise, non-fatal summary of the info.yaml conformance pass. */

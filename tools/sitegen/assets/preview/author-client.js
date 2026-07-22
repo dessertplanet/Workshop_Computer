@@ -12,7 +12,7 @@ const REQUIRED = ['Name', 'short-description', 'summary', 'Language', 'Creator',
 const STORAGE_KEY = 'workshop-computer-author-new';
 const DIFFERENTIAL_STORAGE_KEY = 'workshop-computer-author-differential-controls';
 const SWITCH_POSITIONS = ['up', 'middle', 'down'];
-const OPTIONAL_KEYS = ['tags', 'readme', 'demo-link', 'contact'];
+const OPTIONAL_KEYS = ['demo-link', 'tags', 'contact', 'discussion', 'readme'];
 const SPLIT_STORAGE_KEY = 'workshop-computer-author-editor-width';
 const DOCUMENT_KIND = document.querySelector('.author-page')?.dataset.documentKind || 'new';
 const IS_EXISTING = DOCUMENT_KIND === 'existing';
@@ -585,6 +585,7 @@ function updateProgress() {
 function syncFormFromData() {
   for (const input of els.editor.querySelectorAll('[data-field]')) input.value = data[input.dataset.field] ?? '';
   for (const input of els.editor.querySelectorAll('[data-list-field]')) input.value = Array.isArray(data[input.dataset.listField]) ? data[input.dataset.listField].join(', ') : (data[input.dataset.listField] ?? '');
+  for (const field of els.editor.querySelectorAll('[data-token-field]')) renderTokenField(field.dataset.tokenField);
   for (const input of els.editor.querySelectorAll('[data-lines-field]')) input.value = Array.isArray(data[input.dataset.linesField]) ? data[input.dataset.linesField].join('\n') : '';
   for (const input of els.editor.querySelectorAll('[data-nested-field]')) input.value = getNested(input.dataset.nestedField) ?? '';
   syncOptionalEditors();
@@ -1254,6 +1255,45 @@ function handleAuthorInput(event) {
   validateAndRender();
 }
 
+function normalizeToken(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function renderTokenField(key) {
+  const list = els.editor.querySelector(`[data-token-list="${CSS.escape(key)}"]`);
+  if (!list) return;
+  list.replaceChildren(...(Array.isArray(data[key]) ? data[key] : []).map(value => {
+    const token = document.createElement('span');
+    token.className = 'author-token';
+    token.append(document.createTextNode(value));
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.dataset.removeToken = value;
+    remove.dataset.tokenKey = key;
+    remove.setAttribute('aria-label', `Remove ${value}`);
+    remove.textContent = '×';
+    token.append(remove);
+    return token;
+  }));
+}
+
+function setTokens(key, values) {
+  const normalized = [...new Set(values.map(normalizeToken).filter(Boolean))];
+  if (normalized.length) data[key] = normalized;
+  else delete data[key];
+  const hidden = els.editor.querySelector(`[data-list-field="${CSS.escape(key)}"]`);
+  if (hidden) hidden.value = normalized.join(', ');
+  renderTokenField(key);
+  validateAndRender();
+}
+
+function commitTokenInput(input) {
+  const additions = input.value.split(',').map(normalizeToken).filter(Boolean);
+  if (!additions.length) return;
+  setTokens(input.dataset.tokenInput, [...(data[input.dataset.tokenInput] || []), ...additions]);
+  input.value = '';
+}
+
 function init() {
   initWorkspaceSplitter();
   initCardPicker();
@@ -1261,6 +1301,22 @@ function init() {
   if (!IS_EXISTING) validateAndRender();
 
   els.editor.addEventListener('input', handleAuthorInput);
+  els.editor.addEventListener('keydown', event => {
+    const input = event.target.closest('[data-token-input]');
+    if (!input) return;
+    if (event.key === 'Enter' || event.key === ',') {
+      event.preventDefault();
+      commitTokenInput(input);
+    } else if (event.key === 'Backspace' && !input.value && (data[input.dataset.tokenInput] || []).length) {
+      setTokens(input.dataset.tokenInput, data[input.dataset.tokenInput].slice(0, -1));
+    }
+  });
+  els.editor.addEventListener('focusout', event => {
+    if (event.target.matches('[data-token-input]')) commitTokenInput(event.target);
+  });
+  els.editor.addEventListener('change', event => {
+    if (event.target.matches('[data-token-input]')) commitTokenInput(event.target);
+  });
 
   els.preview.addEventListener('click', event => {
     const descriptionButton = event.target.closest('[data-edit-description]');
@@ -1327,6 +1383,11 @@ function init() {
     if (button) addOptional(button.dataset.addOptional);
   });
   document.getElementById('optional-editors').addEventListener('click', event => {
+    const tokenButton = event.target.closest('[data-remove-token]');
+    if (tokenButton) {
+      setTokens(tokenButton.dataset.tokenKey, (data[tokenButton.dataset.tokenKey] || []).filter(value => value !== tokenButton.dataset.removeToken));
+      return;
+    }
     const button = event.target.closest('[data-remove-optional]');
     if (button) removeOptional(button.dataset.removeOptional);
   });
