@@ -48,12 +48,21 @@ function cardNumber(card) {
   return Number.isNaN(number) ? raw : String(number);
 }
 
-function renderTags(card) {
-  const tags = Array.isArray(card.tags) ? card.tags.filter(Boolean) : [];
-  if (!tags.length) return '';
-  return `<span class="program-card-tags">${tags
-    .map(tag => `<span class="program-card-tag program-card-tag--${esc(String(tag).toLowerCase())}">${esc(tag)}</span>`)
-    .join('')}</span>`;
+function renderTags(card, curatedTags = []) {
+  const slugify = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const curated = Array.isArray(curatedTags) ? curatedTags.filter(tag => tag?.id && tag?.label) : [];
+  const curatedIds = new Set(curated.map(tag => slugify(tag.id)));
+  const authorTags = (Array.isArray(card.tags) ? card.tags.filter(Boolean) : [])
+    .filter(tag => !curatedIds.has(slugify(tag)));
+  if (!curated.length && !authorTags.length) return '';
+  const curatedMarkup = curated.map(tag => {
+    const style = `${tag.color ? `--program-card-tag-bg:${tag.color};` : ''}${tag.textColor ? `--program-card-tag-ink:${tag.textColor};` : ''}`;
+    return `<span class="program-card-tag program-card-tag--${esc(slugify(tag.id))}"${style ? ` style="${esc(style)}"` : ''}>${esc(tag.label)}</span>`;
+  }).join('');
+  const authorMarkup = authorTags
+    .map(tag => `<span class="program-card-tag program-card-tag--author program-card-tag--${esc(slugify(tag))}">${esc(tag)}</span>`)
+    .join('');
+  return `<span class="program-card-tags">${curatedMarkup}${authorMarkup}</span>`;
 }
 
 // At the panel label's 11px type and narrow socket width, roughly 15 visible
@@ -336,7 +345,7 @@ function renderAudio(samples) {
  * @param {string} [opts.extraDocs]  extra HTML appended into the documentation area (README/PDFs)
  * @param {boolean} [opts.basic]    draft mode: render only basic fields + README/PDFs (skip the generated model sections)
  */
-export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs = '', basic = false }) {
+export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs = '', curatedTags = [], basic = false }) {
   const metadata = card.metadata || {};
   const summary = card.summary || '';
   const sourceUrl = card.source_url || '';
@@ -383,7 +392,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
 
   const hero = `<header class="program-card-hero">
     <div class="program-card-hero__main">
-      ${basic ? '' : renderTags(card)}
+      ${basic ? '' : renderTags(card, curatedTags)}
       <h1><span class="program-card-page__number">${esc(cardNumber(card))}</span> ${esc(inline(card.title || card.id || 'Untitled card'))}</h1>
       ${summary ? `<p>${esc(summary)}</p>` : ''}
       <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${basic ? '' : memoryMarkup}</div>
