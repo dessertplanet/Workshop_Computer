@@ -42,6 +42,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
           </div>
         </div>
         <div class="author-toolbar__downloads">
+          <a class="btn secondary" href="https://github.com/TomWhitwell/Workshop_Computer/blob/main/documentation/info.yaml.md" target="_blank" rel="noopener noreferrer">Schema documentation ↗</a>
           <button id="download-source" class="btn download" type="button">Download info.yaml</button>
           <button id="download-panel-image" class="btn secondary" type="button">Download panel SVG</button>
           <button id="start-fresh" class="btn secondary" type="button">Start fresh</button>
