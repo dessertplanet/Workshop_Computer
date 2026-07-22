@@ -40,7 +40,7 @@ function cardNumber(card) {
   return Number.isNaN(number) ? raw : String(number);
 }
 
-function renderTagBadges(flair, hideTags = []) {
+function renderTagBadges(flair, hideTags = [], root = '.') {
   const hidden = new Set((hideTags || []).map(t => curation.slugify(t)));
   const badges = (flair || [])
     .filter(tag => !hidden.has(tag.id) && !hidden.has(curation.slugify(tag.label)))
@@ -49,13 +49,25 @@ function renderTagBadges(flair, hideTags = []) {
         tag.color ? `--program-card-tag-bg: ${tag.color}; --program-card-tag-border: ${tag.color};` : '',
         tag.textColor ? ` --program-card-tag-ink: ${tag.textColor};` : '',
       ].join('').trim();
-      return `<span class="program-card-tag program-card-tag--${esc(tag.id)}"${style ? ` style="${esc(style)}"` : ''}>${esc(tag.label)}</span>`;
+      return `<a class="program-card-tag program-card-tag--${esc(tag.id)}" href="${root}/?tag=${encodeURIComponent(tag.id)}"${style ? ` style="${esc(style)}"` : ''}>${esc(tag.label)}</a>`;
     });
   return badges.length ? `<span class="program-card-tags">${badges.join('')}</span>` : '';
 }
 
+function renderAllTagBadges(card, flair, root = '.') {
+  const curatedIds = new Set(flair.map(tag => tag.id));
+  const authorBadges = (Array.isArray(card.tags) ? card.tags : [])
+    .map(tag => ({ id: curation.slugify(tag), label: String(tag) }))
+    .filter(tag => tag.id && !curatedIds.has(tag.id))
+    .map(tag => `<a class="program-card-tag program-card-tag--author" href="${root}/?tag=${encodeURIComponent(tag.id)}">${esc(tag.label)}</a>`);
+  const curated = renderTagBadges(flair, [], root);
+  if (!authorBadges.length) return curated;
+  const curatedBadges = curated.replace(/^<span class="program-card-tags">|<\/span>$/g, '');
+  return `<span class="program-card-tags">${curatedBadges}${authorBadges.join('')}</span>`;
+}
+
 export function renderTile(card, opts = {}) {
-  const { showVideo = false, showArtwork = false, hideTags = [], root = '.' } = opts;
+  const { showVideo = false, showArtwork = false, showAllTags = false, showCreator = false, hideTags = [], root = '.' } = opts;
   const flair = resolveFlair(card.id);
   const number = cardNumber(card);
   const summary = card.short_description || '';
@@ -76,18 +88,22 @@ export function renderTile(card, opts = {}) {
     ...flair.map(f => f.label),
   ].filter(Boolean).join(' ').toLowerCase();
 
-  const tagFilter = flair.map(f => f.id).join(' ');
+  const curatedTagFilter = flair.map(f => f.id);
+  const authorTagFilter = (Array.isArray(card.tags) ? card.tags : []).map(tag => curation.slugify(tag)).filter(Boolean);
+  const tagFilter = [...new Set([...curatedTagFilter, ...authorTagFilter])].join(' ');
 
-  return `<a class="program-card-tile${media ? ' program-card-tile--video' : ''}${artwork ? ' program-card-tile--artwork' : ''}" href="${root}/programs/${card.slug}/"` +
+  return `<article class="program-card-tile${media ? ' program-card-tile--video' : ''}${artwork ? ' program-card-tile--artwork' : ''}"` +
     ` data-creator="${escapeAttr(metadata.creator || '')}" data-language="${escapeAttr(metadata.language || '')}"` +
     ` data-type="${escapeAttr(metadata.status || '')}" data-date="${escapeAttr(metadata.updated || '')}"` +
     ` data-name="${escapeAttr(String(card.title || card.id || '').toLowerCase())}" data-num="${escapeAttr(String(parseInt(number, 10) || 0))}"` +
     ` data-tags="${escapeAttr(tagFilter)}" data-search="${escapeAttr(searchText)}">
-    ${media}
-    <span class="program-card-tile__head"><span class="program-card-tile__title">${artwork || `<span class="program-card-tile__number">${esc(number)}</span>`}<span class="program-card-tile__name">${esc(truncate(card.title || card.id || 'Untitled card', 48))}</span></span></span>
-    ${summary ? `<span class="program-card-tile__summary">${esc(truncate(summary, 190))}</span>` : ''}
-    ${renderTagBadges(flair, hideTags)}
-  </a>`;
+    <a class="program-card-tile__link" href="${root}/programs/${card.slug}/">
+      ${media}
+      <span class="program-card-tile__head"><span class="program-card-tile__title">${artwork || `<span class="program-card-tile__number">${esc(number)}</span>`}<span class="program-card-tile__name">${esc(truncate(card.title || card.id || 'Untitled card', 48))}</span>${showCreator && metadata.creator ? `<span class="program-card-tile__byline">by ${esc(metadata.creator)}</span>` : ''}</span></span>
+      ${summary ? `<span class="program-card-tile__summary">${esc(truncate(summary, 190))}</span>` : ''}
+    </a>
+    ${showAllTags ? renderAllTagBadges(card, flair, root) : renderTagBadges(flair, hideTags, root)}
+  </article>`;
 }
 
 function shelfCards(shelf, cardsById) {
@@ -140,14 +156,19 @@ function renderArchiveRow(card, root) {
   const flair = resolveFlair(card.id);
   const number = cardNumber(card);
   const summary = card.short_description || '';
-  const searchText = [number, card.title, summary, card.metadata?.creator, ...flair.map(f => f.label)]
+  const searchText = [number, card.title, summary, card.metadata?.creator, ...(Array.isArray(card.tags) ? card.tags : []), ...flair.map(f => f.label)]
     .filter(Boolean).join(' ').toLowerCase();
   const date = card.metadata?.updated || '';
-  return `<a class="program-card-archive-row" href="${root}/programs/${card.slug}/" data-date="${escapeAttr(date)}" data-name="${escapeAttr(String(card.title || '').toLowerCase())}" data-num="${escapeAttr(String(parseInt(number, 10) || 0))}" data-search="${escapeAttr(searchText)}">
-    <span class="program-card-archive-row__number">${esc(number)}</span>
-    <span class="program-card-archive-row__main"><span class="program-card-archive-row__title">${esc(card.title)}</span>${summary ? `<span class="program-card-archive-row__summary">${esc(truncate(summary, 120))}</span>` : ''}</span>
-    <span class="program-card-archive-row__flags">${renderTagBadges(flair)}</span>
-  </a>`;
+  const curatedTagFilter = flair.map(f => f.id);
+  const authorTagFilter = (Array.isArray(card.tags) ? card.tags : []).map(tag => curation.slugify(tag)).filter(Boolean);
+  const tagFilter = [...new Set([...curatedTagFilter, ...authorTagFilter])].join(' ');
+  return `<article class="program-card-archive-row" data-date="${escapeAttr(date)}" data-name="${escapeAttr(String(card.title || '').toLowerCase())}" data-num="${escapeAttr(String(parseInt(number, 10) || 0))}" data-tags="${escapeAttr(tagFilter)}" data-search="${escapeAttr(searchText)}">
+    <a class="program-card-archive-row__link" href="${root}/programs/${card.slug}/">
+      <span class="program-card-archive-row__number">${esc(number)}</span>
+      <span class="program-card-archive-row__main"><span class="program-card-archive-row__heading"><span class="program-card-archive-row__title">${esc(card.title)}</span>${card.metadata?.creator ? `<span class="program-card-archive-row__byline">by ${esc(card.metadata.creator)}</span>` : ''}</span>${summary ? `<span class="program-card-archive-row__summary">${esc(truncate(summary, 120))}</span>` : ''}</span>
+    </a>
+    <span class="program-card-archive-row__flags">${renderAllTagBadges(card, flair, root)}</span>
+  </article>`;
 }
 
 export function renderArchive(cards, root = '..') {
