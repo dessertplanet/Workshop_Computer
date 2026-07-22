@@ -5,8 +5,8 @@ export const infoYamlSchema = {
   fields: [
     { path: 'draft', type: 'boolean', required: false, description: 'Metadata review state.' },
     { path: 'Name', type: 'string', required: true, aliases: ['Title'], description: 'Display title for the card.' },
-    { path: 'Description', type: 'string', required: true, description: 'Short summary for the card.' },
-    { path: 'summary', type: 'string', required: false, description: 'Short operator summary shown in the card header.' },
+    { path: 'short-description', type: 'string', required: true, description: 'Concise catalog tagline shown in discovery views.' },
+    { path: 'summary', type: 'string', required: true, description: 'Operator overview shown in the card detail header.' },
     { path: 'Language', type: 'string', required: true, description: 'Implementation language or stack.' },
     { path: 'Creator', type: 'string', required: true, description: 'Author or maintainer.' },
     { path: 'Version', type: 'string', required: true, description: 'Release or firmware version.' },

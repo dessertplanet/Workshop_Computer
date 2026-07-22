@@ -58,7 +58,7 @@ export function renderTile(card, opts = {}) {
   const { showVideo = false, showArtwork = false, hideTags = [], root = '.' } = opts;
   const flair = resolveFlair(card.id);
   const number = cardNumber(card);
-  const summary = card.summary || card.description || '';
+  const summary = card.short_description || '';
   const metadata = card.metadata || {};
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
 
@@ -139,7 +139,7 @@ export function renderDiscovery(cards, root = '.') {
 function renderArchiveRow(card, root) {
   const flair = resolveFlair(card.id);
   const number = cardNumber(card);
-  const summary = card.summary || card.description || '';
+  const summary = card.short_description || '';
   const searchText = [number, card.title, summary, card.metadata?.creator, ...flair.map(f => f.label)]
     .filter(Boolean).join(' ').toLowerCase();
   const date = card.metadata?.updated || '';

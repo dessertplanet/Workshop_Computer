@@ -65,7 +65,7 @@ The build should normalize each release into a single object, similar to the MTM
 - `draft`
 - `release`
 - `summary`
-- `description`
+- `short_description`
 - `source_file`
 - `source_url`
 - `readme_url`

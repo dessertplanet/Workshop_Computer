@@ -28,7 +28,8 @@ export function normalizeInfo(raw, fallbackTitle) {
   return {
     draft: normalizeDraft(out.draft),
     title: out.title || out.name || fallbackTitle,
-    description: out.description || '',
+    shortdescription: out.shortdescription || '',
+    summary: out.summary || '',
     language: out.language || '',
     creator: out.creator || '',
     version: out.version || '',
