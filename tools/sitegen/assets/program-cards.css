@@ -1,3 +1,11 @@
+@font-face {
+  font-family: "Workshop Panel";
+  font-style: normal;
+  font-weight: 800;
+  font-display: block;
+  src: url("fonts/inter-latin-800-normal.woff2") format("woff2");
+}
+
 /*
  * Workshop Computer program-card detail page.
  * Ported from MTM_Newsite_2022 _sass/minima/_program-cards.scss (detail-page
@@ -661,6 +669,7 @@
 /* Panel diagram */
 .program-card-panel {
   background: #414042;
+  font-family: "Workshop Panel", Arial, sans-serif;
   margin: 0 auto;
   position: relative;
   width: 280px;
@@ -704,8 +713,11 @@
 }
 
 .program-card-panel-text--long {
+  line-height: 1;
   overflow-wrap: anywhere;
-  word-break: break-all;
+  padding-bottom: 4px;
+  padding-top: 5px;
+  word-break: normal;
 }
 
 .program-card-panel__label--control {
@@ -778,8 +790,9 @@
 }
 
 .program-card-panel-switch-position.program-card-panel-text--long strong {
+  line-height: 1;
   overflow-wrap: anywhere;
-  word-break: break-all;
+  word-break: normal;
 }
 
 .program-card-panel-switch-position:hover,
