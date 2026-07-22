@@ -54,6 +54,7 @@ import { uf2ToFlashBuffer } from '${relativeRoot}/assets/js/uf2.js';
 
 var connectBtn = document.getElementById('connectToggle');
 var pb = null;
+var RECONNECT_KEY = 'workshop-computer-picoboot-reconnect';
 
 // Reveal a firmware's SHA256 beneath the tiles when its download is clicked.
 document.addEventListener('click', function(e) {
@@ -207,39 +208,138 @@ function setConnected(on) {
   if (connectBtn) {
     connectBtn.setAttribute('aria-checked', String(on));
     connectBtn.classList.toggle('active', on);
+    var label = connectBtn.querySelector('.c-label');
+    if (label) label.textContent = on ? 'Connected' : 'Connect workshop computer';
   }
   document.querySelectorAll('a[data-uf2-url]').forEach(function(a) {
+    var actionLabel = a.querySelector('.program-card-action__label') || a.querySelector('span');
     if (on) {
       if (!a.dataset.origHtml) a.dataset.origHtml = a.innerHTML;
-      a.innerHTML = '⚡ Program';
+      a.classList.add('program-card-action--program');
+      if (actionLabel) actionLabel.textContent = 'Program';
     } else {
+      a.classList.remove('program-card-action--program');
       if (a.dataset.origHtml) { a.innerHTML = a.dataset.origHtml; delete a.dataset.origHtml; }
     }
   });
+}
+
+function setFirmwareActionLabel(action, text) {
+  var label = action.querySelector('.program-card-action__label') || action.querySelector('span');
+  if (label) label.textContent = text;
+  else action.textContent = text;
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes, function(byte) { return byte.toString(16).padStart(2, '0'); }).join('');
+}
+
+async function disconnectPicoboot() {
+  var connected = pb;
+  pb = null;
+  if (connected) await connected.disconnect();
+  setConnected(false);
+}
+
+async function identifyIndexCard() {
+  if (!pb || !connectBtn || !document.querySelector('.program-cards--index')) return;
+  var label = connectBtn.querySelector('.c-label');
+  connectBtn.disabled = true;
+  if (label) label.textContent = 'Identifying card…';
+  try {
+    var response = await fetch('${relativeRoot}/firmware-fingerprints.json', { cache: 'no-store' });
+    if (!response.ok) throw new Error('Fingerprint catalogue HTTP ' + response.status);
+    var catalogue = await response.json();
+    var flash = await pb.flashRead(Number(catalogue.address), Number(catalogue.length));
+    var digest = new Uint8Array(await crypto.subtle.digest('SHA-256', flash));
+    var hash = bytesToHex(digest);
+    var match = (catalogue.entries || []).find(function(entry) { return entry.hash === hash; });
+    if (!match || !Array.isArray(match.cards) || match.cards.length !== 1) {
+      var message = match ? 'Card match is ambiguous — reconnect' : 'Card not recognized — reconnect';
+      await disconnectPicoboot();
+      if (label) label.textContent = message;
+      connectBtn.disabled = false;
+      setTimeout(function() {
+        if (label && !pb && label.textContent === message) label.textContent = 'Connect workshop computer';
+      }, 3000);
+      return;
+    }
+    var card = match.cards[0];
+    if (label) label.textContent = 'Opening ' + (card.title || 'card') + '…';
+    try {
+      sessionStorage.setItem(RECONNECT_KEY, JSON.stringify({
+        serialNumber: pb.device && pb.device.serialNumber || '',
+        expires: Date.now() + 15000,
+      }));
+    } catch (_) {}
+    window.location.href = '${relativeRoot}/programs/' + encodeURIComponent(card.slug) + '/';
+  } catch (error) {
+    console.error('Could not identify connected card:', error);
+    await disconnectPicoboot();
+    var failureMessage = 'Identification failed — reconnect';
+    if (label) label.textContent = failureMessage;
+    connectBtn.disabled = false;
+    setTimeout(function() {
+      if (label && !pb && label.textContent === failureMessage) label.textContent = 'Connect workshop computer';
+    }, 3000);
+  }
+}
+
+async function reconnectAuthorizedPicoboot() {
+  if (!connectBtn || !('usb' in navigator)) return;
+  var pending = null;
+  try {
+    pending = JSON.parse(sessionStorage.getItem(RECONNECT_KEY) || 'null');
+    sessionStorage.removeItem(RECONNECT_KEY);
+  } catch (_) {}
+  if (!pending || Number(pending.expires) < Date.now()) return;
+  var label = connectBtn.querySelector('.c-label');
+  connectBtn.disabled = true;
+  if (label) label.textContent = 'Reconnecting…';
+  for (var attempt = 0; attempt < 15; attempt++) {
+    try {
+      var devices = await Picoboot.getDevices();
+      var candidate = devices.find(function(device) {
+        return !pending.serialNumber || device.device.serialNumber === pending.serialNumber;
+      });
+      if (candidate) {
+        await candidate.connect();
+        pb = candidate;
+        connectBtn.disabled = false;
+        setConnected(true);
+        return;
+      }
+    } catch (error) {
+      console.warn('Picoboot reconnect attempt failed:', error);
+    }
+    await new Promise(function(resolve) { setTimeout(resolve, 150); });
+  }
+  connectBtn.disabled = false;
+  setConnected(false);
 }
 
 async function flash(url, el) {
   if (el.dataset.busy) return;
   el.dataset.busy = '1';
   try {
-    el.innerHTML = '⏳ Fetching…';
+    setFirmwareActionLabel(el, 'Fetching…');
     var r = await fetch(url);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     var parsed = uf2ToFlashBuffer(new Uint8Array(await r.arrayBuffer()));
-    el.innerHTML = '⏳ Flashing…';
+    setFirmwareActionLabel(el, 'Flashing…');
     await pb.flashEraseAndWrite(parsed.address, parsed.data);
-    el.innerHTML = '⏳ Verifying…';
+    setFirmwareActionLabel(el, 'Verifying…');
     var readback = await pb.flashRead(parsed.address, parsed.data.length);
     for (var i = 0; i < parsed.data.length; i++) {
       if (readback[i] !== parsed.data[i]) throw new Error('Verify failed at byte ' + i);
     }
-    el.innerHTML = '✅ Reset to use';
+    setFirmwareActionLabel(el, 'Reset to use');
     // try { await pb.getConnection().reboot(500); } catch(_) {}
-    setTimeout(function() { delete el.dataset.busy; el.innerHTML = '⚡ Program'; }, 3000);
+    setTimeout(function() { delete el.dataset.busy; setFirmwareActionLabel(el, 'Program'); }, 3000);
   } catch(e) {
-    el.innerHTML = '❌ Error';
+    setFirmwareActionLabel(el, 'Error');
     delete el.dataset.busy;
-    setTimeout(function() { el.innerHTML = '⚡ Program'; }, 3000);
+    setTimeout(function() { setFirmwareActionLabel(el, 'Program'); }, 3000);
   }
 }
 
@@ -262,6 +362,7 @@ if (!('usb' in navigator)) {
         await dev.connect();
         pb = dev;
         setConnected(true);
+        await identifyIndexCard();
       } catch(e) {
         setConnected(false);
       }
@@ -277,11 +378,12 @@ if (!('usb' in navigator)) {
 
   document.addEventListener('click', async function(e) {
     if (!pb) return;
-    var a = e.target.closest('a.btn.download[data-uf2-url]');
+    var a = e.target.closest('a[data-uf2-url]');
     if (!a) return;
     e.preventDefault();
     await flash(a.dataset.uf2Url, a);
   });
+  reconnectAuthorizedPicoboot();
 }
   </script>
   <script>(function(){

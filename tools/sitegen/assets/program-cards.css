@@ -263,6 +263,15 @@
   color: #fff;
 }
 
+.program-card-page .program-card-action--program {
+  background: #087a34;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.28);
+}
+
+.program-card-action__firmware {
+  overflow-wrap: anywhere;
+}
+
 .program-card-page .program-card-action--editor {
   background: #d7ae3d;
   color: #111;

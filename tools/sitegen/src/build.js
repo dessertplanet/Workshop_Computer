@@ -14,6 +14,7 @@ import { curation } from './curation/index.js';
 import { parseSource } from './validate/parseSource.js';
 import { validateInfoYaml } from './validate/validateInfoYaml.js';
 import { renderAuthorPage } from './render/authorPage.js';
+import { buildFirmwareFingerprints } from './firmware/fingerprints.js';
 
 // ========== Path & Globals ==========
 const __filename = fileURLToPath(import.meta.url);
@@ -76,7 +77,7 @@ function detailPage(rel) {
     repoUrl: `https://github.com/${REPO}`,
     content: `
 <nav class="program-card-top-nav" aria-label="Card navigation">
-  <a href="../../index.html">← All cards</a>
+  <a href="../../index.html">← BACK TO PROGRAM CARDS</a>
   <a class="program-card-author-link" href="../../preview/#${encodeURIComponent(rel.slug)}">Author Metadata ↗</a>
 </nav>
 ${article}
@@ -196,6 +197,11 @@ async function build() {
     if (Number.isNaN(bNumber)) return -1;
     return aNumber - bNumber || String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
   });
+  const firmwareFingerprints = await buildFirmwareFingerprints(normalizedCards, ROOT);
+  await writeFileEnsured(
+    path.join(OUT_DIR, 'firmware-fingerprints.json'),
+    JSON.stringify(firmwareFingerprints, null, 2),
+  );
 
   // Index page
   const discoveryHtml = renderDiscovery(normalizedCards, '.');

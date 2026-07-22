@@ -297,7 +297,7 @@ function prune(value) {
 
 function renderDiagnostics(result) {
   if (!result.diagnostics.length) {
-    els.diagnostics.innerHTML = '<p class="diag-clean">✓ No schema issues.</p>';
+    els.diagnostics.innerHTML = '<p class="diag-clean">No schema issues.</p>';
     return;
   }
   els.diagnostics.innerHTML = `<p class="diag-summary">${result.errorCount} error(s), ${result.warningCount} warning(s)</p><ul class="diag-list">${result.diagnostics.map(d => `<li class="diag--${escapeHtml(d.severity)}"><strong>${d.severity === 'error' ? 'Error' : 'Warning'}:</strong> ${escapeHtml(d.path || '')} ${escapeHtml(d.message)}</li>`).join('')}</ul>`;
