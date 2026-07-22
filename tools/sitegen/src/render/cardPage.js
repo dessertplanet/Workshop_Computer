@@ -41,6 +41,12 @@ function markdownBlock(text) {
   return marked.parse(val);
 }
 
+function markdownInline(text) {
+  const val = String(text ?? '').trim();
+  if (!val) return '';
+  return marked.parseInline(val);
+}
+
 function cardNumber(card) {
   const release = card.release || card.id || '';
   const raw = String(release).split('/')[0].split('_')[0].trim();
@@ -396,7 +402,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     <div class="program-card-hero__main">
       ${basic ? '' : renderTags(card, curatedTags)}
       <h1><span class="program-card-page__number">${esc(cardNumber(card))}</span> ${esc(inline(card.title || card.id || 'Untitled card'))}</h1>
-      ${summary ? `<p>${esc(summary)}</p>` : ''}
+      ${summary ? `<p class="program-card-hero__summary">${markdownInline(summary)}</p>` : ''}
       <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${basic ? '' : memoryMarkup}</div>
       <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>
       <div class="program-card-sha" data-sha-display role="status" aria-live="polite" hidden>SHA256: <code class="program-card-sha__value" data-sha-value></code> <button type="button" class="program-card-sha__verify" data-verify-open>How to verify</button></div>

@@ -25,7 +25,7 @@ License: MIT
 | `draft` | no | boolean | When `true`, structured metadata in this file is still under author review. Set to `false` when `Name`, `contact`, `License`, `panel`, and related fields are confirmed. Not rendered on detail pages yet; parsed for tooling and future site UI. |
 | `Name` | yes | string | Display title on the site index and detail page (see sitegen). |
 | `short-description` | yes | string | Concise catalog tagline shown on index tiles, discovery shelves, and archive rows. |
-| `summary` | yes | string | Longer operator overview shown beneath the title on the card detail page. |
+| `summary` | yes | string | Longer operator overview shown beneath the title on the card detail page. Inline Markdown is supported, including links, emphasis, and code. |
 | `Language` | yes | string | Implementation language or stack (e.g. `C++ (Pico SDK)`, `Lua / Blackbird`). |
 | `Creator` | yes | string | Author or maintainer name. |
 | `Version` | yes | string | Semantic or project version string. |
