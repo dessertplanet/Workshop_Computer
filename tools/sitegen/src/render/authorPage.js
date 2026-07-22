@@ -34,7 +34,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
       </div>
       <div class="author-toolbar__actions">
         <div class="author-toolbar__primary">
-          <label class="author-document-picker">Card <select id="card-select" aria-label="Card"><option value="new">＋ NEW</option></select></label>${existing ? '<a id="production-card-link" class="author-production-link" href="#" target="_blank" rel="noopener noreferrer">View card page ↗</a><span id="editor-status" class="author-progress" aria-live="polite"></span>' : ''}
+          <label class="author-document-picker">Card <select id="card-select" aria-label="Card"><option value="new">＋ NEW</option></select></label>${existing ? '<a id="production-card-link" class="author-production-link" href="#" target="_blank" rel="noopener noreferrer">View card page ↗</a><span id="editor-status" class="author-progress" aria-live="polite"></span>' : '<a class="author-production-link" href="../index.html">Program cards home</a>'}
           <span id="required-progress" class="author-progress" aria-live="polite"></span>
           <div class="author-mode-switch" role="group" aria-label="Editing mode">
             <button type="button"${existing ? ' disabled title="Basic availability is checked after the card loads"' : ' class="is-active"'} data-mode="author" aria-pressed="${existing ? 'false' : 'true'}">Basic</button>
