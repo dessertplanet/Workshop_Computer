@@ -11,6 +11,8 @@ const REQUIRED = ['Name', 'short-description', 'summary', 'Language', 'Creator',
 const STORAGE_KEY = 'workshop-computer-author-new';
 const DIFFERENTIAL_STORAGE_KEY = 'workshop-computer-author-differential-controls';
 const SWITCH_POSITIONS = ['up', 'middle', 'down'];
+const PANEL_EXPORT_WIDTH = 560;
+const PANEL_EXPORT_HEIGHT = 1785;
 const OPTIONAL_KEYS = ['tags', 'readme', 'demo-link', 'contact'];
 const SPLIT_STORAGE_KEY = 'workshop-computer-author-editor-width';
 const DOCUMENT_KIND = document.querySelector('.author-page')?.dataset.documentKind || 'new';
@@ -1202,12 +1204,11 @@ async function downloadPanelImage() {
     const panelArtwork = panel.querySelector('img');
     if (!panelArtwork) throw new Error('The panel artwork is missing.');
     const image = await loadExportImage(panelArtwork.currentSrc || panelArtwork.src);
-    const scale = 2;
     const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(rect.width * scale);
-    canvas.height = Math.ceil(rect.height * scale);
+    canvas.width = PANEL_EXPORT_WIDTH;
+    canvas.height = PANEL_EXPORT_HEIGHT;
     const context = canvas.getContext('2d');
-    context.scale(scale, scale);
+    context.scale(PANEL_EXPORT_WIDTH / rect.width, PANEL_EXPORT_HEIGHT / rect.height);
     context.fillStyle = '#fff';
     context.fillRect(0, 0, rect.width, rect.height);
     context.drawImage(image, 0, 0, rect.width, rect.height);

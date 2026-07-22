@@ -60,7 +60,7 @@ contact:
 | `Editor` | no | string | Controls the **Web Editor** button and static deploy. See values below. |
 | `web-entry` | no | string | Entry HTML file when not `index.html` (e.g. `app.html`). |
 
-**`Editor` values**
+### `Editor` values
 
 | Value | Behavior |
 |-------|----------|
@@ -134,11 +134,11 @@ These blocks document the primary inline documentation, I/O, controls, and host 
 | Field | Type | Description |
 |-------|------|-------------|
 | `readme` | string (Markdown) | Full inline operator documentation. When present, it replaces the rendered `README.md` section on the card detail page. It is Markdown content, not a path. Supplementary PDF documentation remains visible. |
-| `panel.inputs` | object[] | Panel jacks in. Each item has `id`, `name`, optional `description`, optional `type` (`audio` / `cv` / `pulse` / `other`), and optional `when: { z: up \| middle \| down }`. Entries with the same `id` override the shared entry in that position. |
+| `panel.inputs` | object[] | Panel jacks in. Each item has `id`, `name`, optional `description`, optional `type` (`audio` / `cv` / `pulse` / `other`), and optional `when.z` or `when.panel` context. Entries with the same `id` override the shared entry in that view. |
 | `panel.outputs` | object[] | Panel jacks out; same shape and position-override behavior as inputs. |
-| `controls.knobs` | object[] | Knob metadata rows containing `main` / `x` / `y` entries with `name` and optional `description`. Omit `when` for controls shared by every position; use `when: { z: up \| middle \| down }` only when a role changes. |
+| `controls.knobs` | object[] | Knob metadata rows containing `main` / `x` / `y` entries with `name` and optional `description`. Omit `when` for shared controls; use `when.z` for generated positions or `when.panel` for custom manifest IDs. |
 | `controls.switch` | object | Switch metadata keyed by `up`, `middle`, `down`, and optional `tap`. The three physical positions may produce panel views. `tap` describes a brief Down-switch action and never produces a panel view. |
-| `controls.leds` | object[] | LED meaning rows. Each has optional `when: { z: up \| middle \| down }`, `display` (e.g. `list`), and `items` with `id`, `name`, and optional `description`. Items override shared LEDs by `id`. |
+| `controls.leds` | object[] | LED meaning rows. Each has optional `when.z` or `when.panel`, `display` (e.g. `list`), and `items` with `id`, `name`, and optional `description`. Items override shared LEDs by `id`. |
 | `host` | object | Host/USB connectivity (e.g. `usb` list with `name`, `role`, `description`) and optional `notes` (Markdown). |
 
 ```yaml
@@ -178,9 +178,58 @@ controls:
       x: { name: Loop Length, description: Sets the loop length while held up }
 ```
 
-A card that only needs to describe its switch uses `controls.switch` alone. A card whose panel changes by position adds conditioned knob, socket, or LED rows. Sitegen resolves at most three complete views as `base + up`, `base + middle`, and `base + down`; Middle is the default when present.
+A card that only needs to describe its switch uses `controls.switch` alone. A card whose automatically generated panel changes by position adds conditioned knob, socket, or LED rows. Sitegen resolves at most three generated views as `base + up`, `base + middle`, and `base + down`; Middle is the default when present.
 
 Legacy `when: { z: any }` rows are still read as shared base metadata but should be written without `when`. Legacy `gesture` conditions produce validation warnings while existing cards are reviewed.
+
+### Custom panel presentations
+
+Complex cards may provide a lowercase `panels/` directory beside `info.yaml`. Directory presence is an explicit presentation override: the site does not publish the automatically generated Up/Middle/Down panels, even when the custom directory is incomplete. Structured controls, sockets, LEDs, and switch metadata remain available as machine-readable card data.
+
+`panels/manifest.yaml` defines any number of ordered, arbitrarily named presentations:
+
+```yaml
+version: 1
+default: performance
+
+panels:
+  - id: overview
+    name: Overview
+    image: overview.png
+    content: overview.md
+  - id: performance
+    name: Performance Mode
+    image: performance.png
+    content: performance.md
+  - id: slice-editor
+    name: Slice Editor
+    image: slice-editor.png
+    content: slice-editor.md
+```
+
+- `id` is a stable, unique lowercase kebab-case identifier used by `when.panel` and direct panel links.
+- `name` is arbitrary display text and may be changed without changing the ID.
+- `image` and `content` are safe paths relative to `panels/`; absolute paths, traversal, and symbolic links are rejected.
+- `default` must name a valid panel ID. Manifest order is display order.
+- Every image must be a **560 × 1785 px PNG**, matching the fixed-size image downloaded by the Author page.
+- Every presentation requires companion Markdown. It is rendered beside the image instead of the generated controls/I/O/LED reference, and provides the accessible textual explanation of text embedded in the image.
+- Relative images and links in the Markdown resolve inside `panels/`.
+
+Physical component IDs do not change. Use `main`, `x`, `y`, ComputerCard jack IDs, and LED IDs as usual; use a manifest panel ID only as the condition:
+
+```yaml
+controls:
+  knobs:
+    - main: { name: Level }       # shared by every custom panel
+    - when: { panel: performance }
+      x: { name: Density }
+      y: { name: Spread }
+    - when: { panel: slice-editor }
+      x: { name: Slice Start }
+      y: { name: Slice Length }
+```
+
+Sockets and LED rows support the same `when.panel` condition. Unconditioned rows form the shared base and matching rows override it. A condition must use either `when.z` or `when.panel`, never both. `when.panel` requires a custom manifest and must exactly match one of its IDs.
 
 ## Authoring guidance
 

@@ -165,7 +165,7 @@ The Advanced YAML preview needs a local layout override:
 5. The state layer writes an unconditioned base entry for All positions or a `when: { z: ... }` override for a position.
 6. The preview updates immediately and retains the selected switch position.
 
-Only expose Up/Middle/Down. `tap` belongs to switch actions and must never appear as a panel view.
+For automatic panel authoring, only expose Up/Middle/Down. `tap` belongs to switch actions and must never appear as an automatic panel view. Complex authors may separately supply an arbitrary `panels/manifest.yaml` collection; the Author page is only responsible for exporting correctly sized 560 × 1785 panel images for that workflow.
 
 ### Optional detail tiles
 
@@ -410,7 +410,7 @@ Suggested source organization:
 1. A first-time author can create and download a schema-valid minimal `info.yaml` without seeing YAML.
 2. Every required field is visibly identified, and completion state derives from the schema adapter.
 3. Selecting any physical panel component edits the corresponding canonical author-schema entry.
-4. Up/Middle/Down overrides produce the same panel views as the production build.
+4. Up/Middle/Down overrides produce the same automatic panel views as the production build; a release-local custom `panels/` directory replaces those presentations.
 5. The panel remains visibly available in Author mode and Advanced YAML mode at desktop and narrow widths.
 6. Advanced YAML edits and visual edits round-trip without dropping unknown fields or comments.
 7. Invalid YAML cannot be overwritten by visual-mode serialization.

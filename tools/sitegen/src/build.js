@@ -140,6 +140,7 @@ async function build() {
   const normalizedCards = [];
   const rawInfoIndex = [];
   const validationResults = []; // non-fatal info.yaml conformance pass
+  const panelValidationResults = [];
   const typeMap = new Map(); // key -> display (original YAML text, normalized spacing)
   const creatorSet = new Set();
   const languageSet = new Set();
@@ -149,6 +150,9 @@ async function build() {
     if (!hasFiles) continue;
     const rel = await discoverRelease(folder);
     releases.push(rel);
+    for (const diagnostic of rel.panelDiagnostics || []) {
+      panelValidationResults.push({ ...diagnostic, file: `releases/${rel.folderName}/${diagnostic.path || 'panels'}` });
+    }
     if (rel.rawInfoSource) {
       normalizedCards.push(rel.card);
       rawInfoIndex.push({
@@ -364,6 +368,7 @@ async function build() {
 
   console.log(`Built site with ${rawInfoIndex.length} metadata cards from ${releases.length} release folders -> ${OUT_DIR}`);
   reportValidation(validationResults);
+  reportPanelValidation(panelValidationResults);
 }
 
 // Shared source modules shipped to the browser author preview. Copied verbatim
@@ -434,6 +439,14 @@ function reportValidation(results) {
     console.log(`  ${failing.length} card(s) with errors: ${failing.map(r => r.file.replace(/^releases\//, '').replace(/\/info\.yaml$/, '')).join(', ')}`);
     console.log('  Run `npm run validate-info` for details.');
   }
+}
+
+function reportPanelValidation(diagnostics) {
+  if (!diagnostics.length) return;
+  const errors = diagnostics.filter(item => item.severity === 'error').length;
+  const warnings = diagnostics.filter(item => item.severity === 'warning').length;
+  console.log(`custom panel validation (non-fatal): ${errors} error(s), ${warnings} warning(s).`);
+  for (const item of diagnostics) console.log(`  ${item.severity}: ${item.file}: ${item.message}`);
 }
 
 build().catch(err => {

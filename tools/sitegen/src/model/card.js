@@ -301,11 +301,28 @@ function matchingRows(rows, position) {
   ];
 }
 
-function normalizeSocketListForPosition(items, mapping, warnings, fieldName, position) {
+function rowAppliesToPanel(row, panelId) {
+  const when = rowWhen(row);
+  const keys = Object.keys(when);
+  if (!keys.length) return true;
+  if (keys.some(key => normalizeKey(key) !== 'panel')) return false;
+  return normalizedWhenValue(row, 'panel') === panelId;
+}
+
+function matchingRowsForContext(rows, position, panelId) {
+  if (!panelId) return matchingRows(rows, position);
+  const applicable = rows.filter(row => isPlainObject(row) && rowAppliesToPanel(row, panelId));
+  return [
+    ...applicable.filter(row => !normalizedWhenValue(row, 'panel')),
+    ...applicable.filter(row => normalizedWhenValue(row, 'panel') === panelId),
+  ];
+}
+
+function normalizeSocketListForContext(items, mapping, warnings, fieldName, position, panelId = '') {
   if (!Array.isArray(items)) return normalizeSocketList(items, mapping, warnings, fieldName);
 
   const resolved = new Map();
-  for (const item of matchingRows(items, position)) {
+  for (const item of matchingRowsForContext(items, position, panelId)) {
     const apiId = textValue(field(item, 'id'));
     const slot = mappedSlot(mapping, apiId);
     if (!slot) {
@@ -366,7 +383,7 @@ function switchItem(info, key) {
   return isPlainObject(controlsSwitch) ? field(controlsSwitch, key) : undefined;
 }
 
-function normalizeControls(info, warnings, position) {
+function normalizeControls(info, warnings, position, panelId = '') {
   const controls = {};
   const directControls = field(field(info, 'panel'), 'controls');
   if (isPlainObject(directControls)) {
@@ -377,14 +394,14 @@ function normalizeControls(info, warnings, position) {
   }
 
   const rows = listValue(field(field(info, 'controls'), 'knobs'), warnings, 'controls.knobs');
-  for (const row of matchingRows(rows, position)) {
+  for (const row of matchingRowsForContext(rows, position, panelId)) {
     for (const key of KNOB_KEYS) {
       const knob = normalizedControl(field(row, key), warnings, `controls.knobs.${key}`);
       if (knob) controls[key] = { ...(controls[key] || {}), ...knob };
     }
   }
 
-  const item = switchItem(info, position);
+  const item = position ? switchItem(info, position) : undefined;
   if (item !== undefined) {
     const zControl = isPlainObject(item)
       ? normalizedControl(item, warnings, `controls.switch.${position}`, position)
@@ -435,7 +452,7 @@ function normalizeSwitchModes(info, warnings) {
   return modes;
 }
 
-function normalizeLeds(info, warnings, position) {
+function normalizeLeds(info, warnings, position, panelId = '') {
   const directLeds = field(info, 'leds');
   if (directLeds != null) {
     if (typeof directLeds === 'string') {
@@ -458,7 +475,7 @@ function normalizeLeds(info, warnings, position) {
   const rows = listValue(field(field(info, 'controls'), 'leds'), warnings, 'controls.leds');
   const resolved = new Map();
   let anonymousId = 0;
-  for (const row of matchingRows(rows, position)) {
+  for (const row of matchingRowsForContext(rows, position, panelId)) {
     for (const item of listValue(field(row, 'items'), warnings, 'controls.leds.items')) {
       if (!isPlainObject(item)) continue;
       const id = textValue(field(item, 'id')) || `anonymous-${anonymousId++}`;
@@ -491,8 +508,8 @@ function resolvePanelView(info, warnings, position, switchModes) {
   const panelInfo = hashValue(field(info, 'panel'), warnings, 'panel');
   const panel = {
     controls: normalizeControls(info, warnings, position),
-    inputs: normalizeSocketListForPosition(field(panelInfo, 'inputs'), API_INPUT_KEYS, warnings, 'panel.inputs', position),
-    outputs: normalizeSocketListForPosition(field(panelInfo, 'outputs'), API_OUTPUT_KEYS, warnings, 'panel.outputs', position),
+    inputs: normalizeSocketListForContext(field(panelInfo, 'inputs'), API_INPUT_KEYS, warnings, 'panel.inputs', position),
+    outputs: normalizeSocketListForContext(field(panelInfo, 'outputs'), API_OUTPUT_KEYS, warnings, 'panel.outputs', position),
   };
   if (!Object.keys(panel.controls).length) delete panel.controls;
   if (!Object.keys(panel.inputs).length) delete panel.inputs;
@@ -503,6 +520,25 @@ function resolvePanelView(info, warnings, position, switchModes) {
     panel,
     switch_modes: switchModes,
     leds: normalizeLeds(info, warnings, position),
+  };
+}
+
+function resolveCustomPanelView(info, warnings, presentation, switchModes) {
+  const panelInfo = hashValue(field(info, 'panel'), warnings, 'panel');
+  const panelId = textValue(presentation?.id).toLowerCase();
+  const panel = {
+    controls: normalizeControls(info, warnings, '', panelId),
+    inputs: normalizeSocketListForContext(field(panelInfo, 'inputs'), API_INPUT_KEYS, warnings, 'panel.inputs', '', panelId),
+    outputs: normalizeSocketListForContext(field(panelInfo, 'outputs'), API_OUTPUT_KEYS, warnings, 'panel.outputs', '', panelId),
+  };
+  if (!Object.keys(panel.controls).length) delete panel.controls;
+  if (!Object.keys(panel.inputs).length) delete panel.inputs;
+  if (!Object.keys(panel.outputs).length) delete panel.outputs;
+  return {
+    ...sanitizeValue(presentation),
+    panel,
+    switch_modes: switchModes,
+    leds: normalizeLeds(info, warnings, '', panelId),
   };
 }
 
@@ -533,6 +569,7 @@ export function buildCanonicalCardModel({
   gitLastDate = '',
   blameDate = '',
   contentDate = '',
+  customPanels = null,
 }) {
   const warnings = [];
   const info = isPlainObject(rawYaml) ? rawYaml : {};
@@ -577,12 +614,15 @@ export function buildCanonicalCardModel({
     .filter(position => hasPositionMetadata(info, position))
     .map(position => resolvePanelView(info, warnings, position, switchModes));
   const defaultPanelView = panelViews.find(view => view.id === 'middle') || panelViews[0];
+  const customPanelViews = customPanels
+    ? listValue(customPanels.items).map(item => resolveCustomPanelView(info, warnings, item, switchModes))
+    : null;
 
   const panelInfo = hashValue(field(info, 'panel'), warnings, 'panel');
   const panel = defaultPanelView?.panel || {
     controls: normalizeControls(info, warnings, 'middle'),
-    inputs: normalizeSocketListForPosition(field(panelInfo, 'inputs'), API_INPUT_KEYS, warnings, 'panel.inputs', 'middle'),
-    outputs: normalizeSocketListForPosition(field(panelInfo, 'outputs'), API_OUTPUT_KEYS, warnings, 'panel.outputs', 'middle'),
+    inputs: normalizeSocketListForContext(field(panelInfo, 'inputs'), API_INPUT_KEYS, warnings, 'panel.inputs', 'middle'),
+    outputs: normalizeSocketListForContext(field(panelInfo, 'outputs'), API_OUTPUT_KEYS, warnings, 'panel.outputs', 'middle'),
   };
   if (panel.controls && !Object.keys(panel.controls).length) delete panel.controls;
   if (panel.inputs && !Object.keys(panel.inputs).length) delete panel.inputs;
@@ -653,8 +693,15 @@ export function buildCanonicalCardModel({
     metadata,
   };
 
-  if (panelViews.length) {
+  if (customPanelViews) {
     card.panel_views = {
+      source: 'custom',
+      default: textValue(customPanels.default) || customPanelViews[0]?.id || '',
+      items: customPanelViews,
+    };
+  } else if (panelViews.length) {
+    card.panel_views = {
+      source: 'generated',
       default: defaultPanelView.id,
       items: panelViews,
     };
