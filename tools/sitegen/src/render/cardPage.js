@@ -106,6 +106,11 @@ function renderPanel(panel, panelImg, positionControl = null, switchModes = {}) 
   return `<figure class="program-card-panel" aria-label="Workshop Computer panel"><img src="${esc(panelImg)}" alt="Workshop Computer panel">${labels.join('')}${renderPanelSwitchPositions(switchModes, positionControl)}</figure>`;
 }
 
+/** Render one generated panel artwork figure for Author-page/CLI SVG export. */
+export function renderPanelArtwork(snapshot, panelImg) {
+  return renderPanel(snapshot?.panel || {}, panelImg, null, snapshot?.switch_modes || {});
+}
+
 function renderSwitchSection(snapshot, positionControl = null) {
   const switchModes = snapshot.switch_modes || {};
   if (positionControl) {

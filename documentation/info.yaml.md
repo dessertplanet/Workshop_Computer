@@ -195,15 +195,15 @@ default: performance
 panels:
   - id: overview
     name: Overview
-    image: overview.png
+    image: overview.svg
     content: overview.md
   - id: performance
     name: Performance Mode
-    image: performance.png
+    image: performance.svg
     content: performance.md
   - id: slice-editor
     name: Slice Editor
-    image: slice-editor.png
+    image: slice-editor.svg
     content: slice-editor.md
 ```
 
@@ -211,7 +211,7 @@ panels:
 - `name` is arbitrary display text and may be changed without changing the ID.
 - `image` and `content` are safe paths relative to `panels/`; absolute paths, traversal, and symbolic links are rejected.
 - `default` must name a valid panel ID. Manifest order is display order.
-- Every image must be a **560 × 1785 px PNG**, matching the fixed-size image downloaded by the Author page.
+- Every image must be a self-contained SVG with `viewBox="0 0 560 1785"`. Generated/downloaded SVGs use the documentation-default intrinsic viewport of `width="280"` and `height="892.5"`. Scripts, `foreignObject`, event handlers, and external resources are rejected.
 - Every presentation requires companion Markdown. It is rendered beside the image instead of the generated controls/I/O/LED reference, and provides the accessible textual explanation of text embedded in the image.
 - Relative images and links in the Markdown resolve inside `panels/`.
 
@@ -230,6 +230,8 @@ controls:
 ```
 
 Sockets and LED rows support the same `when.panel` condition. Unconditioned rows form the shared base and matching rows override it. A condition must use either `when.z` or `when.panel`, never both. `when.panel` requires a custom manifest and must exactly match one of its IDs.
+
+The Author page and standalone panel-design skill use the shared browser-side vector renderer and produce self-contained SVGs with the canonical 560 × 1785 viewBox. Run `npm run setup-panel-renderer` once when the skill reports that its pinned headless Chromium runtime or Linux dependencies are missing. Add the approved SVG and companion Markdown to `panels/`, then reference them from the manifest.
 
 ## Authoring guidance
 

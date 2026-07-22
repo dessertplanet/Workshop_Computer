@@ -165,7 +165,7 @@ The Advanced YAML preview needs a local layout override:
 5. The state layer writes an unconditioned base entry for All positions or a `when: { z: ... }` override for a position.
 6. The preview updates immediately and retains the selected switch position.
 
-For automatic panel authoring, only expose Up/Middle/Down. `tap` belongs to switch actions and must never appear as an automatic panel view. Complex authors may separately supply an arbitrary `panels/manifest.yaml` collection; the Author page is only responsible for exporting correctly sized 560 × 1785 panel images for that workflow.
+For automatic panel authoring, only expose Up/Middle/Down. `tap` belongs to switch actions and must never appear as an automatic panel view. Complex authors may separately supply an arbitrary `panels/manifest.yaml` collection; the Author page exports self-contained SVG panel images with a canonical `0 0 560 1785` viewBox for that workflow.
 
 ### Optional detail tiles
 
