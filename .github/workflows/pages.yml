@@ -33,6 +33,10 @@ jobs:
         run: |
           npm ci --prefix tools/sitegen || npm install --prefix tools/sitegen
 
+      - name: Run tests
+        run: |
+          npm test --prefix tools/sitegen
+
       - name: Build site
         run: |
           npm run build --prefix tools/sitegen
