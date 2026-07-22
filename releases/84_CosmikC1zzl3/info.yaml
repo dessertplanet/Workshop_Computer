@@ -7,7 +7,7 @@ summary: >-
   Stable phase-distortion synthesiser and Turing machine firmware with Web MIDI
   envelope readback, PD, detune, eight waveform families, hosted CZ patch
   import, USB MIDI device/host operation, and optional Turing MIDI output.
-description: >-
+short-description: >-
   Stable phase-distortion synthesiser and Turing machine firmware with Web MIDI
   envelope readback, PD, detune, eight waveform families, hosted CZ patch
   import, USB MIDI device/host operation, and optional Turing MIDI output.
