@@ -354,6 +354,8 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
   const panelRail = basic ? '' : renderPanelRail(card, panelImg);
   const discussionUrl = metadata.discussion_url || DEFAULT_DISCUSSION;
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
+  const sourceLinkUrl = metadata.repository || sourceUrl;
+  const sourceLinkLabel = metadata.repository ? 'Upstream repository' : 'Release folder in the Workshop Computer repo';
 
   const dataSources = !basic && Array.isArray(card.source) && card.source.length
     ? `<div class="program-card-data-sources"><details><summary>Data sources</summary><p>${card.source.map(item => `<code title="${esc(item)}">${esc(truncate(item, 56))}</code>`).join(', ')}</p></details></div>`
@@ -432,7 +434,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
       ${metadata.created && metadata.created !== 'n/a' ? `<div><dt>Created</dt><dd>${esc(metadata.created)}</dd></div>` : ''}
       ${card.memory && card.memory.size ? `<div><dt>Card memory</dt><dd>${esc(String(card.memory.size).toUpperCase())} ${esc(card.memory.requirement || 'supported')}</dd></div>` : ''}
       ${readmeUrl ? `<div><dt>Read more</dt><dd><a href="${esc(readmeUrl)}">README in the Workshop Computer repo</a></dd></div>` : ''}
-      ${sourceUrl ? `<div><dt>Source</dt><dd><a href="${esc(sourceUrl)}">Release folder on GitHub</a></dd></div>` : ''}
+      ${sourceLinkUrl ? `<div><dt>Source</dt><dd><a href="${esc(sourceLinkUrl)}">${sourceLinkLabel}</a></dd></div>` : ''}
       <div><dt>Support</dt><dd><a href="${esc(discussionUrl)}">Ask questions, contact the designer, or share feedback</a></dd></div>
     </dl></details>
     ${notesMarkup}
