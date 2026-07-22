@@ -117,6 +117,11 @@ async function build() {
     path.join(ROOT, 'tools', 'sitegen', 'assets', 'program-cards.css'),
     path.join(OUT_DIR, 'assets', 'program-cards.css')
   );
+  await ensureDir(path.join(OUT_DIR, 'assets', 'fonts'));
+  await fs.copyFile(
+    path.join(ROOT, 'tools', 'sitegen', 'node_modules', '@fontsource', 'inter', 'files', 'inter-latin-800-normal.woff2'),
+    path.join(OUT_DIR, 'assets', 'fonts', 'inter-latin-800-normal.woff2')
+  );
 
   // Copy program-card panel diagram asset
   const panelSrcDir = path.join(ROOT, 'tools', 'sitegen', 'assets', 'program_cards');

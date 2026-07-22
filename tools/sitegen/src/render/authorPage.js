@@ -41,7 +41,7 @@ export function renderAuthorPage({ documentKind = 'new' } = {}) {
         </div>
         <div class="author-toolbar__downloads">
           <button id="download-source" class="btn download" type="button">Download info.yaml</button>
-          <button id="download-panel-image" class="btn secondary" type="button">Download panel image</button>
+          <button id="download-panel-image" class="btn secondary" type="button">Download panel SVG</button>
           <button id="start-fresh" class="btn secondary" type="button">Start fresh</button>
         </div>
       </div>

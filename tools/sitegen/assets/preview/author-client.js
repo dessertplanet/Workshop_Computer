@@ -6,13 +6,12 @@ import { renderCardArticle } from './lib/render/cardPage.js';
 import { renderReadmeAndDocs } from './lib/render/cardPage.js';
 import { panelPositions } from './lib/render/panelPositions.js';
 import { resolveAudioSamples, getAudioField } from './lib/utils/audio.js';
+import { renderPanelElementToSvgBlob } from '../assets/js/panel-export.js';
 
 const REQUIRED = ['Name', 'short-description', 'summary', 'Language', 'Creator', 'Version', 'Status'];
 const STORAGE_KEY = 'workshop-computer-author-new';
 const DIFFERENTIAL_STORAGE_KEY = 'workshop-computer-author-differential-controls';
 const SWITCH_POSITIONS = ['up', 'middle', 'down'];
-const PANEL_EXPORT_WIDTH = 560;
-const PANEL_EXPORT_HEIGHT = 1785;
 const OPTIONAL_KEYS = ['tags', 'readme', 'demo-link', 'contact'];
 const SPLIT_STORAGE_KEY = 'workshop-computer-author-editor-width';
 const DOCUMENT_KIND = document.querySelector('.author-page')?.dataset.documentKind || 'new';
@@ -1088,106 +1087,6 @@ function downloadSource() {
   URL.revokeObjectURL(url);
 }
 
-async function loadExportImage(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Could not load panel artwork (HTTP ${response.status}).`);
-  const objectUrl = URL.createObjectURL(await response.blob());
-  const image = new Image();
-  try {
-    await new Promise((resolve, reject) => {
-      image.onload = resolve;
-      image.onerror = () => reject(new Error('The browser could not render the panel artwork.'));
-      image.src = objectUrl;
-    });
-    return image;
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
-function wrapCanvasText(context, text, maxWidth, breakAnywhere) {
-  const lines = [];
-  const appendCharacters = value => {
-    let line = '';
-    for (const character of value) {
-      const candidate = line + character;
-      if (line && context.measureText(candidate).width > maxWidth) {
-        lines.push(line.trimEnd());
-        line = character.trimStart();
-      } else {
-        line = candidate;
-      }
-    }
-    if (line) lines.push(line.trim());
-  };
-  for (const paragraph of String(text).split('\n')) {
-    if (breakAnywhere) {
-      appendCharacters(paragraph);
-      continue;
-    }
-    let line = '';
-    for (const word of paragraph.trim().split(/\s+/).filter(Boolean)) {
-      const candidate = line ? `${line} ${word}` : word;
-      if (line && context.measureText(candidate).width > maxWidth) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = candidate;
-      }
-      if (context.measureText(line).width > maxWidth) {
-        const oversized = line;
-        line = '';
-        appendCharacters(oversized);
-      }
-    }
-    if (line) lines.push(line);
-  }
-  return lines.filter(Boolean);
-}
-
-function drawPanelLabel(context, panelRect, element) {
-  const rect = element.getBoundingClientRect();
-  const textElement = element.matches('.program-card-panel-switch-position') ? element.querySelector('strong') : element;
-  if (!textElement) return;
-  const style = getComputedStyle(element);
-  const textStyle = getComputedStyle(textElement);
-  const neutralSwitchPosition = element.matches('.program-card-panel-switch-position[aria-pressed="true"]');
-  const x = rect.left - panelRect.left;
-  const y = rect.top - panelRect.top;
-  const backgroundColor = neutralSwitchPosition ? '#fdfdfd' : style.backgroundColor;
-  if (backgroundColor !== 'rgba(0, 0, 0, 0)') {
-    context.fillStyle = backgroundColor;
-    context.fillRect(x, y, rect.width, rect.height);
-  }
-  const borderWidth = neutralSwitchPosition ? 0 : Number.parseFloat(style.borderTopWidth) || 0;
-  if (borderWidth && style.borderTopColor !== 'rgba(0, 0, 0, 0)') {
-    context.strokeStyle = style.borderTopColor;
-    context.lineWidth = borderWidth;
-    context.strokeRect(x + borderWidth / 2, y + borderWidth / 2, rect.width - borderWidth, rect.height - borderWidth);
-  }
-  const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
-  const paddingRight = Number.parseFloat(style.paddingRight) || 0;
-  const maxWidth = Math.max(1, rect.width - paddingLeft - paddingRight);
-  context.font = `${textStyle.fontWeight} ${textStyle.fontSize} ${textStyle.fontFamily}`;
-  context.fillStyle = textStyle.color;
-  context.textAlign = 'center';
-  context.textBaseline = 'alphabetic';
-  const rawText = textElement.innerText || textElement.textContent || '';
-  const text = textStyle.textTransform === 'uppercase' ? rawText.toUpperCase() : rawText;
-  const lines = wrapCanvasText(context, text, maxWidth, element.classList.contains('program-card-panel-text--long'));
-  const lineHeight = Number.parseFloat(textStyle.lineHeight) || Number.parseFloat(textStyle.fontSize) || 11;
-  const totalHeight = lines.length * lineHeight;
-  const firstBaseline = y + (rect.height - totalHeight) / 2 + lineHeight * 0.82;
-  lines.forEach((line, index) => context.fillText(line, x + rect.width / 2, firstBaseline + index * lineHeight));
-}
-
-function canvasBlob(canvas) {
-  return new Promise((resolve, reject) => canvas.toBlob(blob => {
-    if (blob) resolve(blob);
-    else reject(new Error('The browser could not create the panel image.'));
-  }, 'image/png'));
-}
-
 async function downloadPanelImage() {
   const panel = [...els.preview.querySelectorAll('.program-card-use__panel .program-card-panel')]
     .find(element => element.offsetParent !== null);
@@ -1200,30 +1099,15 @@ async function downloadPanelImage() {
   els.panelDownload.disabled = true;
   els.panelDownload.textContent = 'Preparing image…';
   try {
-    const rect = panel.getBoundingClientRect();
-    const panelArtwork = panel.querySelector('img');
-    if (!panelArtwork) throw new Error('The panel artwork is missing.');
-    const image = await loadExportImage(panelArtwork.currentSrc || panelArtwork.src);
-    const canvas = document.createElement('canvas');
-    canvas.width = PANEL_EXPORT_WIDTH;
-    canvas.height = PANEL_EXPORT_HEIGHT;
-    const context = canvas.getContext('2d');
-    context.scale(PANEL_EXPORT_WIDTH / rect.width, PANEL_EXPORT_HEIGHT / rect.height);
-    context.fillStyle = '#fff';
-    context.fillRect(0, 0, rect.width, rect.height);
-    context.drawImage(image, 0, 0, rect.width, rect.height);
-    for (const label of panel.querySelectorAll('.program-card-panel__label,.program-card-panel-switch-position.has-value')) {
-      drawPanelLabel(context, rect, label);
-    }
-    const pngUrl = URL.createObjectURL(await canvasBlob(canvas));
+    const svgUrl = URL.createObjectURL(await renderPanelElementToSvgBlob(panel));
     const filename = cleanText(currentEntry?.id || data.Name || 'new-card').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'new-card';
     const link = document.createElement('a');
-    link.href = pngUrl;
-    link.download = `${filename}-panel.png`;
+    link.href = svgUrl;
+    link.download = `${filename}-panel.svg`;
     document.body.appendChild(link);
     link.click();
     link.remove();
-    setTimeout(() => URL.revokeObjectURL(pngUrl), 1000);
+    setTimeout(() => URL.revokeObjectURL(svgUrl), 1000);
     els.status.textContent = '';
     els.status.className = 'author-status';
   } catch (error) {
