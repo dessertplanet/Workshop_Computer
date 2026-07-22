@@ -118,7 +118,9 @@ document.addEventListener('click', function(e) {
   if (!root) return;
   var selected = button.getAttribute('data-panel-position-button');
   root.querySelectorAll('[data-panel-position-button]').forEach(function(candidate) {
-    candidate.setAttribute('aria-pressed', String(candidate.getAttribute('data-panel-position-button') === selected));
+    var active = candidate.getAttribute('data-panel-position-button') === selected;
+    candidate.setAttribute('aria-pressed', String(active));
+    if (candidate.getAttribute('role') === 'tab') candidate.setAttribute('aria-selected', String(active));
   });
   root.querySelectorAll('[data-panel-position-view]').forEach(function(view) {
     var active = view.getAttribute('data-panel-position-view') === selected;
@@ -129,6 +131,33 @@ document.addEventListener('click', function(e) {
     var active = panel.getAttribute('data-panel-position-panel') === selected;
     panel.hidden = !active;
     panel.setAttribute('aria-hidden', String(!active));
+  });
+  if (button.classList.contains('program-card-panel-choice') && window.history && window.URL) {
+    var url = new URL(window.location.href);
+    url.searchParams.set('panel', selected);
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+  }
+});
+
+document.addEventListener('keydown', function(e) {
+  var button = e.target.closest('.program-card-panel-choice');
+  if (!button || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  var buttons = Array.from(button.parentElement.querySelectorAll('.program-card-panel-choice'));
+  var index = buttons.indexOf(button);
+  if (e.key === 'Home') index = 0;
+  else if (e.key === 'End') index = buttons.length - 1;
+  else index = (index + (e.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length;
+  e.preventDefault();
+  buttons[index].focus();
+  buttons[index].click();
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+  if (!window.URLSearchParams) return;
+  var requested = new URLSearchParams(window.location.search).get('panel');
+  if (!requested) return;
+  document.querySelectorAll('.program-card-panel-choice').forEach(function(button) {
+    if (button.getAttribute('data-panel-position-button') === requested) button.click();
   });
 });
 

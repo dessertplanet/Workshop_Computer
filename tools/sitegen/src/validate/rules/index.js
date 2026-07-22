@@ -240,6 +240,16 @@ function validateWhen(when, path, key, out) {
         message: `${path}.z should be up, middle, or down; tap is switch action metadata and hold is the down position.` });
     }
   }
+  if (when.panel !== undefined) {
+    if (typeof when.panel !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(when.panel)) {
+      out.push({ severity: 'warning', path: `${path}.panel`, key,
+        message: `${path}.panel should be a lowercase kebab-case id from panels/manifest.yaml.` });
+    }
+  }
+  if (when.z !== undefined && when.panel !== undefined) {
+    out.push({ severity: 'error', path, key,
+      message: `${path} cannot combine z and panel; use one physical-position or custom-panel context.` });
+  }
   if (when.gesture !== undefined) {
     out.push({ severity: 'warning', path: `${path}.gesture`, key,
       message: `${path}.gesture is legacy syntax; describe a tap in controls.switch.tap, and use when.z: down for the held-down panel state.` });
