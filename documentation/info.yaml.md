@@ -9,7 +9,8 @@ Keys are case-insensitive. Hyphens and spaces in key names are equivalent (`audi
 ```yaml
 draft: true
 Name: Card Display Name
-Description: One-line summary of what the card does
+short-description: One-line catalog tagline
+summary: Longer operator overview of what the card does and how it is used
 Language: C++ (Pico SDK)
 Creator: Your Name
 Version: 1.0
@@ -23,8 +24,8 @@ License: MIT
 |-------|----------|------|-------------|
 | `draft` | no | boolean | When `true`, structured metadata in this file is still under author review. Set to `false` when `Name`, `contact`, `License`, `panel`, and related fields are confirmed. Not rendered on detail pages yet; parsed for tooling and future site UI. |
 | `Name` | yes | string | Display title on the site index and detail page (see sitegen). |
-| `Description` | yes | string | Short blurb shown on the index and detail aside. |
-| `summary` | no | string | Short operator summary shown in the card header. Falls back to `Description` when absent. |
+| `short-description` | yes | string | Concise catalog tagline shown on index tiles, discovery shelves, and archive rows. |
+| `summary` | yes | string | Longer operator overview shown beneath the title on the card detail page. |
 | `Language` | yes | string | Implementation language or stack (e.g. `C++ (Pico SDK)`, `Lua / Blackbird`). |
 | `Creator` | yes | string | Author or maintainer name. |
 | `Version` | yes | string | Semantic or project version string. |
@@ -108,7 +109,6 @@ uf2:
 |-------|----------|------|-------------|
 | `demo-link` | no | string (URL) | Optional YouTube URL (`watch`, `youtu.be`, `/shorts/`, `/embed/`). Rendered as a demo-video thumbnail on the detail page that plays inline when clicked. README YouTube links also get inline embeds. |
 | `audio-sample` | no | string or list | Demo audio. Accepts a single value or a list. Each value may be: a **repo-relative file** (e.g. `samples/demo.wav`, resolved to a raw URL and rendered with an `<audio>` player); a **SoundCloud** track/set URL (embedded as a player, derived from the URL — no API key); a **Bandcamp** *EmbeddedPlayer* URL (the iframe `src` from Bandcamp's Share → Embed dialog); or any other URL (shown as a link). You may also paste a whole embed `<iframe>` snippet (we extract the player `src` + height), but you must single-quote it in YAML. List items may also be `{ url, title }` objects (`title` shows above the player). |
-
 ```yaml
 # single file
 audio-sample: samples/demo.wav
@@ -148,7 +148,7 @@ readme: |
   Patch an audio signal to **Audio In 1**, then use Main to set the amount.
 ```
 
-`readme` replaces the former `manual` field. Existing authored `manual` content should be migrated to `readme`; `summary` remains the short player-facing header text.
+`readme` replaces the former `manual` field. Existing authored `manual` content should be migrated to `readme`; `summary` remains the operator overview shown in the card detail header.
 
 See [`releases/82_Computer_Grids/info.yaml`](../releases/82_Computer_Grids/info.yaml) for a full structured example.
 
@@ -211,9 +211,9 @@ controls:
   knobs: ...
 ```
 
-**Preserve** existing `Description`, `Language`, `Creator`, `Version`, `Status`, `License`, `Editor`, and `Repository` values unless deployment rules require a change.
+**Preserve** existing `short-description`, `summary`, `Language`, `Creator`, `Version`, `Status`, `License`, `Editor`, and `Repository` values unless deployment rules require a change.
 
-Every card must include **`Name`** — the site index and detail page title come from this field (not `Description`). Legacy `Title` is still read as a fallback if `Name` is absent.
+Every card must include **`Name`** — the site index and detail page title come from this field. Legacy `Title` is still read as a fallback if `Name` is absent.
 
 ## Automation
 
