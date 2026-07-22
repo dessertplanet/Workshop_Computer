@@ -355,7 +355,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     <div class="program-card-hero__main">
       ${basic ? '' : renderTags(card)}
       <h1><span class="program-card-page__number">${esc(cardNumber(card))}</span> ${esc(inline(card.title || card.id || 'Untitled card'))}</h1>
-      ${summary ? `<p>${esc(truncate(summary, 240))}</p>` : ''}
+      ${summary ? `<p>${esc(summary)}</p>` : ''}
       <div class="program-card-hero__meta">${metadata.creator ? `<span>By ${esc(metadata.creator)}</span>` : ''}${basic ? '' : memoryMarkup}</div>
       <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>
       <div class="program-card-sha" data-sha-display role="status" aria-live="polite" hidden>SHA256: <code class="program-card-sha__value" data-sha-value></code> <button type="button" class="program-card-sha__verify" data-verify-open>How to verify</button></div>
