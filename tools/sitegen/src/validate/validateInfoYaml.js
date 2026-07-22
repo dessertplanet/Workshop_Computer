@@ -7,6 +7,7 @@
 
 import { getInfoYamlSchemaAdapter } from '../schema/schemaAdapter.js';
 import { normalizeYamlKey } from '../utils/strings.js';
+import { validateWithAjv } from './ajvStructural.js';
 import { allRules } from './rules/index.js';
 
 /** Build a normalized-key index of a raw object's own top-level entries. */
@@ -71,6 +72,9 @@ export function validateInfoYaml(source, opts = {}) {
   }
 
   const ctx = makeContext(source, schema);
+  for (const diag of validateWithAjv(source.data || {})) {
+    diagnostics.push(finalizeDiagnostic(diag, ctx, 'ajv-schema'));
+  }
   for (const rule of rules) {
     let produced = [];
     try {

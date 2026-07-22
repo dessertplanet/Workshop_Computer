@@ -1,11 +1,13 @@
 import { fsAsync as fs, ensureDir, writeFileEnsured, listSubdirs, toPosix } from './utils/fs.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build as esbuild } from 'esbuild';
 import { makeRawUrl as makeRawUrlExternal } from './links.js';
 import { renderLayout } from './render/layout.js';
 import { discoverRelease as discoverReleaseMod } from './discover/release.js';
 import { githubPagesBase, copyWebAssets } from './discover/webEditor.js';
 import { getInfoYamlSchemaAdapter } from './schema/schemaAdapter.js';
+import { infoYamlJsonSchema } from './schema/infoYamlJsonSchema.js';
 import { renderCardArticle, renderReadmeAndDocs } from './render/cardPage.js';
 import { renderDiscovery, renderArchive, renderTile } from './render/discovery.js';
 import { curation } from './curation/index.js';
@@ -92,6 +94,7 @@ async function build() {
   await fs.rm(OUT_DIR, { recursive: true, force: true });
   await ensureDir(OUT_DIR);
   await ensureDir(path.join(OUT_DIR, 'assets'));
+  await writeFileEnsured(path.join(OUT_DIR, 'schema', 'info-yaml.json'), JSON.stringify(infoYamlJsonSchema, null, 2));
   // Copy physical CSS asset
   const cssSrc = path.join(ROOT, 'tools', 'sitegen', 'assets', 'style.css');
   const cssDest = path.join(OUT_DIR, 'assets', 'style.css');
@@ -385,7 +388,9 @@ const PREVIEW_LIB_FILES = [
   'utils/audio.js',
   'schema/schemaDefinition.js',
   'schema/schemaAdapter.js',
+  'schema/infoYamlJsonSchema.js',
   'validate/parseSource.js',
+  'validate/ajvStructural.js',
   'validate/validateInfoYaml.js',
   'validate/rules/index.js',
   'model/card.js',
@@ -407,7 +412,7 @@ async function buildPreviewTool(suggestions = {}) {
     await fs.copyFile(path.join(__dirname, rel), dest);
   }
 
-  // Vendor browser builds for the bare `yaml` / `marked` imports.
+  // Vendor browser builds for the bare `yaml` / `marked` / `ajv` imports.
   const nodeModules = path.join(ROOT, 'tools', 'sitegen', 'node_modules');
   await fs.cp(path.join(nodeModules, 'yaml', 'browser'), path.join(vendorDir, 'yaml'), { recursive: true });
   await ensureDir(vendorDir);
@@ -415,6 +420,20 @@ async function buildPreviewTool(suggestions = {}) {
     path.join(nodeModules, 'marked', 'lib', 'marked.esm.js'),
     path.join(vendorDir, 'marked.esm.js')
   );
+  await esbuild({
+    stdin: {
+      contents: "export { default } from 'ajv';",
+      resolveDir: __dirname,
+      sourcefile: 'ajv-browser-entry.js',
+      loader: 'js',
+    },
+    bundle: true,
+    format: 'esm',
+    platform: 'browser',
+    target: ['es2020'],
+    outfile: path.join(vendorDir, 'ajv.esm.js'),
+    minify: true,
+  });
 
   // Client script + page.
   await fs.copyFile(
