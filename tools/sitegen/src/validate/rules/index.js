@@ -379,8 +379,6 @@ export const uf2Entries = {
 };
 
 export const allRules = [
-  requiredCoreFields,
-  knownFieldTypes,
   unknownTopLevelKeys,
   tagsFormat,
   editorValue,
