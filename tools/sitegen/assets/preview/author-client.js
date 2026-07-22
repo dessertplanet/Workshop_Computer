@@ -78,6 +78,7 @@ let licenseWasManuallySelected = false;
 let differentControls = localStorage.getItem(DIFFERENTIAL_STORAGE_KEY) === 'true';
 let activePosition = 'middle';
 let currentMode = IS_EXISTING ? 'yaml' : 'author';
+let basicPanelEditable = true;
 const openOptionals = new Set(OPTIONAL_KEYS.filter(key => hasOptionalValue(key)));
 let yamlTimer;
 let positionClickTimer;
@@ -122,37 +123,37 @@ function isObject(value) {
 
 function basicCompatibility(source, parsed) {
   const reasons = [];
-  const top = new Set(['draft', 'Name', 'short-description', 'summary', 'Language', 'Creator', 'Version', 'Status', 'License', 'tags', 'readme', 'demo-link', 'contact', 'panel', 'controls']);
-  const textFields = ['Name', 'short-description', 'summary', 'Language', 'Creator', 'Version', 'Status', 'License', 'readme', 'demo-link'];
+  const panelReasons = [];
+  const textFields = ['Name', 'short-description', 'summary', 'Language', 'Creator', 'Version', 'Status', 'License', 'readme', 'demo-link', 'discussion'];
   const positions = new Set(SWITCH_POSITIONS);
   const inputs = new Set(Object.values(inputIds));
   const outputs = new Set(Object.values(outputIds));
   const keysOnly = (value, allowed) => isObject(value) && Object.keys(value).every(key => allowed.has(key));
+  const scalarOk = value => value == null || ['string', 'number', 'boolean'].includes(typeof value);
   const conditionOk = value => value == null || (keysOnly(value, new Set(['z'])) && positions.has(value.z));
   const partOk = value => keysOnly(value, new Set(['name', 'description'])) && Object.values(value).every(item => typeof item === 'string');
   if (!isObject(parsed)) return { compatible: false, reasons: ['The YAML root must be a mapping.'] };
   if (/^\s*#|\s+#|(^|\s)[&*!][\w-]+|^\s*<<\s*:/m.test(source)) reasons.push('YAML comments, anchors, aliases, tags, or merge keys cannot be preserved.');
-  for (const key of Object.keys(parsed)) if (!top.has(key)) reasons.push(`Unsupported field: ${key}`);
-  for (const key of textFields) if (parsed[key] != null && typeof parsed[key] !== 'string') reasons.push(`${key} must be text.`);
+  for (const key of textFields) if (!scalarOk(parsed[key])) reasons.push(`${key} must be a scalar value.`);
   if (parsed.draft != null && typeof parsed.draft !== 'boolean') reasons.push('draft must be true or false.');
   if (parsed.tags != null && (!Array.isArray(parsed.tags) || parsed.tags.some(item => typeof item !== 'string'))) reasons.push('tags must be a list of text values.');
-  if (parsed.contact != null && (!keysOnly(parsed.contact, new Set(['website'])) || (parsed.contact.website != null && typeof parsed.contact.website !== 'string'))) reasons.push('contact contains fields Basic mode cannot edit.');
+  if (parsed.contact != null && !isObject(parsed.contact)) reasons.push('contact must be a mapping.');
   const controls = parsed.controls;
   if (controls != null) {
-    if (!keysOnly(controls, new Set(['knobs', 'switch']))) reasons.push('controls contains unsupported sections.');
+    if (!keysOnly(controls, new Set(['knobs', 'switch']))) panelReasons.push('controls contains unsupported sections.');
     if (controls?.switch != null) {
-      if (!keysOnly(controls.switch, new Set(['up', 'middle', 'down', 'tap']))) reasons.push('controls.switch contains unsupported positions.');
-      else for (const [position, value] of Object.entries(controls.switch)) if (!partOk(value)) reasons.push(`controls.switch.${position} has unsupported data.`);
+      if (!keysOnly(controls.switch, new Set(['up', 'middle', 'down', 'tap']))) panelReasons.push('controls.switch contains unsupported positions.');
+      else for (const [position, value] of Object.entries(controls.switch)) if (!partOk(value)) panelReasons.push(`controls.switch.${position} has unsupported data.`);
     }
     if (controls?.knobs != null) {
-      if (!Array.isArray(controls.knobs)) reasons.push('controls.knobs must be a list.');
+      if (!Array.isArray(controls.knobs)) panelReasons.push('controls.knobs must be a list.');
       else {
         const seen = new Set();
         for (const row of controls.knobs) {
-          if (!keysOnly(row, new Set(['when', 'main', 'x', 'y'])) || !conditionOk(row.when)) reasons.push('A knob row has unsupported fields or conditions.');
-          for (const key of ['main', 'x', 'y']) if (row?.[key] != null && !partOk(row[key])) reasons.push(`A ${key} knob has unsupported data.`);
+          if (!keysOnly(row, new Set(['when', 'main', 'x', 'y'])) || !conditionOk(row.when)) panelReasons.push('A knob row has unsupported fields or conditions.');
+          for (const key of ['main', 'x', 'y']) if (row?.[key] != null && !partOk(row[key])) panelReasons.push(`A ${key} knob has unsupported data.`);
           const context = row?.when?.z || 'shared';
-          if (seen.has(context)) reasons.push(`Multiple knob rows use the ${context} context.`);
+          if (seen.has(context)) panelReasons.push(`Multiple knob rows use the ${context} context.`);
           seen.add(context);
         }
       }
@@ -160,29 +161,34 @@ function basicCompatibility(source, parsed) {
   }
   const panel = parsed.panel;
   if (panel != null) {
-    if (!keysOnly(panel, new Set(['inputs', 'outputs']))) reasons.push('panel contains unsupported sections.');
+    if (!keysOnly(panel, new Set(['inputs', 'outputs']))) panelReasons.push('panel contains unsupported sections.');
     for (const [side, ids] of [['inputs', inputs], ['outputs', outputs]]) {
       if (panel?.[side] == null) continue;
-      if (!Array.isArray(panel[side])) { reasons.push(`panel.${side} must be a list.`); continue; }
+      if (!Array.isArray(panel[side])) { panelReasons.push(`panel.${side} must be a list.`); continue; }
       const seen = new Set();
       for (const item of panel[side]) {
         if (!keysOnly(item, new Set(['id', 'name', 'description', 'when'])) || !ids.has(item?.id) || !conditionOk(item?.when)
-          || (item.name != null && typeof item.name !== 'string') || (item.description != null && typeof item.description !== 'string')) reasons.push(`panel.${side} contains an unsupported jack.`);
+          || (item.name != null && typeof item.name !== 'string') || (item.description != null && typeof item.description !== 'string')) panelReasons.push(`panel.${side} contains an unsupported jack.`);
         const identity = `${item?.id}:${item?.when?.z || 'shared'}`;
-        if (seen.has(identity)) reasons.push(`panel.${side} repeats ${identity}.`);
+        if (seen.has(identity)) panelReasons.push(`panel.${side} repeats ${identity}.`);
         seen.add(identity);
       }
     }
   }
-  return { compatible: reasons.length === 0, reasons: [...new Set(reasons)] };
+  return { compatible: reasons.length === 0, reasons: [...new Set(reasons)], panelReasons: [...new Set(panelReasons)] };
 }
 
 function updateBasicAvailability(source = els.yaml.value, parsed = data) {
   const button = document.querySelector('[data-mode="author"]');
   if (!IS_EXISTING || !button) return;
   const result = basicCompatibility(source, parsed);
+  basicPanelEditable = !result.panelReasons?.length;
   button.disabled = !result.compatible;
-  button.title = result.compatible ? 'Edit this card visually' : `Basic mode unavailable: ${result.reasons.join(' ')}`;
+  button.title = !result.compatible
+    ? `Basic mode unavailable: ${result.reasons.join(' ')}`
+    : basicPanelEditable
+      ? 'Edit this card visually'
+      : `Edit basic metadata visually. Panel controls remain read-only: ${result.panelReasons.join(' ')}`;
   button.setAttribute('aria-description', button.title);
   if (!result.compatible && currentMode === 'author') setMode('yaml');
 }
@@ -1321,6 +1327,7 @@ function init() {
   els.preview.addEventListener('click', event => {
     const descriptionButton = event.target.closest('[data-edit-description]');
     if (descriptionButton) {
+      if (currentMode === 'author' && !basicPanelEditable) return;
       beginInlineDescriptionEdit(descriptionButton.dataset.component, descriptionButton);
       return;
     }
@@ -1328,6 +1335,7 @@ function init() {
     if (positionButton) {
       if (positionButton.matches('[data-panel-switch-position][data-component]')
         && positionButton.getAttribute('aria-pressed') === 'true') {
+        if (currentMode === 'author' && !basicPanelEditable) return;
         beginInlineComponentEdit(positionButton.dataset.component, positionButton);
         return;
       }
@@ -1345,6 +1353,7 @@ function init() {
     }
     const hit = event.target.closest('.author-panel-hit,.author-panel-value,.author-reference-component,.author-switch-inline-row');
     if (hit) {
+      if (currentMode === 'author' && !basicPanelEditable) return;
       beginInlineComponentEdit(hit.dataset.component, hit);
       return;
     }

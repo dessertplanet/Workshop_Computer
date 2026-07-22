@@ -136,7 +136,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
     </form>
   </dialog>
 
-  <script type="module" src="./author-client.js?v=37"></script>
+  <script type="module" src="./author-client.js?v=39"></script>
 </body>
 </html>`;
 }
