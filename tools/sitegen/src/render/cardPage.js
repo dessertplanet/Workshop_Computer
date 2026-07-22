@@ -308,7 +308,7 @@ function renderAudio(samples) {
  */
 export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs = '', basic = false }) {
   const metadata = card.metadata || {};
-  const summary = card.summary || card.description || '';
+  const summary = card.summary || '';
   const sourceUrl = card.source_url || '';
   const readmeUrl = card.readme_url || '';
   const documentation = renderDocumentation(card, extraDocs, !basic);

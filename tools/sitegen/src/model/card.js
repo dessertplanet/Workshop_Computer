@@ -543,8 +543,8 @@ export function buildCanonicalCardModel({
   const releaseText = optionalText(field(info, 'release'), warnings, 'release');
   let version = optionalText(field(info, 'Version'), warnings, 'Version');
   if (!version && releaseText.includes('/')) version = releaseText.split('/')[1].trim();
-  const description = requiredText(field(info, 'Description'), warnings, 'Description', 'n/a');
-  const summary = optionalText(field(info, 'summary'), warnings, 'summary') || description;
+  const shortDescription = requiredText(field(info, 'short-description'), warnings, 'short-description', 'n/a');
+  const summary = requiredText(field(info, 'summary'), warnings, 'summary', 'n/a');
   const release = releaseText || (version ? `${number} / ${version}` : number);
 
   let created = normalizedDate(field(info, 'created', 'created_at'), warnings, 'created');
@@ -638,7 +638,7 @@ export function buildCanonicalCardModel({
     draft: truthy(field(info, 'draft', 'Draft')),
     release,
     summary,
-    description,
+    short_description: shortDescription,
     panel,
     switch_modes: switchModes,
     leds: defaultPanelView?.leds || normalizeLeds(info, warnings, 'middle'),

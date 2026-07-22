@@ -7,18 +7,19 @@ import { renderReadmeAndDocs } from './lib/render/cardPage.js';
 import { panelPositions } from './lib/render/panelPositions.js';
 import { resolveAudioSamples, getAudioField } from './lib/utils/audio.js';
 
-const REQUIRED = ['Name', 'Description', 'Language', 'Creator', 'Version', 'Status'];
+const REQUIRED = ['Name', 'short-description', 'summary', 'Language', 'Creator', 'Version', 'Status'];
 const STORAGE_KEY = 'workshop-computer-author-new';
 const DIFFERENTIAL_STORAGE_KEY = 'workshop-computer-author-differential-controls';
 const SWITCH_POSITIONS = ['up', 'middle', 'down'];
-const OPTIONAL_KEYS = ['summary', 'tags', 'readme', 'demo-link', 'contact'];
+const OPTIONAL_KEYS = ['tags', 'readme', 'demo-link', 'contact'];
 const SPLIT_STORAGE_KEY = 'workshop-computer-author-editor-width';
 const DOCUMENT_KIND = document.querySelector('.author-page')?.dataset.documentKind || 'new';
 const IS_EXISTING = DOCUMENT_KIND === 'existing';
 const INITIAL = {
   draft: false,
   Name: '',
-  Description: '',
+  'short-description': '',
+  summary: '',
   Language: '',
   Creator: '',
   Version: '',
@@ -89,7 +90,14 @@ function clone(value) {
 function loadDraft() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return { ...clone(INITIAL), ...YAML.parse(saved) };
+    if (saved) {
+      const parsed = YAML.parse(saved) || {};
+      const legacyDescription = cleanText(parsed.Description);
+      if (!cleanText(parsed['short-description']) && legacyDescription) parsed['short-description'] = legacyDescription;
+      if (!cleanText(parsed.summary) && legacyDescription) parsed.summary = legacyDescription;
+      delete parsed.Description;
+      return { ...clone(INITIAL), ...parsed };
+    }
   } catch {}
   return clone(INITIAL);
 }
@@ -113,8 +121,8 @@ function isObject(value) {
 
 function basicCompatibility(source, parsed) {
   const reasons = [];
-  const top = new Set(['draft', 'Name', 'Description', 'Language', 'Creator', 'Version', 'Status', 'License', 'summary', 'tags', 'readme', 'demo-link', 'contact', 'panel', 'controls']);
-  const textFields = ['Name', 'Description', 'Language', 'Creator', 'Version', 'Status', 'License', 'summary', 'readme', 'demo-link'];
+  const top = new Set(['draft', 'Name', 'short-description', 'summary', 'Language', 'Creator', 'Version', 'Status', 'License', 'tags', 'readme', 'demo-link', 'contact', 'panel', 'controls']);
+  const textFields = ['Name', 'short-description', 'summary', 'Language', 'Creator', 'Version', 'Status', 'License', 'readme', 'demo-link'];
   const positions = new Set(SWITCH_POSITIONS);
   const inputs = new Set(Object.values(inputIds));
   const outputs = new Set(Object.values(outputIds));
@@ -325,9 +333,9 @@ function renderPreview() {
       yamlUrl: currentEntry?.yamlUrl || '#', uf2Url: currentEntry?.uf2Url || '',
       extraDocs: currentEntry?.extras ? renderReadmeAndDocs({ ...currentEntry.extras, inlinePdf: false, includeReadme: !card.documentation?.intro }) : '',
     });
-    if (!cleanText(data.Description)) {
+    if (!cleanText(data.summary)) {
       const summary = els.preview.querySelector('.program-card-hero__main > p');
-      if (summary) summary.textContent = 'Add a short description to introduce this card.';
+      if (summary) summary.textContent = 'Add an operator summary to introduce this card.';
     }
     if (currentMode === 'author') {
       renderAuthorControlReference();
