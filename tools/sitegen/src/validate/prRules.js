@@ -175,6 +175,7 @@ export async function evaluatePrRules(changes, { root }) {
         `Release directory ${release} is deleted in the proposed changes.`));
       continue;
     }
+    const releaseFiles = walkFiles(releaseDir);
     const readme = path.join(releaseDir, 'README.md');
     if (!fs.existsSync(readme) || !fs.statSync(readme).isFile()) {
       diagnostics.push(diagnostic('warning', 'release-readme-recommended', `releases/${release}`,
@@ -202,11 +203,11 @@ export async function evaluatePrRules(changes, { root }) {
       }
     }
     const included = includedUf2ByRelease.get(release) || [];
-    if (!included.length) {
+    const allUf2 = releaseFiles.filter(isUf2);
+    if (!allUf2.length) {
       diagnostics.push(diagnostic('error', 'uf2-required', `releases/${release}`,
-        `No UF2 firmware file is included for ${release}.`));
+        `No UF2 firmware file exists anywhere under releases/${release}/.`));
     } else {
-      const allUf2 = walkFiles(releaseDir).filter(isUf2);
       const groups = new Map();
       for (const file of allUf2) {
         const hash = hashFile(file);
@@ -223,7 +224,6 @@ export async function evaluatePrRules(changes, { root }) {
       }
     }
 
-    const releaseFiles = walkFiles(releaseDir);
     for (const cmakeFile of releaseFiles.filter(file => path.basename(file).toLowerCase() === 'cmakelists.txt')) {
       const source = fs.readFileSync(cmakeFile, 'utf8');
       if (!cmakeUsesPicoSdk(source) || cmakeHasXosc64(source) || customBoardHasXosc64(source, releaseFiles)) continue;

@@ -129,6 +129,17 @@ test('release without a local README warns', async t => {
     item.ruleId === 'release-readme-recommended' && item.severity === 'warning'));
 });
 
+test('existing UF2 in a nested release subdirectory satisfies the firmware rule', async t => {
+  const root = await fixture(t);
+  await write(root, 'releases/42_card/info.yaml', 'Name: Card');
+  await write(root, 'releases/42_card/README.md', '# Card');
+  await write(root, 'releases/42_card/UF2/archive/card.UF2', 'firmware');
+  const diagnostics = await evaluatePrRules([
+    { status: 'M', path: 'releases/42_card/info.yaml' },
+  ], { root });
+  assert.ok(!diagnostics.some(item => item.ruleId === 'uf2-required'));
+});
+
 test('malformed release-local panels are blocking errors', async t => {
   const root = await fixture(t);
   await write(root, 'releases/42_card/info.yaml', 'Name: Card');
