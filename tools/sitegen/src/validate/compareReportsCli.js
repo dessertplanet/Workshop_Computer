@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import {
   classifyDiagnostics,
+  reportComparisonMarkdown,
   reportComparisonText,
   reportGithubComparison,
 } from './diagnosticComparison.js';
@@ -25,14 +26,5 @@ console.log(reportGithubComparison(compared));
 console.log(text);
 
 if (summaryFile) {
-  fs.appendFileSync(summaryFile, [
-    '## Complete info.yaml validation',
-    '',
-    'Every current diagnostic in each changed file is listed. **NEW** diagnostics were not present on the PR base branch; **existing** diagnostics were already present in that file.',
-    '',
-    '```text',
-    text,
-    '```',
-    '',
-  ].join('\n'));
+  fs.appendFileSync(summaryFile, reportComparisonMarkdown(compared));
 }
