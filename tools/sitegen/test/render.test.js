@@ -1,0 +1,101 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { renderCardArticle, renderPanelArtwork, renderReadmeAndDocs } from '../src/render/cardPage.js';
+import { renderArchive, renderShelf, renderTile } from '../src/render/discovery.js';
+
+function card(extra = {}) {
+  return {
+    id: '42_test', slug: '42-test', title: 'Test & "Card"', release: '42 / 1.0',
+    summary: 'Safe **summary**', short_description: 'A short description',
+    metadata: { creator: 'A & B', version: '1.0', status: 'Released' },
+    panel: {}, switch_modes: {}, leds: [], tags: [], source: [],
+    source_url: 'https://example.test/source',
+    ...extra,
+  };
+}
+
+test('card renderer exposes accessible generated panel tabs and default state', () => {
+  const generated = card({
+    panel_views: {
+      source: 'generated', default: 'middle', items: [
+        { id: 'up', name: 'Up', panel: { controls: { main: { label: 'Upper\nmode' } } }, switch_modes: {}, leds: [] },
+        { id: 'middle', name: 'Middle', panel: { controls: { main: { label: 'Normal' } } }, switch_modes: {}, leds: [] },
+      ],
+    },
+  });
+  const html = renderCardArticle({ card: generated, panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
+  assert.match(html, /role="tablist" aria-label="Panel view"/);
+  assert.match(html, /data-panel-position-button="middle"[^>]*aria-selected="true"/);
+  assert.match(html, /data-panel-position-view="up" hidden aria-hidden="true"/);
+  assert.match(html, /data-panel-position-view="middle"/);
+  assert.match(html, /Upper<br>mode/);
+  assert.match(html, /Test &amp; &quot;Card&quot;/);
+  assert.match(html, /By A &amp; B/);
+});
+
+test('custom panel rendering preserves trusted content and escapes image metadata', () => {
+  const custom = card({ panel_views: {
+    source: 'custom', default: 'face-a', items: [{
+      id: 'face-a', name: 'Face <A>', panel: {}, switch_modes: {}, leds: [],
+      image: { url: 'panels/a.svg?x=1&y=2', width: 560, height: 1785 },
+      content_html: '<p><strong>Authored documentation</strong></p>',
+    }],
+  } });
+  const html = renderCardArticle({ card: custom, panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
+  assert.match(html, /program-card-panel-views--custom/);
+  assert.match(html, /src="panels\/a\.svg\?x=1&amp;y=2"/);
+  assert.match(html, /alt="Face &lt;A&gt; panel"/);
+  assert.match(html, /<strong>Authored documentation<\/strong>/);
+  assert.doesNotMatch(html, /program-card-panel-switch-position/);
+});
+
+test('basic rendering omits generated features but keeps actions, metadata, and extra docs', () => {
+  const html = renderCardArticle({
+    card: card({ videos: [{ id: 'abc', url: 'https://youtu.be/abc' }], audio_samples: [{ kind: 'file', url: 'demo.mp3' }] }),
+    panelImg: 'panel.svg', yamlUrl: 'source.yaml', basic: true,
+    extraDocs: '<section id="fixture-docs">Docs</section>',
+  });
+  assert.match(html, /program-card-actions/);
+  assert.match(html, /About this card/);
+  assert.match(html, /fixture-docs/);
+  assert.doesNotMatch(html, /data-panel-views/);
+  assert.doesNotMatch(html, /program-card-demo/);
+  assert.doesNotMatch(html, /program-card-audio/);
+});
+
+test('downloads and documentation use the right security and embedding attributes', () => {
+  const html = renderCardArticle({ card: card({ uf2_downloads: [
+    { name: 'Local', url: 'firmware.uf2', sha256: 'abc&123' },
+    { name: 'Mirror', url: 'https://downloads.test/fw', external: true, host: 'downloads.test' },
+  ] }), panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
+  assert.match(html, /href="firmware\.uf2" download data-uf2-url="firmware\.uf2" data-sha256="abc&amp;123"/);
+  assert.match(html, /href="https:\/\/downloads\.test\/fw" target="_blank" rel="noopener noreferrer"/);
+
+  const inline = renderReadmeAndDocs({ readmeHtml: '<p>README</p>', docs: [{ name: 'Guide & Notes.pdf', url: 'Guide?x=1&y=2' }] });
+  assert.match(inline, /<object[^>]+data="Guide\?x=1&amp;y=2"/);
+  assert.match(inline, /Download Guide &amp; Notes\.pdf/);
+  const preview = renderReadmeAndDocs({ docs: [{ name: 'Guide.pdf', url: 'guide.pdf' }], inlinePdf: false });
+  assert.match(preview, /target="_blank" rel="noopener noreferrer"/);
+  assert.match(preview, /inline PDF preview appears/);
+});
+
+test('discovery renderers escape searchable attributes and ignore absent shelf cards', () => {
+  const testCard = card({
+    title: 'A "quoted" <card>', slug: 'safe-slug',
+    short_description: 'x'.repeat(220),
+    metadata: { creator: 'A&B <maker>', updated: '2026-01-01' },
+  });
+  const tile = renderTile(testCard, { showCreator: true });
+  assert.match(tile, /data-creator="A&amp;B &lt;maker&gt;"/);
+  assert.match(tile, /data-name="a &quot;quoted&quot; &lt;card&gt;"/);
+  assert.match(tile, /…/);
+  assert.match(renderArchive([testCard]), /\.\.\/programs\/safe-slug\//);
+  const shelf = renderShelf({ title: 'Shelf <One>', cards: ['missing', testCard.id] }, new Map([[testCard.id, testCard]]));
+  assert.match(shelf, /Shelf &lt;One&gt;/);
+  assert.equal((shelf.match(/program-card-tile__link/g) || []).length, 1);
+});
+
+test('panel artwork converts authored newlines to visual line breaks', () => {
+  const html = renderPanelArtwork({ panel: { controls: { main: { label: 'Line one\nLine two' } } } }, 'panel.svg');
+  assert.match(html, /Line one<br>Line two/);
+});

@@ -726,7 +726,13 @@ export function buildCanonicalCardModel({
     card.audio_samples = sanitizeValue(audioSamples);
     card.audio_sample_url = audioSamples[0].url;
   }
-  if (web && (web.editorUrl || web.mode)) card.web = sanitizeValue(web);
+  if (web && (web.editorUrl || web.mode)) {
+    // `copySrc` is an internal absolute build path. The release discovery
+    // result retains it for asset copying, but it must not leak into the
+    // portable card catalogue consumed by browsers.
+    const { copySrc: _copySrc, ...publishedWeb } = web;
+    card.web = sanitizeValue(publishedWeb);
+  }
 
   card.warnings = warnings;
 

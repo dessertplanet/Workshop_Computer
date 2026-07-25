@@ -58,7 +58,11 @@ function rewritePanelHtmlLinks(html, markdownPath) {
   return String(html || '').replace(/\b(href|src)=(['"])([^'"#]+)(#[^'"]*)?\2/gi, (full, attr, quote, rawUrl, hash = '') => {
     const value = String(rawUrl).trim();
     if (!value || /^(?:[a-z][a-z0-9+.-]*:)?\/\//i.test(value) || /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith('/')) return full;
-    const relative = safeRelativePath(path.posix.join(base, value));
+    // Markdown renderers percent-encode spaces before this pass. Decode once
+    // before applying our segment encoder so `%20` does not become `%2520`.
+    let decoded;
+    try { decoded = decodeURIComponent(value); } catch { return full; }
+    const relative = safeRelativePath(path.posix.join(base, decoded));
     return relative ? `${attr}=${quote}${assetUrl(relative)}${hash}${quote}` : full;
   });
 }
