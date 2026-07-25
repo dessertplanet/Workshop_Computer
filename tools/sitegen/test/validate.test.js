@@ -32,8 +32,8 @@ tags: [midi-host, utility]
 
 test('missing Name is an error, legacy Title satisfies it', () => {
   const missing = validate(`Creator: Someone\nLanguage: C\nVersion: "1"\nStatus: WIP\n`);
-  assert.ok(ruleIds(missing).includes('required-core-fields'));
-  assert.ok(missing.diagnostics.some(d => d.message.includes('"Name"')));
+  assert.ok(missing.diagnostics.some(d =>
+    d.ruleId === 'ajv-schema' && d.message.includes('One of "Name"')));
 
   const withTitle = validate(`Title: Legacy Card\nCreator: S\nLanguage: C\nVersion: "1"\nStatus: WIP\n`);
   assert.ok(!withTitle.diagnostics.some(d => d.message.includes('"Name"')));
