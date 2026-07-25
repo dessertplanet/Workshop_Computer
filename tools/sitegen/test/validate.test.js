@@ -13,6 +13,7 @@ import {
   classifyDiagnostics,
   comparisonTotals,
   reportGithubComparison,
+  reportComparisonMarkdown,
 } from '../src/validate/diagnosticComparison.js';
 
 function validate(yamlText) {
@@ -72,6 +73,12 @@ test('PR comparison labels unchanged diagnostics as existing and changed diagnos
   const annotations = reportGithubComparison(compared);
   assert.match(annotations, /title=info\.yaml EXISTING tags/);
   assert.match(annotations, /title=info\.yaml NEW required/);
+  const markdown = reportComparisonMarkdown(compared);
+  assert.match(markdown, /\| \*\*New\*\* \| 1 \| 0 \|/);
+  assert.match(markdown, /#### New diagnostics \(1\)/);
+  assert.match(markdown, /❌ Error.*`Creator`.*`required`.*Missing Creator\./);
+  assert.match(markdown, /<summary>Existing diagnostics \(1\)<\/summary>/);
+  assert.match(markdown, /⚠️ Warning.*`tags`.*Use kebab case\./);
 });
 
 test('canonical card validates clean', () => {
