@@ -18,6 +18,7 @@ import { fsAsync as fs, fileExists, listSubdirs } from '../utils/fs.js';
 import { parseSourceFile } from './readSource.js';
 import { validateInfoYaml } from './validateInfoYaml.js';
 import { reportText, reportJson, reportGithub } from './reporters/index.js';
+import { readCustomPanelManifest } from '../discover/customPanels.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../../../..');
@@ -90,7 +91,16 @@ async function main() {
     const source = await parseSourceFile(file);
     // Report paths relative to repo root for stable, readable output.
     source.file = path.relative(ROOT, file) || file;
-    results.push(validateInfoYaml(source));
+    const customPanels = await readCustomPanelManifest(path.dirname(file));
+    results.push(validateInfoYaml(source, {
+      customPanelsPresent: customPanels.present,
+      panelIds: customPanels.items.map(item => item.id),
+      externalDiagnostics: customPanels.diagnostics.map(diagnostic => ({
+        ...diagnostic,
+        ruleId: 'custom-panel-manifest',
+        key: 'panels',
+      })),
+    }));
   }
 
   if (opts.json) console.log(reportJson(results));

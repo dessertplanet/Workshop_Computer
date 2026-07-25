@@ -20,7 +20,7 @@ function buildNormalized(data) {
 }
 
 /** Assemble the rule context: schema, data lookups, and source positions. */
-function makeContext(source, schema) {
+function makeContext(source, schema, opts = {}) {
   const normalized = buildNormalized(source.data || {});
   const keyLines = source.keyLines || {};
   const entry = (key) => normalized[normalizeYamlKey(key)];
@@ -32,6 +32,8 @@ function makeContext(source, schema) {
     normalized,
     keyLines,
     normKey: normalizeYamlKey,
+    customPanelsPresent: opts.customPanelsPresent,
+    panelIds: opts.panelIds instanceof Set ? opts.panelIds : new Set(opts.panelIds || []),
     entry,
     get: (key) => { const e = entry(key); return e ? e.value : undefined; },
     lineFor: (key) => keyLines[normalizeYamlKey(key)] || null,
@@ -71,7 +73,7 @@ export function validateInfoYaml(source, opts = {}) {
     return summarize(source.file, diagnostics);
   }
 
-  const ctx = makeContext(source, schema);
+  const ctx = makeContext(source, schema, opts);
   for (const diag of validateWithAjv(source.data || {})) {
     diagnostics.push(finalizeDiagnostic(diag, ctx, 'ajv-schema'));
   }
@@ -84,6 +86,9 @@ export function validateInfoYaml(source, opts = {}) {
         message: `Rule "${rule.id}" failed: ${err.message}` }];
     }
     for (const diag of produced) diagnostics.push(finalizeDiagnostic(diag, ctx, rule.id));
+  }
+  for (const diag of opts.externalDiagnostics || []) {
+    diagnostics.push(finalizeDiagnostic(diag, ctx, diag.ruleId || 'external-validation'));
   }
   return summarize(source.file, diagnostics);
 }
