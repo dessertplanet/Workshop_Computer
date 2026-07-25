@@ -16,7 +16,8 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
         <img src="https://www.musicthing.co.uk/images/MTM_Horiz.svg" alt="Music Thing Modular">
       </a>
       <div class="site-header-actions">
-        <nav class="site-nav" aria-label="Music Thing Modular">
+        <button class="site-menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav"><span class="site-menu-toggle__icon" aria-hidden="true"><span></span><span></span><span></span></span><span>Menu</span></button>
+        <nav class="site-nav" id="site-nav" aria-label="Music Thing Modular">
           <a href="https://www.musicthing.co.uk/#writing">Talking &amp; Writing</a>
           <a href="https://www.musicthing.co.uk/about/">About</a>
           <a href="https://www.musicthing.co.uk/buy">Buy</a>
@@ -48,6 +49,16 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
       </div>
     </div>
   </footer>
+  <script>(function(){
+    var button=document.querySelector('.site-menu-toggle');
+    var nav=document.getElementById('site-nav');
+    if(!button||!nav)return;
+    document.body.classList.add('site-menu-enabled');
+    function setOpen(open){button.setAttribute('aria-expanded',String(open));nav.classList.toggle('is-open',open);}
+    button.addEventListener('click',function(){setOpen(button.getAttribute('aria-expanded')!=='true');});
+    nav.addEventListener('click',function(e){if(e.target.closest('a'))setOpen(false);});
+    document.addEventListener('keydown',function(e){if(e.key==='Escape'&&button.getAttribute('aria-expanded')==='true'){setOpen(false);button.focus();}});
+  })();</script>
   <script type="module">
 import { Picoboot } from '${relativeRoot}/assets/js/picoboot.js';
 import { uf2ToFlashBuffer } from '${relativeRoot}/assets/js/uf2.js';
