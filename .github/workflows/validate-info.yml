@@ -56,47 +56,13 @@ jobs:
 
           printf 'Validating %s\n' "${files[@]}"
 
-          # Use the current validator for both revisions. This separates newly
-          # introduced diagnostics from issues already present on the base
-          # branch without letting validator-version drift affect the result.
-          base_dir="$RUNNER_TEMP/info-yaml-base"
-          baseline_dir="$RUNNER_TEMP/info-yaml-baseline"
-          rm -rf "$base_dir"
-          rm -rf "$baseline_dir"
-          git worktree add --detach "$base_dir" "$BASE_SHA"
-          trap 'git worktree remove --force "$base_dir" >/dev/null 2>&1 || true; rm -rf "$baseline_dir"' EXIT
-
-          baseline_files=()
-          for file in "${files[@]}"; do
-            base_file="$file"
-            rename_record=$(git diff --find-renames --name-status \
-              "$BASE_SHA...$HEAD_SHA" -- "$file" | head -n 1)
-            if [[ "$rename_record" == R* ]]; then
-              IFS=$'\t' read -r _status base_file _new_file <<< "$rename_record"
-            fi
-
-            if [[ -f "$base_dir/$base_file" ]]; then
-              # Stage the base card under its current PR path. This preserves
-              # sibling panel manifests while making renamed cards comparable.
-              staged_card_dir="$baseline_dir/$(dirname "$file")"
-              mkdir -p "$staged_card_dir"
-              cp -a "$base_dir/$(dirname "$base_file")/." "$staged_card_dir/"
-              baseline_files+=("$baseline_dir/$file")
-            fi
-          done
-
           set +e
           node tools/sitegen/src/validate/cli.js --json "${files[@]}" > current-validation.json
           validation_status=$?
-          if (( ${#baseline_files[@]} )); then
-            node tools/sitegen/src/validate/cli.js --json "${baseline_files[@]}" > baseline-validation.json
-          else
-            printf '{"summary":{"errors":0,"warnings":0,"files":0,"failed":0},"results":[]}\n' > baseline-validation.json
-          fi
           set -e
 
-          node tools/sitegen/src/validate/compareReportsCli.js \
-            current-validation.json baseline-validation.json validation-comment.md
+          node tools/sitegen/src/validate/githubReportCli.js \
+            current-validation.json validation-comment.md
           cat validation-comment.md >> "$GITHUB_STEP_SUMMARY"
           echo "status=$validation_status" >> "$GITHUB_OUTPUT"
 
