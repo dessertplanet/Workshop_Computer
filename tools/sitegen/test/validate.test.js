@@ -8,6 +8,12 @@ import { parseSource } from '../src/validate/parseSource.js';
 import { validateInfoYaml } from '../src/validate/validateInfoYaml.js';
 import { getInfoYamlSchemaAdapter } from '../src/schema/schemaAdapter.js';
 import { infoYamlJsonSchema } from '../src/schema/infoYamlJsonSchema.js';
+import { reportGithub } from '../src/validate/reporters/index.js';
+import {
+  classifyDiagnostics,
+  comparisonTotals,
+  reportGithubComparison,
+} from '../src/validate/diagnosticComparison.js';
 
 function validate(yamlText) {
   return validateInfoYaml(parseSource(yamlText, 'test/info.yaml'));
@@ -26,6 +32,46 @@ test('author schema fields are represented in the published JSON schema', () => 
     new Set(infoYamlJsonSchema.required),
     new Set(adapter.requiredFields().map(field => field.path)),
   );
+});
+
+test('GitHub reporter emits inline annotations and a PR-check summary', () => {
+  const output = reportGithub([{
+    file: 'releases/42_test/info.yaml', ok: false, errorCount: 1, warningCount: 1,
+    diagnostics: [
+      { severity: 'error', ruleId: 'required', path: 'Name', line: 2, col: 1, message: 'Missing Name.' },
+      { severity: 'warning', ruleId: 'tags', path: 'tags', message: 'Check tags.' },
+    ],
+  }]);
+  assert.match(output, /::error file=releases\/42_test\/info\.yaml,line=2,col=1,title=info\.yaml required::Name: Missing Name\./);
+  assert.match(output, /::warning file=releases\/42_test\/info\.yaml,title=info\.yaml tags::tags: Check tags\./);
+  assert.match(output, /::notice title=info\.yaml validation::1 file\(s\), 1 failing — 1 error\(s\), 1 warning\(s\)\./);
+});
+
+test('PR comparison labels unchanged diagnostics as existing and changed diagnostics as new', () => {
+  const baseline = [{
+    file: '../../base/releases/42_test/info.yaml', diagnostics: [
+      { severity: 'warning', ruleId: 'tags', path: 'tags', line: 4, message: 'Use kebab case.' },
+      { severity: 'error', ruleId: 'required', path: 'Name', line: 1, message: 'Missing Name.' },
+    ],
+  }];
+  const current = [{
+    file: 'releases/42_test/info.yaml', diagnostics: [
+      // Its line moved, but the underlying issue is unchanged.
+      { severity: 'warning', ruleId: 'tags', path: 'tags', line: 9, message: 'Use kebab case.' },
+      { severity: 'error', ruleId: 'required', path: 'Creator', line: 2, message: 'Missing Creator.' },
+    ],
+  }];
+  const compared = classifyDiagnostics(current, baseline);
+  assert.equal(compared[0].diagnostics[0].origin, 'existing');
+  assert.equal(compared[0].diagnostics[1].origin, 'new');
+  assert.deepEqual(comparisonTotals(compared), {
+    new: { errors: 1, warnings: 0 },
+    existing: { errors: 0, warnings: 1 },
+    files: 1,
+  });
+  const annotations = reportGithubComparison(compared);
+  assert.match(annotations, /title=info\.yaml EXISTING tags/);
+  assert.match(annotations, /title=info\.yaml NEW required/);
 });
 
 test('canonical card validates clean', () => {

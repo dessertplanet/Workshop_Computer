@@ -63,6 +63,8 @@ export function reportGithub(results) {
       lines.push(`::${level} ${props.join(',')}::${esc(detail)}`);
     }
   }
+  const t = totals(results);
+  lines.push(`::notice title=info.yaml validation::${t.files} file(s), ${t.failed} failing — ${t.errors} error(s), ${t.warnings} warning(s).`);
   return lines.join('\n');
 }
 
