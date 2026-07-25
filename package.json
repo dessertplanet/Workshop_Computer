@@ -7,6 +7,7 @@
     "validate-info": "npm --prefix tools/sitegen run validate-info",
     "check-curation": "npm --prefix tools/sitegen run check-curation",
     "sync-curation": "npm --prefix tools/sitegen run sync-curation",
-    "setup-panel-renderer": "npm --prefix tools/sitegen run setup-panel-renderer"
+    "setup-panel-renderer": "npm --prefix tools/sitegen run setup-panel-renderer",
+    "test": "npm --prefix tools/sitegen test"
   }
 }
