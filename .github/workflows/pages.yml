@@ -37,6 +37,10 @@ jobs:
         run: |
           npm run check-curation
 
+      - name: Run tests
+        run: |
+          npm test --prefix tools/sitegen
+
       - name: Build site
         run: |
           npm run build --prefix tools/sitegen
