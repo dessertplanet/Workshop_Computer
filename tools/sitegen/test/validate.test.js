@@ -8,13 +8,7 @@ import { parseSource } from '../src/validate/parseSource.js';
 import { validateInfoYaml } from '../src/validate/validateInfoYaml.js';
 import { getInfoYamlSchemaAdapter } from '../src/schema/schemaAdapter.js';
 import { infoYamlJsonSchema } from '../src/schema/infoYamlJsonSchema.js';
-import { reportGithub } from '../src/validate/reporters/index.js';
-import {
-  classifyDiagnostics,
-  comparisonTotals,
-  reportGithubComparison,
-  reportComparisonMarkdown,
-} from '../src/validate/diagnosticComparison.js';
+import { reportGithub, reportMarkdown } from '../src/validate/reporters/index.js';
 
 function validate(yamlText) {
   return validateInfoYaml(parseSource(yamlText, 'test/info.yaml'));
@@ -48,37 +42,25 @@ test('GitHub reporter emits inline annotations and a PR-check summary', () => {
   assert.match(output, /::notice title=info\.yaml validation::1 file\(s\), 1 failing — 1 error\(s\), 1 warning\(s\)\./);
 });
 
-test('PR comparison labels unchanged diagnostics as existing and changed diagnostics as new', () => {
-  const baseline = [{
-    file: '../../base/releases/42_test/info.yaml', diagnostics: [
-      { severity: 'warning', ruleId: 'tags', path: 'tags', line: 4, message: 'Use kebab case.' },
-      { severity: 'error', ruleId: 'required', path: 'Name', line: 1, message: 'Missing Name.' },
-    ],
-  }];
-  const current = [{
+test('PR Markdown report shows one readable table and dynamic outcome title', () => {
+  const failed = [{
     file: 'releases/42_test/info.yaml', diagnostics: [
-      // Its line moved, but the underlying issue is unchanged.
       { severity: 'warning', ruleId: 'tags', path: 'tags', line: 9, message: 'Use kebab case.' },
       { severity: 'error', ruleId: 'required', path: 'Creator', line: 2, message: 'Missing Creator.' },
-    ],
+    ], ok: false, errorCount: 1, warningCount: 1,
   }];
-  const compared = classifyDiagnostics(current, baseline);
-  assert.equal(compared[0].diagnostics[0].origin, 'existing');
-  assert.equal(compared[0].diagnostics[1].origin, 'new');
-  assert.deepEqual(comparisonTotals(compared), {
-    new: { errors: 1, warnings: 0 },
-    existing: { errors: 0, warnings: 1 },
-    files: 1,
-  });
-  const annotations = reportGithubComparison(compared);
-  assert.match(annotations, /title=info\.yaml EXISTING tags/);
-  assert.match(annotations, /title=info\.yaml NEW required/);
-  const markdown = reportComparisonMarkdown(compared);
-  assert.match(markdown, /\| \*\*New\*\* \| 1 \| 0 \|/);
-  assert.match(markdown, /#### New diagnostics \(1\)/);
-  assert.match(markdown, /❌ Error.*`Creator`.*`required`.*Missing Creator\./);
-  assert.match(markdown, /<summary>Existing diagnostics \(1\)<\/summary>/);
+  const markdown = reportMarkdown(failed);
+  assert.match(markdown, /## `info\.yaml` validation failed/);
+  assert.equal((markdown.match(/\| Severity \|/g) || []).length, 1);
+  assert.match(markdown, /❌ Error.*`releases\/42_test\/info\.yaml`.*`Creator`.*`required`.*Missing Creator\./);
   assert.match(markdown, /⚠️ Warning.*`tags`.*Use kebab case\./);
+  assert.doesNotMatch(markdown, /<details>|New diagnostics|Existing diagnostics/);
+
+  const succeeded = reportMarkdown([{
+    file: 'releases/43_clean/info.yaml', diagnostics: [], ok: true, errorCount: 0, warningCount: 0,
+  }]);
+  assert.match(succeeded, /## `info\.yaml` validation succeeded/);
+  assert.match(succeeded, /validate cleanly/);
 });
 
 test('canonical card validates clean', () => {

@@ -68,4 +68,50 @@ export function reportGithub(results) {
   return lines.join('\n');
 }
 
-export const reporters = { text: reportText, json: reportJson, github: reportGithub };
+function escapeMarkdown(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, '<br>');
+}
+
+function code(value) {
+  const text = String(value ?? '').replace(/`/g, '\\`');
+  return text ? `\`${text}\`` : '—';
+}
+
+/** Rich Markdown used by the PR comment and GitHub job summary. */
+export function reportMarkdown(results) {
+  const t = totals(results);
+  const status = t.errors ? 'failed' : 'succeeded';
+  const lines = [
+    `## \`info.yaml\` validation ${status}`,
+    '',
+    `**${t.files} file(s) checked · ${t.errors} error(s) · ${t.warnings} warning(s)**`,
+    '',
+  ];
+  const diagnostics = results.flatMap(result =>
+    result.diagnostics.map(diagnostic => ({ ...diagnostic, file: result.file }))
+  );
+  if (!diagnostics.length) {
+    lines.push('✅ All changed `info.yaml` files validate cleanly.', '');
+    return lines.join('\n');
+  }
+  lines.push(
+    '| Severity | File | Location | Field | Rule | Message |',
+    '|:--|:--|:--|:--|:--|:--|',
+  );
+  for (const diagnostic of diagnostics) {
+    const severity = diagnostic.severity === 'error' ? '❌ Error' : '⚠️ Warning';
+    const location = diagnostic.line == null
+      ? '—'
+      : `Line ${diagnostic.line}${diagnostic.col == null ? '' : `:${diagnostic.col}`}`;
+    lines.push(`| ${severity} | ${code(diagnostic.file)} | ${location} | ${code(diagnostic.path)} | ${code(diagnostic.ruleId)} | ${escapeMarkdown(diagnostic.message)} |`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+export const reporters = { text: reportText, json: reportJson, github: reportGithub, markdown: reportMarkdown };
