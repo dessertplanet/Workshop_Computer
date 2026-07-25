@@ -82,6 +82,13 @@ function code(value) {
   return text ? `\`${text}\`` : '—';
 }
 
+function displayInfoPath(file) {
+  const normalized = String(file || '').replaceAll('\\', '/');
+  const marker = 'releases/';
+  const index = normalized.indexOf(marker);
+  return index >= 0 ? normalized.slice(index + marker.length) : normalized;
+}
+
 /** Rich Markdown used by the PR comment and GitHub job summary. */
 export function reportMarkdown(results) {
   const t = totals(results);
@@ -92,20 +99,26 @@ export function reportMarkdown(results) {
     `**${t.files} file(s) checked · ${t.errors} error(s) · ${t.warnings} warning(s)**`,
     '',
   ];
-  const diagnostics = results.flatMap(result => result.diagnostics);
-  if (!diagnostics.length) {
+  if (!results.some(result => result.diagnostics.length)) {
     lines.push('✅ All changed `info.yaml` files validate cleanly.', '');
     return lines.join('\n');
   }
-  lines.push(
-    '| Severity | Field | Rule | Message |',
-    '|:--|:--|:--|:--|',
-  );
-  for (const diagnostic of diagnostics) {
-    const severity = diagnostic.severity === 'error' ? '❌ Error' : '⚠️ Warning';
-    lines.push(`| ${severity} | ${code(diagnostic.path)} | ${code(diagnostic.ruleId)} | ${escapeMarkdown(diagnostic.message)} |`);
+  for (const result of results) {
+    lines.push(`### ${code(displayInfoPath(result.file))}`, '');
+    if (!result.diagnostics.length) {
+      lines.push('✅ This file validates cleanly.', '');
+      continue;
+    }
+    lines.push(
+      '| Severity | Field | Rule | Message |',
+      '|:--|:--|:--|:--|',
+    );
+    for (const diagnostic of result.diagnostics) {
+      const severity = diagnostic.severity === 'error' ? '❌ Error' : '⚠️ Warning';
+      lines.push(`| ${severity} | ${code(diagnostic.path)} | ${code(diagnostic.ruleId)} | ${escapeMarkdown(diagnostic.message)} |`);
+    }
+    lines.push('');
   }
-  lines.push('');
   return lines.join('\n');
 }
 
