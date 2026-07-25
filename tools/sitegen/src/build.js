@@ -323,7 +323,8 @@ async function build() {
   <header class="program-cards__title">
     <h1>All cards</h1>
     <nav class="program-cards__links" aria-label="Program card links">
-      <a href="../index.html">Program cards</a>
+      <a href="../index.html">Program cards home</a>
+      <a href="https://www.musicthing.co.uk/workshopsystem/program-cards/install/">Installation</a>
       <a href="https://github.com/${REPO}">Make a card</a>
     </nav>
   </header>
