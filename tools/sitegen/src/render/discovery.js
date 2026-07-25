@@ -46,7 +46,7 @@ function truncate(value, length) {
 function cardNumber(card) {
   const raw = String(card.release || card.id || '').split('/')[0].split('_')[0].trim();
   const number = Number.parseInt(raw, 10);
-  return Number.isNaN(number) ? raw : String(number);
+  return Number.isNaN(number) ? raw : String(number).padStart(2, '0');
 }
 
 function renderTagBadges(flair, hideTags = [], root = '.') {
