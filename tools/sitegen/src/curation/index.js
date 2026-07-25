@@ -14,8 +14,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function loadYaml(name) {
   try {
     return YAML.parse(fs.readFileSync(path.join(__dirname, name), 'utf8')) || {};
-  } catch {
-    return {};
+  } catch (error) {
+    throw new Error(`Unable to load curation/${name}: ${error.message}`, { cause: error });
   }
 }
 
