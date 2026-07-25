@@ -7,7 +7,7 @@
 //
 // Diagnostic shape: { severity, ruleId, path, message, line?, col?, suggestion? }
 
-const SCALAR = new Set(['string', 'number', 'boolean']);
+const TEXT_SCALAR = new Set(['string', 'number']);
 
 function typeOf(value) {
   if (Array.isArray(value)) return 'array';
@@ -56,7 +56,7 @@ export const knownFieldTypes = {
       const expected = String(field.type || '').split('|').map(t => t.trim());
       let ok = false;
       for (const exp of expected) {
-        if (exp === 'string' && SCALAR.has(actual)) ok = true;
+        if (exp === 'string' && TEXT_SCALAR.has(actual)) ok = true;
         else if (exp === 'boolean' && actual === 'boolean') ok = true;
         else if (exp === 'array' && actual === 'array') ok = true;
         else if (exp === 'object' && actual === 'object') ok = true;
@@ -301,6 +301,41 @@ export const controlsStructure = {
   },
 };
 
+export const customPanelReferences = {
+  id: 'custom-panel-reference',
+  check(ctx) {
+    // Cross-file checks are available to filesystem consumers such as the CLI.
+    // Browser-only callers omit customPanelsPresent and still receive syntax
+    // validation for when.panel from validateWhen().
+    if (ctx.customPanelsPresent === undefined) return [];
+    const out = [];
+    const panel = ctx.get('panel');
+    const controls = ctx.get('controls');
+    const lists = [
+      ['panel.inputs', panel?.inputs],
+      ['panel.outputs', panel?.outputs],
+      ['controls.knobs', controls?.knobs],
+      ['controls.leds', controls?.leds],
+    ];
+    for (const [listPath, rows] of lists) {
+      if (!Array.isArray(rows)) continue;
+      rows.forEach((row, index) => {
+        const panelId = isPlainObject(row?.when) ? row.when.panel : undefined;
+        if (panelId === undefined) return;
+        const path = `${listPath}[${index}].when.panel`;
+        if (!ctx.customPanelsPresent) {
+          out.push({ severity: 'error', path, key: listPath.split('.')[0],
+            message: `${path} requires a panels/manifest.yaml custom-panel override.` });
+        } else if (typeof panelId === 'string' && !ctx.panelIds.has(panelId)) {
+          out.push({ severity: 'error', path, key: listPath.split('.')[0],
+            message: `${path} references unknown custom panel id "${panelId}".` });
+        }
+      });
+    }
+    return out;
+  },
+};
+
 // Keys that only ever appear in the *generated* normalized card model, never in
 // author-authored info.yaml. Their presence means the source file was
 // overwritten with build output (the split-brain the migration plan warns
@@ -387,6 +422,7 @@ export const allRules = [
   draftCompleteness,
   panelStructure,
   controlsStructure,
+  customPanelReferences,
   uf2Entries,
   generatedModelShape,
 ];

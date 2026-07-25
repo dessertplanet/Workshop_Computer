@@ -13,7 +13,7 @@ short-description: One-line catalog tagline
 summary: Longer operator overview of what the card does and how it is used
 Language: C++ (Pico SDK)
 Creator: Your Name
-Version: 1.0
+Version: "1.0"
 Status: Released
 License: MIT
 ```
@@ -32,6 +32,8 @@ License: MIT
 | `Status` | yes | string | Release state (e.g. `Released`, `Beta`, `WIP`). Shown with version on the index. |
 | `License` | no | string | Recommended. SPDX identifier or short license name (e.g. `MIT`, `GPL-3.0`, `GPLv3 or later`). Use the license stated in the card's `README.md` or `LICENSE` file. A missing license produces a warning when `draft: false`. |
 | `date` | no | string | Last-update date (`YYYY-MM-DD`). If omitted, sitegen uses the last git commit date for the card folder. |
+
+Text fields should be quoted when a value could otherwise be interpreted by YAML as a boolean. Numeric YAML scalars remain accepted for compatibility with historical unquoted `Version` values, but new metadata should quote version strings as shown above.
 
 ## Contact
 
