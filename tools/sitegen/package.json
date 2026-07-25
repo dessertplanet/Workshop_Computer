@@ -6,6 +6,8 @@
   "scripts": {
     "build": "node ./src/build.js",
     "validate-info": "node ./src/validate/cli.js",
+    "check-curation": "node ./src/curation/cli.js check",
+    "sync-curation": "node ./src/curation/cli.js sync",
     "setup-panel-renderer": "playwright install --with-deps chromium"
   },
   "dependencies": {
