@@ -1,0 +1,97 @@
+name: Validate info.yaml
+
+on:
+  pull_request:
+    branches:
+      - main
+      - workshop-ops
+    paths:
+      - 'releases/**/info.yaml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-info-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate changed card metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tools/sitegen/package-lock.json
+
+      - name: Install validator dependencies
+        run: npm ci --prefix tools/sitegen
+
+      - name: Validate complete changed info.yaml files
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          mapfile -d '' files < <(
+            git diff --name-only --diff-filter=ACMR -z \
+              "$BASE_SHA...$HEAD_SHA" -- ':(glob)releases/**/info.yaml'
+          )
+
+          if (( ${#files[@]} == 0 )); then
+            echo "No added or modified info.yaml files to validate."
+            exit 0
+          fi
+
+          printf 'Validating %s\n' "${files[@]}"
+
+          # Use the current validator for both revisions. This separates newly
+          # introduced diagnostics from issues already present on the base
+          # branch without letting validator-version drift affect the result.
+          base_dir="$RUNNER_TEMP/info-yaml-base"
+          baseline_dir="$RUNNER_TEMP/info-yaml-baseline"
+          rm -rf "$base_dir"
+          rm -rf "$baseline_dir"
+          git worktree add --detach "$base_dir" "$BASE_SHA"
+
+          baseline_files=()
+          for file in "${files[@]}"; do
+            base_file="$file"
+            rename_record=$(git diff --find-renames --name-status \
+              "$BASE_SHA...$HEAD_SHA" -- "$file" | head -n 1)
+            if [[ "$rename_record" == R* ]]; then
+              IFS=$'\t' read -r _status base_file _new_file <<< "$rename_record"
+            fi
+
+            if [[ -f "$base_dir/$base_file" ]]; then
+              # Stage the base card under its current PR path. This preserves
+              # sibling panel manifests while making renamed cards comparable.
+              staged_card_dir="$baseline_dir/$(dirname "$file")"
+              mkdir -p "$staged_card_dir"
+              cp -a "$base_dir/$(dirname "$base_file")/." "$staged_card_dir/"
+              baseline_files+=("$baseline_dir/$file")
+            fi
+          done
+
+          set +e
+          node tools/sitegen/src/validate/cli.js --json "${files[@]}" > current-validation.json
+          validation_status=$?
+          if (( ${#baseline_files[@]} )); then
+            node tools/sitegen/src/validate/cli.js --json "${baseline_files[@]}" > baseline-validation.json
+          else
+            printf '{"summary":{"errors":0,"warnings":0,"files":0,"failed":0},"results":[]}\n' > baseline-validation.json
+          fi
+          set -e
+
+          node tools/sitegen/src/validate/compareReportsCli.js \
+            current-validation.json baseline-validation.json "$GITHUB_STEP_SUMMARY"
+
+          exit "$validation_status"
