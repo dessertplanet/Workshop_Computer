@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
   group: validate-info-${{ github.event.pull_request.number }}
@@ -36,6 +37,7 @@ jobs:
         run: npm ci --prefix tools/sitegen
 
       - name: Validate complete changed info.yaml files
+        id: validate
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -48,6 +50,7 @@ jobs:
 
           if (( ${#files[@]} == 0 )); then
             echo "No added or modified info.yaml files to validate."
+            echo 'status=0' >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -93,6 +96,37 @@ jobs:
           set -e
 
           node tools/sitegen/src/validate/compareReportsCli.js \
-            current-validation.json baseline-validation.json "$GITHUB_STEP_SUMMARY"
+            current-validation.json baseline-validation.json validation-comment.md
+          cat validation-comment.md >> "$GITHUB_STEP_SUMMARY"
+          echo "status=$validation_status" >> "$GITHUB_OUTPUT"
 
-          exit "$validation_status"
+      - name: Post validation report on PR
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository && hashFiles('validation-comment.md') != ''
+        uses: actions/github-script@v8
+        env:
+          REPORT_FILE: validation-comment.md
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- workshop-computer-info-yaml-validation -->';
+            const report = fs.readFileSync(process.env.REPORT_FILE, 'utf8');
+            const body = `${marker}\n${report}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const previous = comments.find(comment =>
+              comment.user?.type === 'Bot' && comment.body?.includes(marker)
+            );
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: previous.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Fail on validation errors
+        if: always() && steps.validate.outputs.status != '0'
+        run: exit 1
