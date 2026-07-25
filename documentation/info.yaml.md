@@ -13,7 +13,7 @@ short-description: One-line catalog tagline
 summary: Longer operator overview of what the card does and how it is used
 Language: C++ (Pico SDK)
 Creator: Your Name
-Version: 1.0
+Version: "1.0"
 Status: Released
 License: MIT
 date-created: 2025-02-14
@@ -37,6 +37,8 @@ date-updated: 2026-06-21
 | `date-updated` | no | string | Date of the most recent substantial release update (`YYYY-MM-DD`). |
 
 `date-created` and `date-updated` are independently optional. Authors should omit either date when it is unknown rather than estimate it.
+
+Text fields should be quoted when a value could otherwise be interpreted by YAML as a boolean. Numeric YAML scalars remain accepted for compatibility with historical unquoted `Version` values, but new metadata should quote version strings as shown above.
 
 ## Contact
 

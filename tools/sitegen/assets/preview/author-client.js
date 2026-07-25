@@ -6,9 +6,10 @@ import { renderCardArticle } from './lib/render/cardPage.js';
 import { renderReadmeAndDocs } from './lib/render/cardPage.js';
 import { panelPositions } from './lib/render/panelPositions.js';
 import { resolveAudioSamples, getAudioField } from './lib/utils/audio.js';
+import { getInfoYamlSchemaAdapter } from './lib/schema/schemaAdapter.js';
 import { renderPanelElementToSvgBlob } from '../assets/js/panel-export.js';
 
-const REQUIRED = ['Name', 'short-description', 'summary', 'Language', 'Creator', 'Version', 'Status'];
+const REQUIRED = getInfoYamlSchemaAdapter().requiredFields().map(field => field.path);
 const STORAGE_KEY = 'workshop-computer-author-new';
 const DIFFERENTIAL_STORAGE_KEY = 'workshop-computer-author-differential-controls';
 const SWITCH_POSITIONS = ['up', 'middle', 'down'];

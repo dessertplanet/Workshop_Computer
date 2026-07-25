@@ -1,10 +1,22 @@
 import Ajv from 'ajv';
 import { infoYamlJsonSchema } from '../schema/infoYamlJsonSchema.js';
+import { getInfoYamlSchemaAdapter } from '../schema/schemaAdapter.js';
 import { normalizeYamlKey } from '../utils/strings.js';
 
 const ajv = new Ajv({ allErrors: true, strict: false, allowUnionTypes: true });
 const validate = ajv.compile(infoYamlJsonSchema);
 const REQUIRED_CORE = new Set(['name', 'shortdescription', 'summary', 'language', 'creator', 'version', 'status']);
+
+/** Canonicalize documented top-level keys before exact-property AJV checks. */
+function canonicalData(data) {
+  const schema = getInfoYamlSchemaAdapter();
+  const out = {};
+  for (const [key, value] of Object.entries(data || {})) {
+    const field = schema.getFieldByKey(key);
+    out[field?.path || key] = value;
+  }
+  return out;
+}
 
 function decodePointerPart(value) {
   return String(value || '').replace(/~1/g, '/').replace(/~0/g, '~');
@@ -24,14 +36,12 @@ function messageFor(error, path) {
 
 /** Validate parsed info.yaml data with AJV and return shared diagnostic shapes. */
 export function validateWithAjv(data) {
-  if (validate(data)) return [];
+  const canonical = canonicalData(data);
+  if (validate(canonical)) return [];
   const diagnostics = [];
   const seen = new Set();
   for (const error of validate.errors || []) {
     const path = pathFromError(error);
-    // `anyOf` also emits its nested `required` failures. Keep the actionable
-    // Name/Title summary rather than reporting all three messages.
-    if (error.keyword === 'required' && ['Name', 'Title'].includes(error.params?.missingProperty)) continue;
     const normalized = normalizeYamlKey(path.split('.')[0] || '');
     const severity = error.keyword === 'required' || REQUIRED_CORE.has(normalized) ? 'error' : 'warning';
     const message = messageFor(error, path);
