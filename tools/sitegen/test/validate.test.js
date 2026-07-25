@@ -52,7 +52,9 @@ test('PR Markdown report shows one readable table and dynamic outcome title', ()
   const markdown = reportMarkdown(failed);
   assert.match(markdown, /## `info\.yaml` validation failed/);
   assert.equal((markdown.match(/\| Severity \|/g) || []).length, 1);
-  assert.match(markdown, /❌ Error.*`releases\/42_test\/info\.yaml`.*`Creator`.*`required`.*Missing Creator\./);
+  assert.match(markdown, /\| Severity \| Field \| Rule \| Message \|/);
+  assert.doesNotMatch(markdown, /\| File \||\| Location \|/);
+  assert.match(markdown, /❌ Error.*`Creator`.*`required`.*Missing Creator\./);
   assert.match(markdown, /⚠️ Warning.*`tags`.*Use kebab case\./);
   assert.doesNotMatch(markdown, /<details>|New diagnostics|Existing diagnostics/);
 
