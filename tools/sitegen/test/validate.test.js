@@ -42,16 +42,22 @@ test('GitHub reporter emits inline annotations and a PR-check summary', () => {
   assert.match(output, /::notice title=info\.yaml validation::1 file\(s\), 1 failing — 1 error\(s\), 1 warning\(s\)\./);
 });
 
-test('PR Markdown report shows one readable table and dynamic outcome title', () => {
+test('PR Markdown report groups diagnostics by changed info.yaml', () => {
   const failed = [{
     file: 'releases/42_test/info.yaml', diagnostics: [
       { severity: 'warning', ruleId: 'tags', path: 'tags', line: 9, message: 'Use kebab case.' },
       { severity: 'error', ruleId: 'required', path: 'Creator', line: 2, message: 'Missing Creator.' },
     ], ok: false, errorCount: 1, warningCount: 1,
+  }, {
+    file: '/tmp/checkout/releases/43_clean/info.yaml', diagnostics: [],
+    ok: true, errorCount: 0, warningCount: 0,
   }];
   const markdown = reportMarkdown(failed);
   assert.match(markdown, /## `info\.yaml` validation failed/);
   assert.equal((markdown.match(/\| Severity \|/g) || []).length, 1);
+  assert.match(markdown, /### `42_test\/info\.yaml`/);
+  assert.match(markdown, /### `43_clean\/info\.yaml`/);
+  assert.match(markdown, /43_clean\/info\.yaml`\n\n✅ This file validates cleanly\./);
   assert.match(markdown, /\| Severity \| Field \| Rule \| Message \|/);
   assert.doesNotMatch(markdown, /\| File \||\| Location \|/);
   assert.match(markdown, /❌ Error.*`Creator`.*`required`.*Missing Creator\./);
