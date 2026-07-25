@@ -90,34 +90,79 @@ function displayInfoPath(file) {
 }
 
 /** Rich Markdown used by the PR comment and GitHub job summary. */
-export function reportMarkdown(results) {
+export function reportMarkdown(results, otherRules = null) {
   const t = totals(results);
-  const status = t.errors ? 'failed' : 'succeeded';
+  const otherErrors = Number(otherRules?.errorCount || 0);
+  const otherWarnings = Number(otherRules?.warningCount || 0);
+  const status = t.errors || otherErrors ? 'failed' : 'succeeded';
   const lines = [
     `## \`info.yaml\` validation ${status}`,
     '',
-    `**${t.files} file(s) checked · ${t.errors} error(s) · ${t.warnings} warning(s)**`,
+    `**${t.files} info.yaml file(s) checked · ${t.errors + otherErrors} error(s) · ${t.warnings + otherWarnings} warning(s)**`,
     '',
   ];
-  if (!results.some(result => result.diagnostics.length)) {
+  if (!results.length) {
+    lines.push('No `info.yaml` file was added or modified.', '');
+  } else if (!results.some(result => result.diagnostics.length)) {
     lines.push('✅ All changed `info.yaml` files validate cleanly.', '');
-    return lines.join('\n');
-  }
-  for (const result of results) {
-    lines.push(`### ${code(displayInfoPath(result.file))}`, '');
-    if (!result.diagnostics.length) {
-      lines.push('✅ This file validates cleanly.', '');
-      continue;
+  } else {
+    for (const result of results) {
+      lines.push(`### ${code(displayInfoPath(result.file))}`, '');
+      if (!result.diagnostics.length) {
+        lines.push('✅ This file validates cleanly.', '');
+        continue;
+      }
+      lines.push(
+        '| Severity | Field | Rule | Message |',
+        '|:--|:--|:--|:--|',
+      );
+      for (const diagnostic of result.diagnostics) {
+        const severity = diagnostic.severity === 'error' ? '❌ Error' : '⚠️ Warning';
+        lines.push(`| ${severity} | ${code(diagnostic.path)} | ${code(diagnostic.ruleId)} | ${escapeMarkdown(diagnostic.message)} |`);
+      }
+      lines.push('');
     }
+  }
+
+  lines.push('## Other rules', '');
+  const trigger = otherRules?.trigger;
+  if (trigger?.changedPaths?.length) {
+    lines.push('**Triggered by:**', '');
+    for (const change of trigger.changedPaths) {
+      const label = change.oldPath
+        ? `${change.status} ${change.oldPath} → ${change.path}`
+        : `${change.status} ${change.path}`;
+      lines.push(`- ${code(label)}`);
+    }
+    if (trigger.affectedReleases?.length) {
+      lines.push('', `**Affected release directories:** ${trigger.affectedReleases.map(code).join(', ')}`, '');
+    } else {
+      lines.push('');
+    }
+  }
+  const ruleDiagnostics = otherRules?.diagnostics || [];
+  if (!ruleDiagnostics.length) {
+    lines.push('✅ All submission rules passed.', '');
+  } else {
     lines.push(
-      '| Severity | Field | Rule | Message |',
+      '| Severity | Affected path | Rule | Message |',
       '|:--|:--|:--|:--|',
     );
-    for (const diagnostic of result.diagnostics) {
+    for (const diagnostic of ruleDiagnostics) {
       const severity = diagnostic.severity === 'error' ? '❌ Error' : '⚠️ Warning';
-      lines.push(`| ${severity} | ${code(diagnostic.path)} | ${code(diagnostic.ruleId)} | ${escapeMarkdown(diagnostic.message)} |`);
+      lines.push(`| ${severity} | ${code(diagnostic.file)} | ${code(diagnostic.ruleId)} | ${escapeMarkdown(diagnostic.message)} |`);
     }
     lines.push('');
+  }
+  return lines.join('\n');
+}
+
+export function reportOtherRulesGithub(report) {
+  const lines = [];
+  const esc = value => String(value).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  for (const diagnostic of report?.diagnostics || []) {
+    const level = diagnostic.severity === 'error' ? 'error' : 'warning';
+    lines.push(`::${level} file=${diagnostic.file},title=Submission rule ${diagnostic.ruleId}::${esc(diagnostic.message)}`);
   }
   return lines.join('\n');
 }
