@@ -76,6 +76,8 @@ test('PR Markdown report groups diagnostics by changed info.yaml', () => {
   assert.match(markdown, /\*\*Triggered by:\*\*/);
   assert.match(markdown, /`M releases\/42_test\/info.yaml`/);
   assert.match(markdown, /\*\*Affected release directories:\*\* `42_test`, `43_clean`/);
+  assert.ok(markdown.indexOf('**Triggered by:**') < markdown.indexOf('### `42_test/info.yaml`'));
+  assert.ok(markdown.indexOf('**Triggered by:**') < markdown.indexOf('## Other rules'));
   assert.match(markdown, /\| Severity \| Affected path \| Rule \| Message \|/);
   assert.match(markdown, /`uf2-required`.*No UF2 firmware file is included\./);
   assert.match(markdown, /\| Severity \| Field \| Rule \| Message \|/);
