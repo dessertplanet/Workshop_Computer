@@ -140,7 +140,7 @@ export async function readCustomPanelManifest(absReleaseDir) {
  * Directory presence is authoritative: even an invalid manifest suppresses
  * generated Up/Middle/Down presentation views.
  */
-export async function discoverCustomPanels(absReleaseDir, outProgramDir) {
+export async function discoverCustomPanels(absReleaseDir, outProgramDir, { copyAssets = true } = {}) {
   const source = await readCustomPanelManifest(absReleaseDir);
   const { panelsDir } = source;
   if (!source.present) return { present: false, panels: null, diagnostics: [] };
@@ -183,15 +183,17 @@ export async function discoverCustomPanels(absReleaseDir, outProgramDir) {
   // Preserve the complete authored directory so Markdown can use supplementary
   // relative images. Referenced primary files were checked above; symlinks are
   // rejected by fs.cp rather than followed.
-  try {
-    await ensureDir(outProgramDir);
-    await fs.cp(panelsDir, path.join(outProgramDir, 'panels'), {
-      recursive: true,
-      force: true,
-      filter: async source => !(await fs.lstat(source)).isSymbolicLink(),
-    });
-  } catch (error) {
-    diagnostics.push(diagnostic('error', 'panels', `Could not copy custom-panel assets: ${error.message}`));
+  if (copyAssets) {
+    try {
+      await ensureDir(outProgramDir);
+      await fs.cp(panelsDir, path.join(outProgramDir, 'panels'), {
+        recursive: true,
+        force: true,
+        filter: async source => !(await fs.lstat(source)).isSymbolicLink(),
+      });
+    } catch (error) {
+      diagnostics.push(diagnostic('error', 'panels', `Could not copy custom-panel assets: ${error.message}`));
+    }
   }
 
   return {

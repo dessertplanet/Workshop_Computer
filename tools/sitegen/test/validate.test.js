@@ -52,12 +52,32 @@ test('PR Markdown report groups diagnostics by changed info.yaml', () => {
     file: '/tmp/checkout/releases/43_clean/info.yaml', diagnostics: [],
     ok: true, errorCount: 0, warningCount: 0,
   }];
-  const markdown = reportMarkdown(failed);
+  const markdown = reportMarkdown(failed, {
+    errorCount: 1,
+    warningCount: 1,
+    trigger: {
+      affectedReleases: ['42_test', '43_clean'],
+      changedPaths: [
+        { status: 'M', path: 'releases/42_test/info.yaml' },
+        { status: 'A', path: 'releases/43_clean/info.yaml' },
+      ],
+    },
+    diagnostics: [
+      { severity: 'warning', ruleId: 'multiple-release-directories', file: 'releases', message: 'Two release directories changed.' },
+      { severity: 'error', ruleId: 'uf2-required', file: 'releases/42_test', message: 'No UF2 firmware file is included.' },
+    ],
+  });
   assert.match(markdown, /## `info\.yaml` validation failed/);
-  assert.equal((markdown.match(/\| Severity \|/g) || []).length, 1);
+  assert.equal((markdown.match(/\| Severity \|/g) || []).length, 2);
   assert.match(markdown, /### `42_test\/info\.yaml`/);
   assert.match(markdown, /### `43_clean\/info\.yaml`/);
   assert.match(markdown, /43_clean\/info\.yaml`\n\n✅ This file validates cleanly\./);
+  assert.match(markdown, /## Other rules/);
+  assert.match(markdown, /\*\*Triggered by:\*\*/);
+  assert.match(markdown, /`M releases\/42_test\/info.yaml`/);
+  assert.match(markdown, /\*\*Affected release directories:\*\* `42_test`, `43_clean`/);
+  assert.match(markdown, /\| Severity \| Affected path \| Rule \| Message \|/);
+  assert.match(markdown, /`uf2-required`.*No UF2 firmware file is included\./);
   assert.match(markdown, /\| Severity \| Field \| Rule \| Message \|/);
   assert.doesNotMatch(markdown, /\| File \||\| Location \|/);
   assert.match(markdown, /❌ Error.*`Creator`.*`required`.*Missing Creator\./);
