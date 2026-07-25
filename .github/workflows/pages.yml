@@ -37,13 +37,9 @@ jobs:
         run: |
           npm run check-curation
 
-      - name: Run tests
+      - name: Build and test site
         run: |
           npm test --prefix tools/sitegen
-
-      - name: Build site
-        run: |
-          npm run build --prefix tools/sitegen
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

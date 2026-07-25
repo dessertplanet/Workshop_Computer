@@ -30,7 +30,7 @@ function esc(value) {
 }
 
 function escapeAttr(value) {
-  return String(value ?? '').replaceAll('"', '&quot;');
+  return esc(value);
 }
 
 function stripTags(value) {

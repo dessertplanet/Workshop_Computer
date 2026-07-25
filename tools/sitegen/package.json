@@ -9,7 +9,7 @@
     "check-curation": "node ./src/curation/cli.js check",
     "sync-curation": "node ./src/curation/cli.js sync",
     "setup-panel-renderer": "playwright install --with-deps chromium",
-    "test": "node --test"
+    "test": "npm run build && node --test"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
