@@ -270,9 +270,6 @@ assignments:
   # 43 Castle Process
   "43_Castle_Process": []
 
-  # 43 Clockwork
-  "43_clockwork": []
-
   # 81 West Coast LPG
   "81_West_Coast_LPG": []
 
@@ -284,6 +281,36 @@ assignments:
 
   # 16 The Bells
   "16_the_bells": []
+
+  # COMET
+  "17_COMET": []
+
+  # CA Sequencer
+  "19_CA_Sequencer": []
+
+  # XHT
+  "29_XHT": []
+
+  # Two Tracks
+  "48_two_tracks": []
+
+  # Fragments
+  "67_Fragments": []
+
+  # VSS
+  "73_VSS": []
+
+  # Turing Clouds
+  "75_Turing_Clouds": []
+
+  # Alloy
+  "97_alloy": []
+
+  # Acid 303
+  "303_acid": []
+
+  # 433 Sense of Space
+  "433_sense_of_space": []
 
   # 36 GradualProcess
   "36_GradualProcess": []
