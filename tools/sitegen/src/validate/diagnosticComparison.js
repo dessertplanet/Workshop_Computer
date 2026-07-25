@@ -109,3 +109,73 @@ export function reportComparisonText(results) {
   lines.push(`Existing: ${totals.existing.errors} error(s), ${totals.existing.warnings} warning(s).`);
   return lines.join('\n');
 }
+
+function escapeMarkdown(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, '<br>');
+}
+
+function code(value) {
+  const text = String(value ?? '').replace(/`/g, '\\`');
+  return text ? `\`${text}\`` : '—';
+}
+
+function diagnosticTable(diagnostics) {
+  const lines = [
+    '| Severity | Location | Field | Rule | Message |',
+    '|:--|:--|:--|:--|:--|',
+  ];
+  for (const diagnostic of diagnostics) {
+    const severity = diagnostic.severity === 'error' ? '❌ Error' : '⚠️ Warning';
+    const location = diagnostic.line == null
+      ? '—'
+      : `Line ${diagnostic.line}${diagnostic.col == null ? '' : `:${diagnostic.col}`}`;
+    lines.push(`| ${severity} | ${location} | ${code(diagnostic.path)} | ${code(diagnostic.ruleId)} | ${escapeMarkdown(diagnostic.message)} |`);
+  }
+  return lines.join('\n');
+}
+
+/** Rich Markdown used by the PR comment and GitHub job summary. */
+export function reportComparisonMarkdown(results) {
+  const totals = comparisonTotals(results);
+  const lines = [
+    '## Complete `info.yaml` validation',
+    '',
+    'Every current diagnostic in each changed file is listed. **New** diagnostics were not present on the PR base branch; **existing** diagnostics were already present.',
+    '',
+    '| Origin | Errors | Warnings |',
+    '|:--|--:|--:|',
+    `| **New** | ${totals.new.errors} | ${totals.new.warnings} |`,
+    `| Existing | ${totals.existing.errors} | ${totals.existing.warnings} |`,
+  ];
+
+  for (const result of results || []) {
+    const fresh = result.diagnostics.filter(diagnostic => diagnostic.origin !== 'existing');
+    const existing = result.diagnostics.filter(diagnostic => diagnostic.origin === 'existing');
+    lines.push('', `### ${code(result.file)}`, '');
+    if (!result.diagnostics.length) {
+      lines.push('✅ **This file validates cleanly.**');
+    } else if (fresh.length) {
+      lines.push(`#### New diagnostics (${fresh.length})`, '', diagnosticTable(fresh));
+    } else {
+      lines.push('✅ **No new diagnostics.**');
+    }
+    if (existing.length) {
+      lines.push(
+        '',
+        '<details>',
+        `<summary>Existing diagnostics (${existing.length})</summary>`,
+        '',
+        diagnosticTable(existing),
+        '',
+        '</details>',
+      );
+    }
+  }
+  lines.push('');
+  return lines.join('\n');
+}
