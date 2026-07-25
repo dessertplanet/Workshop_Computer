@@ -21,12 +21,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: npm
@@ -61,6 +61,7 @@ jobs:
           rm -rf "$base_dir"
           rm -rf "$baseline_dir"
           git worktree add --detach "$base_dir" "$BASE_SHA"
+          trap 'git worktree remove --force "$base_dir" >/dev/null 2>&1 || true; rm -rf "$baseline_dir"' EXIT
 
           baseline_files=()
           for file in "${files[@]}"; do
