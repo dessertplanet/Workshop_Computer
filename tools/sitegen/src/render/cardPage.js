@@ -51,7 +51,7 @@ function cardNumber(card) {
   const release = card.release || card.id || '';
   const raw = String(release).split('/')[0].split('_')[0].trim();
   const number = Number.parseInt(raw, 10);
-  return Number.isNaN(number) ? raw : String(number);
+  return Number.isNaN(number) ? raw : String(number).padStart(2, '0');
 }
 
 function renderTags(card, curatedTags = []) {
@@ -179,7 +179,7 @@ function renderPanelReference(snapshot, panelImg, positionControl = null) {
     <div class="program-card-use__panel">${renderPanel(panel, panelImg, positionControl, snapshot.switch_modes)}</div>
     <div class="program-card-use__reference">
       ${controlsMarkup || switchMarkup ? `<details class="program-card-section program-card-collapsible program-card-controls-section" open><summary><h3>Controls</h3></summary><div class="program-card-control-list">${controlsMarkup}${switchMarkup}</div></details>` : ''}
-      ${inputsMarkup || outputsMarkup ? `<details class="program-card-section program-card-collapsible program-card-io-section" open><summary class="program-card-io-summary"><span class="program-card-io-headings">${inputsMarkup ? '<h3>Inputs</h3>' : '<span></span>'}${outputsMarkup ? '<h3>Outputs</h3>' : ''}</span></summary><div class="program-card-io-columns">${inputsMarkup}${outputsMarkup}</div></details>` : ''}
+      ${inputsMarkup || outputsMarkup ? `<details class="program-card-section program-card-collapsible program-card-io-section" open><summary class="program-card-io-summary"><h3 class="program-card-io-mobile-heading">${inputsMarkup && outputsMarkup ? 'Inputs &amp; Outputs' : inputsMarkup ? 'Inputs' : 'Outputs'}</h3><span class="program-card-io-headings">${inputsMarkup ? '<h3>Inputs</h3>' : '<span></span>'}${outputsMarkup ? '<h3>Outputs</h3>' : ''}</span></summary><div class="program-card-io-columns">${inputsMarkup}${outputsMarkup}</div></details>` : ''}
       ${ledsMarkup}
     </div>
   </div>`;
@@ -200,10 +200,10 @@ function renderCustomPanelReference(item) {
   </div>`;
 }
 
-function renderCustomPanelSelector(items, selected, groupId) {
+function renderPanelSelector(items, selected, groupId, label = '') {
   if (items.length < 2) return '';
   const buttons = items.map(item => `<button type="button" class="program-card-panel-choice" role="tab" data-panel-position-button="${esc(item.id)}" aria-controls="${esc(groupId)}-${esc(item.id)}" aria-selected="${item.id === selected.id}" aria-pressed="${item.id === selected.id}">${esc(item.name)}</button>`).join('');
-  return `<div class="program-card-panel-selector" role="tablist" aria-label="Panel view">${buttons}</div>`;
+  return `<div class="program-card-panel-selector" role="tablist" aria-label="Panel view">${label ? `<span class="program-card-panel-selector__label" aria-hidden="true">${esc(label)}</span>` : ''}${buttons}</div>`;
 }
 
 function renderPanelViews(card, panelImg) {
@@ -219,7 +219,7 @@ function renderPanelViews(card, panelImg) {
   const views = items.map(item => `<div id="${esc(groupId)}-${esc(item.id)}" class="program-card-position-view" data-panel-position-view="${esc(item.id)}"${item.id === selected.id ? '' : ' hidden aria-hidden="true"'}>
     ${custom ? renderCustomPanelReference(item) : renderPanelReference(item, panelImg, { items, groupId, activeId: item.id })}
   </div>`).join('');
-  return `<div class="program-card-panel-views${custom ? ' program-card-panel-views--custom' : ''}">${custom ? renderCustomPanelSelector(items, selected, groupId) : ''}${views}</div>`;
+  return `<div class="program-card-panel-views${custom ? ' program-card-panel-views--custom' : ''}">${renderPanelSelector(items, selected, groupId, custom ? '' : 'Switch')}${views}</div>`;
 }
 
 function renderPanelRail(card, panelImg) {
@@ -247,7 +247,7 @@ function renderSocketList(title, sockets, positions) {
     </div>`;
   }).join('');
   if (!items.trim()) return '';
-  return `<section class="program-card-socket-section program-card-socket-section--${esc(title.toLowerCase())}"><div class="program-card-socket-list">${items}</div></section>`;
+  return `<section class="program-card-socket-section program-card-socket-section--${esc(title.toLowerCase())}"><h4 class="program-card-socket-section__heading">${esc(title)}</h4><div class="program-card-socket-list">${items}</div></section>`;
 }
 
 function renderLedList(leds) {
@@ -304,7 +304,7 @@ export function renderReadmeAndDocs({ readmeHtml = '', docs = [], inlinePdf = tr
     pdfSection = `
     <details class="program-card-section program-card-collapsible docs-section" open>
       <summary><h3>Documentation PDF</h3></summary>
-      <object data="${esc(list[0].url)}" type="application/pdf" width="100%" height="700px">
+      <object class="docs-pdf-preview" data="${esc(list[0].url)}" type="application/pdf" width="100%" height="700px">
         <p>PDF preview not available.</p>
       </object>
       <div style="margin-top:16px;text-align:center">
