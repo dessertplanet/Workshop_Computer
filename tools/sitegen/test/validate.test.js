@@ -67,7 +67,7 @@ test('PR Markdown report groups diagnostics by changed info.yaml', () => {
       { severity: 'error', ruleId: 'uf2-required', file: 'releases/42_test', message: 'No UF2 firmware file is included.' },
     ],
   });
-  assert.match(markdown, /## `info\.yaml` validation failed/);
+  assert.match(markdown, /## ❌ Program card PR validation failed/);
   assert.equal((markdown.match(/\| Severity \|/g) || []).length, 2);
   assert.match(markdown, /### `42_test\/info\.yaml`/);
   assert.match(markdown, /### `43_clean\/info\.yaml`/);
@@ -89,8 +89,15 @@ test('PR Markdown report groups diagnostics by changed info.yaml', () => {
   const succeeded = reportMarkdown([{
     file: 'releases/43_clean/info.yaml', diagnostics: [], ok: true, errorCount: 0, warningCount: 0,
   }]);
-  assert.match(succeeded, /## `info\.yaml` validation succeeded/);
+  assert.match(succeeded, /## ✅ Program card PR validation succeeded/);
   assert.match(succeeded, /validate cleanly/);
+
+  const warned = reportMarkdown([{
+    file: 'releases/44_warning/info.yaml', diagnostics: [
+      { severity: 'warning', ruleId: 'tags', path: 'tags', message: 'Check tags.' },
+    ], ok: true, errorCount: 0, warningCount: 1,
+  }]);
+  assert.match(warned, /## ⚠️ Program card PR validation succeeded with warnings/);
 });
 
 test('canonical card validates clean', () => {
