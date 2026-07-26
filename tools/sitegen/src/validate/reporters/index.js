@@ -101,6 +101,21 @@ export function reportMarkdown(results, otherRules = null) {
     `**${t.files} info.yaml file(s) checked · ${t.errors + otherErrors} error(s) · ${t.warnings + otherWarnings} warning(s)**`,
     '',
   ];
+  const trigger = otherRules?.trigger;
+  if (trigger?.changedPaths?.length) {
+    lines.push('**Triggered by:**', '');
+    for (const change of trigger.changedPaths) {
+      const label = change.oldPath
+        ? `${change.status} ${change.oldPath} → ${change.path}`
+        : `${change.status} ${change.path}`;
+      lines.push(`- ${code(label)}`);
+    }
+    if (trigger.affectedReleases?.length) {
+      lines.push('', `**Affected release directories:** ${trigger.affectedReleases.map(code).join(', ')}`, '');
+    } else {
+      lines.push('');
+    }
+  }
   if (!results.length) {
     lines.push('No `info.yaml` file was added or modified.', '');
   } else if (!results.some(result => result.diagnostics.length)) {
@@ -125,21 +140,6 @@ export function reportMarkdown(results, otherRules = null) {
   }
 
   lines.push('## Other rules', '');
-  const trigger = otherRules?.trigger;
-  if (trigger?.changedPaths?.length) {
-    lines.push('**Triggered by:**', '');
-    for (const change of trigger.changedPaths) {
-      const label = change.oldPath
-        ? `${change.status} ${change.oldPath} → ${change.path}`
-        : `${change.status} ${change.path}`;
-      lines.push(`- ${code(label)}`);
-    }
-    if (trigger.affectedReleases?.length) {
-      lines.push('', `**Affected release directories:** ${trigger.affectedReleases.map(code).join(', ')}`, '');
-    } else {
-      lines.push('');
-    }
-  }
   const ruleDiagnostics = otherRules?.diagnostics || [];
   if (!ruleDiagnostics.length) {
     lines.push('✅ All submission rules passed.', '');
