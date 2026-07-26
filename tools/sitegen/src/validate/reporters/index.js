@@ -104,7 +104,7 @@ export function reportMarkdown(results, otherRules = null) {
   const lines = [
     `## ${status.icon} Program card PR validation ${status.label}`,
     '',
-    `_PR validation is meant work maintainers, not card authors! If you're an author and you don't understand what this says, don't worry about it!_`,
+    `_PR validation is intended for maintainers, not card authors. If you're a card author and don't understand this report, don't worry about it!_`,
     '',
     `**${t.files} info.yaml file(s) checked · ${errorCount} error(s) · ${warningCount} warning(s)**`,
     '',
