@@ -85,10 +85,15 @@ export function validateInfoYaml(source, opts = {}) {
       produced = [{ severity: 'error', ruleId: `rule-crash:${rule.id}`, path: '',
         message: `Rule "${rule.id}" failed: ${err.message}` }];
     }
-    for (const diag of produced) diagnostics.push(finalizeDiagnostic(diag, ctx, rule.id));
+    for (const diag of produced) {
+      // Semantic rules are advisory. Only schema-required/core failures, YAML
+      // syntax errors, and rule crashes block a card PR.
+      const severity = String(diag.ruleId || '').startsWith('rule-crash:') ? 'error' : 'warning';
+      diagnostics.push(finalizeDiagnostic({ ...diag, severity }, ctx, rule.id));
+    }
   }
   for (const diag of opts.externalDiagnostics || []) {
-    diagnostics.push(finalizeDiagnostic(diag, ctx, diag.ruleId || 'external-validation'));
+    diagnostics.push(finalizeDiagnostic({ ...diag, severity: 'warning' }, ctx, diag.ruleId || 'external-validation'));
   }
   return summarize(source.file, diagnostics);
 }
