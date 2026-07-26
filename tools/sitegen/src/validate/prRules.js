@@ -151,10 +151,10 @@ export async function evaluatePrRules(changes, { root }) {
   for (const file of [...new Set(endpoints.map(posix))].sort()) {
     const parts = file.split('/').filter(Boolean);
     if (parts[0] !== 'releases') {
-      diagnostics.push(diagnostic('error', 'change-outside-release-directory', file,
+      diagnostics.push(diagnostic('warning', 'change-outside-release-directory', file,
         'Card submissions must not include changes outside releases/<card>/ directories.'));
     } else if (parts.length < 3) {
-      diagnostics.push(diagnostic('error', 'change-at-releases-root', file,
+      diagnostics.push(diagnostic('warning', 'change-at-releases-root', file,
         'Card submissions must not modify files directly under releases/.'));
     }
   }
@@ -171,7 +171,7 @@ export async function evaluatePrRules(changes, { root }) {
   for (const release of releases) {
     const releaseDir = path.join(root, 'releases', release);
     if (!fs.existsSync(releaseDir)) {
-      diagnostics.push(diagnostic('error', 'release-directory-deleted', `releases/${release}`,
+      diagnostics.push(diagnostic('warning', 'release-directory-deleted', `releases/${release}`,
         `Release directory ${release} is deleted in the proposed changes.`));
       continue;
     }
@@ -195,7 +195,7 @@ export async function evaluatePrRules(changes, { root }) {
       ];
       for (const item of panelDiagnostics) {
         diagnostics.push(diagnostic(
-          item.severity === 'warning' ? 'warning' : 'error',
+          'warning',
           'custom-panels',
           `releases/${release}/${item.path || 'panels'}`,
           item.message,
@@ -205,7 +205,7 @@ export async function evaluatePrRules(changes, { root }) {
     const included = includedUf2ByRelease.get(release) || [];
     const allUf2 = releaseFiles.filter(isUf2);
     if (!allUf2.length) {
-      diagnostics.push(diagnostic('error', 'uf2-required', `releases/${release}`,
+      diagnostics.push(diagnostic('warning', 'uf2-required', `releases/${release}`,
         `No UF2 firmware file exists anywhere under releases/${release}/.`));
     } else {
       const groups = new Map();

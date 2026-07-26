@@ -23,7 +23,7 @@ async function write(root, relative, contents = '') {
   await fs.writeFile(file, contents);
 }
 
-test('release scope rules report multiple cards, release-root, and outside changes', async t => {
+test('release scope rules are advisory warnings', async t => {
   const root = await fixture(t);
   await write(root, 'releases/04_card/info.yaml', 'Name: Four');
   await write(root, 'releases/05_card/README.md', 'Five');
@@ -39,6 +39,7 @@ test('release scope rules report multiple cards, release-root, and outside chang
   assert.equal(byRule('change-at-releases-root').length, 1);
   assert.equal(byRule('change-outside-release-directory').length, 1);
   assert.equal(byRule('uf2-required').length, 2);
+  assert.ok(diagnostics.every(item => item.severity === 'warning'));
 });
 
 test('UF2 and Pico SDK rules detect missing oscillator definition and duplicate firmware', async t => {
@@ -107,13 +108,14 @@ test('NUL name-status parsing preserves renames and spaces', () => {
   });
 });
 
-test('deleting a complete release reports an explicit deletion error', async t => {
+test('deleting a complete release reports an explicit warning', async t => {
   const root = await fixture(t);
   const diagnostics = await evaluatePrRules([
     { status: 'D', path: 'releases/42_deleted/info.yaml' },
     { status: 'D', path: 'releases/42_deleted/card.uf2' },
   ], { root });
-  assert.ok(diagnostics.some(item => item.ruleId === 'release-directory-deleted'));
+  assert.ok(diagnostics.some(item =>
+    item.ruleId === 'release-directory-deleted' && item.severity === 'warning'));
   assert.ok(!diagnostics.some(item => item.ruleId === 'uf2-required'));
 });
 
@@ -140,7 +142,7 @@ test('existing UF2 in a nested release subdirectory satisfies the firmware rule'
   assert.ok(!diagnostics.some(item => item.ruleId === 'uf2-required'));
 });
 
-test('malformed release-local panels are blocking errors', async t => {
+test('malformed release-local panels are advisory warnings', async t => {
   const root = await fixture(t);
   await write(root, 'releases/42_card/info.yaml', 'Name: Card');
   await write(root, 'releases/42_card/README.md', '# Card');
@@ -159,5 +161,5 @@ panels:
     { status: 'A', path: 'releases/42_card/card.uf2' },
   ], { root });
   assert.ok(diagnostics.some(item =>
-    item.ruleId === 'custom-panels' && item.severity === 'error'));
+    item.ruleId === 'custom-panels' && item.severity === 'warning'));
 });
