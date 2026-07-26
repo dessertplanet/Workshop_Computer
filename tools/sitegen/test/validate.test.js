@@ -256,7 +256,7 @@ controls:
       main: { name: Amount }
 `, 'test/info.yaml');
   const absent = validateInfoYaml(source, { customPanelsPresent: false });
-  assert.ok(absent.diagnostics.some(d => d.ruleId === 'custom-panel-reference' && d.severity === 'error'));
+  assert.ok(absent.diagnostics.some(d => d.ruleId === 'custom-panel-reference' && d.severity === 'warning'));
   const unknown = validateInfoYaml(source, { customPanelsPresent: true, panelIds: ['main'] });
   assert.ok(unknown.diagnostics.some(d => d.message.includes('unknown custom panel id')));
   const valid = validateInfoYaml(source, { customPanelsPresent: true, panelIds: ['main', 'alternate'] });
@@ -270,7 +270,8 @@ test('filesystem consumers can attach manifest diagnostics to the shared result'
     message: 'Invalid custom panel manifest.',
   }] });
   assert.ok(result.diagnostics.some(d => d.ruleId === 'custom-panel-manifest'));
-  assert.equal(result.errorCount, 1);
+  assert.equal(result.errorCount, 0);
+  assert.equal(result.warningCount, 1);
 });
 
 test('broken YAML yields a yaml-syntax diagnostic with a line, never throws', () => {
@@ -295,7 +296,7 @@ test('legacy object tags and non-kebab tags warn', () => {
   assert.ok(messages.some(m => m.includes('"Not Kebab"')));
 });
 
-test('uf2 download without sha256 is an error', () => {
+test('uf2 semantic rule is advisory when sha256 is missing', () => {
   const result = validate(`
 Name: X
 uf2:
@@ -304,7 +305,9 @@ uf2:
       url: https://example.com/fw.uf2
 `);
   assert.ok(result.diagnostics.some(d =>
-    d.ruleId === 'uf2-entries' && d.severity === 'error' && d.path === 'uf2[0].download.sha256'));
+    d.ruleId === 'uf2-entries' && d.severity === 'warning' && d.path === 'uf2[0].download.sha256'));
+  assert.ok(result.diagnostics.some(d =>
+    d.ruleId === 'ajv-schema' && d.severity === 'error' && d.path === 'uf2.0.download.sha256'));
 });
 
 test('when cannot combine z and panel', () => {
@@ -316,7 +319,7 @@ panel:
       when: { z: up, panel: alt }
 `);
   assert.ok(result.diagnostics.some(d =>
-    d.severity === 'error' && d.path === 'panel.inputs[0].when'));
+    d.severity === 'warning' && d.path === 'panel.inputs[0].when'));
 });
 
 test('generated card-model keys in source are flagged once', () => {
@@ -328,5 +331,6 @@ test('generated card-model keys in source are flagged once', () => {
 test('a crashing rule becomes a diagnostic, not an exception', () => {
   const boom = { id: 'boom', check() { throw new Error('nope'); } };
   const result = validateInfoYaml(parseSource('Name: X\n'), { rules: [boom] });
-  assert.ok(result.diagnostics.some(d => d.ruleId === 'rule-crash:boom'));
+  assert.ok(result.diagnostics.some(d =>
+    d.ruleId === 'rule-crash:boom' && d.severity === 'error'));
 });
