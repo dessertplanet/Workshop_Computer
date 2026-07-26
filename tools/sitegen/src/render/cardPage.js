@@ -206,6 +206,15 @@ function renderPanelSelector(items, selected, groupId, label = '') {
   return `<div class="program-card-panel-selector" role="tablist" aria-label="Panel view">${label ? `<span class="program-card-panel-selector__label" aria-hidden="true">${esc(label)}</span>` : ''}${buttons}</div>`;
 }
 
+function hasPanelDefinition(card) {
+  if (card.panel_views?.source === 'custom') return true;
+  if (Array.isArray(card.panel_views?.items) && card.panel_views.items.length) return true;
+  const panel = card.panel || {};
+  return ['controls', 'inputs', 'outputs'].some(key =>
+    panel[key] && typeof panel[key] === 'object' && Object.keys(panel[key]).length,
+  );
+}
+
 function renderPanelViews(card, panelImg) {
   const items = Array.isArray(card.panel_views?.items) ? card.panel_views.items : [];
   const custom = card.panel_views?.source === 'custom';
@@ -357,7 +366,8 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
   const sourceUrl = card.source_url || '';
   const readmeUrl = card.readme_url || '';
   const documentation = renderDocumentation(card, extraDocs, !basic);
-  const panelRail = basic ? '' : renderPanelRail(card, panelImg);
+  const hasPanel = !basic && hasPanelDefinition(card);
+  const panelRail = hasPanel ? renderPanelRail(card, panelImg) : '';
   const discussionUrl = metadata.discussion_url || DEFAULT_DISCUSSION;
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
   const sourceLinkUrl = metadata.repository || sourceUrl;
@@ -421,7 +431,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     ? `<section class="program-card-quick-start"><h2>Quick start</h2><ol>${card.quick_start.map(step => `<li>${esc(stripTags(step))}</li>`).join('')}</ol></section>`
     : '';
 
-  const use = basic ? '' : `<section class="program-card-use-section">
+  const use = !hasPanel ? '' : `<section class="program-card-use-section">
     <h2 class="program-card-use__title">Panel</h2>
     ${renderPanelViews(card, panelImg)}
   </section>`;
@@ -462,7 +472,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     </div>
   </dialog>`;
 
-  return `<article class="program-cards program-card-page"${basic ? '' : ' data-panel-views'}>
+  return `<article class="program-cards program-card-page"${hasPanel ? ' data-panel-views' : ''}>
     ${draftBar}
     ${panelRail}
     ${hero}

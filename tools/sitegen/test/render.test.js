@@ -63,6 +63,14 @@ test('basic rendering omits generated features but keeps actions, metadata, and 
   assert.doesNotMatch(html, /program-card-audio/);
 });
 
+test('cards without generated or custom panels omit both panel regions', () => {
+  const html = renderCardArticle({ card: card(), panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
+  assert.doesNotMatch(html, /program-card-use-section/);
+  assert.doesNotMatch(html, /program-card-panel-rail/);
+  assert.doesNotMatch(html, /data-panel-views/);
+  assert.doesNotMatch(html, />Panel<\/h2>/);
+});
+
 test('downloads and documentation use the right security and embedding attributes', () => {
   const html = renderCardArticle({ card: card({ uf2_downloads: [
     { name: 'Local', url: 'firmware.uf2', sha256: 'abc&123' },
