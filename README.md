@@ -32,4 +32,15 @@ My suggestion for the first 100 projects is that people grab numbers & folders i
 
 Release documentation: I've been making [little](https://docs.google.com/presentation/d/19z0S9cpGnyhb7lVmBPHYjTZLpEB-Xg-v9zzfXCjCjOQ/copy) [leaflets](https://docs.google.com/presentation/d/10R8onfP5JAq9MpOgVSa4sAhxg-WTx7_0-Q1fY0MUDho/copy) for each card, designed in Google Sheets, but you might experiment with other types of documentation   
 
+### Optional pre-commit validation
+
+Program card contributors can enable the repository's pre-commit checks for this clone:
+
+1. Run `npm ci --prefix tools/sitegen`.
+2. Run `npm run hooks:install`.
+
+The hook runs only when staged changes touch `releases/`. It validates the exact staged snapshot, so unstaged edits do not affect the result. Run `npm run validate-staged` to invoke it manually. The hook reports advisory warnings and blocks commits only for malformed YAML, missing or invalid required core metadata, or an internal validation-rule crash.
+
+Hook installation changes only this clone's `core.hooksPath`. If another hook manager is already configured, call `npm run validate-staged` from that manager instead. `git commit --no-verify` bypasses the local hook, but pull-request validation still runs in CI.
+
 
