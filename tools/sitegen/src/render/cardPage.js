@@ -395,11 +395,11 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
         const hashAttr = d.sha256 ? ` data-sha256="${esc(d.sha256)}"` : '';
         return `<a class="program-card-action program-card-action--download" href="${esc(d.url)}" download data-uf2-url="${esc(d.url)}"${hashAttr}><span class="program-card-action__label">Download</span><small class="program-card-action__firmware">${esc(d.name)}</small></a>`;
       }).join('')
-    : (() => {
+    : (uf2Url || card.has_uf2_metadata ? (() => {
         const downloadHref = uf2Url || sourceUrl;
         const downloadAttrs = uf2Url ? ` download data-uf2-url="${esc(uf2Url)}"` : '';
         return `<a class="program-card-action program-card-action--download" href="${esc(downloadHref)}"${downloadAttrs}><span class="program-card-action__label">Download</span>${metadata.version ? `<small class="program-card-action__firmware">Firmware ${esc(metadata.version)}</small>` : ''}</a>`;
-      })();
+      })() : '');
   const editorAction = metadata.editor_url
     ? `<a class="program-card-action program-card-action--editor" href="${esc(metadata.editor_url)}"><span>Launch web editor</span><small>${esc(metadata.editor_note || 'Configure this card in your browser')}</small></a>`
     : '';

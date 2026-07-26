@@ -87,6 +87,17 @@ test('downloads and documentation use the right security and embedding attribute
   assert.match(preview, /inline PDF preview appears/);
 });
 
+test('download action requires firmware, an external link, or authored UF2 metadata', () => {
+  const absent = renderCardArticle({ card: card(), panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
+  assert.doesNotMatch(absent, /program-card-action--download/);
+
+  const declared = renderCardArticle({
+    card: card({ has_uf2_metadata: true }), panelImg: 'panel.svg', yamlUrl: 'source.yaml',
+  });
+  assert.match(declared, /program-card-action--download/);
+  assert.match(declared, /href="https:\/\/example\.test\/source"/);
+});
+
 test('discovery renderers escape searchable attributes and ignore absent shelf cards', () => {
   const testCard = card({
     title: 'A "quoted" <card>', slug: 'safe-slug',
