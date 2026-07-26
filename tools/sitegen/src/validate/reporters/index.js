@@ -94,11 +94,17 @@ export function reportMarkdown(results, otherRules = null) {
   const t = totals(results);
   const otherErrors = Number(otherRules?.errorCount || 0);
   const otherWarnings = Number(otherRules?.warningCount || 0);
-  const status = t.errors || otherErrors ? 'failed' : 'succeeded';
+  const errorCount = t.errors + otherErrors;
+  const warningCount = t.warnings + otherWarnings;
+  const status = errorCount
+    ? { icon: '❌', label: 'failed' }
+    : warningCount
+      ? { icon: '⚠️', label: 'succeeded with warnings' }
+      : { icon: '✅', label: 'succeeded' };
   const lines = [
-    `## \`info.yaml\` validation ${status}`,
+    `## ${status.icon} Program card PR validation ${status.label}`,
     '',
-    `**${t.files} info.yaml file(s) checked · ${t.errors + otherErrors} error(s) · ${t.warnings + otherWarnings} warning(s)**`,
+    `**${t.files} info.yaml file(s) checked · ${errorCount} error(s) · ${warningCount} warning(s)**`,
     '',
   ];
   const trigger = otherRules?.trigger;
