@@ -70,6 +70,7 @@ const uf2Download = {
   properties: {
     url: urlText,
     sha256: { type: 'string', pattern: '^[A-Fa-f0-9]{64}$' },
+    flashable: { type: 'boolean' },
   },
   additionalProperties: false,
 };
@@ -78,6 +79,7 @@ const uf2Entry = {
   properties: {
     path: { type: 'string', minLength: 1, pattern: '\\.[Uu][Ff]2$' },
     name: nonBlankText,
+    sha256: { type: 'string', pattern: '^[A-Fa-f0-9]{64}$' },
     download: uf2Download,
   },
   anyOf: [{ required: ['path'] }, { required: ['download'] }],
