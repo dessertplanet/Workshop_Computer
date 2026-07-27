@@ -555,6 +555,37 @@ async function buildPreviewTool(suggestions = {}) {
     minify: true,
   });
 
+  // Monaco remains a separate browser bundle so the author page only downloads
+  // and initializes it when Advanced YAML mode is opened.
+  await esbuild({
+    entryPoints: [path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'monaco-editor.js')],
+    bundle: true,
+    format: 'esm',
+    platform: 'browser',
+    target: ['es2020'],
+    outfile: path.join(previewDir, 'monaco-editor.js'),
+    loader: { '.ttf': 'dataurl' },
+    minify: true,
+  });
+  await esbuild({
+    entryPoints: [path.join(nodeModules, 'monaco-editor', 'esm', 'vs', 'editor', 'editor.worker.js')],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: ['es2020'],
+    outfile: path.join(previewDir, 'monaco-editor-worker.js'),
+    minify: true,
+  });
+  await esbuild({
+    entryPoints: [path.join(nodeModules, 'monaco-yaml', 'yaml.worker.js')],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: ['es2020'],
+    outfile: path.join(previewDir, 'monaco-yaml-worker.js'),
+    minify: true,
+  });
+
   // Client script + page.
   await fs.copyFile(
     path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'author-client.js'),
