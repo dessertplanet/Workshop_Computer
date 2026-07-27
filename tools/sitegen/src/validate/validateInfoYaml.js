@@ -82,7 +82,9 @@ export function validateInfoYaml(source, opts = {}) {
 
   // A syntax error means we cannot meaningfully run structural rules.
   if (source.error) {
-    diagnostics.push({ ...source.error, file: source.file });
+    for (const error of source.errors?.length ? source.errors : [source.error]) {
+      diagnostics.push({ ...error, file: source.file });
+    }
     return summarize(source.file, diagnostics);
   }
 

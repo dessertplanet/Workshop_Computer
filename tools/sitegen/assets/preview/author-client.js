@@ -53,7 +53,7 @@ const els = {
   yamlHighlight: document.getElementById('yaml-highlight'),
   formatYaml: document.getElementById('format-yaml'),
   toggleWhitespace: document.getElementById('toggle-whitespace'),
-  yamlMarkers: document.getElementById('yaml-diagnostic-markers'),
+  yamlTooltip: document.getElementById('yaml-diagnostic-tooltip'),
   sourcePathTitle: document.getElementById('source-path-title'),
   diagnostics: document.getElementById('diagnostics'),
   preview: document.getElementById('card-preview'),
@@ -277,28 +277,33 @@ function updateYamlHighlight(diagnostics = editorDiagnostics) {
   els.yamlHighlight.innerHTML = els.yaml.value.split('\n').map((line, index) => {
     const severity = severityByLine.get(index + 1);
     return `<span class="yaml-line${severity ? ` has-${severity}` : ''}">${highlightYamlLine(line) || ' '}</span>`;
-  }).join('\n') + '\n';
+  }).join('');
   els.yamlHighlight.classList.toggle('show-whitespace', showWhitespace);
   els.yamlHighlight.style.transform = `translate(${-els.yaml.scrollLeft}px, ${-els.yaml.scrollTop}px)`;
-  renderYamlDiagnosticMarkers();
   updateGutter();
 }
 
-function renderYamlDiagnosticMarkers() {
-  const byLine = new Map();
-  const lineHeight = Number.parseFloat(getComputedStyle(els.yaml).lineHeight) || 19.5;
-  for (const diagnostic of editorDiagnostics) {
-    if (!Number.isInteger(diagnostic.line)) continue;
-    const existing = byLine.get(diagnostic.line) || [];
-    existing.push(diagnostic);
-    byLine.set(diagnostic.line, existing);
-  }
-  els.yamlMarkers.innerHTML = [...byLine.entries()].map(([line, diagnostics]) => {
-    const severity = diagnostics.some(item => item.severity === 'error') ? 'error' : 'warning';
-    const message = diagnostics.map(item => `${item.severity === 'error' ? 'Error' : 'Warning'}${item.path ? ` · ${item.path}` : ''}: ${item.message}`).join('\n');
-    const top = 12 + ((line - 1) * lineHeight) - els.yaml.scrollTop;
-    return `<button type="button" class="yaml-diagnostic-marker has-${severity}" style="top:${top}px" data-diagnostic-line="${line}" data-diagnostic-col="${diagnostics[0].col || 1}" data-message="${escapeHtml(message)}" title="${escapeHtml(message)}" aria-label="Line ${line}: ${escapeHtml(message)}">${severity === 'error' ? '!' : '⚠'}</button>`;
-  }).join('');
+function hideYamlDiagnosticTooltip() {
+  els.yamlTooltip.hidden = true;
+}
+
+function showYamlDiagnosticTooltip(event) {
+  const editorRect = els.yaml.getBoundingClientRect();
+  const sourceY = event.clientY - editorRect.top + els.yaml.scrollTop;
+  const sourceLine = [...els.yamlHighlight.children].find(line => sourceY >= line.offsetTop && sourceY < line.offsetTop + line.offsetHeight);
+  if (!sourceLine) { hideYamlDiagnosticTooltip(); return; }
+  const line = [...els.yamlHighlight.children].indexOf(sourceLine) + 1;
+  const diagnostics = editorDiagnostics.filter(item => item.line === line);
+  if (!diagnostics.length) { hideYamlDiagnosticTooltip(); return; }
+  const severity = diagnostics.some(item => item.severity === 'error') ? 'error' : 'warning';
+  els.yamlTooltip.textContent = diagnostics.map(item => `${item.severity === 'error' ? 'Error' : 'Warning'}${item.path ? ` · ${item.path}` : ''}: ${item.message}`).join('\n');
+  els.yamlTooltip.className = `yaml-diagnostic-tooltip has-${severity}`;
+  els.yamlTooltip.hidden = false;
+  const containerRect = els.yaml.parentElement.getBoundingClientRect();
+  const preferredLeft = event.clientX - containerRect.left + 14;
+  const preferredTop = event.clientY - containerRect.top + 14;
+  els.yamlTooltip.style.left = `${Math.max(8, Math.min(preferredLeft, containerRect.width - els.yamlTooltip.offsetWidth - 8))}px`;
+  els.yamlTooltip.style.top = `${Math.max(8, Math.min(preferredTop, containerRect.height - els.yamlTooltip.offsetHeight - 8))}px`;
 }
 
 function updateWhitespaceToggle() {
@@ -1367,6 +1372,15 @@ function autoIndentOnEnter(event) {
   els.yaml.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+function preserveConsecutiveSpaces(event) {
+  if (event.key !== ' ' || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+  const start = els.yaml.selectionStart;
+  if (start !== els.yaml.selectionEnd || start === 0 || els.yaml.value[start - 1] !== ' ') return;
+  event.preventDefault();
+  els.yaml.setRangeText(' ', start, start, 'end');
+  els.yaml.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 async function initCardPicker() {
   try {
     index = await fetch('../raw-info/index.json', { cache: 'no-store' }).then(response => response.json());
@@ -1575,15 +1589,14 @@ function init() {
       updateBasicAvailability(els.yaml.value, data);
     }, 250);
   });
-  els.yaml.addEventListener('scroll', () => updateYamlHighlight());
+  els.yaml.addEventListener('scroll', () => { hideYamlDiagnosticTooltip(); updateYamlHighlight(); });
+  els.yaml.addEventListener('mousemove', showYamlDiagnosticTooltip);
+  els.yaml.addEventListener('mouseleave', hideYamlDiagnosticTooltip);
   els.yaml.addEventListener('keydown', autoIndentOnEnter);
+  els.yaml.addEventListener('keydown', preserveConsecutiveSpaces);
   els.formatYaml.addEventListener('click', formatYamlSource);
   els.toggleWhitespace.addEventListener('change', toggleWhitespace);
   els.diagnostics.addEventListener('click', event => {
-    const button = event.target.closest('[data-diagnostic-line]');
-    if (button) jumpToDiagnostic(button.dataset.diagnosticLine, button.dataset.diagnosticCol);
-  });
-  els.yamlMarkers.addEventListener('click', event => {
     const button = event.target.closest('[data-diagnostic-line]');
     if (button) jumpToDiagnostic(button.dataset.diagnosticLine, button.dataset.diagnosticCol);
   });
