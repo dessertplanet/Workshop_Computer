@@ -180,6 +180,10 @@ function main() {
   const result = validate(currentTags, discovery, cards);
   report(result);
   if (result.errors.length) {
+    const missingAssignments = result.errors.filter(error => error.startsWith('tags.yml: missing assignment for '));
+    if (mode === 'check' && missingAssignments.length) {
+      console.error('Curation assignments are out of sync. Run `npm run sync-curation` from the repository root, then commit the updated tags.yml.');
+    }
     console.error(`Curation check failed with ${result.errors.length} error(s).`);
     process.exitCode = 1;
   } else {
