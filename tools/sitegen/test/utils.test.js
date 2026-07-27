@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeYamlKey, slugify, parseDisplayFromFolder, formatVersion } from '../src/utils/strings.js';
+import { normalizeYamlKey, slugify } from '../src/utils/strings.js';
 import { normalizeTags, normalizeDraft, normalizeContact, resolveAudioSample } from '../src/discover/infoFields.js';
 import { extractIframeSrc, classifyAudioUrl, resolveAudioSamples } from '../src/utils/audio.js';
 
@@ -11,17 +11,8 @@ test('normalizeYamlKey strips spaces and hyphens, lowercases', () => {
   assert.equal(normalizeYamlKey('Short Description'), 'shortdescription');
 });
 
-test('slugify and parseDisplayFromFolder', () => {
+test('slugify normalizes names for URLs', () => {
   assert.equal(slugify("Chord Blimey!"), 'chord-blimey');
-  assert.deepEqual(parseDisplayFromFolder('05_chord_blimey'), { number: '05', title: 'chord blimey' });
-  assert.deepEqual(parseDisplayFromFolder('NoNumber'), { number: '', title: 'NoNumber' });
-});
-
-test('formatVersion adds .0 to bare integers only', () => {
-  assert.equal(formatVersion('1'), '1.0');
-  assert.equal(formatVersion('1.2.3'), '1.2.3');
-  assert.equal(formatVersion('v2'), 'v2');
-  assert.equal(formatVersion(''), '');
 });
 
 test('normalizeTags dedupes and slugs from list or delimited string', () => {

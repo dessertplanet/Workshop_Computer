@@ -336,7 +336,7 @@ controls:
       main: { name: Amount }
 `, 'test/info.yaml');
   const absent = validateInfoYaml(source, { customPanelsPresent: false });
-  assert.ok(absent.diagnostics.some(d => d.ruleId === 'custom-panel-reference' && d.severity === 'warning'));
+  assert.ok(absent.diagnostics.some(d => d.ruleId === 'custom-panel-reference' && d.severity === 'error'));
   const unknown = validateInfoYaml(source, { customPanelsPresent: true, panelIds: ['main'] });
   assert.ok(unknown.diagnostics.some(d => d.message.includes('unknown custom panel id')));
   const valid = validateInfoYaml(source, { customPanelsPresent: true, panelIds: ['main', 'alternate'] });
@@ -350,8 +350,8 @@ test('filesystem consumers can attach manifest diagnostics to the shared result'
     message: 'Invalid custom panel manifest.',
   }] });
   assert.ok(result.diagnostics.some(d => d.ruleId === 'custom-panel-manifest'));
-  assert.equal(result.errorCount, 0);
-  assert.equal(result.warningCount, 1);
+  assert.equal(result.errorCount, 1);
+  assert.equal(result.warningCount, 0);
 });
 
 test('broken YAML yields a yaml-syntax diagnostic with a line, never throws', () => {
@@ -399,7 +399,7 @@ panel:
       when: { z: up, panel: alt }
 `);
   assert.ok(result.diagnostics.some(d =>
-    d.severity === 'warning' && d.path === 'panel.inputs[0].when'));
+    d.severity === 'error' && d.path === 'panel.inputs[0].when'));
 });
 
 test('generated card-model keys in source are flagged once', () => {

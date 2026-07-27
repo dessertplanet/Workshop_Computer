@@ -113,3 +113,18 @@ test('generator-owned HTML has no broken local links or assets', () => {
   }
   assert.deepEqual(failures, []);
 });
+
+test('generator-owned layouts use external runtime scripts', () => {
+  const { cards } = readJson('cards.json');
+  const htmlFiles = [
+    'index.html', 'archive/index.html', '404.html',
+    ...cards.map(card => `programs/${card.slug}/index.html`),
+  ];
+
+  for (const relative of htmlFiles) {
+    const html = fs.readFileSync(path.join(siteDir, relative), 'utf8');
+    const executableInline = [...html.matchAll(/<script(?![^>]*\bsrc=)([^>]*)>([\s\S]*?)<\/script>/gi)]
+      .filter(match => !/\btype=(['"])importmap\1/i.test(match[1]) && match[2].trim());
+    assert.deepEqual(executableInline, [], `${relative} contains executable inline runtime code`);
+  }
+});
