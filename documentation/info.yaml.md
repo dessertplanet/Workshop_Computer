@@ -151,7 +151,7 @@ These blocks document the primary inline documentation, I/O, controls, and host 
 | `panel.inputs` | object[] | Panel jacks in. Each item has `id`, `name`, optional `description`, optional `type` (`audio` / `cv` / `pulse` / `other`), and optional `when.z` or `when.panel` context. Entries with the same `id` override the shared entry in that view. |
 | `panel.outputs` | object[] | Panel jacks out; same shape and position-override behavior as inputs. |
 | `controls.knobs` | object[] | Knob metadata rows containing `main` / `x` / `y` entries with `name` and optional `description`. Omit `when` for shared controls; use `when.z` for generated positions or `when.panel` for custom manifest IDs. |
-| `controls.switch` | object | Switch metadata keyed by `up`, `middle`, `down`, and optional `tap`. The three physical positions may produce panel views. `tap` describes a brief Down-switch action and never produces a panel view. |
+| `controls.switch` | object | Switch metadata keyed by optional `up`, `middle`, `down`, and `tap` entries. The three physical positions may produce panel views. `tap` describes a brief Down-switch action, never produces a panel view, and may be authored without `down`. |
 | `controls.leds` | object[] | LED meaning rows. Each has optional `when.z` or `when.panel`, `display` (e.g. `list`), and `items` with `id`, `name`, and optional `description`. Items override shared LEDs by `id`. |
 | `host` | object | Host/USB connectivity (e.g. `usb` list with `name`, `role`, `description`) and optional `notes` (Markdown). |
 
@@ -170,7 +170,7 @@ See [`releases/82_Computer_Grids/info.yaml`](../releases/82_Computer_Grids/info.
 
 Switch-position meaning and panel metadata are related but remain independently authored:
 
-- **`controls.switch`** documents what each Z position does and may document a Down-switch `tap` action.
+- **`controls.switch`** documents any relevant Z positions and may independently document a Down-switch `tap` action; `tap` does not require a `down` entry.
 - Unconditioned knobs, sockets, and LEDs are the base inherited by Up, Middle, and Down.
 - A `when: { z: ... }` row supplies only the properties that change in that position.
 - Down already means the switch is being held down. There is no separate Hold position or gesture condition.
