@@ -89,7 +89,7 @@ export function renderTile(card, opts = {}) {
     : '';
   const artworkFile = showArtwork ? CARD_ARTWORK[card.id] : '';
   const artwork = card.id === '88_Blank' && showArtwork
-    ? `<span class="program-card-tile__artwork program-card-tile__artwork--blank" aria-hidden="true" data-random-blank-card><svg viewBox="0 0 306 178"><g transform="translate(0 178) scale(1 -1)"><path fill="currentColor" d="M16 0h132l11 12h11l11-12h20l28 22h64c7 0 13 6 13 13v130c0 7-6 13-13 13H40c-22 0-40-18-40-40V16C0 7 7 0 16 0Z"/><circle cx="39" cy="138" r="27" fill="#fdfdfd"/></g></svg></span>`
+    ? `<span class="program-card-tile__artwork program-card-tile__artwork--blank" aria-hidden="true" data-random-blank-card><svg viewBox="0 0 306 178"><g transform="translate(0 178) scale(1 -1)"><path fill="currentColor" d="M16 0h132l11 12h11l11-12h20l28 22h64c7 0 13 6 13 13v130c0 7-6 13-13 13H40c-22 0-40-18-40-40V16C0 7 7 0 16 0Z"/><circle cx="39" cy="138" r="27" fill="#fdfdfd"/></g><svg x="-13.4" y="11.36" width="316.8" height="161.28" viewBox="398.58 362.95 54.38 29.99" preserveAspectRatio="xMidYMid meet"><image href="${root}/assets/program_cards/blank.svg" x="0" y="0" width="841.896" height="595.296"/></svg></svg></span>`
     : artworkFile
       ? `<span class="program-card-tile__artwork" aria-hidden="true"><img src="${root}/assets/program_cards/${artworkFile}" alt="" loading="lazy"></span>`
       : '';
