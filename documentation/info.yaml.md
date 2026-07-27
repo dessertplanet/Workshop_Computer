@@ -93,7 +93,9 @@ Add an optional `uf2:` list to curate this. **When `uf2:` is present it fully re
 |-------|----------|------|-------------|
 | `path` | either path or download | string | Path to the `.uf2` relative to the card folder (e.g. `UF2/goldfish.2.0.2mb.uf2`), matched case-insensitively. The build errors if the file is missing. |
 | `name` | no | string | Friendly label shown on the download tile instead of the filename. |
-| `download` | either path or download | object | `{ url, sha256 }` (both required when `download` is present). `url` is an external link (mirror, or a store/purchase page) — it opens in a new tab, shows its host, is tagged "External", and is never treated as flashable firmware. `sha256` is a mandatory hex digest of the firmware (`shasum -a 256 file.uf2` on macOS). For repo-hosted firmware (via `path`) the build computes the sha256 automatically. |
+| `download` | either path or download | object | `{ url, sha256, flashable? }` (`url` and `sha256` are required). `url` is an external mirror, direct firmware URL, or store/purchase page. It opens in a new tab, shows its host, and is tagged "External". Set `flashable: true` only for a direct UF2 URL whose host permits cross-origin browser requests (CORS); the site verifies `sha256` before erasing or writing the connected card. `sha256` is the firmware's hex digest (`shasum -a 256 file.uf2` on macOS). For repo-hosted firmware (via `path`) the build computes it automatically. |
+
+Do not add `sha256` beside a repository-hosted `path`; the build calculates that hash from the tracked file. Validation accepts it only to provide a warning that it is unnecessary.
 
 ```yaml
 uf2:
@@ -103,6 +105,11 @@ uf2:
     download:
       url: https://example.com/store/goldfish
       sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  - name: External firmware mirror
+    download:
+      url: https://downloads.example.com/goldfish.uf2
+      sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+      flashable: true
 ```
 
 ## Media

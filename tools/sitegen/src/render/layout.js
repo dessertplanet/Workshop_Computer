@@ -344,7 +344,14 @@ async function flash(url, el) {
     setFirmwareActionLabel(el, 'Fetching…');
     var r = await fetch(url);
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    var parsed = uf2ToFlashBuffer(new Uint8Array(await r.arrayBuffer()));
+    var uf2Bytes = new Uint8Array(await r.arrayBuffer());
+    var expectedHash = (el.dataset.sha256 || '').trim().toLowerCase();
+    if (expectedHash) {
+      setFirmwareActionLabel(el, 'Checking…');
+      var digest = new Uint8Array(await crypto.subtle.digest('SHA-256', uf2Bytes));
+      if (bytesToHex(digest) !== expectedHash) throw new Error('Firmware SHA256 mismatch');
+    }
+    var parsed = uf2ToFlashBuffer(uf2Bytes);
     setFirmwareActionLabel(el, 'Flashing…');
     await pb.flashEraseAndWrite(parsed.address, parsed.data);
     setFirmwareActionLabel(el, 'Verifying…');
@@ -372,6 +379,7 @@ async function flash(url, el) {
       setFirmwareActionLabel(el, 'Download');
     }, 3000);
   } catch(e) {
+    console.error('Firmware programming failed:', e);
     setFirmwareActionLabel(el, 'Error');
     delete el.dataset.busy;
     setTimeout(function() { setFirmwareActionLabel(el, 'Program'); }, 3000);
