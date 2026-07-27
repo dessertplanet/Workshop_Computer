@@ -71,6 +71,12 @@ test('draft accepts boolean and string forms', () => {
   assert.equal(build({}).draft, false);
 });
 
+test('authored UF2 entries are retained as a download-availability signal', () => {
+  assert.equal(build({ uf2: [{ download: { url: 'https://example.com/card.uf2' } }] }).has_uf2_metadata, true);
+  assert.equal(build({ uf2: [] }).has_uf2_metadata, undefined);
+  assert.equal(build({}).has_uf2_metadata, undefined);
+});
+
 test('demo-link YouTube URL produces a videos entry', () => {
   const card = build({ 'demo-link': 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' });
   assert.equal(card.videos.length, 1);

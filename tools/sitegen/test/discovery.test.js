@@ -89,7 +89,7 @@ test('curated firmware resolves case-insensitive paths, hashes files, and handle
   await write(path.join(release, 'Firmware', 'Card.UF2'), bytes);
   const { uf2Downloads, errors } = await curateUf2Downloads([
     { path: 'firmware/card.uf2', name: 'Local firmware' },
-    { name: 'Mirror', download: { url: 'https://downloads.example/fw.uf2' } },
+    { name: 'Mirror', download: { url: 'https://downloads.example/fw.uf2', flashable: true } },
     { path: 'missing.uf2' },
   ], release, 'releases/42_fixture', relative => `https://raw.test/${relative}`);
   assert.equal(errors.length, 1);
@@ -97,7 +97,7 @@ test('curated firmware resolves case-insensitive paths, hashes files, and handle
   assert.equal(uf2Downloads[0].url, 'https://raw.test/releases/42_fixture/Firmware/Card.UF2');
   assert.equal(uf2Downloads[0].sha256, crypto.createHash('sha256').update(bytes).digest('hex'));
   assert.deepEqual(uf2Downloads[1], {
-    name: 'Mirror', url: 'https://downloads.example/fw.uf2', host: 'downloads.example', external: true,
+    name: 'Mirror', url: 'https://downloads.example/fw.uf2', host: 'downloads.example', external: true, flashable: true,
   });
 });
 

@@ -111,6 +111,11 @@ Status: Released
 short-description: A test card.
 summary: A longer summary of the test card.
 tags: [midi-host, utility]
+License: MIT
+contact: { website: https://example.com }
+panel:
+  inputs:
+    - { id: AudioIn1, name: Input }
 `);
   assert.equal(result.ok, true);
   assert.equal(result.errorCount, 0);
@@ -134,9 +139,41 @@ language: C++
 creator: Someone
 version: "1.0"
 status: Released
+License: MIT
+contact: { website: https://example.com }
+panel:
+  inputs:
+    - { id: AudioIn1, name: Input }
 `);
   assert.equal(result.errorCount, 0);
   assert.equal(result.warningCount, 0);
+});
+
+test('completeness warnings apply to drafts and valid custom panels satisfy the panel check', () => {
+  const source = parseSource(`
+Name: Draft Panels
+short-description: Short
+summary: Long
+Language: C++
+Creator: Someone
+Version: "1.0"
+Status: WIP
+draft: true
+`, 'test/info.yaml');
+  const withoutPanel = validateInfoYaml(source, { customPanelsPresent: false });
+  assert.ok(withoutPanel.diagnostics.some(d =>
+    d.ruleId === 'metadata-completeness' && d.path === 'panel'));
+  assert.ok(withoutPanel.diagnostics.some(d =>
+    d.ruleId === 'metadata-completeness' && d.path === 'License'));
+  assert.ok(withoutPanel.diagnostics.some(d =>
+    d.ruleId === 'metadata-completeness' && d.path === 'contact'));
+
+  const withCustomPanel = validateInfoYaml(source, {
+    customPanelsPresent: true,
+    panelIds: ['main'],
+  });
+  assert.ok(!withCustomPanel.diagnostics.some(d =>
+    d.ruleId === 'metadata-completeness' && d.path === 'panel'));
 });
 
 test('boolean values are rejected for authored text while numeric versions remain compatible', () => {
@@ -162,6 +199,8 @@ Language: C++
 Creator: Someone
 Version: "1.0"
 Status: Released
+License: MIT
+contact: { website: https://example.com }
 date: 2026-07-25
 audio-sample:
   - url: samples/demo.wav
@@ -242,6 +281,46 @@ uf2:
   assert.ok(result.diagnostics.some(d => d.path === 'uf2.0.download.sha256'));
 });
 
+test('external firmware may opt into browser flashing', () => {
+  const result = validate(`
+Name: External Firmware
+short-description: Short
+summary: Long
+Language: C++
+Creator: Someone
+Version: "1.0"
+Status: Released
+uf2:
+  - name: Mirror
+    download:
+      url: https://downloads.example/card.uf2
+      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      flashable: true
+`);
+  assert.ok(!result.diagnostics.some(d => d.path.startsWith('uf2')));
+});
+
+test('repository-hosted firmware warns that an authored hash is unnecessary', () => {
+  const result = validate(`
+Name: Repository Firmware
+short-description: Short
+summary: Long
+Language: C++
+Creator: Someone
+Version: "1.0"
+Status: Released
+uf2:
+  - path: firmware/card.uf2
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+`);
+  assert.ok(result.diagnostics.some(d =>
+    d.ruleId === 'uf2-entries'
+    && d.path === 'uf2[0].sha256'
+    && d.message.includes('not required for repository-hosted firmware')));
+  assert.ok(!result.diagnostics.some(d =>
+    d.ruleId === 'ajv-schema' && d.path === 'uf2.0.sha256'));
+});
+
 test('filesystem consumers can validate custom panel references', () => {
   const source = parseSource(`
 Name: Panels
@@ -265,7 +344,7 @@ controls:
 });
 
 test('filesystem consumers can attach manifest diagnostics to the shared result', () => {
-  const source = parseSource('Name: X\nshort-description: S\nsummary: L\nLanguage: C\nCreator: A\nVersion: "1"\nStatus: WIP\n');
+  const source = parseSource('Name: X\nshort-description: S\nsummary: L\nLanguage: C\nCreator: A\nVersion: "1"\nStatus: WIP\nLicense: MIT\ncontact: { website: https://example.com }\npanel:\n  inputs:\n    - { id: AudioIn1, name: Input }\n');
   const result = validateInfoYaml(source, { externalDiagnostics: [{
     severity: 'error', ruleId: 'custom-panel-manifest', path: 'panels/manifest.yaml',
     message: 'Invalid custom panel manifest.',

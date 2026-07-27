@@ -206,6 +206,15 @@ function renderPanelSelector(items, selected, groupId, label = '') {
   return `<div class="program-card-panel-selector" role="tablist" aria-label="Panel view">${label ? `<span class="program-card-panel-selector__label" aria-hidden="true">${esc(label)}</span>` : ''}${buttons}</div>`;
 }
 
+function hasPanelDefinition(card) {
+  if (card.panel_views?.source === 'custom') return true;
+  if (Array.isArray(card.panel_views?.items) && card.panel_views.items.length) return true;
+  const panel = card.panel || {};
+  return ['controls', 'inputs', 'outputs'].some(key =>
+    panel[key] && typeof panel[key] === 'object' && Object.keys(panel[key]).length,
+  );
+}
+
 function renderPanelViews(card, panelImg) {
   const items = Array.isArray(card.panel_views?.items) ? card.panel_views.items : [];
   const custom = card.panel_views?.source === 'custom';
@@ -357,7 +366,8 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
   const sourceUrl = card.source_url || '';
   const readmeUrl = card.readme_url || '';
   const documentation = renderDocumentation(card, extraDocs, !basic);
-  const panelRail = basic ? '' : renderPanelRail(card, panelImg);
+  const hasPanel = !basic && hasPanelDefinition(card);
+  const panelRail = hasPanel ? renderPanelRail(card, panelImg) : '';
   const discussionUrl = metadata.discussion_url || DEFAULT_DISCUSSION;
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
   const sourceLinkUrl = metadata.repository || sourceUrl;
@@ -379,17 +389,20 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
         if (d.external) {
           const host = d.host ? `<small class="program-card-action__host">${esc(d.host)}</small>` : '';
           const tag = '<small class="program-card-action__tag">External \u2197</small>';
-          return `<a class="program-card-action program-card-action--download program-card-action--external" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer"><span>Download</span><small>${esc(d.name)}</small>${host}${tag}</a>`;
+          const flashAttrs = d.flashable && d.sha256
+            ? ` data-uf2-url="${esc(d.url)}" data-sha256="${esc(d.sha256)}"`
+            : '';
+          return `<a class="program-card-action program-card-action--download program-card-action--external" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer"${flashAttrs}><span class="program-card-action__label">Download</span><small>${esc(d.name)}</small>${host}${tag}</a>`;
         }
         // A repo file downloads directly, enables WebUSB, and exposes its SHA256.
         const hashAttr = d.sha256 ? ` data-sha256="${esc(d.sha256)}"` : '';
         return `<a class="program-card-action program-card-action--download" href="${esc(d.url)}" download data-uf2-url="${esc(d.url)}"${hashAttr}><span class="program-card-action__label">Download</span><small class="program-card-action__firmware">${esc(d.name)}</small></a>`;
       }).join('')
-    : (() => {
+    : (uf2Url || card.has_uf2_metadata ? (() => {
         const downloadHref = uf2Url || sourceUrl;
         const downloadAttrs = uf2Url ? ` download data-uf2-url="${esc(uf2Url)}"` : '';
         return `<a class="program-card-action program-card-action--download" href="${esc(downloadHref)}"${downloadAttrs}><span class="program-card-action__label">Download</span>${metadata.version ? `<small class="program-card-action__firmware">Firmware ${esc(metadata.version)}</small>` : ''}</a>`;
-      })();
+      })() : '');
   const editorAction = metadata.editor_url
     ? `<a class="program-card-action program-card-action--editor" href="${esc(metadata.editor_url)}"><span>Launch web editor</span><small>${esc(metadata.editor_note || 'Configure this card in your browser')}</small></a>`
     : '';
@@ -421,7 +434,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     ? `<section class="program-card-quick-start"><h2>Quick start</h2><ol>${card.quick_start.map(step => `<li>${esc(stripTags(step))}</li>`).join('')}</ol></section>`
     : '';
 
-  const use = basic ? '' : `<section class="program-card-use-section">
+  const use = !hasPanel ? '' : `<section class="program-card-use-section">
     <h2 class="program-card-use__title">Panel</h2>
     ${renderPanelViews(card, panelImg)}
   </section>`;
@@ -462,7 +475,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
     </div>
   </dialog>`;
 
-  return `<article class="program-cards program-card-page"${basic ? '' : ' data-panel-views'}>
+  return `<article class="program-cards program-card-page"${hasPanel ? ' data-panel-views' : ''}>
     ${draftBar}
     ${panelRail}
     ${hero}
