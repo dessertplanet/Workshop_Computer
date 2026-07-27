@@ -193,7 +193,7 @@ Legacy `when: { z: any }` rows are still read as shared base metadata but should
 
 ### Custom panel presentations
 
-Complex cards may provide a lowercase `panels/` directory beside `info.yaml`. Directory presence is an explicit presentation override: the site does not publish the automatically generated Up/Middle/Down panels, even when the custom directory is incomplete. Structured controls, sockets, LEDs, and switch metadata remain available as machine-readable card data.
+Complex cards may provide a lowercase `panels/` directory beside `info.yaml`. A `panels/manifest.yaml` file activates the custom presentation override: the site does not publish the automatically generated Up/Middle/Down panels when a manifest exists, even when that manifest is invalid or incomplete. A `panels/` directory without a manifest is treated as an ordinary asset directory and does not activate custom panels. Structured controls, sockets, LEDs, and switch metadata remain available as machine-readable card data.
 
 `panels/manifest.yaml` defines any number of ordered, arbitrarily named presentations:
 

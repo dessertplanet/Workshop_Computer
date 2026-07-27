@@ -73,19 +73,30 @@ function rewritePanelHtmlLinks(html, markdownPath) {
  */
 export async function readCustomPanelManifest(absReleaseDir) {
   const panelsDir = path.join(absReleaseDir, 'panels');
+  const manifestPath = path.join(panelsDir, 'manifest.yaml');
   const diagnostics = [];
+  try {
+    await fs.lstat(manifestPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') {
+      return { present: false, panelsDir, manifest: null, items: [], diagnostics };
+    }
+    diagnostics.push(diagnostic('error', 'panels/manifest.yaml', `Could not inspect the custom-panel manifest: ${error.message}`));
+    return { present: true, panelsDir, manifest: null, items: [], diagnostics };
+  }
+
   let stat;
   try {
     stat = await fs.lstat(panelsDir);
-  } catch {
-    return { present: false, panelsDir, manifest: null, items: [], diagnostics };
+  } catch (error) {
+    diagnostics.push(diagnostic('error', 'panels', `Could not inspect the custom-panel directory: ${error.message}`));
+    return { present: true, panelsDir, manifest: null, items: [], diagnostics };
   }
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     diagnostics.push(diagnostic('error', 'panels', 'panels must be a real directory, not a file or symbolic link.'));
     return { present: true, panelsDir, manifest: null, items: [], diagnostics };
   }
 
-  const manifestPath = path.join(panelsDir, 'manifest.yaml');
   let manifest;
   try {
     manifest = YAML.parse(await fs.readFile(manifestPath, 'utf8')) || {};
@@ -137,8 +148,8 @@ export async function readCustomPanelManifest(absReleaseDir) {
 
 /**
  * Discover an optional release-local panels/ presentation override.
- * Directory presence is authoritative: even an invalid manifest suppresses
- * generated Up/Middle/Down presentation views.
+ * Manifest presence is authoritative: an asset-only panels/ directory is
+ * ignored, while an invalid manifest suppresses generated presentation views.
  */
 export async function discoverCustomPanels(absReleaseDir, outProgramDir, { copyAssets = true } = {}) {
   const source = await readCustomPanelManifest(absReleaseDir);
