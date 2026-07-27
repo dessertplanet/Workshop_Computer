@@ -117,7 +117,7 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   readmeHtml = injectYouTubeEmbeds(readmeHtml);
   
   // downloads
-  const { downloads, latestUf2, uf2Downloads, trackedUf2 } = await discoverDownloads(abs, repoRelBase, makeRawUrl);
+  const { downloads, latestUf2, uf2Downloads, availableUf2Downloads, trackedUf2 } = await discoverDownloads(abs, repoRelBase, makeRawUrl);
 
   // A curated `uf2:` list in info.yaml fully replaces auto-discovery for this
   // card, so authors can trim noise and annotate firmware (name/description/hash).
@@ -187,6 +187,7 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
     downloads,
     latestUf2: primaryUf2,
     uf2Downloads: effectiveUf2Downloads,
+    availableUf2Downloads,
     trackedUf2,
     web,
     card,

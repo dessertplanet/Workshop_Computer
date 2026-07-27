@@ -18,7 +18,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
   <link rel="stylesheet" href="../assets/style.css">
   <link rel="stylesheet" href="../assets/program-cards.css">
   <link rel="stylesheet" href="../assets/github-markdown.css">
-  <link rel="stylesheet" href="./author.css?v=27">
+  <link rel="stylesheet" href="./author.css?v=29">
   <script type="importmap">
   {
     "imports": {
@@ -64,8 +64,8 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
           <header><div><span class="author-step">Start here</span><h2>Card details</h2></div><span class="author-required-key">Required</span></header>
           <div class="author-form-grid">
             <label class="author-field author-field--wide"><span>Name <strong>Required</strong></span><input data-field="Name" required placeholder="Card display name"></label>
-            <label class="author-field author-field--wide"><span>Short description <strong>Required</strong></span><textarea data-field="short-description" required rows="2" placeholder="A concise tagline for indexes, shelves, and archive rows"></textarea></label>
-            <label class="author-field author-field--wide"><span>Summary <strong>Required</strong></span><textarea data-field="summary" required rows="4" placeholder="A longer operator overview for the card detail page"></textarea><small>Markdown is supported, including links, emphasis, and inline code.</small></label>
+            <label class="author-field author-field--wide"><span>Short description <strong>Required</strong> <small class="author-field-guidance">(used in card search and the all cards index; <a href="../archive/" target="_blank" rel="noopener noreferrer">see example ↗</a>)</small></span><textarea data-field="short-description" required rows="2" placeholder="A concise tagline for indexes, shelves, and archive rows"></textarea></label>
+            <label class="author-field author-field--wide"><span>Summary <strong>Required</strong> <small class="author-field-guidance">(used beneath the title on card pages; <a href="../programs/15-mlrws/" target="_blank" rel="noopener noreferrer">see example ↗</a>)</small></span><textarea data-field="summary" required rows="4" placeholder="A longer operator overview for the card detail page"></textarea><small>Markdown is supported, including links, emphasis, and inline code.</small></label>
             <label class="author-field"><span>Creator <strong>Required</strong></span><input data-field="Creator" required list="creator-suggestions" placeholder="Your name or handle"></label>
             <label class="author-field"><span>Language <strong>Required</strong></span><input data-field="Language" required list="language-suggestions" placeholder="ie. Pico SDK"></label>
             <label class="author-field"><span>Version <strong>Required</strong></span><input data-field="Version" required placeholder="For example, 1.0.0"></label>
@@ -81,6 +81,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
           <p>Choose only the details this card needs.</p>
           <div id="optional-catalog" class="author-add-list" aria-label="Available optional fields">
             <button type="button" data-add-optional="demo-link"><span><strong>Demo video</strong><small>Add a YouTube demonstration.</small></span><b aria-hidden="true">+</b></button>
+            <button type="button" data-add-optional="Editor"><span><strong>Web editor</strong><small>Add, change, or hide the browser editor action.</small></span><b aria-hidden="true">+</b></button>
             <button type="button" data-add-optional="tags"><span><strong>Tags</strong><small>Help people discover the card.</small></span><b aria-hidden="true">+</b></button>
             <button type="button" data-add-optional="contact"><span><strong>Contact email</strong><small>Add a public email address for the creator or maintainer.</small></span><b aria-hidden="true">+</b></button>
             <button type="button" data-add-optional="discussion"><span><strong>Support / discussion URL</strong><small>Link to card-specific support, questions, or feedback.</small></span><b aria-hidden="true">+</b></button>
@@ -89,6 +90,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
             <div class="author-optional-editor" data-optional="tags" hidden><header><h3>Tags</h3><button type="button" data-remove-optional="tags" aria-label="Remove tags">×</button></header><label class="author-field"><span class="author-token-field" data-token-field="tags"><span class="author-token-list" data-token-list="tags"></span><input data-token-input="tags" list="tag-suggestions" placeholder="Add a tag…" autocomplete="off"><input type="hidden" data-list-field="tags"></span><small>Choose an existing tag or type a new one, then press Enter or comma. Select × to remove it.</small></label></div>
             <div class="author-optional-editor" data-optional="readme" hidden><header><h3>Inline README</h3><button type="button" data-remove-optional="readme" aria-label="Remove inline README">×</button></header><label class="author-field"><textarea data-field="readme" rows="7" placeholder="Full operating instructions; Markdown is supported"></textarea><small>When present, this replaces the rendered README.md section. Documentation PDFs remain visible.</small></label></div>
             <div class="author-optional-editor" data-optional="demo-link" hidden><header><h3>Demo video</h3><button type="button" data-remove-optional="demo-link" aria-label="Remove demo video">×</button></header><label class="author-field"><input data-field="demo-link" type="url" placeholder="https://www.youtube.com/..."></label></div>
+            <div class="author-optional-editor" data-optional="Editor" hidden><header><h3>Web editor</h3><button type="button" data-remove-optional="Editor" aria-label="Remove web editor metadata">×</button></header><label class="author-field"><span>Editor</span><input data-field="Editor" list="editor-suggestions" placeholder="https://…, web, dist, or none"><small>Use an HTTPS URL, <code>web</code> or <code>dist</code> for a local folder, or <code>none</code> to hide the action.</small></label><label class="author-field"><span>Web entry</span><input data-field="web-entry" placeholder="index.html"><small>Optional entry file when the local editor does not use <code>index.html</code>.</small></label></div>
             <div class="author-optional-editor" data-optional="contact" hidden><header><h3>Contact email</h3><button type="button" data-remove-optional="contact" aria-label="Remove contact email">×</button></header><label class="author-field"><input data-nested-field="contact.email" type="email" placeholder="name@example.com"><small>This address will be public.</small></label></div>
             <div class="author-optional-editor" data-optional="discussion" hidden><header><h3>Support / discussion URL</h3><button type="button" data-remove-optional="discussion" aria-label="Remove support or discussion URL">×</button></header><label class="author-field"><input data-field="discussion" type="url" placeholder="https://..."><small>Link to a Discord thread, issue tracker, forum topic, or other card-specific support page.</small></label></div>
           </div>
@@ -112,6 +114,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
     ${datalist('language-suggestions', suggestions.languages)}
     ${datalist('status-suggestions', suggestions.statuses)}
     ${datalist('tag-suggestions', suggestions.tags)}
+    ${datalist('editor-suggestions', ['none', 'web', 'dist'])}
   </main>
 
   <dialog id="license-dialog" class="author-license-dialog" aria-labelledby="license-title">
@@ -144,7 +147,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
     </form>
   </dialog>
 
-  <script type="module" src="./author-client.js?v=44"></script>
+  <script type="module" src="./author-client.js?v=46"></script>
 </body>
 </html>`;
   return applyContentSecurityPolicy(html, { preview: true });
