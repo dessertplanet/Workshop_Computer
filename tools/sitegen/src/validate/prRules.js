@@ -195,7 +195,7 @@ export async function evaluatePrRules(changes, { root }) {
       ];
       for (const item of panelDiagnostics) {
         diagnostics.push(diagnostic(
-          'warning',
+          item.severity === 'error' ? 'error' : 'warning',
           'custom-panels',
           `releases/${release}/${item.path || 'panels'}`,
           item.message,

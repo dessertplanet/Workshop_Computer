@@ -1,15 +1,18 @@
 // Unified visual/YAML author page for new and existing cards.
 
+import { applyContentSecurityPolicy, CSP_PLACEHOLDER } from './csp.js';
+
 export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}) {
   const existing = documentKind === 'existing';
   const baseHref = existing ? './' : '../';
   const escape = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const datalist = (id, values) => `<datalist id="${id}">${(values || []).map(value => `<option value="${escape(value)}"></option>`).join('')}</datalist>`;
-  return `<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="${CSP_PLACEHOLDER}">
   <base href="${baseHref}">
   <title>Author page – Workshop Computer</title>
   <link rel="stylesheet" href="../assets/style.css">
@@ -21,6 +24,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
     "imports": {
       "yaml": "./vendor/yaml/index.js",
       "marked": "./vendor/marked.esm.js",
+      "sanitize-html": "./vendor/sanitize-html.esm.js",
       "ajv": "./vendor/ajv.esm.js"
     }
   }
@@ -141,4 +145,5 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
   <script type="module" src="./author-client.js?v=40"></script>
 </body>
 </html>`;
+  return applyContentSecurityPolicy(html, { preview: true });
 }

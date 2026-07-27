@@ -142,7 +142,7 @@ test('existing UF2 in a nested release subdirectory satisfies the firmware rule'
   assert.ok(!diagnostics.some(item => item.ruleId === 'uf2-required'));
 });
 
-test('malformed release-local panels are advisory warnings', async t => {
+test('malformed release-local panels are blocking errors', async t => {
   const root = await fixture(t);
   await write(root, 'releases/42_card/info.yaml', 'Name: Card');
   await write(root, 'releases/42_card/README.md', '# Card');
@@ -161,5 +161,5 @@ panels:
     { status: 'A', path: 'releases/42_card/card.uf2' },
   ], { root });
   assert.ok(diagnostics.some(item =>
-    item.ruleId === 'custom-panels' && item.severity === 'warning'));
+    item.ruleId === 'custom-panels' && item.severity === 'error'));
 });

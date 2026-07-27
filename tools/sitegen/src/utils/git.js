@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { debugLog } from './logger.js';
@@ -18,7 +18,7 @@ let _trackedCache;
 export function getTrackedFileSet() {
   if (_trackedCache !== undefined) return _trackedCache;
   try {
-    const out = execSync('git -c core.quotepath=off ls-files -- releases', {
+    const out = execFileSync('git', ['-c', 'core.quotepath=off', 'ls-files', '--', 'releases'], {
       cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
     });
     _trackedCache = new Set(out.split('\n').map(s => s.trim()).filter(Boolean));
@@ -29,33 +29,10 @@ export function getTrackedFileSet() {
   return _trackedCache;
 }
 
-export function detectRepoFromGit() {
-  try {
-    const url = execSync('git config --get remote.origin.url', { cwd: ROOT, encoding: 'utf8' }).trim();
-    const m = url.match(/github\.com[:\/]([^\s]+?)(?:\.git)?$/i);
-    if (m && m[1]) {
-      return m[1].replace(/\.git$/i, '');
-    }
-  } catch (e) { debugLog('detectRepoFromGit failed:', e?.message || e); }
-  return null;
-}
-
-export function detectRefFromGit() {
-  try {
-    const sha = execSync('git rev-parse HEAD', { cwd: ROOT, encoding: 'utf8' }).trim();
-    if (sha) return sha;
-  } catch (e) { debugLog('detectRefFromGit sha failed:', e?.message || e); }
-  try {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: ROOT, encoding: 'utf8' }).trim();
-    if (branch && branch !== 'HEAD') return branch;
-  } catch (e) { debugLog('detectRefFromGit branch failed:', e?.message || e); }
-  return null;
-}
-
 export function getLastCommitDate(relPath) {
   try {
     // Returns ISO 8601 date (e.g. 2023-01-01T12:00:00+00:00) of last change to path
-    const date = execSync(`git log -1 --format=%cI -- "${relPath}"`, { cwd: ROOT, encoding: 'utf8' }).trim();
+    const date = execFileSync('git', ['log', '-1', '--format=%cI', '--', String(relPath)], { cwd: ROOT, encoding: 'utf8' }).trim();
     return date;
   } catch (e) {
     debugLog(`getLastCommitDate failed for ${relPath}:`, e?.message || e);
@@ -69,7 +46,7 @@ export function getLastCommitDate(relPath) {
  */
 export function getCommitDates(relPath) {
   try {
-    const out = execSync(`git log --format=%cs -- "${relPath}"`, { cwd: ROOT, encoding: 'utf8' });
+    const out = execFileSync('git', ['log', '--format=%cs', '--', String(relPath)], { cwd: ROOT, encoding: 'utf8' });
     const dates = out.split('\n').map(s => s.trim()).filter(Boolean);
     if (!dates.length) return { first: '', last: '' };
     return { first: dates[dates.length - 1], last: dates[0] };
@@ -90,7 +67,7 @@ export function getCommitDates(relPath) {
  */
 export function getOldestBlameDate(relPath) {
   try {
-    const out = execSync(`git blame --date=short -- "${relPath}"`, {
+    const out = execFileSync('git', ['blame', '--date=short', '--', String(relPath)], {
       cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
@@ -116,8 +93,9 @@ export function getContentUpdatedDate(folderRel) {
   const f = String(folderRel || '').replace(/\/+$/, '');
   if (!f) return '';
   try {
-    const out = execSync(
-      `git log -1 --format=%cs -- "${f}" ":(exclude)${f}/info.yaml" ":(exclude,icase)${f}/readme.md"`,
+    const out = execFileSync(
+      'git',
+      ['log', '-1', '--format=%cs', '--', f, `:(exclude)${f}/info.yaml`, `:(exclude,icase)${f}/readme.md`],
       { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
     ).trim();
     return out || '';

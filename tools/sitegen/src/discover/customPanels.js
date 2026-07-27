@@ -1,7 +1,7 @@
 import path from 'node:path';
 import YAML from 'yaml';
-import { marked } from 'marked';
 import { fsAsync as fs, ensureDir, encodePathSegments } from '../utils/fs.js';
+import { renderMarkdownBlock } from '../utils/markdown.js';
 
 export const CUSTOM_PANEL_WIDTH = 560;
 export const CUSTOM_PANEL_HEIGHT = 1785;
@@ -171,7 +171,7 @@ export async function discoverCustomPanels(absReleaseDir, outProgramDir, { copyA
       name,
       kind: 'custom',
       image: { url: assetUrl(imagePath), format: 'svg', width: metadata.width, height: metadata.height },
-      content_html: rewritePanelHtmlLinks(marked.parse(markdown), contentPath),
+      content_html: rewritePanelHtmlLinks(renderMarkdownBlock(markdown), contentPath),
       source: { image: `panels/${imagePath}`, content: `panels/${contentPath}` },
     });
   }

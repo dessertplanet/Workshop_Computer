@@ -7,14 +7,6 @@
 //
 // Diagnostic shape: { severity, ruleId, path, message, line?, col?, suggestion? }
 
-const TEXT_SCALAR = new Set(['string', 'number']);
-
-function typeOf(value) {
-  if (Array.isArray(value)) return 'array';
-  if (value === null) return 'null';
-  return typeof value;
-}
-
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -34,51 +26,6 @@ function looksLikeUrl(value) {
 }
 
 // ---------------------------------------------------------------------------
-
-export const requiredCoreFields = {
-  id: 'required-core-fields',
-  check(ctx) {
-    const out = [];
-    for (const field of ctx.schema.requiredFields()) {
-      // `Name` has a legacy `Title` fallback; treat either as satisfying it.
-      if (ctx.normKey(field.path) === 'name' && !isBlank(ctx.get('title'))) continue;
-      if (isBlank(ctx.get(field.path))) {
-        out.push({ severity: 'error', path: field.path, key: field.path,
-          message: `Missing required field "${field.path}".` });
-      }
-    }
-    return out;
-  },
-};
-
-export const knownFieldTypes = {
-  id: 'field-type',
-  check(ctx) {
-    const out = [];
-    for (const field of ctx.schema.listFields()) {
-      const entry = ctx.entry(field.path);
-      if (!entry || entry.value === undefined || entry.value === null) continue;
-      const actual = typeOf(entry.value);
-      const expected = String(field.type || '').split('|').map(t => t.trim());
-      let ok = false;
-      for (const exp of expected) {
-        if (exp === 'string' && TEXT_SCALAR.has(actual)) ok = true;
-        else if (exp === 'boolean' && actual === 'boolean') ok = true;
-        else if (exp === 'array' && actual === 'array') ok = true;
-        else if (exp === 'object' && actual === 'object') ok = true;
-        else if (exp === actual) ok = true;
-      }
-      if (!ok) {
-        // A wrong type on a required core field is a real authoring mistake;
-        // on an optional structured field it usually means the card predates
-        // the canonical schema, so surface it as a migration warning.
-        out.push({ severity: field.required ? 'error' : 'warning', path: entry.key, key: field.path,
-          message: `Field "${entry.key}" should be ${field.type}, got ${actual}.` });
-      }
-    }
-    return out;
-  },
-};
 
 export const unknownTopLevelKeys = {
   id: 'unknown-field',
@@ -129,12 +76,19 @@ export const editorValue = {
     const v = String(value).trim();
     const known = v === 'web' || v === 'dist' || v === 'none' || looksLikeUrl(v);
     if (!known) {
-      return [{ severity: 'warning', path: 'Editor', key: 'Editor',
+      const unsafe = /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(v)
+        || pathLikeAbsolute(v)
+        || /^[a-z][a-z0-9+.-]*:/i.test(v);
+      return [{ severity: unsafe ? 'error' : 'warning', path: 'Editor', key: 'Editor',
         message: `Editor "${v}" is not a recognized value (expected web, dist, none, or an https URL).` }];
     }
     return [];
   },
 };
+
+function pathLikeAbsolute(value) {
+  return /^[/\\]/.test(value) || /^[a-z]:[/\\]/i.test(value) || String(value).includes('\0');
+}
 
 export const contactShape = {
   id: 'contact-shape',
@@ -422,8 +376,8 @@ export const uf2Entries = {
           }
           const shaEntry = Object.entries(entry.download).find(([k]) => k.toLowerCase() === 'sha256');
           if (!shaEntry || isBlank(shaEntry[1])) {
-            out.push({ severity: 'error', path: `${at}.download.sha256`, key: 'uf2',
-              message: `${at}.download requires a "sha256" hash.` });
+            out.push({ severity: entry.download.flashable === true ? 'error' : 'warning', path: `${at}.download.sha256`, key: 'uf2',
+              message: `${at}.download${entry.download.flashable === true ? ' is flashable and' : ''} should provide a "sha256" hash.` });
           }
         }
       }

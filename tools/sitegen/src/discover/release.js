@@ -1,6 +1,5 @@
 import path from 'node:path';
 import YAML from 'yaml';
-import { marked } from 'marked';
 import { fsAsync as fs, fileExists } from '../utils/fs.js';
 import { slugify, normalizeYamlKey } from '../utils/strings.js';
 import { toPosix } from '../utils/fs.js';
@@ -13,6 +12,7 @@ import { normalizeTags, normalizeRepository, normalizeDiscussion, normalizeConta
 import { parseYoutubeId, youtubeEmbedHtml } from '../utils/youtube.js';
 import { resolveAudioSamples, getAudioField } from '../utils/audio.js';
 import { buildCanonicalCardModel } from '../model/card.js';
+import { renderMarkdownBlock } from '../utils/markdown.js';
 
 // Read the top-level `uf2` field from parsed YAML, case-insensitively.
 function readUf2Field(obj) {
@@ -112,7 +112,7 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   let readmeHtml = '<p>No README.md found.</p>';
   if (await fileExists(readmePath)) {
     const md = await fs.readFile(readmePath, 'utf8');
-    readmeHtml = marked.parse(md);
+    readmeHtml = renderMarkdownBlock(md);
   }
 
   // docs
@@ -141,7 +141,7 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   if (hasCuratedUf2) {
     const { uf2Downloads: curated, errors } = await curateUf2Downloads(uf2Field, abs, repoRelBase, makeRawUrl);
     effectiveUf2Downloads = curated;
-    for (const e of errors) console.error(`[sitegen] ${folderName}: ${e}`);
+    if (errors.length) throw new Error(`${folderName} has invalid curated firmware metadata: ${errors.join(' ')}`);
   }
   const primaryUf2 = effectiveUf2Downloads[0] || null;
 

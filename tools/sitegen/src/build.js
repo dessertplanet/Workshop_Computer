@@ -148,6 +148,10 @@ async function build() {
     if (!hasFiles) continue;
     const rel = await discoverRelease(folder);
     releases.push(rel);
+    const unsafePanelDiagnostics = (rel.panelDiagnostics || []).filter(diagnostic => diagnostic.severity === 'error');
+    if (unsafePanelDiagnostics.length) {
+      throw new Error(`${folder} has invalid custom panels: ${unsafePanelDiagnostics.map(item => item.message).join(' ')}`);
+    }
     for (const diagnostic of rel.panelDiagnostics || []) {
       panelValidationResults.push({ ...diagnostic, file: `releases/${rel.folderName}/${diagnostic.path || 'panels'}` });
     }
@@ -419,6 +423,7 @@ const PREVIEW_LIB_FILES = [
   'utils/strings.js',
   'utils/youtube.js',
   'utils/audio.js',
+  'utils/markdown.js',
   'schema/schemaDefinition.js',
   'schema/schemaAdapter.js',
   'schema/infoYamlJsonSchema.js',
@@ -453,6 +458,20 @@ async function buildPreviewTool(suggestions = {}) {
     path.join(nodeModules, 'marked', 'lib', 'marked.esm.js'),
     path.join(vendorDir, 'marked.esm.js')
   );
+  await esbuild({
+    stdin: {
+      contents: "export { default } from 'sanitize-html';",
+      resolveDir: __dirname,
+      sourcefile: 'sanitize-html-browser-entry.js',
+      loader: 'js',
+    },
+    bundle: true,
+    format: 'esm',
+    platform: 'browser',
+    target: ['es2020'],
+    outfile: path.join(vendorDir, 'sanitize-html.esm.js'),
+    minify: true,
+  });
   await esbuild({
     stdin: {
       contents: "export { default } from 'ajv';",
