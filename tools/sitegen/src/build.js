@@ -23,6 +23,7 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '../../..');
 const RELEASES_DIR = path.join(ROOT, 'releases');
 const OUT_DIR = path.join(ROOT, 'site');
+const DEV_CACHE_FILE = path.join(ROOT, 'tools', 'sitegen', 'node_modules', '.cache', 'sitegen-releases.json');
 
 // Resolve repo details (for GitHub raw links)
 const DEFAULT_REPO = 'TomWhitwell/Workshop_Computer';
@@ -89,31 +90,47 @@ ${article}
   });
 }
 
-async function build() {
+async function readDevCache() {
+  try {
+    const parsed = JSON.parse(await fs.readFile(DEV_CACHE_FILE, 'utf8'));
+    return parsed.version === 1 && Array.isArray(parsed.releases) ? parsed.releases : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeDevCache(releases) {
+  await writeFileEnsured(DEV_CACHE_FILE, JSON.stringify({ version: 1, releases }));
+}
+
+async function build({ incrementalRelease = '', incrementalCuration = '' } = {}) {
+  const incremental = Boolean(incrementalRelease || incrementalCuration);
   // The output is fully generated. Clear it first so renamed/removed pages and
   // assets cannot survive from an older build with stale repository links.
-  await fs.rm(OUT_DIR, { recursive: true, force: true });
+  if (!incremental) await fs.rm(OUT_DIR, { recursive: true, force: true });
   await ensureDir(OUT_DIR);
-  await ensureDir(path.join(OUT_DIR, 'assets'));
-  await writeFileEnsured(path.join(OUT_DIR, 'schema', 'info-yaml.json'), JSON.stringify(infoYamlJsonSchema, null, 2));
+  if (!incremental) {
+    await ensureDir(path.join(OUT_DIR, 'assets'));
+    await writeFileEnsured(path.join(OUT_DIR, 'schema', 'info-yaml.json'), JSON.stringify(infoYamlJsonSchema, null, 2));
+  }
   // Copy physical CSS asset
   const cssSrc = path.join(ROOT, 'tools', 'sitegen', 'assets', 'style.css');
   const cssDest = path.join(OUT_DIR, 'assets', 'style.css');
-  await fs.copyFile(cssSrc, cssDest);
+  if (!incremental) await fs.copyFile(cssSrc, cssDest);
 
   // Copy GitHub-flavoured markdown stylesheet (used by embedded README bodies)
-  await fs.copyFile(
+  if (!incremental) await fs.copyFile(
     path.join(ROOT, 'tools', 'sitegen', 'assets', 'github-markdown.css'),
     path.join(OUT_DIR, 'assets', 'github-markdown.css')
   );
 
   // Copy program-card detail-page stylesheet
-  await fs.copyFile(
+  if (!incremental) await fs.copyFile(
     path.join(ROOT, 'tools', 'sitegen', 'assets', 'program-cards.css'),
     path.join(OUT_DIR, 'assets', 'program-cards.css')
   );
-  await ensureDir(path.join(OUT_DIR, 'assets', 'fonts'));
-  await fs.copyFile(
+  if (!incremental) await ensureDir(path.join(OUT_DIR, 'assets', 'fonts'));
+  if (!incremental) await fs.copyFile(
     path.join(ROOT, 'tools', 'sitegen', 'node_modules', '@fontsource', 'inter', 'files', 'inter-latin-800-normal.woff2'),
     path.join(OUT_DIR, 'assets', 'fonts', 'inter-latin-800-normal.woff2')
   );
@@ -121,33 +138,52 @@ async function build() {
   // Copy program-card panel diagram asset
   const panelSrcDir = path.join(ROOT, 'tools', 'sitegen', 'assets', 'program_cards');
   const panelDestDir = path.join(OUT_DIR, 'assets', 'program_cards');
-  await ensureDir(panelDestDir);
-  for (const f of await fs.readdir(panelSrcDir)) {
-    await fs.copyFile(path.join(panelSrcDir, f), path.join(panelDestDir, f));
+  if (!incremental) {
+    await ensureDir(panelDestDir);
+    for (const f of await fs.readdir(panelSrcDir)) {
+      await fs.copyFile(path.join(panelSrcDir, f), path.join(panelDestDir, f));
+    }
   }
 
   // Copy JS assets (picoboot / uf2 libs for WebUSB programmer)
   const jsSrcDir = path.join(ROOT, 'tools', 'sitegen', 'assets', 'js');
   const jsDestDir = path.join(OUT_DIR, 'assets', 'js');
-  await ensureDir(jsDestDir);
-  for (const f of await fs.readdir(jsSrcDir)) {
-    if (f.endsWith('.js')) await fs.copyFile(path.join(jsSrcDir, f), path.join(jsDestDir, f));
+  if (!incremental) {
+    await ensureDir(jsDestDir);
+    for (const f of await fs.readdir(jsSrcDir)) {
+      if (f.endsWith('.js')) await fs.copyFile(path.join(jsSrcDir, f), path.join(jsDestDir, f));
+    }
   }
 
   const releaseFolders = (await listSubdirs(RELEASES_DIR)).sort();
 
-  const releases = [];
+  let releases = incremental ? await readDevCache() : [];
+  if (incremental && (!releases || !await fs.stat(path.join(OUT_DIR, 'cards.json')).catch(() => null))) {
+    console.log('[sitegen] Incremental cache unavailable; running a clean build.');
+    return build();
+  }
+  if (incrementalRelease && !releaseFolders.includes(incrementalRelease)) {
+    console.log(`[sitegen] Release ${incrementalRelease} was removed; running a clean build.`);
+    return build();
+  }
   const normalizedCards = [];
   const rawInfoIndex = [];
   const validationResults = []; // non-fatal info.yaml conformance pass
   const panelValidationResults = [];
   const creatorSet = new Set();
-  for (const folder of releaseFolders) {
+  const foldersToDiscover = incrementalRelease ? [incrementalRelease] : (incrementalCuration ? [] : releaseFolders);
+  for (const folder of foldersToDiscover) {
     const relPath = path.join(RELEASES_DIR, folder);
     const hasFiles = (await fs.readdir(relPath)).length > 0;
     if (!hasFiles) continue;
     const rel = await discoverRelease(folder);
-    releases.push(rel);
+    if (incrementalRelease) {
+      const index = releases.findIndex(candidate => candidate.folderName === folder);
+      if (index >= 0) releases[index] = rel;
+      else releases.push(rel);
+    } else {
+      releases.push(rel);
+    }
     const unsafePanelDiagnostics = (rel.panelDiagnostics || []).filter(diagnostic => diagnostic.severity === 'error');
     if (unsafePanelDiagnostics.length) {
       throw new Error(`${folder} has invalid custom panels: ${unsafePanelDiagnostics.map(item => item.message).join(' ')}`);
@@ -156,38 +192,40 @@ async function build() {
       panelValidationResults.push({ ...diagnostic, file: `releases/${rel.folderName}/${diagnostic.path || 'panels'}` });
     }
     if (rel.rawInfoSource) {
-      normalizedCards.push(rel.card);
-      rawInfoIndex.push({
-        id: rel.folderName,
-        slug: rel.slug,
-        sourceFile: rel.card.source_file,
-        path: `raw-info/${rel.folderName}/info.yaml`,
-        // Build-discovered assets the browser preview cannot compute on its own,
-        // so it can render the same download/source/readme links a full build
-        // would produce.
-        uf2Url: rel.latestUf2?.url || '',
-        uf2Downloads: (rel.uf2Downloads || []).map(d => ({
-          name: d.name,
-          url: d.url,
-          ...(d.external ? { external: true } : {}),
-          ...(d.host ? { host: d.host } : {}),
-          ...(d.sha256 ? { sha256: d.sha256 } : {}),
-        })),
-        uf2Files: rel.trackedUf2 || [],
-        sourceUrl: rel.card?.source_url || '',
-        readmeUrl: rel.card?.readme_url || '',
-        yamlUrl: rel.card?.source_file
-          ? `https://github.com/${REPO}/blob/${BRANCH}/${rel.card.source_file}`
-          : '',
-      });
       // Validate the raw author source against the canonical schema. This is a
       // non-fatal reporting pass: it never blocks the build.
       const source = parseSource(rel.rawInfoSource, `releases/${rel.folderName}/info.yaml`);
       validationResults.push(validateInfoYaml(source));
-      const meta = rel.card?.metadata || {};
-      const creatorVal = (meta.creator || 'Unknown').toString().trim() || 'Unknown';
-      creatorSet.add(creatorVal);
     }
+  }
+
+  // Reconstruct shared indexes from the cached release models. This avoids
+  // rescanning Git history, firmware, documentation, and panels for unchanged
+  // cards during development.
+  normalizedCards.push(...releases.filter(rel => rel.rawInfoSource).map(rel => rel.card));
+  rawInfoIndex.push(...releases.filter(rel => rel.rawInfoSource).map(rel => ({
+    id: rel.folderName,
+    slug: rel.slug,
+    sourceFile: rel.card.source_file,
+    path: `raw-info/${rel.folderName}/info.yaml`,
+    uf2Url: rel.latestUf2?.url || '',
+    uf2Downloads: (rel.uf2Downloads || []).map(d => ({
+      name: d.name,
+      url: d.url,
+      ...(d.external ? { external: true } : {}),
+      ...(d.host ? { host: d.host } : {}),
+      ...(d.sha256 ? { sha256: d.sha256 } : {}),
+    })),
+    uf2Files: rel.trackedUf2 || [],
+    sourceUrl: rel.card?.source_url || '',
+    readmeUrl: rel.card?.readme_url || '',
+    yamlUrl: rel.card?.source_file
+      ? `https://github.com/${REPO}/blob/${BRANCH}/${rel.card.source_file}`
+      : '',
+  })));
+  for (const card of normalizedCards) {
+    const creatorVal = (card.metadata?.creator || 'Unknown').toString().trim() || 'Unknown';
+    creatorSet.add(creatorVal);
   }
 
   // Canonical index order is numeric by card number, not lexical folder name,
@@ -201,11 +239,13 @@ async function build() {
     if (Number.isNaN(bNumber)) return -1;
     return aNumber - bNumber || String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
   });
-  const firmwareFingerprints = await buildFirmwareFingerprints(normalizedCards, ROOT);
-  await writeFileEnsured(
-    path.join(OUT_DIR, 'firmware-fingerprints.json'),
-    JSON.stringify(firmwareFingerprints, null, 2),
-  );
+  if (!incrementalCuration) {
+    const firmwareFingerprints = await buildFirmwareFingerprints(normalizedCards, ROOT);
+    await writeFileEnsured(
+      path.join(OUT_DIR, 'firmware-fingerprints.json'),
+      JSON.stringify(firmwareFingerprints, null, 2),
+    );
+  }
 
   // Index page
   const discoveryHtml = renderDiscovery(normalizedCards, '.');
@@ -315,7 +355,7 @@ async function build() {
 })();
 </script>`
   });
-  await writeFileEnsured(path.join(OUT_DIR, 'random', 'index.html'), randomHtml);
+  if (!incrementalCuration) await writeFileEnsured(path.join(OUT_DIR, 'random', 'index.html'), randomHtml);
 
   // Archive page (complete one-line index, with search + sort)
   const archiveHtml = renderLayout({
@@ -350,8 +390,8 @@ async function build() {
   ${renderArchive(normalizedCards, '..')}
 </div>`
   });
-  await writeFileEnsured(path.join(OUT_DIR, 'archive', 'index.html'), archiveHtml);
-  await writeFileEnsured(path.join(OUT_DIR, 'cards.json'), JSON.stringify({
+  if (incrementalCuration !== 'discovery') await writeFileEnsured(path.join(OUT_DIR, 'archive', 'index.html'), archiveHtml);
+  if (!incrementalCuration) await writeFileEnsured(path.join(OUT_DIR, 'cards.json'), JSON.stringify({
     schema: {
       id: schemaAdapter.id,
       version: schemaAdapter.version,
@@ -360,9 +400,12 @@ async function build() {
     },
     cards: normalizedCards,
   }, null, 2));
-  await writeFileEnsured(path.join(OUT_DIR, 'raw-info', 'index.json'), JSON.stringify(rawInfoIndex, null, 2));
+  if (!incrementalCuration) await writeFileEnsured(path.join(OUT_DIR, 'raw-info', 'index.json'), JSON.stringify(rawInfoIndex, null, 2));
 
-  for (const rel of releases) {
+  const releaseOutputs = incrementalRelease
+    ? releases.filter(rel => rel.folderName === incrementalRelease)
+    : (incrementalCuration ? [] : releases);
+  for (const rel of releaseOutputs) {
     if (rel.rawInfoSource) {
       await writeFileEnsured(path.join(OUT_DIR, 'raw-info', rel.folderName, 'info.yaml'), rel.rawInfoSource);
       // Ship the build-only "extras" (rendered README + PDF links with absolute
@@ -378,20 +421,21 @@ async function build() {
     }
   }
 
-  for (const rel of releases) {
+  const detailOutputs = incrementalCuration === 'tags' ? releases : releaseOutputs;
+  for (const rel of detailOutputs) {
     const base = path.join(OUT_DIR, 'programs', rel.slug);
     await ensureDir(base);
     const html = detailPage(rel);
     await writeFileEnsured(path.join(base, 'index.html'), html);
 
-    if (rel.web?.copySrc) {
+    if (!incrementalCuration && rel.web?.copySrc) {
       const webDest = path.join(base, rel.web.siteSubdir || 'web');
       await copyWebAssets(rel.web.copySrc, webDest);
     }
   }
 
   // 404 fallback
-  await writeFileEnsured(path.join(OUT_DIR, '404.html'), renderLayout({
+  if (!incremental) await writeFileEnsured(path.join(OUT_DIR, '404.html'), renderLayout({
     title: 'Not found',
     relativeRoot: '.',
   repoUrl: `https://github.com/${REPO}`,
@@ -401,7 +445,7 @@ async function build() {
   // Author preview/editor (static, client-side; reuses the shared engine).
   const suggestionValues = key => [...new Set(normalizedCards.map(card => card.metadata?.[key]).filter(Boolean).map(String))]
     .sort((a, b) => a.localeCompare(b));
-  await buildPreviewTool({
+  const suggestions = {
     creators: suggestionValues('creator'),
     languages: suggestionValues('language'),
     statuses: [...new Set(['WIP', 'Beta', 'Released', ...suggestionValues('status')])].sort((a, b) => a.localeCompare(b)),
@@ -409,9 +453,18 @@ async function build() {
       ...curation.availableTags.map(tag => tag.label),
       ...normalizedCards.flatMap(card => Array.isArray(card.tags) ? card.tags : []),
     ])].sort((a, b) => a.localeCompare(b)),
-  });
+  };
+  if (!incremental) await buildPreviewTool(suggestions);
+  else if (!incrementalCuration || incrementalCuration === 'tags') await buildPreviewPages(suggestions);
 
-  console.log(`Built site with ${rawInfoIndex.length} metadata cards from ${releases.length} release folders -> ${OUT_DIR}`);
+  if (!incrementalCuration) await writeDevCache(releases);
+
+  const buildKind = incrementalRelease
+    ? `Incrementally rebuilt ${incrementalRelease}`
+    : incrementalCuration
+      ? `Incrementally rebuilt ${incrementalCuration} curation`
+      : `Built site with ${rawInfoIndex.length} metadata cards from ${releases.length} release folders`;
+  console.log(`${buildKind} -> ${OUT_DIR}`);
   reportValidation(validationResults);
   reportPanelValidation(panelValidationResults);
 }
@@ -496,6 +549,12 @@ async function buildPreviewTool(suggestions = {}) {
     path.join(ROOT, 'tools', 'sitegen', 'assets', 'preview', 'author.css'),
     path.join(previewDir, 'author.css')
   );
+  await buildPreviewPages(suggestions);
+}
+
+/** Refresh only the suggestion-bearing author pages, leaving vendor bundles intact. */
+async function buildPreviewPages(suggestions = {}) {
+  const previewDir = path.join(OUT_DIR, 'preview');
   await writeFileEnsured(path.join(previewDir, 'index.html'), renderAuthorPage({ documentKind: 'existing', suggestions }));
   await writeFileEnsured(path.join(previewDir, 'new', 'index.html'), renderAuthorPage({ documentKind: 'new', suggestions }));
 }
@@ -525,7 +584,18 @@ function reportPanelValidation(diagnostics) {
   for (const item of diagnostics) console.log(`  ${item.severity}: ${item.file}: ${item.message}`);
 }
 
-build().catch(err => {
+const args = process.argv.slice(2);
+const releaseArg = args.indexOf('--incremental-release');
+const curationArg = args.indexOf('--incremental-curation');
+const options = {
+  incrementalRelease: releaseArg >= 0 ? String(args[releaseArg + 1] || '') : '',
+  incrementalCuration: curationArg >= 0 ? String(args[curationArg + 1] || '') : '',
+};
+if (options.incrementalCuration && !['discovery', 'tags'].includes(options.incrementalCuration)) {
+  throw new Error(`Unknown incremental curation target: ${options.incrementalCuration}`);
+}
+
+build(options).catch(err => {
   console.error(err);
   process.exit(1);
 });

@@ -6,6 +6,7 @@
   "scripts": {
     "prebuild": "npm run check-curation",
     "build": "node ./src/build.js",
+    "dev": "npm run build && vite --config vite.config.js",
     "validate-info": "node ./src/validate/cli.js",
     "check-curation": "node ./src/curation/cli.js check",
     "sync-curation": "node ./src/curation/cli.js sync",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "esbuild": "^0.25.12",
-    "playwright": "^1.61.1"
+    "playwright": "^1.61.1",
+    "vite": "^7.3.6"
   }
 }
