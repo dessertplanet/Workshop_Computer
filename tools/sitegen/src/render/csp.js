@@ -11,9 +11,10 @@ export function applyContentSecurityPolicy(html, { preview = false } = {}) {
     const digest = crypto.createHash('sha256').update(body).digest('base64');
     hashes.push(`'sha256-${digest}'`);
   }
+  const scriptSources = ["'self'", ...(preview ? ["'unsafe-eval'"] : []), ...new Set(hashes)];
   const directives = [
     "default-src 'self'",
-    `script-src 'self' ${[...new Set(hashes)].join(' ')}`.trim(),
+    `script-src ${scriptSources.join(' ')}`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' data: https:",
@@ -23,7 +24,6 @@ export function applyContentSecurityPolicy(html, { preview = false } = {}) {
     "connect-src 'self' https:",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
     ...(preview ? ["worker-src 'self' blob:"] : []),
   ];
   return String(html).replace(PLACEHOLDER, directives.join('; '));
