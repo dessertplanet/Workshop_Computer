@@ -19,11 +19,25 @@ test('direct socket metadata maps API IDs and aliases to physical panel slots', 
       outputs: [{ id: 'CVOut1', name: 'Pitch' }, { id: 'NotAJack', name: 'Ignored' }],
     },
   });
-  assert.equal(card.panel.inputs.audio_l.label, 'Left In');
-  assert.equal(card.panel.inputs.audio_r.label, 'Right In');
+  assert.equal(card.panel.inputs.audio_l.label, 'Left input');
+  assert.equal(card.panel.inputs.audio_r.label, 'Right input');
   assert.equal(card.panel.outputs.cv_out_1.label, 'Pitch');
   assert.ok(card.warnings.some(warning => warning.includes('NotAJack')));
   assert.equal(card.panel_views, undefined);
+});
+
+test('panel labels preserve author wording without abbreviation or truncation', () => {
+  const card = build({
+    Name: 'Panel Test',
+    panel: { inputs: [{ id: 'PulseIn1', name: 'External Trigger / Pattern Input' }] },
+    controls: {
+      switch: { up: 'Preset Select Pattern' },
+      knobs: [{ main: { name: 'Quantized Modulation Channel' } }],
+    },
+  });
+  assert.equal(card.panel.inputs.pulse_1.label, 'External Trigger / Pattern Input');
+  assert.equal(card.panel_views.items[0].panel.controls.main.label, 'Quantized Modulation Channel');
+  assert.equal(card.panel_views.items[0].panel.controls.z.label, 'Preset Select Pattern');
 });
 
 test('generated switch views inherit base rows and apply positional overlays', () => {
@@ -86,7 +100,7 @@ test('custom panels preserve order, select their default, and suppress generated
   assert.equal(card.panel_views.default, 'alternate');
   assert.deepEqual(card.panel_views.items.map(item => item.id), ['main', 'alternate']);
   assert.equal(card.panel_views.items[0].panel.controls.main.label, 'Shared');
-  assert.equal(card.panel_views.items[1].panel.controls.main.label, 'Alternate\nmain');
+  assert.equal(card.panel_views.items[1].panel.controls.main.label, 'Alternate main');
   assert.ok(!card.panel_views.items.some(item => item.id === 'up'));
 
   const invalidOverride = build({ Name: 'Panel Test', controls: { switch: { up: 'Up' } } }, {

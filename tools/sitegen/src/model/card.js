@@ -172,50 +172,13 @@ function titleizeId(id) {
     .join(' ');
 }
 
-function compactPanelLabel(name) {
-  let text = textValue(name).trim().replace(/\s*\/\s*/g, ' / ');
-  if (!text) return '';
-  const replacements = {
-    External: 'Ext',
-    Channel: 'Chan',
-    Quantized: 'Quant',
-    Modulation: 'Mod',
-    Divide: 'Div',
-    Multiply: 'Mult',
-    Randomness: 'Random',
-    Trigger: 'Trig',
-    Output: 'Out',
-    Input: 'In',
-    'Preset Select': 'Preset',
-    Pattern: 'Patt',
-  };
-  for (const [from, to] of Object.entries(replacements)) {
-    text = text.replace(new RegExp(`\\b${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), to);
-  }
-  const words = text.split(/\s+/);
-  const lines = [];
-  let line = '';
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (candidate.length <= 12) {
-      line = candidate;
-    } else {
-      if (line) lines.push(line);
-      line = word;
-    }
-  }
-  if (line) lines.push(line);
-  const label = lines.slice(0, 2).join('\n');
-  return label.length > 24 ? label.slice(0, 23).replace(/\s+$/, '') : label;
-}
-
 // ---------- panel sockets ----------
 
 function normalizeSocket(item, source) {
   const obj = hashValue(item);
   const name = field(obj, 'label', 'name', 'Name') ?? field(obj, 'id');
   const out = {
-    label: compactPanelLabel(name),
+    label: textValue(name),
     description: textValue(field(obj, 'description', 'Description')),
     source,
   };
@@ -369,7 +332,7 @@ function normalizedControl(item, warnings, fieldName, fallbackLabel = '') {
   if (!isPlainObject(item)) return null;
   const label = textValue(field(item, 'label', 'name')) || fallbackLabel;
   const control = {
-    label: compactPanelLabel(label),
+    label,
     description: optionalText(field(item, 'description'), warnings, `${fieldName}.description`),
     source: textValue(field(item, 'source')) || 'info.yaml',
   };
@@ -405,7 +368,7 @@ function normalizeControls(info, warnings, position, panelId = '') {
   if (item !== undefined) {
     const zControl = isPlainObject(item)
       ? normalizedControl(item, warnings, `controls.switch.${position}`, position)
-      : { label: compactPanelLabel(textValue(item) || position), source: 'info.yaml' };
+      : { label: textValue(item) || position, source: 'info.yaml' };
     if (zControl) controls.z = { ...(controls.z || {}), ...zControl };
   } else if (position && rows.some(row => rowDeclaresPosition(row, position))) {
     controls.z = { label: position, description: `Switch Z ${position}.`, source: 'info.yaml' };
