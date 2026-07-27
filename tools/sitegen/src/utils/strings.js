@@ -9,3 +9,8 @@ export function slugify(name) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)+/g, '');
 }
+
+/** Return authored list data safely; legacy object-shaped fields become empty. */
+export function arrayOrEmpty(value) {
+  return Array.isArray(value) ? value : [];
+}
