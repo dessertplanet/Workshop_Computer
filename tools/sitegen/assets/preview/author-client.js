@@ -7,6 +7,7 @@ import { renderReadmeAndDocs } from './lib/render/cardPage.js';
 import { panelPositions } from './lib/render/panelPositions.js';
 import { resolveAudioSamples, getAudioField } from './lib/utils/audio.js';
 import { getInfoYamlSchemaAdapter } from './lib/schema/schemaAdapter.js';
+import { arrayOrEmpty } from './lib/utils/strings.js';
 import { renderPanelElementToSvgBlob } from '../assets/js/panel-export.js';
 
 const REQUIRED = getInfoYamlSchemaAdapter().requiredFields().map(field => field.path);
@@ -756,10 +757,10 @@ function normalizeSharedPositionValues(def) {
 
 function hasAuthoredComponentValue(def) {
   if (def.kind === 'control') {
-    return (data.controls?.knobs || []).some(row => cleanText(row?.[def.key]?.name));
+    return arrayOrEmpty(data.controls?.knobs).some(row => cleanText(row?.[def.key]?.name));
   }
   const side = def.kind === 'input' ? 'inputs' : 'outputs';
-  return (data.panel?.[side] || []).some(item => item.id === def.id && cleanText(item.name));
+  return arrayOrEmpty(data.panel?.[side]).some(item => item.id === def.id && cleanText(item.name));
 }
 
 function setComponent(def, name, description) {
@@ -779,10 +780,10 @@ function setComponent(def, name, description) {
 
 function hasAuthoredComponentDescription(def) {
   if (def.kind === 'control') {
-    return (data.controls?.knobs || []).some(row => cleanText(row?.[def.key]?.description));
+    return arrayOrEmpty(data.controls?.knobs).some(row => cleanText(row?.[def.key]?.description));
   }
   const side = def.kind === 'input' ? 'inputs' : 'outputs';
-  return (data.panel?.[side] || []).some(item => item.id === def.id && cleanText(item.description));
+  return arrayOrEmpty(data.panel?.[side]).some(item => item.id === def.id && cleanText(item.description));
 }
 
 function setPositionDescription(def, position, description) {
@@ -1188,9 +1189,9 @@ async function loadExistingCard(entry) {
 
 function hasPositionSpecificData() {
   const conditional = item => SWITCH_POSITIONS.includes(item?.when?.z);
-  return (data.controls?.knobs || []).some(conditional)
-    || (data.panel?.inputs || []).some(conditional)
-    || (data.panel?.outputs || []).some(conditional);
+  return arrayOrEmpty(data.controls?.knobs).some(conditional)
+    || arrayOrEmpty(data.panel?.inputs).some(conditional)
+    || arrayOrEmpty(data.panel?.outputs).some(conditional);
 }
 
 function applyExistingHash() {

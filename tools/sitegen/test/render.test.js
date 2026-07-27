@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { renderCardArticle, renderPanelArtwork, renderReadmeAndDocs } from '../src/render/cardPage.js';
 import { renderArchive, renderShelf, renderTile } from '../src/render/discovery.js';
 import { renderLayout } from '../src/render/layout.js';
+import { renderAuthorPage } from '../src/render/authorPage.js';
 
 function card(extra = {}) {
   return {
@@ -136,4 +137,13 @@ test('layout uses relative external runtime assets and CSP hashes only remaining
 
   const withInline = renderLayout({ title: 'Inline', content: '<script>window.example = true;</script>' });
   assert.match(withInline, /script-src 'self' 'sha256-/);
+});
+
+test('author preview permits AJV schema compilation without weakening published pages', () => {
+  const preview = renderAuthorPage();
+  const previewPolicy = preview.match(/Content-Security-Policy" content="([^"]+)/)?.[1] || '';
+  const published = renderLayout({ title: 'Published', content: '' });
+  const publishedPolicy = published.match(/Content-Security-Policy" content="([^"]+)/)?.[1] || '';
+  assert.match(previewPolicy.match(/script-src[^;]*/)?.[0] || '', /unsafe-eval/);
+  assert.doesNotMatch(publishedPolicy.match(/script-src[^;]*/)?.[0] || '', /unsafe-eval/);
 });
