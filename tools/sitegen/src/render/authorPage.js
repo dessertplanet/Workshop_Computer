@@ -18,7 +18,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
   <link rel="stylesheet" href="../assets/style.css">
   <link rel="stylesheet" href="../assets/program-cards.css">
   <link rel="stylesheet" href="../assets/github-markdown.css">
-  <link rel="stylesheet" href="./author.css?v=27">
+  <link rel="stylesheet" href="./author.css?v=28">
   <script type="importmap">
   {
     "imports": {
@@ -64,8 +64,8 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
           <header><div><span class="author-step">Start here</span><h2>Card details</h2></div><span class="author-required-key">Required</span></header>
           <div class="author-form-grid">
             <label class="author-field author-field--wide"><span>Name <strong>Required</strong></span><input data-field="Name" required placeholder="Card display name"></label>
-            <label class="author-field author-field--wide"><span>Short description <strong>Required</strong></span><textarea data-field="short-description" required rows="2" placeholder="A concise tagline for indexes, shelves, and archive rows"></textarea></label>
-            <label class="author-field author-field--wide"><span>Summary <strong>Required</strong></span><textarea data-field="summary" required rows="4" placeholder="A longer operator overview for the card detail page"></textarea><small>Markdown is supported, including links, emphasis, and inline code.</small></label>
+            <label class="author-field author-field--wide"><span>Short description <strong>Required</strong> <small class="author-field-guidance">(used in card search and the all cards index; <a href="../archive/" target="_blank" rel="noopener noreferrer">see example ↗</a>)</small></span><textarea data-field="short-description" required rows="2" placeholder="A concise tagline for indexes, shelves, and archive rows"></textarea></label>
+            <label class="author-field author-field--wide"><span>Summary <strong>Required</strong> <small class="author-field-guidance">(used beneath the title on card pages; <a href="../programs/15-mlrws/" target="_blank" rel="noopener noreferrer">see example ↗</a>)</small></span><textarea data-field="summary" required rows="4" placeholder="A longer operator overview for the card detail page"></textarea><small>Markdown is supported, including links, emphasis, and inline code.</small></label>
             <label class="author-field"><span>Creator <strong>Required</strong></span><input data-field="Creator" required list="creator-suggestions" placeholder="Your name or handle"></label>
             <label class="author-field"><span>Language <strong>Required</strong></span><input data-field="Language" required list="language-suggestions" placeholder="ie. Pico SDK"></label>
             <label class="author-field"><span>Version <strong>Required</strong></span><input data-field="Version" required placeholder="For example, 1.0.0"></label>
