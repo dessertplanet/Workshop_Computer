@@ -72,6 +72,19 @@ export async function discoverDownloads(absReleaseDir, repoRelBase, makeRawUrl) 
   // curated `uf2.path` at any committed firmware and tools can validate it.
   const trackedUf2 = uf2s.map(it => it.relRelease);
 
+  // Keep every tracked candidate available to the browser author preview. This
+  // mirrors curated path resolution even when auto-discovery later suppresses
+  // a duplicate copy under web/.
+  const availableUf2Downloads = [];
+  const shaByReleasePath = new Map();
+  for (const it of uf2s) {
+    const entry = { name: it.name, url: it.url, rel: it.rel, path: it.relRelease };
+    const sha256 = await sha256File(it.abs);
+    if (sha256) entry.sha256 = sha256;
+    shaByReleasePath.set(it.relRelease, sha256);
+    availableUf2Downloads.push(entry);
+  }
+
   // Ignore a firmware under a `web/` folder when an identically-named UF2 also
   // exists outside web/ (avoids duplicate links); keep uniquely-named web ones.
   const nonWebNames = new Set(uf2s.filter(it => !it.inWeb).map(it => it.name.toLowerCase()));
@@ -86,12 +99,12 @@ export async function discoverDownloads(absReleaseDir, repoRelBase, makeRawUrl) 
   const uf2Downloads = [];
   for (const it of uf2s) {
     const entry = { name: it.name, url: it.url, rel: it.rel };
-    const sha256 = await sha256File(it.abs);
+    const sha256 = shaByReleasePath.get(it.relRelease);
     if (sha256) entry.sha256 = sha256;
     uf2Downloads.push(entry);
   }
   const latestUf2 = uf2Downloads[0] || null;
-  return { downloads, latestUf2, uf2Downloads, trackedUf2 };
+  return { downloads, latestUf2, uf2Downloads, availableUf2Downloads, trackedUf2 };
 }
 
 export function compareFirmwareCandidates(a, b) {
