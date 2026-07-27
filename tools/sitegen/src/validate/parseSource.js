@@ -52,7 +52,7 @@ function collectSourceLines(doc, raw) {
 
 /** Parse raw YAML text. Never throws; syntax errors become `result.error`. */
 export function parseSource(raw, file = '<memory>') {
-  const result = { file, raw, data: null, keyLines: {}, pathLines: {}, error: null };
+  const result = { file, raw, data: null, keyLines: {}, pathLines: {}, error: null, errors: [] };
   let doc;
   try {
     doc = YAML.parseDocument(raw, { prettyErrors: true });
@@ -61,16 +61,19 @@ export function parseSource(raw, file = '<memory>') {
       severity: 'error', ruleId: 'yaml-syntax', file, path: '',
       message: `YAML parse failed: ${err.message}`,
     };
+    result.errors = [result.error];
     return result;
   }
   if (doc.errors && doc.errors.length) {
-    const err = doc.errors[0];
-    const pos = err.linePos && err.linePos[0];
-    result.error = {
-      severity: 'error', ruleId: 'yaml-syntax', file, path: '',
-      message: err.message,
-      line: pos?.line, col: pos?.col,
-    };
+    result.errors = doc.errors.map(err => {
+      const pos = err.linePos && err.linePos[0];
+      return {
+        severity: 'error', ruleId: 'yaml-syntax', file, path: '',
+        message: err.message,
+        line: pos?.line, col: pos?.col,
+      };
+    });
+    result.error = result.errors[0];
     return result;
   }
   result.data = doc.toJS() ?? {};

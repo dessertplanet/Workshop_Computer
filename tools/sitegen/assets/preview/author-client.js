@@ -18,7 +18,6 @@ const DIFFERENTIAL_STORAGE_KEY = 'workshop-computer-author-differential-controls
 const SWITCH_POSITIONS = ['up', 'middle', 'down'];
 const OPTIONAL_KEYS = ['demo-link', 'Editor', 'tags', 'contact', 'discussion', 'readme'];
 const SPLIT_STORAGE_KEY = 'workshop-computer-author-editor-width';
-const WHITESPACE_STORAGE_KEY = 'workshop-computer-author-show-whitespace';
 const DOCUMENT_KIND = document.querySelector('.author-page')?.dataset.documentKind || 'new';
 const IS_EXISTING = DOCUMENT_KIND === 'existing';
 const INITIAL = {
@@ -50,10 +49,9 @@ const els = {
   editor: document.getElementById('author-editor'),
   yamlPanel: document.getElementById('yaml-editor'),
   yaml: document.getElementById('yaml-source'),
-  yamlHighlight: document.getElementById('yaml-highlight'),
+  yamlMonaco: document.getElementById('yaml-monaco'),
   formatYaml: document.getElementById('format-yaml'),
   toggleWhitespace: document.getElementById('toggle-whitespace'),
-  yamlMarkers: document.getElementById('yaml-diagnostic-markers'),
   sourcePathTitle: document.getElementById('source-path-title'),
   diagnostics: document.getElementById('diagnostics'),
   preview: document.getElementById('card-preview'),
@@ -70,7 +68,6 @@ const els = {
   select: document.getElementById('card-select'),
   editorStatus: document.getElementById('editor-status'),
   page: document.querySelector('.author-page'),
-  gutter: document.getElementById('gutter-inner'),
   productionLink: document.getElementById('production-card-link'),
   workspace: document.querySelector('.author-workspace'),
   splitter: document.getElementById('author-splitter'),
@@ -94,7 +91,11 @@ let positionClickTimer;
 let yamlTargetCacheSource = '';
 let yamlTargetCacheDocument = null;
 let editorDiagnostics = [];
-let showWhitespace = localStorage.getItem(WHITESPACE_STORAGE_KEY) === 'true';
+let languageDiagnostics = [];
+let lastValidationResult = { diagnostics: [], errorCount: 0, warningCount: 0 };
+let showWhitespace = false;
+let yamlEditor = null;
+let yamlEditorPromise = null;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -204,113 +205,41 @@ function updateBasicAvailability(source = els.yaml.value, parsed = data) {
   if (!result.compatible && currentMode === 'author') setMode('yaml');
 }
 
-function updateGutter() {
-  if (!els.gutter) return;
-  const severityByLine = diagnosticSeverityByLine(editorDiagnostics);
-  els.gutter.innerHTML = Array.from({ length: els.yaml.value.split('\n').length }, (_, index) => {
-    const line = index + 1;
-    const severity = severityByLine.get(line);
-    return `<span${severity ? ` class="has-${severity}"` : ''}>${line}</span>`;
-  }).join('');
-  els.gutter.style.transform = `translateY(${-els.yaml.scrollTop}px)`;
+function layoutYamlEditor() {
+  yamlEditor?.layout();
 }
 
-function diagnosticSeverityByLine(diagnostics) {
-  const lines = new Map();
-  for (const diagnostic of diagnostics || []) {
-    if (!Number.isInteger(diagnostic.line)) continue;
-    if (diagnostic.severity === 'error' || !lines.has(diagnostic.line)) lines.set(diagnostic.line, diagnostic.severity);
-  }
-  return lines;
-}
-
-function highlightSourceText(value) {
-  return String(value ?? '').split(/([ \t])/).map(part => {
-    if (part === ' ') return '<span class="yaml-whitespace yaml-space"> </span>';
-    if (part === '\t') return '<span class="yaml-whitespace yaml-tab">\t</span>';
-    return escapeHtml(part);
-  }).join('');
-}
-
-function findYamlComment(line) {
-  let quote = '';
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (quote) {
-      if (char === quote && (quote === "'" || line[index - 1] !== '\\')) quote = '';
-    } else if (char === '"' || char === "'") quote = char;
-    else if (char === '#' && (index === 0 || /\s/.test(line[index - 1]))) return index;
-  }
-  return -1;
-}
-
-function highlightYamlValue(value) {
-  const token = /("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\b(?:true|false|null|~)\b|(?:^|[\s,[{])-?(?:\d+(?:\.\d+)?|\.\d+)(?=$|[\s,\]}]))/gi;
-  let html = '';
-  let offset = 0;
-  for (const match of value.matchAll(token)) {
-    html += highlightSourceText(value.slice(offset, match.index));
-    const raw = match[0];
-    const leading = raw.match(/^\s/)?.[0] || '';
-    const content = raw.slice(leading.length);
-    const kind = /^['"]/.test(content) ? 'string' : /^(true|false|null|~)$/i.test(content) ? 'literal' : 'number';
-    html += highlightSourceText(leading) + `<span class="yaml-${kind}">${highlightSourceText(content)}</span>`;
-    offset = match.index + raw.length;
-  }
-  return html + highlightSourceText(value.slice(offset));
-}
-
-function highlightYamlLine(line) {
-  const commentAt = findYamlComment(line);
-  const code = commentAt >= 0 ? line.slice(0, commentAt) : line;
-  const comment = commentAt >= 0 ? line.slice(commentAt) : '';
-  const key = code.match(/^(\s*(?:-\s+)?)([^:#][^:]*?)(\s*:)(.*)$/);
-  const highlighted = key
-    ? `${highlightSourceText(key[1])}<span class="yaml-key">${highlightSourceText(key[2])}</span><span class="yaml-punctuation">${highlightSourceText(key[3])}</span>${highlightYamlValue(key[4])}`
-    : highlightYamlValue(code);
-  return highlighted + (comment ? `<span class="yaml-comment">${highlightSourceText(comment)}</span>` : '');
-}
-
-function updateYamlHighlight(diagnostics = editorDiagnostics) {
+function updateYamlDiagnostics(diagnostics = editorDiagnostics) {
   editorDiagnostics = diagnostics || [];
-  const severityByLine = diagnosticSeverityByLine(editorDiagnostics);
-  els.yamlHighlight.innerHTML = els.yaml.value.split('\n').map((line, index) => {
-    const severity = severityByLine.get(index + 1);
-    return `<span class="yaml-line${severity ? ` has-${severity}` : ''}">${highlightYamlLine(line) || ' '}</span>`;
-  }).join('\n') + '\n';
-  els.yamlHighlight.classList.toggle('show-whitespace', showWhitespace);
-  els.yamlHighlight.style.transform = `translate(${-els.yaml.scrollLeft}px, ${-els.yaml.scrollTop}px)`;
-  renderYamlDiagnosticMarkers();
-  updateGutter();
-}
-
-function renderYamlDiagnosticMarkers() {
-  const byLine = new Map();
-  const lineHeight = Number.parseFloat(getComputedStyle(els.yaml).lineHeight) || 19.5;
-  for (const diagnostic of editorDiagnostics) {
-    if (!Number.isInteger(diagnostic.line)) continue;
-    const existing = byLine.get(diagnostic.line) || [];
-    existing.push(diagnostic);
-    byLine.set(diagnostic.line, existing);
-  }
-  els.yamlMarkers.innerHTML = [...byLine.entries()].map(([line, diagnostics]) => {
-    const severity = diagnostics.some(item => item.severity === 'error') ? 'error' : 'warning';
-    const message = diagnostics.map(item => `${item.severity === 'error' ? 'Error' : 'Warning'}${item.path ? ` · ${item.path}` : ''}: ${item.message}`).join('\n');
-    const top = 12 + ((line - 1) * lineHeight) - els.yaml.scrollTop;
-    return `<button type="button" class="yaml-diagnostic-marker has-${severity}" style="top:${top}px" data-diagnostic-line="${line}" data-diagnostic-col="${diagnostics[0].col || 1}" data-message="${escapeHtml(message)}" title="${escapeHtml(message)}" aria-label="Line ${line}: ${escapeHtml(message)}">${severity === 'error' ? '!' : '⚠'}</button>`;
-  }).join('');
+  yamlEditor?.setDiagnostics(editorDiagnostics);
 }
 
 function updateWhitespaceToggle() {
   els.toggleWhitespace.checked = showWhitespace;
   els.toggleWhitespace.closest('.author-toggle').title = showWhitespace ? 'Hide space and tab markers' : 'Show spaces as dots and tabs as arrows';
-  updateYamlHighlight();
+  yamlEditor?.setShowWhitespace(showWhitespace);
 }
 
 function toggleWhitespace() {
   showWhitespace = !showWhitespace;
-  localStorage.setItem(WHITESPACE_STORAGE_KEY, String(showWhitespace));
   updateWhitespaceToggle();
+}
+
+async function ensureYamlEditor() {
+  if (yamlEditor) return yamlEditor;
+  if (!yamlEditorPromise) {
+    yamlEditorPromise = import('./monaco-editor.js').then(({ createYamlEditor }) => {
+      yamlEditor = createYamlEditor({ container: els.yamlMonaco, source: els.yaml, showWhitespace });
+      els.yamlMonaco.classList.add('is-ready');
+      yamlEditor.setDiagnostics(editorDiagnostics);
+      return yamlEditor;
+    }).catch(error => {
+      yamlEditorPromise = null;
+      els.yamlMonaco.querySelector('.author-monaco-loading').textContent = `Advanced editor failed to load: ${error.message}`;
+      throw error;
+    });
+  }
+  return yamlEditorPromise;
 }
 
 function splitBounds() {
@@ -326,6 +255,7 @@ function setEditorWidth(width, { persist = true } = {}) {
   els.splitter.setAttribute('aria-valuemax', String(max));
   els.splitter.setAttribute('aria-valuenow', String(next));
   if (persist) localStorage.setItem(SPLIT_STORAGE_KEY, String(next));
+  yamlEditor?.layout();
 }
 
 function initWorkspaceSplitter() {
@@ -382,7 +312,10 @@ function updateFullscreenButtons() {
   els.previewFullscreen.setAttribute('aria-pressed', String(previewActive));
   els.previewFullscreen.setAttribute('aria-label', previewActive ? 'Exit preview full screen' : 'Enter preview full screen');
   els.previewFullscreen.title = previewActive ? 'Exit preview full screen' : 'Enter preview full screen';
-  if (yamlActive) els.yaml.focus();
+  if (yamlActive) {
+    yamlEditor?.layout();
+    yamlEditor?.focus();
+  }
 }
 
 function getNested(path) {
@@ -410,24 +343,28 @@ function prune(value) {
 }
 
 function renderDiagnostics(result) {
+  lastValidationResult = result;
   editorDiagnostics = result.diagnostics;
-  updateYamlHighlight(editorDiagnostics);
-  if (!result.diagnostics.length) {
+  updateYamlDiagnostics(editorDiagnostics);
+  const validatorDiagnostics = yamlEditor
+    ? result.diagnostics.filter(item => item.ruleId !== 'yaml-syntax' && item.ruleId !== 'ajv-schema')
+    : result.diagnostics;
+  const diagnostics = [...languageDiagnostics, ...validatorDiagnostics];
+  const errorCount = diagnostics.filter(item => item.severity === 'error').length;
+  const warningCount = diagnostics.filter(item => item.severity === 'warning').length;
+  if (!diagnostics.length) {
     els.diagnostics.innerHTML = '<p class="diag-clean">No schema issues.</p>';
     return;
   }
-  els.diagnostics.innerHTML = `<p class="diag-summary">${result.errorCount} error(s), ${result.warningCount} warning(s)</p><ul class="diag-list">${result.diagnostics.map(d => `<li class="diag--${escapeHtml(d.severity)}"><strong>${d.severity === 'error' ? 'Error' : 'Warning'}:</strong> ${Number.isInteger(d.line) ? `<button type="button" class="diag-location" data-diagnostic-line="${d.line}" data-diagnostic-col="${d.col || 1}">Line ${d.line}</button>` : ''} ${escapeHtml(d.path || '')} ${escapeHtml(d.message)}</li>`).join('')}</ul>`;
+  els.diagnostics.innerHTML = `<p class="diag-summary">${errorCount} error(s), ${warningCount} warning(s)</p><ul class="diag-list">${diagnostics.map(d => `<li class="diag--${escapeHtml(d.severity)}"><strong>${d.severity === 'error' ? 'Error' : 'Warning'}:</strong> ${Number.isInteger(d.line) ? `<button type="button" class="diag-location" data-diagnostic-line="${d.line}" data-diagnostic-col="${d.col || 1}">Line ${d.line}</button>` : ''} ${escapeHtml(d.path || '')} ${escapeHtml(d.message)}</li>`).join('')}</ul>`;
 }
 
 function jumpToDiagnostic(line, col = 1) {
-  const lines = els.yaml.value.split('\n');
-  const lineIndex = Math.max(0, Math.min(lines.length - 1, Number(line) - 1));
-  const offset = lines.slice(0, lineIndex).reduce((total, value) => total + value.length + 1, 0) + Math.max(0, Number(col) - 1);
-  els.yaml.focus();
-  els.yaml.setSelectionRange(offset, Math.min(els.yaml.value.length, offset + Math.max(1, lines[lineIndex].length - Number(col) + 1)));
-  const lineHeight = Number.parseFloat(getComputedStyle(els.yaml).lineHeight) || 20;
-  els.yaml.scrollTop = Math.max(0, lineIndex * lineHeight - els.yaml.clientHeight / 3);
-  updateYamlHighlight();
+  if (yamlEditor) {
+    yamlEditor.reveal(line, col);
+    return;
+  }
+  ensureYamlEditor().then(editor => editor.reveal(line, col)).catch(() => {});
 }
 
 function formatYamlSource() {
@@ -704,21 +641,19 @@ function jumpToYamlTarget(target) {
     return;
   }
   const start = els.yaml.value.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
-  let end = els.yaml.value.indexOf('\n', offset);
-  if (end < 0) end = els.yaml.value.length;
-  els.yaml.focus();
-  els.yaml.setSelectionRange(start, end);
-  const line = els.yaml.value.slice(0, start).split('\n').length - 1;
-  const lineHeight = Number.parseFloat(getComputedStyle(els.yaml).lineHeight) || 20;
-  els.yaml.scrollTop = Math.max(0, line * lineHeight - els.yaml.clientHeight / 3);
-  updateGutter();
-  els.yaml.classList.remove('author-yaml-target-flash');
-  requestAnimationFrame(() => els.yaml.classList.add('author-yaml-target-flash'));
-  setTimeout(() => els.yaml.classList.remove('author-yaml-target-flash'), 900);
+  const lineNumber = els.yaml.value.slice(0, start).split('\n').length;
+  if (yamlEditor) {
+    yamlEditor.reveal(lineNumber, 1, true);
+    return;
+  }
+  ensureYamlEditor().then(editor => editor.reveal(lineNumber, 1, true)).catch(() => {});
 }
 
 function validateAndRender({ syncYaml = true, syncForm = false } = {}) {
-  const source = parseSource(sourceText(), 'info.yaml');
+  // Advanced mode must retain the editor's exact spacing and comments when
+  // calculating diagnostic locations. Canonical serialization can remove
+  // blank lines and would make otherwise-correct markers drift upward.
+  const source = parseSource(syncYaml ? sourceText() : els.yaml.value, 'info.yaml');
   const result = validateInfoYaml(source);
   renderDiagnostics(result);
   if (syncYaml) els.yaml.value = sourceText();
@@ -1215,7 +1150,7 @@ function openLicenseAssistant() {
   els.licenseDialog.showModal();
 }
 
-function setMode(mode) {
+async function setMode(mode) {
   const requested = document.querySelector(`[data-mode="${CSS.escape(mode)}"]`);
   if (requested?.disabled) return;
   const yamlMode = mode === 'yaml';
@@ -1230,8 +1165,15 @@ function setMode(mode) {
   }
   if (yamlMode) {
     els.yaml.value = sourceText();
-    updateYamlHighlight([]);
-    els.yaml.focus();
+    updateYamlDiagnostics([]);
+    try {
+      const editor = await ensureYamlEditor();
+      editor.layout();
+      editor.focus();
+    } catch (error) {
+      els.status.textContent = `Advanced editor could not be loaded: ${error.message}`;
+      els.status.className = 'author-status is-error';
+    }
   }
   renderPreview();
 }
@@ -1312,7 +1254,7 @@ async function loadExistingCard(entry) {
       .then(response => response.ok ? response.json() : null).catch(() => null);
     const source = parseSource(raw, entry.sourceFile || 'info.yaml');
     els.yaml.value = raw;
-    updateYamlHighlight([]);
+    updateYamlDiagnostics([]);
     if (source.error || !source.data) {
       renderDiagnostics(validateInfoYaml(source));
       updateBasicAvailability(raw, null);
@@ -1328,7 +1270,7 @@ async function loadExistingCard(entry) {
       updateBasicAvailability(raw, data);
       els.editorStatus.textContent = `${result.errorCount} error(s), ${result.warningCount} warning(s)`;
     }
-    updateGutter();
+    layoutYamlEditor();
   } catch (error) {
     els.editorStatus.textContent = 'Load failed';
     els.status.textContent = `Could not load ${entry.path}: ${error.message}`;
@@ -1354,17 +1296,6 @@ function applyExistingHash() {
   els.select.value = String(index.indexOf(entry));
   setMode('yaml');
   loadExistingCard(entry);
-}
-
-function autoIndentOnEnter(event) {
-  if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
-  const start = els.yaml.selectionStart;
-  const lineStart = els.yaml.value.lastIndexOf('\n', start - 1) + 1;
-  const indent = (els.yaml.value.slice(lineStart, start).match(/^[ \t]*/) || [''])[0];
-  if (!indent) return;
-  event.preventDefault();
-  els.yaml.setRangeText(`\n${indent}`, els.yaml.selectionStart, els.yaml.selectionEnd, 'end');
-  els.yaml.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 async function initCardPicker() {
@@ -1556,7 +1487,7 @@ function init() {
   });
 
   els.yaml.addEventListener('input', () => {
-    updateYamlHighlight([]);
+    updateYamlDiagnostics([]);
     clearTimeout(yamlTimer);
     yamlTimer = setTimeout(() => {
       const source = parseSource(els.yaml.value, 'info.yaml');
@@ -1575,15 +1506,13 @@ function init() {
       updateBasicAvailability(els.yaml.value, data);
     }, 250);
   });
-  els.yaml.addEventListener('scroll', () => updateYamlHighlight());
-  els.yaml.addEventListener('keydown', autoIndentOnEnter);
+  els.yaml.addEventListener('yaml-language-diagnostics', event => {
+    languageDiagnostics = event.detail || [];
+    renderDiagnostics(lastValidationResult);
+  });
   els.formatYaml.addEventListener('click', formatYamlSource);
   els.toggleWhitespace.addEventListener('change', toggleWhitespace);
   els.diagnostics.addEventListener('click', event => {
-    const button = event.target.closest('[data-diagnostic-line]');
-    if (button) jumpToDiagnostic(button.dataset.diagnosticLine, button.dataset.diagnosticCol);
-  });
-  els.yamlMarkers.addEventListener('click', event => {
     const button = event.target.closest('[data-diagnostic-line]');
     if (button) jumpToDiagnostic(button.dataset.diagnosticLine, button.dataset.diagnosticCol);
   });
