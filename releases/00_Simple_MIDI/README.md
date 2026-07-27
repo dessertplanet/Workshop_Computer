@@ -85,3 +85,6 @@ USB-A-to-USB-C data cable is also suitable.
 For full details on how to calibrate the Workshop Computer and Workshop System oscillators, see the [complete Workshop System calibration
 guide](https://www.musicthing.co.uk/Workshop_System_Calibration/).
 
+## Using the calibration data 
+
+For more details check the [Technical notes](TECHNICAL_NOTES.md)
