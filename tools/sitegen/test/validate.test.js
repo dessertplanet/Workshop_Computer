@@ -252,6 +252,28 @@ host:
   assert.equal(result.warningCount, 0);
 });
 
+test('switch tap metadata does not require a down-position description', () => {
+  const result = validate(`
+Name: Tap Only
+short-description: Short
+summary: Long
+Language: C++
+Creator: Someone
+Version: "1.0"
+Status: Released
+License: MIT
+contact: { website: https://example.com }
+controls:
+  switch:
+    tap: { name: Reset, description: Briefly press and release to reset }
+panel:
+  inputs:
+    - { id: AudioIn1, name: Input }
+`);
+  assert.equal(result.errorCount, 0);
+  assert.equal(result.warningCount, 0);
+});
+
 test('malformed nested metadata is diagnosed instead of silently ignored', () => {
   const result = validate(`
 Name: Broken

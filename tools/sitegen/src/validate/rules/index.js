@@ -248,10 +248,6 @@ export const controlsStructure = {
               message: `controls.switch.${pos} should be text or an object with name/description.` });
           }
         }
-        if (controls.switch.tap !== undefined && controls.switch.down === undefined) {
-          out.push({ severity: 'warning', path: 'controls.switch.tap', key: 'controls',
-            message: 'controls.switch.tap describes a Down-switch action, so controls.switch.down should also be documented.' });
-        }
       }
     }
     for (const listKey of ['knobs', 'leds']) {
