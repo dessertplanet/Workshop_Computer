@@ -584,7 +584,11 @@ export function buildCanonicalCardModel({
   const summary = requiredText(field(info, 'summary'), warnings, 'summary', 'n/a');
   const release = releaseText || (version ? `${number} / ${version}` : number);
 
-  let created = normalizedDate(field(info, 'created', 'created_at'), warnings, 'created');
+  let created = normalizedDate(
+    field(info, 'date-created', 'date', 'releasedate', 'created', 'created_at'),
+    warnings,
+    'date-created',
+  );
   if (!created) {
     // Earliest genesis signal: the folder's first commit and Phil's oldest
     // blame date are both "early" markers (and use different date sources), so
@@ -593,7 +597,7 @@ export function buildCanonicalCardModel({
     created = early[0] || '';
   }
   if (!created) created = 'n/a';
-  let updated = normalizedDate(field(info, 'date', 'updated', 'updated_at'), warnings, 'date');
+  let updated = normalizedDate(field(info, 'date-updated', 'updated', 'updated_at'), warnings, 'date-updated');
   // "Last updated" = the card's most recent real change: the newest commit
   // touching its release content (firmware/source/assets, i.e. the folder minus
   // the bulk-edited info.yaml/README). This advances when a release ships and

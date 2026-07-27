@@ -133,7 +133,7 @@ function isObject(value) {
 function basicCompatibility(source, parsed) {
   const reasons = [];
   const panelReasons = [];
-  const textFields = ['Name', 'short-description', 'summary', 'Language', 'Creator', 'Version', 'Status', 'License', 'readme', 'demo-link', 'discussion'];
+  const textFields = ['Name', 'short-description', 'summary', 'Language', 'Creator', 'Version', 'Status', 'License', 'date-created', 'date-updated', 'readme', 'demo-link', 'discussion'];
   const positions = new Set(SWITCH_POSITIONS);
   const inputs = new Set(Object.values(inputIds));
   const outputs = new Set(Object.values(outputIds));

@@ -95,6 +95,17 @@ export default defineConfig({
   cacheDir: path.join(__dirname, 'node_modules', '.vite'),
   appType: 'mpa',
   plugins: [rebuildSite()],
+  resolve: {
+    // Static author pages use an import map for these bare specifiers. Vite
+    // resolves imports before the browser sees that map, so point development
+    // mode at the same generated browser bundles explicitly.
+    alias: {
+      yaml: path.join(SITE_DIR, 'preview', 'vendor', 'yaml', 'index.js'),
+      marked: path.join(SITE_DIR, 'preview', 'vendor', 'marked.esm.js'),
+      'sanitize-html': path.join(SITE_DIR, 'preview', 'vendor', 'sanitize-html.esm.js'),
+      ajv: path.join(SITE_DIR, 'preview', 'vendor', 'ajv.esm.js'),
+    },
+  },
   server: {
     host: true,
     port: 5173,

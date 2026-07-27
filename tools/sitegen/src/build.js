@@ -271,8 +271,8 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
     }).join('');
   const sortOptions = [
     ['', 'Card number'],
-    ['updated-desc', 'Recently updated'],
-    ['updated-asc', 'Oldest updated'],
+    ['created-desc', 'Newest created'],
+    ['created-asc', 'Oldest created'],
     ['name-asc', 'Name A\u2013Z'],
     ['name-desc', 'Name Z\u2013A'],
     ['number-desc', 'Number (high to low)'],

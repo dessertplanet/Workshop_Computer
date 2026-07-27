@@ -218,7 +218,8 @@ Version: "1.0"
 Status: Released
 License: MIT
 contact: { website: https://example.com }
-date: 2026-07-25
+date-created: 2025-07-25
+date-updated: 2026-07-25
 audio-sample:
   - url: samples/demo.wav
     title: Demo
@@ -297,9 +298,29 @@ controls:
 host:
   usb: broken
 `);
-  for (const path of ['date', 'audio-sample.0.url', 'panel.inputs.0.id', 'panel.inputs.0.type', 'controls.knobs.0.main', 'controls.leds.0.items', 'host.usb']) {
+  for (const path of ['date-created', 'audio-sample.0.url', 'panel.inputs.0.id', 'panel.inputs.0.type', 'controls.knobs.0.main', 'controls.leds.0.items', 'host.usb']) {
     assert.ok(result.diagnostics.some(d => d.path === path), `missing diagnostic for ${path}`);
   }
+});
+
+test('legacy date aliases validate as date-created', () => {
+  const result = validate(`
+Name: Legacy Date
+short-description: Short
+summary: Long
+Language: C++
+Creator: Someone
+Version: "1.0"
+Status: Released
+License: MIT
+contact: { website: https://example.com }
+date: 2024-11-30
+panel:
+  inputs:
+    - { id: AudioIn1, name: Input }
+`);
+  assert.equal(result.errorCount, 0);
+  assert.equal(result.warningCount, 0);
 });
 
 test('external firmware hashes must be complete SHA-256 values', () => {

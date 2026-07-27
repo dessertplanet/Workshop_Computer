@@ -70,6 +70,8 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
             <label class="author-field"><span>Language <strong>Required</strong></span><input data-field="Language" required list="language-suggestions" placeholder="ie. Pico SDK"></label>
             <label class="author-field"><span>Version <strong>Required</strong></span><input data-field="Version" required placeholder="For example, 1.0.0"></label>
             <label class="author-field"><span>Status <strong>Required</strong></span><input data-field="Status" required list="status-suggestions" placeholder="Choose or add a status"></label>
+            <label class="author-field"><span>Date created</span><input data-field="date-created" type="date"><small>Optional publication or original release date.</small></label>
+            <label class="author-field"><span>Date updated</span><input data-field="date-updated" type="date"><small>Optional date of the most recent substantial update.</small></label>
             <div id="license-recommended-field" class="author-field author-field--wide"><span>License <em class="author-recommended-label">Recommended</em></span><div class="author-license-row"><div><strong id="license-value">No license selected</strong><p id="license-help">Choose how other people may use and adapt your work. The validator will warn if this is omitted.</p></div><button id="open-license" class="btn secondary" type="button">Choose license</button></div></div>
           </div>
         </section>

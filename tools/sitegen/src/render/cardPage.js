@@ -446,8 +446,8 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
       ${metadata.version ? `<div><dt>Version</dt><dd>${esc(metadata.version)}</dd></div>` : ''}
       ${metadata.status ? `<div><dt>Status</dt><dd>${esc(metadata.status)}</dd></div>` : ''}
       ${metadata.license ? `<div><dt>License</dt><dd>${esc(metadata.license)}</dd></div>` : ''}
-      ${metadata.updated && metadata.updated !== 'n/a' ? `<div><dt>Updated</dt><dd>${esc(metadata.updated)}</dd></div>` : ''}
       ${metadata.created && metadata.created !== 'n/a' ? `<div><dt>Created</dt><dd>${esc(metadata.created)}</dd></div>` : ''}
+      ${metadata.updated && metadata.updated !== 'n/a' ? `<div><dt>Updated</dt><dd>${esc(metadata.updated)}</dd></div>` : ''}
       ${card.memory && card.memory.size ? `<div><dt>Card memory</dt><dd>${esc(String(card.memory.size).toUpperCase())} ${esc(card.memory.requirement || 'supported')}</dd></div>` : ''}
       ${readmeUrl ? `<div><dt>Read more</dt><dd><a href="${esc(readmeUrl)}">README in the Workshop Computer repo</a></dd></div>` : ''}
       ${sourceLinkUrl ? `<div><dt>Source</dt><dd><a href="${esc(sourceLinkUrl)}">${sourceLinkLabel}</a></dd></div>` : ''}

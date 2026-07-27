@@ -106,7 +106,7 @@ export function renderTile(card, opts = {}) {
 
   return `<article class="program-card-tile${media ? ' program-card-tile--video' : ''}${artwork ? ' program-card-tile--artwork' : ''}"` +
     ` data-creator="${escapeAttr(metadata.creator || '')}" data-language="${escapeAttr(metadata.language || '')}"` +
-    ` data-type="${escapeAttr(metadata.status || '')}" data-date="${escapeAttr(metadata.updated || '')}"` +
+    ` data-type="${escapeAttr(metadata.status || '')}" data-date="${escapeAttr(metadata.created || '')}"` +
     ` data-name="${escapeAttr(String(card.title || card.id || '').toLowerCase())}" data-num="${escapeAttr(String(parseInt(number, 10) || 0))}"` +
     ` data-tags="${escapeAttr(tagFilter)}" data-search="${escapeAttr(searchText)}">
     <a class="program-card-tile__link" href="${card.id === '88_Blank' && showArtwork ? `${root}/random/` : `${root}/programs/${card.slug}/`}">
@@ -171,7 +171,7 @@ function renderArchiveRow(card, root) {
   const summary = card.short_description || '';
   const searchText = [number, card.title, summary, card.metadata?.creator, ...(Array.isArray(card.tags) ? card.tags : []), ...flair.map(f => f.label)]
     .filter(Boolean).join(' ').toLowerCase();
-  const date = card.metadata?.updated || '';
+  const date = card.metadata?.created || '';
   const curatedTagFilter = flair.map(f => f.id);
   const authorTagFilter = (Array.isArray(card.tags) ? card.tags : []).map(tag => curation.slugify(tag)).filter(Boolean);
   const tagFilter = [...new Set([...curatedTagFilter, ...authorTagFilter])].join(' ');
