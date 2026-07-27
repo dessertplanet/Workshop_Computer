@@ -216,9 +216,22 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
       ...(d.host ? { host: d.host } : {}),
       ...(d.sha256 ? { sha256: d.sha256 } : {}),
     })),
+    availableUf2Downloads: (rel.availableUf2Downloads || []).map(d => ({
+      name: d.name,
+      url: d.url,
+      path: d.path || String(d.rel || '').replace(new RegExp(`^releases/${rel.folderName}/`, 'i'), ''),
+      ...(d.rel ? { rel: d.rel } : {}),
+      ...(d.sha256 ? { sha256: d.sha256 } : {}),
+    })),
     uf2Files: rel.trackedUf2 || [],
     sourceUrl: rel.card?.source_url || '',
     readmeUrl: rel.card?.readme_url || '',
+    web: rel.web ? {
+      mode: rel.web.mode || 'none',
+      editorUrl: rel.web.editorUrl || '',
+      siteSubdir: rel.web.siteSubdir || 'web',
+      entry: rel.web.entry || '',
+    } : null,
     yamlUrl: rel.card?.source_file
       ? `https://github.com/${REPO}/blob/${BRANCH}/${rel.card.source_file}`
       : '',
@@ -477,6 +490,8 @@ const PREVIEW_LIB_FILES = [
   'utils/youtube.js',
   'utils/audio.js',
   'utils/markdown.js',
+  'utils/previewFirmware.js',
+  'utils/previewWeb.js',
   'schema/schemaDefinition.js',
   'schema/schemaAdapter.js',
   'schema/infoYamlJsonSchema.js',
