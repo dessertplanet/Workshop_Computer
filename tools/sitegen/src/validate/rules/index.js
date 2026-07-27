@@ -23,6 +23,12 @@ function isBlank(value) {
   return value === undefined || value === null || String(value).trim() === '';
 }
 
+function hasContent(value) {
+  if (Array.isArray(value)) return value.some(hasContent);
+  if (isPlainObject(value)) return Object.values(value).some(hasContent);
+  return !isBlank(value);
+}
+
 function looksLikeUrl(value) {
   return /^https?:\/\/\S+$/i.test(String(value).trim());
 }
@@ -174,19 +180,27 @@ export const mediaFields = {
   },
 };
 
-export const draftCompleteness = {
-  id: 'draft-completeness',
+export const metadataCompleteness = {
+  id: 'metadata-completeness',
   check(ctx) {
-    // The schema says draft should be set to false only once Name, contact,
-    // License, and panel are confirmed. If an author declares the card done
-    // (draft: false) while those are missing, warn — don't block.
-    if (ctx.get('draft') !== false) return [];
+    // Draft status controls publication readiness, not diagnostic visibility:
+    // incomplete metadata should remain visible while a card is being drafted.
     const out = [];
-    for (const field of ['License', 'contact', 'panel']) {
+    for (const field of ['License', 'contact']) {
       if (isBlank(ctx.get(field))) {
-        out.push({ severity: 'warning', path: field, key: 'draft',
-          message: `draft is false but "${field}" is missing; confirm it or keep draft: true.` });
+        out.push({ severity: 'warning', path: field, key: field,
+          message: `Metadata field "${field}" is missing.` });
       }
+    }
+    const panel = ctx.get('panel');
+    const controls = ctx.get('controls');
+    const generatedPanelDefined = [panel, controls].some(value =>
+      isPlainObject(value) && hasContent(value),
+    );
+    const customPanelDefined = ctx.customPanelsPresent === true && ctx.panelIds.size > 0;
+    if (!generatedPanelDefined && !customPanelDefined) {
+      out.push({ severity: 'warning', path: 'panel', key: 'panel',
+        message: 'No generated panel metadata or valid custom panel definition was found.' });
     }
     return out;
   },
@@ -378,6 +392,7 @@ export const uf2Entries = {
       }
       const dl = isPlainObject(entry.download) ? entry.download : null;
       const urlEntry = dl && Object.entries(dl).find(([k]) => k.toLowerCase() === 'url');
+      const shaEntry = Object.entries(entry).find(([k]) => k.toLowerCase() === 'sha256');
       const hasPath = !isBlank(entry.path);
       const hasUrl = urlEntry && !isBlank(urlEntry[1]);
       // An entry needs either a repo firmware path or an external download URL.
@@ -391,6 +406,10 @@ export const uf2Entries = {
       if (entry.name !== undefined && typeof entry.name !== 'string') {
         out.push({ severity: 'warning', path: `${at}.name`, key: 'uf2',
           message: `${at}.name should be a string.` });
+      }
+      if (hasPath && !hasUrl && shaEntry && !isBlank(shaEntry[1])) {
+        out.push({ severity: 'warning', path: `${at}.sha256`, key: 'uf2',
+          message: `${at}.sha256 is not required for repository-hosted firmware; the build computes it automatically.` });
       }
       if (entry.download !== undefined) {
         if (!isPlainObject(entry.download)) {
@@ -419,7 +438,7 @@ export const allRules = [
   editorValue,
   contactShape,
   mediaFields,
-  draftCompleteness,
+  metadataCompleteness,
   panelStructure,
   controlsStructure,
   customPanelReferences,

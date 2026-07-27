@@ -608,6 +608,9 @@ export function buildCanonicalCardModel({
   const videoId = demoLink ? parseYoutubeId(demoLink) : null;
   const editor = (web && web.editorUrl) || (normalizedInfo && normalizedInfo.editor) || '';
   const downloadUrl = latestUf2?.url || sourceUrl;
+  const uf2Metadata = field(info, 'uf2');
+  const hasUf2Metadata = uf2Metadata != null
+    && (!Array.isArray(uf2Metadata) || uf2Metadata.length > 0);
 
   const switchModes = normalizeSwitchModes(info, warnings);
   const panelViews = Z_MODES
@@ -692,6 +695,8 @@ export function buildCanonicalCardModel({
     download_url: downloadUrl,
     metadata,
   };
+
+  if (hasUf2Metadata) card.has_uf2_metadata = true;
 
   if (customPanelViews) {
     card.panel_views = {

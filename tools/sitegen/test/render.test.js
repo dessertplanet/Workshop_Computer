@@ -63,13 +63,22 @@ test('basic rendering omits generated features but keeps actions, metadata, and 
   assert.doesNotMatch(html, /program-card-audio/);
 });
 
+test('cards without generated or custom panels omit both panel regions', () => {
+  const html = renderCardArticle({ card: card(), panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
+  assert.doesNotMatch(html, /program-card-use-section/);
+  assert.doesNotMatch(html, /program-card-panel-rail/);
+  assert.doesNotMatch(html, /data-panel-views/);
+  assert.doesNotMatch(html, />Panel<\/h2>/);
+});
+
 test('downloads and documentation use the right security and embedding attributes', () => {
   const html = renderCardArticle({ card: card({ uf2_downloads: [
     { name: 'Local', url: 'firmware.uf2', sha256: 'abc&123' },
-    { name: 'Mirror', url: 'https://downloads.test/fw', external: true, host: 'downloads.test' },
+    { name: 'Mirror', url: 'https://downloads.test/fw', external: true, host: 'downloads.test', flashable: true, sha256: 'a'.repeat(64) },
   ] }), panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
   assert.match(html, /href="firmware\.uf2" download data-uf2-url="firmware\.uf2" data-sha256="abc&amp;123"/);
   assert.match(html, /href="https:\/\/downloads\.test\/fw" target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /data-uf2-url="https:\/\/downloads\.test\/fw" data-sha256="a{64}"/);
 
   const inline = renderReadmeAndDocs({ readmeHtml: '<p>README</p>', docs: [{ name: 'Guide & Notes.pdf', url: 'Guide?x=1&y=2' }] });
   assert.match(inline, /<object[^>]+data="Guide\?x=1&amp;y=2"/);
@@ -77,6 +86,17 @@ test('downloads and documentation use the right security and embedding attribute
   const preview = renderReadmeAndDocs({ docs: [{ name: 'Guide.pdf', url: 'guide.pdf' }], inlinePdf: false });
   assert.match(preview, /target="_blank" rel="noopener noreferrer"/);
   assert.match(preview, /inline PDF preview appears/);
+});
+
+test('download action requires firmware, an external link, or authored UF2 metadata', () => {
+  const absent = renderCardArticle({ card: card(), panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
+  assert.doesNotMatch(absent, /program-card-action--download/);
+
+  const declared = renderCardArticle({
+    card: card({ has_uf2_metadata: true }), panelImg: 'panel.svg', yamlUrl: 'source.yaml',
+  });
+  assert.match(declared, /program-card-action--download/);
+  assert.match(declared, /href="https:\/\/example\.test\/source"/);
 });
 
 test('discovery renderers escape searchable attributes and ignore absent shelf cards', () => {
