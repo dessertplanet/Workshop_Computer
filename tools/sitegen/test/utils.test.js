@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeYamlKey, slugify } from '../src/utils/strings.js';
+import { arrayOrEmpty, normalizeYamlKey, slugify } from '../src/utils/strings.js';
 import { normalizeTags, normalizeDraft, normalizeContact, resolveAudioSample } from '../src/discover/infoFields.js';
 import { extractIframeSrc, classifyAudioUrl, resolveAudioSamples } from '../src/utils/audio.js';
 
@@ -13,6 +13,13 @@ test('normalizeYamlKey strips spaces and hyphens, lowercases', () => {
 
 test('slugify normalizes names for URLs', () => {
   assert.equal(slugify("Chord Blimey!"), 'chord-blimey');
+});
+
+test('arrayOrEmpty rejects legacy object-shaped list fields', () => {
+  const list = [{ id: 'AudioIn1' }];
+  assert.equal(arrayOrEmpty(list), list);
+  assert.deepEqual(arrayOrEmpty({ audio_in_1: 'Input' }), []);
+  assert.deepEqual(arrayOrEmpty(null), []);
 });
 
 test('normalizeTags dedupes and slugs from list or delimited string', () => {
