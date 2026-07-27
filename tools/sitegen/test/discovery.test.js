@@ -138,6 +138,16 @@ test('external firmware rejects active protocols and unhashed browser flashing',
   assert.equal(errors.length, 2);
 });
 
+test('panel asset directories without a manifest do not activate custom panels', async t => {
+  const release = await fixture(t);
+  const output = path.join(release, 'output');
+  await write(path.join(release, 'panels', 'printable-overlay.png'), 'png');
+
+  const result = await discoverCustomPanels(release, output);
+  assert.deepEqual(result, { present: false, panels: null, diagnostics: [] });
+  await assert.rejects(fs.stat(path.join(output, 'panels')), { code: 'ENOENT' });
+});
+
 test('custom panel discovery validates, renders, rewrites, and copies authored presentations', async t => {
   const release = await fixture(t);
   const output = path.join(release, '..', 'output');
