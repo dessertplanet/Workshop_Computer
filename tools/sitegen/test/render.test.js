@@ -102,14 +102,24 @@ test('download action requires firmware, an external link, or authored UF2 metad
   assert.match(declared, /href="https:\/\/example\.test\/source"/);
 });
 
+test('card details render configured creation and update dates', () => {
+  const html = renderCardArticle({
+    card: card({ metadata: { created: '2024-02-03', updated: '2025-06-07' } }),
+    panelImg: 'panel.svg', yamlUrl: 'source.yaml',
+  });
+  assert.match(html, /<dt>Created<\/dt><dd>2024-02-03<\/dd>/);
+  assert.match(html, /<dt>Updated<\/dt><dd>2025-06-07<\/dd>/);
+});
+
 test('discovery renderers escape searchable attributes and ignore absent shelf cards', () => {
   const testCard = card({
     title: 'A "quoted" <card>', slug: 'safe-slug',
     short_description: 'x'.repeat(220),
-    metadata: { creator: 'A&B <maker>', updated: '2026-01-01' },
+    metadata: { creator: 'A&B <maker>', created: '2025-01-01', updated: '2026-01-01' },
   });
   const tile = renderTile(testCard, { showCreator: true });
   assert.match(tile, /data-creator="A&amp;B &lt;maker&gt;"/);
+  assert.match(tile, /data-date="2025-01-01"/);
   assert.match(tile, /data-name="a &quot;quoted&quot; &lt;card&gt;"/);
   assert.match(tile, /…/);
   assert.match(renderArchive([testCard]), /\.\.\/programs\/safe-slug\//);
@@ -165,4 +175,6 @@ test('advanced author editor includes highlighting, diagnostics, and YAML format
   assert.match(preview, /id="yaml-highlight"/);
   assert.match(preview, /id="yaml-diagnostic-markers"/);
   assert.match(preview, /AJV schema diagnostics update as you type/);
+  assert.match(preview, /data-field="date-created" type="date"/);
+  assert.match(preview, /data-field="date-updated" type="date"/);
 });

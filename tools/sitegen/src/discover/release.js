@@ -6,7 +6,7 @@ import { toPosix } from '../utils/fs.js';
 import { discoverDocs } from './docs.js';
 import { discoverCustomPanels, validateCustomPanelReferences } from './customPanels.js';
 import { discoverDownloads, curateUf2Downloads } from './downloads.js';
-import { getLastCommitDate, getCommitDates, getOldestBlameDate, getContentUpdatedDate } from '../utils/git.js';
+import { getCommitDates, getOldestBlameDate, getContentUpdatedDate } from '../utils/git.js';
 import { resolveWebConfig } from './webEditor.js';
 import { normalizeTags, normalizeRepository, normalizeDiscussion, normalizeContact, normalizeDraft, resolveAudioSample } from './infoFields.js';
 import { parseYoutubeId, youtubeEmbedHtml } from '../utils/youtube.js';
@@ -39,7 +39,6 @@ export function normalizeInfo(raw, fallbackTitle) {
     status: out.status || '',
     license: String(out.license || '').trim(),
     editor: out.editor || '',
-    date: out.date || out.releasedate || '',
     audiosample: String(out.audiosample || '').trim(),
     audiosampleurl: '',
     tags: normalizeTags(out.tags),
@@ -74,19 +73,6 @@ export async function discoverRelease(rootReleasesDir, folderName, outDirProgram
   const web = await resolveWebConfig(rawYaml, abs, slug, pagesBaseUrl);
   if (web.editorUrl) info.editor = web.editorUrl;
   else if (web.mode === 'none') info.editor = '';
-
-  // Fallback date from git if not specified in YAML
-  if (!info.date) {
-    const relPath = path.join('releases', folderName);
-    const gitDate = getLastCommitDate(relPath);
-    if (gitDate) {
-      // Keep ISO string or take YYYY-MM-DD. ISO string sorts better if we want time too, 
-      // but UI logic just compares strings. Let's keep full ISO for better precision
-      // or just YYYY-MM-DD if preferred. The user asked for "date".
-      // Let's use YYYY-MM-DD for consistency with manual entry usually.
-      info.date = gitDate.split('T')[0];
-    }
-  }
 
   // Helper: rewrite relative links in README HTML to raw GitHub URLs
   function rewriteHtmlLinksToRaw(html, repoRelBase) {

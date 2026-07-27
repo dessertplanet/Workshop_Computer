@@ -53,6 +53,24 @@ test('updated is never presented as older than created', () => {
   assert.equal(card.metadata.updated, '2025-01-01');
 });
 
+test('authored creation and update dates remain independent', () => {
+  const card = build({
+    'date-created': '2024-02-03',
+    'date-updated': '2025-06-07',
+  }, {
+    gitFirstDate: '2023-01-01',
+    contentDate: '2026-01-01',
+  });
+  assert.equal(card.metadata.created, '2024-02-03');
+  assert.equal(card.metadata.updated, '2025-06-07');
+});
+
+test('legacy date is treated as the creation date', () => {
+  const card = build({ date: '2024-11-30' }, { contentDate: '2025-03-01' });
+  assert.equal(card.metadata.created, '2024-11-30');
+  assert.equal(card.metadata.updated, '2025-03-01');
+});
+
 test('inline readme becomes documentation.intro', () => {
   const card = build({ readme: '# Hello\n\nInline docs.' });
   assert.equal(card.documentation.intro, '# Hello\n\nInline docs.');

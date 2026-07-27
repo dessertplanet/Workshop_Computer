@@ -104,8 +104,8 @@ export const infoYamlJsonSchema = {
     Version: scalarText,
     Status: scalarText,
     License: scalarText,
-    date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
-    releasedate: scalarText,
+    'date-created': { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+    'date-updated': { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
     Editor: {
       oneOf: [
         { enum: ['web', 'dist', 'none'] },

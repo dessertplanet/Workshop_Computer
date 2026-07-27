@@ -1,7 +1,7 @@
 (function(){
   // Search + filters. Index toggles curated shelves <-> flat results; the
   // archive page filters its one-line rows in place. Both support type-ahead
-  // search and latest-update sort.
+  // search and creation-date sort.
   var creatorSel=document.getElementById('filter-creator');
   var tagInputs=Array.from(document.querySelectorAll('input[name="filter-tag"]'));
   var tagSearch=document.getElementById('filter-tag-search');
@@ -93,8 +93,8 @@
     items.sort(function(a,b){
       var da, db;
       switch(mode){
-        case 'updated-desc': da=dv(a); db=dv(b); if(!da&&!db) return idx(a)-idx(b); if(!da) return 1; if(!db) return -1; return db.localeCompare(da);
-        case 'updated-asc': da=dv(a); db=dv(b); if(!da&&!db) return idx(a)-idx(b); if(!da) return 1; if(!db) return -1; return da.localeCompare(db);
+        case 'created-desc': da=dv(a); db=dv(b); if(!da&&!db) return idx(a)-idx(b); if(!da) return 1; if(!db) return -1; return db.localeCompare(da);
+        case 'created-asc': da=dv(a); db=dv(b); if(!da&&!db) return idx(a)-idx(b); if(!da) return 1; if(!db) return -1; return da.localeCompare(db);
         case 'name-asc': return nm(a).localeCompare(nm(b));
         case 'name-desc': return nm(b).localeCompare(nm(a));
         case 'number-asc': return nv(a)-nv(b);
