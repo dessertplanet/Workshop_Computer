@@ -1785,7 +1785,7 @@
   color: #27743a;
 }
 
-.program-card-tile__artwork--blank svg {
+.program-card-tile__artwork--blank > svg {
   display: block;
   height: 100%;
   width: 100%;
