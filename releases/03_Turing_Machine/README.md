@@ -221,6 +221,7 @@ calibrated.
 
 - Patch CV Out 1 and Pulse Out 1 to the top oscillator and an envelope for a
   self-running melody.
+- Patch all four CV outputs to non-pitch inputs - filters, Slopes CV inputs - to create chaotic but rhythmic patterns. 
 - Send Audio/CV Out 1 to CV In 1 to modulate Diviply with another Turing
   sequence.
 - Use a slow external clock on Pulse In 1 and a faster clock on Pulse In 2 for
