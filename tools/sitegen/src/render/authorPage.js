@@ -18,7 +18,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
   <link rel="stylesheet" href="../assets/style.css">
   <link rel="stylesheet" href="../assets/program-cards.css">
   <link rel="stylesheet" href="../assets/github-markdown.css">
-  <link rel="stylesheet" href="./author.css?v=24">
+  <link rel="stylesheet" href="./author.css?v=27">
   <script type="importmap">
   {
     "imports": {
@@ -95,8 +95,8 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
 
       <section id="yaml-editor" class="author-yaml" aria-label="Advanced YAML editor"${existing ? '' : ' hidden'}>
         <div class="author-yaml__diagnostics"><h2>Diagnostics</h2><div id="diagnostics"></div></div>
-        <div class="author-yaml__head"><div><h2 id="source-path-title">${existing ? 'info.yaml' : 'new_card/info.yaml'}</h2><p>Edit the source directly. Diagnostics and the preview update as you type.</p></div><button id="yaml-fullscreen" class="author-icon-button" type="button" aria-label="Enter full screen" title="Enter full screen" aria-pressed="false"><span class="author-fullscreen-expand" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg></span><span class="author-fullscreen-close" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 5 14 14M19 5 5 19"/></svg></span></button></div>
-        <div class="author-editor-wrap"><div class="author-editor-gutter" aria-hidden="true"><div id="gutter-inner">1</div></div><textarea id="yaml-source" spellcheck="false" aria-label="Raw info.yaml source"></textarea></div>
+        <div class="author-yaml__head"><div><h2 id="source-path-title">${existing ? 'info.yaml' : 'new_card/info.yaml'}</h2><p>Edit the source directly. YAML syntax and AJV schema diagnostics update as you type.</p></div><div class="author-yaml__actions"><div class="author-yaml__action-row"><button id="format-yaml" class="btn secondary" type="button">Auto-format YAML</button><button id="yaml-fullscreen" class="author-icon-button" type="button" aria-label="Enter full screen" title="Enter full screen" aria-pressed="false"><span class="author-fullscreen-expand" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg></span><span class="author-fullscreen-close" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 5 14 14M19 5 5 19"/></svg></span></button></div><label class="author-toggle" title="Show spaces as dots and tabs as arrows"><input id="toggle-whitespace" type="checkbox"><span class="author-toggle__track" aria-hidden="true"><span></span></span><span>Show whitespace</span></label></div></div>
+        <div class="author-editor-wrap"><div class="author-editor-gutter" aria-hidden="true"><div id="gutter-inner">1</div></div><div class="author-editor-code"><pre id="yaml-highlight" aria-hidden="true"></pre><textarea id="yaml-source" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Raw info.yaml source"></textarea><div id="yaml-diagnostic-markers" class="yaml-diagnostic-markers" aria-label="Inline YAML diagnostics"></div></div></div>
       </section>
 
       <div id="author-splitter" class="author-splitter" role="separator" aria-label="Resize editor and preview" aria-orientation="vertical" aria-valuemin="320" aria-valuemax="1000" aria-valuenow="560" tabindex="0"><span aria-hidden="true"></span></div>
@@ -142,7 +142,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
     </form>
   </dialog>
 
-  <script type="module" src="./author-client.js?v=41"></script>
+  <script type="module" src="./author-client.js?v=44"></script>
 </body>
 </html>`;
   return applyContentSecurityPolicy(html, { preview: true });
