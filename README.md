@@ -29,4 +29,10 @@ My suggestion for the first 100 projects is that people grab numbers & folders i
 
 Release documentation: I've been making [little](https://docs.google.com/presentation/d/19z0S9cpGnyhb7lVmBPHYjTZLpEB-Xg-v9zzfXCjCjOQ/copy) [leaflets](https://docs.google.com/presentation/d/10R8onfP5JAq9MpOgVSa4sAhxg-WTx7_0-Q1fY0MUDho/copy) for each card, designed in Google Sheets, but you might experiment with other types of documentation   
 
+### METADATA SITE DEVELOPMENT
+
+- `npm run dev` builds and serves the complete generated site at `http://localhost:5173/`.
+
+The command watches `releases/*/info.yaml`, curation files under `tools/sitegen/src/curation/`, and other site-generator source/assets. It rebuilds after changes and refreshes connected browsers automatically. Metadata and curation edits use fast delta builds after the initial full build; mixed or structural changes safely fall back to a full build.
+
 
