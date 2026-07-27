@@ -118,6 +118,16 @@ test('discovery renderers escape searchable attributes and ignore absent shelf c
   assert.equal((shelf.match(/program-card-tile__link/g) || []).length, 1);
 });
 
+test('featured blank card overlays its label artwork on the randomized card icon', () => {
+  const blank = card({ id: '88_Blank', title: 'Blank', slug: '88-blank' });
+  const tile = renderTile(blank, { showArtwork: true, root: '..' });
+  assert.match(tile, /data-random-blank-card/);
+  assert.match(tile, /fill="currentColor"/);
+  assert.match(tile, /href="\.\.\/assets\/program_cards\/blank\.svg"/);
+  assert.match(tile, /<svg x="-13\.4" y="11\.36"/);
+  assert.match(tile, /viewBox="398\.58 362\.95 54\.38 29\.99"/);
+});
+
 test('panel artwork converts authored newlines to visual line breaks', () => {
   const html = renderPanelArtwork({ panel: { controls: { main: { label: 'Line one\nLine two' } } } }, 'panel.svg');
   assert.match(html, /Line one<br>Line two/);
