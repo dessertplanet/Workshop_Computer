@@ -22,25 +22,37 @@ function offsetToLineCol(raw, offset) {
   return { line, col };
 }
 
-/** Map each top-level key to its source {line, col}, keyed by normalized name. */
-function collectKeyLines(doc, raw) {
+/** Map keys and sequence entries to source positions for schema diagnostics. */
+function collectSourceLines(doc, raw) {
   const keyLines = {};
-  const items = doc?.contents?.items;
-  if (!Array.isArray(items)) return keyLines;
-  for (const item of items) {
-    const keyNode = item?.key;
-    if (!keyNode) continue;
-    const name = keyNode.value != null ? String(keyNode.value) : '';
-    const start = Array.isArray(keyNode.range) ? keyNode.range[0] : undefined;
-    const pos = offsetToLineCol(raw, start);
-    if (name) keyLines[normalizeYamlKey(name)] = pos || { line: undefined, col: undefined };
-  }
-  return keyLines;
+  const pathLines = {};
+  const visit = (node, path = []) => {
+    if (!Array.isArray(node?.items)) return;
+    for (let index = 0; index < node.items.length; index += 1) {
+      const item = node.items[index];
+      if (item?.key) {
+        const name = item.key.value != null ? String(item.key.value) : '';
+        if (!name) continue;
+        const nextPath = [...path, name];
+        const pos = offsetToLineCol(raw, item.key.range?.[0]);
+        if (pos) pathLines[nextPath.join('.')] = pos;
+        if (path.length === 0) keyLines[normalizeYamlKey(name)] = pos || { line: undefined, col: undefined };
+        visit(item.value, nextPath);
+      } else {
+        const nextPath = [...path, String(index)];
+        const pos = offsetToLineCol(raw, item?.range?.[0]);
+        if (pos) pathLines[nextPath.join('.')] = pos;
+        visit(item, nextPath);
+      }
+    }
+  };
+  visit(doc?.contents);
+  return { keyLines, pathLines };
 }
 
 /** Parse raw YAML text. Never throws; syntax errors become `result.error`. */
 export function parseSource(raw, file = '<memory>') {
-  const result = { file, raw, data: null, keyLines: {}, error: null };
+  const result = { file, raw, data: null, keyLines: {}, pathLines: {}, error: null };
   let doc;
   try {
     doc = YAML.parseDocument(raw, { prettyErrors: true });
@@ -62,6 +74,8 @@ export function parseSource(raw, file = '<memory>') {
     return result;
   }
   result.data = doc.toJS() ?? {};
-  result.keyLines = collectKeyLines(doc, raw);
+  const lines = collectSourceLines(doc, raw);
+  result.keyLines = lines.keyLines;
+  result.pathLines = lines.pathLines;
   return result;
 }

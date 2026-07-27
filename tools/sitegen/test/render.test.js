@@ -157,3 +157,12 @@ test('author preview permits AJV schema compilation without weakening published 
   assert.match(previewPolicy.match(/script-src[^;]*/)?.[0] || '', /unsafe-eval/);
   assert.doesNotMatch(publishedPolicy.match(/script-src[^;]*/)?.[0] || '', /unsafe-eval/);
 });
+
+test('advanced author editor includes highlighting, diagnostics, and YAML formatting controls', () => {
+  const preview = renderAuthorPage();
+  assert.match(preview, /id="format-yaml"/);
+  assert.match(preview, /id="toggle-whitespace" type="checkbox"/);
+  assert.match(preview, /id="yaml-highlight"/);
+  assert.match(preview, /id="yaml-diagnostic-markers"/);
+  assert.match(preview, /AJV schema diagnostics update as you type/);
+});

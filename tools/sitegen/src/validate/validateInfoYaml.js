@@ -23,7 +23,19 @@ function buildNormalized(data) {
 function makeContext(source, schema, opts = {}) {
   const normalized = buildNormalized(source.data || {});
   const keyLines = source.keyLines || {};
+  const pathLines = source.pathLines || {};
   const entry = (key) => normalized[normalizeYamlKey(key)];
+  const lineFor = (path) => {
+    const parts = String(path || '').split('.').filter(Boolean);
+    const actualTopLevel = entry(parts[0])?.key;
+    if (actualTopLevel) parts[0] = actualTopLevel;
+    while (parts.length) {
+      const pos = pathLines[parts.join('.')];
+      if (pos) return pos;
+      parts.pop();
+    }
+    return keyLines[normalizeYamlKey(path)] || null;
+  };
   return {
     file: source.file,
     raw: source.raw,
@@ -31,12 +43,13 @@ function makeContext(source, schema, opts = {}) {
     schema,
     normalized,
     keyLines,
+    pathLines,
     normKey: normalizeYamlKey,
     customPanelsPresent: opts.customPanelsPresent,
     panelIds: opts.panelIds instanceof Set ? opts.panelIds : new Set(opts.panelIds || []),
     entry,
     get: (key) => { const e = entry(key); return e ? e.value : undefined; },
-    lineFor: (key) => keyLines[normalizeYamlKey(key)] || null,
+    lineFor,
   };
 }
 
@@ -51,7 +64,7 @@ function finalizeDiagnostic(diag, ctx, ruleId) {
   };
   // Anchor to the offending top-level key's source line when the rule didn't
   // supply its own coordinates.
-  const anchorKey = diag.key || diag.path;
+  const anchorKey = diag.path || diag.key;
   const pos = diag.line != null ? { line: diag.line, col: diag.col } : ctx.lineFor(anchorKey);
   if (pos && pos.line != null) { out.line = pos.line; out.col = pos.col; }
   if (diag.suggestion) out.suggestion = diag.suggestion;
