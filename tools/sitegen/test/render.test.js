@@ -173,7 +173,8 @@ test('advanced author editor includes highlighting, diagnostics, and YAML format
   assert.match(preview, /id="format-yaml"/);
   assert.match(preview, /id="toggle-whitespace" type="checkbox"/);
   assert.match(preview, /id="yaml-highlight"/);
-  assert.match(preview, /id="yaml-diagnostic-markers"/);
+  assert.match(preview, /id="yaml-diagnostic-tooltip"/);
+  assert.match(preview, /id="yaml-source"[^>]*autocorrect="off"/);
   assert.match(preview, /AJV schema diagnostics update as you type/);
   assert.match(preview, /data-field="date-created" type="date"/);
   assert.match(preview, /data-field="date-updated" type="date"/);
