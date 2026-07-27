@@ -6,8 +6,8 @@
 // card model produced by src/model/card.js and to render inside the local
 // sitegen layout.
 
-import { marked } from 'marked';
 import { panelPositions } from './panelPositions.js';
+import { renderMarkdownBlock, renderMarkdownInline, sanitizeAuthoredHtml } from '../utils/markdown.js';
 
 const DEFAULT_DISCUSSION = 'https://discord.com/channels/1210238368898879569/1484219323039092938';
 
@@ -36,15 +36,11 @@ function truncate(value, length) {
 }
 
 function markdownBlock(text) {
-  const val = String(text ?? '').trim();
-  if (!val) return '';
-  return marked.parse(val);
+  return renderMarkdownBlock(text);
 }
 
 function markdownInline(text) {
-  const val = String(text ?? '').trim();
-  if (!val) return '';
-  return marked.parseInline(val);
+  return renderMarkdownInline(text);
 }
 
 function cardNumber(card) {
@@ -196,7 +192,7 @@ function renderCustomPanelImage(item) {
 function renderCustomPanelReference(item) {
   return `<div class="program-card-use program-card-use--custom">
     <div class="program-card-use__panel">${renderCustomPanelImage(item)}</div>
-    <div class="program-card-use__reference program-card-custom-panel-copy markdown-body">${item.content_html || ''}</div>
+    <div class="program-card-use__reference program-card-custom-panel-copy markdown-body">${sanitizeAuthoredHtml(item.content_html || '')}</div>
   </div>`;
 }
 

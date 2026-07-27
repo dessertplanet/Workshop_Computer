@@ -47,12 +47,8 @@ export async function discoverDownloads(absReleaseDir, repoRelBase, makeRawUrl) 
       if (!/\.(uf2|zip|bin|hex)$/i.test(ent.name)) continue;
       const relFromRelease = path.relative(absReleaseDir, fullPath);
       const relFromRepoRoot = toPosix(path.join(repoRelBase, relFromRelease));
-      let mtime = 0;
-      try {
-        mtime = (await fs.stat(fullPath)).mtimeMs;
-      } catch {}
       const url = makeRawUrl(relFromRepoRoot);
-      const item = { name: ent.name, rel: relFromRepoRoot, url, mtime };
+      const item = { name: ent.name, rel: relFromRepoRoot, url };
       downloads.push(item);
       if (/\.uf2$/i.test(ent.name)) {
         const segs = relFromRelease.split(path.sep);
@@ -81,13 +77,10 @@ export async function discoverDownloads(absReleaseDir, repoRelBase, makeRawUrl) 
   const nonWebNames = new Set(uf2s.filter(it => !it.inWeb).map(it => it.name.toLowerCase()));
   uf2s = uf2s.filter(it => !(it.inWeb && nonWebNames.has(it.name.toLowerCase())));
 
-  // Order: current firmware (not in old/older-versions) first, then newest by
-  // mtime, then by name for a stable, natural ordering.
-  uf2s.sort((a, b) => {
-    if (a.isOld !== b.isOld) return a.isOld ? 1 : -1;
-    if (b.mtime !== a.mtime) return b.mtime - a.mtime;
-    return a.name.localeCompare(b.name, undefined, { numeric: true });
-  });
+  // Order current firmware before old versions, then use the repository path.
+  // Git does not preserve filesystem mtimes, so they must never influence the
+  // primary firmware or generated catalogue.
+  uf2s.sort(compareFirmwareCandidates);
 
   // Record a sha256 for each served firmware (metadata for UI; no fetching).
   const uf2Downloads = [];
@@ -99,6 +92,11 @@ export async function discoverDownloads(absReleaseDir, repoRelBase, makeRawUrl) 
   }
   const latestUf2 = uf2Downloads[0] || null;
   return { downloads, latestUf2, uf2Downloads, trackedUf2 };
+}
+
+export function compareFirmwareCandidates(a, b) {
+  if (a.isOld !== b.isOld) return a.isOld ? 1 : -1;
+  return String(a.relRelease).localeCompare(String(b.relRelease), undefined, { numeric: true, sensitivity: 'base' });
 }
 
 /**
@@ -154,13 +152,25 @@ export async function curateUf2Downloads(uf2Field, absReleaseDir, repoRelBase, m
 
     // External link (store/mirror): no repo file required.
     if (externalUrl) {
+      if (!/^https?:\/\//i.test(externalUrl)) {
+        errors.push(`uf2 external download URL must use http or https: ${externalUrl}`);
+        continue;
+      }
+      const authorHash = readKeyCi(download, 'sha256').toLowerCase();
+      if (authorHash && !/^[a-f0-9]{64}$/.test(authorHash)) {
+        errors.push(`uf2 external download sha256 must be 64 hexadecimal characters: ${externalUrl}`);
+        continue;
+      }
+      if (download.flashable === true && !authorHash) {
+        errors.push(`uf2 external download must provide sha256 when flashable is true: ${externalUrl}`);
+        continue;
+      }
       const item = {
         name: (typeof entry.name === 'string' && entry.name.trim()) || nameFromUrl(externalUrl),
         url: externalUrl,
         host: hostFromUrl(externalUrl),
         external: true,
       };
-      const authorHash = readKeyCi(download, 'sha256');
       if (authorHash) item.sha256 = authorHash;
       if (download.flashable === true) item.flashable = true;
       uf2Downloads.push(item);
