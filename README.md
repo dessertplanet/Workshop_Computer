@@ -31,8 +31,7 @@ Release documentation: I've been making [little](https://docs.google.com/present
 
 ### METADATA SITE DEVELOPMENT
 
-- `npm run dev` builds and serves the complete generated site at `http://localhost:5173/`.
-
-The command watches `releases/*/info.yaml`, curation files under `tools/sitegen/src/curation/`, and other site-generator source/assets. It rebuilds after changes and refreshes connected browsers automatically. Metadata and curation edits use fast delta builds after the initial full build; mixed or structural changes safely fall back to a full build.
+The public site is hosted at https://computer.musicthing.co.uk/
+[Read about how to run and use the metadata site locally here](documentation/metadata-site-development.md)
 
 
