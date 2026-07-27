@@ -29,6 +29,23 @@ test('author schema fields are represented in the published JSON schema', () => 
   );
 });
 
+test('nested AJV diagnostics point to the nested YAML source line', () => {
+  const result = validate(`Name: Test Card
+Creator: Someone
+Language: C++
+Version: "1.0"
+Status: Released
+short-description: A test card.
+summary: A longer summary.
+panel:
+  inputs:
+    - id: AudioIn1
+      name: 42
+`);
+  const diagnostic = result.diagnostics.find(item => item.ruleId === 'ajv-schema' && item.path === 'panel.inputs.0.name');
+  assert.equal(diagnostic?.line, 11);
+});
+
 test('GitHub reporter emits inline annotations and a PR-check summary', () => {
   const output = reportGithub([{
     file: 'releases/42_test/info.yaml', ok: false, errorCount: 1, warningCount: 1,
