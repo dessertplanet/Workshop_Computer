@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderCardArticle, renderPanelArtwork, renderReadmeAndDocs } from '../src/render/cardPage.js';
 import { renderArchive, renderShelf, renderTile } from '../src/render/discovery.js';
+import { renderLayout } from '../src/render/layout.js';
 
 function card(extra = {}) {
   return {
@@ -33,12 +34,12 @@ test('card renderer exposes accessible generated panel tabs and default state', 
   assert.match(html, /By A &amp; B/);
 });
 
-test('custom panel rendering preserves trusted content and escapes image metadata', () => {
+test('custom panel rendering sanitizes authored content and escapes image metadata', () => {
   const custom = card({ panel_views: {
     source: 'custom', default: 'face-a', items: [{
       id: 'face-a', name: 'Face <A>', panel: {}, switch_modes: {}, leds: [],
       image: { url: 'panels/a.svg?x=1&y=2', width: 560, height: 1785 },
-      content_html: '<p><strong>Authored documentation</strong></p>',
+      content_html: '<p onclick="alert(1)"><strong>Authored documentation</strong><script>alert(2)</script><a href="javascript:alert(3)">bad</a></p>',
     }],
   } });
   const html = renderCardArticle({ card: custom, panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
@@ -46,6 +47,7 @@ test('custom panel rendering preserves trusted content and escapes image metadat
   assert.match(html, /src="panels\/a\.svg\?x=1&amp;y=2"/);
   assert.match(html, /alt="Face &lt;A&gt; panel"/);
   assert.match(html, /<strong>Authored documentation<\/strong>/);
+  assert.doesNotMatch(html, /onclick|<script|javascript:/i);
   assert.doesNotMatch(html, /program-card-panel-switch-position/);
 });
 
@@ -118,4 +120,20 @@ test('discovery renderers escape searchable attributes and ignore absent shelf c
 test('panel artwork converts authored newlines to visual line breaks', () => {
   const html = renderPanelArtwork({ panel: { controls: { main: { label: 'Line one\nLine two' } } } }, 'panel.svg');
   assert.match(html, /Line one<br>Line two/);
+});
+
+test('layout uses relative external runtime assets and CSP hashes only remaining inline scripts', () => {
+  const html = renderLayout({ title: 'Safe', content: '<p>Content</p>', relativeRoot: '../..' });
+  const policy = html.match(/Content-Security-Policy" content="([^"]+)/)?.[1] || '';
+  assert.match(html, /<script src="\.\.\/\.\.\/assets\/js\/site-menu\.js"><\/script>/);
+  assert.match(html, /<script type="module" src="\.\.\/\.\.\/assets\/js\/program-cards\.js"><\/script>/);
+  assert.match(html, /<script src="\.\.\/\.\.\/assets\/js\/catalogue-filters\.js"><\/script>/);
+  assert.doesNotMatch(html, /<script(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/i);
+  assert.match(policy, /script-src 'self'/);
+  assert.doesNotMatch(policy, /sha256-/);
+  assert.doesNotMatch(policy.match(/script-src[^;]*/)?.[0] || '', /unsafe-inline/);
+  assert.match(policy, /object-src 'self'/);
+
+  const withInline = renderLayout({ title: 'Inline', content: '<script>window.example = true;</script>' });
+  assert.match(withInline, /script-src 'self' 'sha256-/);
 });

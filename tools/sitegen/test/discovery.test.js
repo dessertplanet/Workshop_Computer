@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { discoverRelease } from '../src/discover/release.js';
 import { discoverDocs } from '../src/discover/docs.js';
-import { curateUf2Downloads } from '../src/discover/downloads.js';
+import { compareFirmwareCandidates, curateUf2Downloads } from '../src/discover/downloads.js';
 import { discoverCustomPanels, validateCustomPanelReferences } from '../src/discover/customPanels.js';
 import { copyWebAssets, resolveWebConfig } from '../src/discover/webEditor.js';
 
@@ -83,13 +83,39 @@ test('document and web discovery copy only publishable assets', async t => {
   await assert.rejects(fs.stat(path.join(output, 'web', 'package.json')));
 });
 
+test('web editors reject traversal, unsafe protocols, and symlinks', async t => {
+  const release = await fixture(t);
+  await write(path.join(release, 'web', 'index.html'), 'index');
+  await assert.rejects(
+    resolveWebConfig({ Editor: '../outside' }, release, 'fixture', 'https://pages.test/repo/'),
+    /must be "web" or "dist"/,
+  );
+  await assert.rejects(
+    resolveWebConfig({ Editor: 'http://example.test/editor' }, release, 'fixture', 'https://pages.test/repo/'),
+    /must use HTTPS/,
+  );
+  await fs.symlink(path.join(release, 'web', 'index.html'), path.join(release, 'web', 'linked.html'));
+  await assert.rejects(copyWebAssets(path.join(release, 'web'), path.join(release, 'output')), /symbolic links/);
+});
+
+test('automatic firmware ordering is stable and independent of mtimes', () => {
+  const candidates = [
+    { relRelease: 'old/card-99.uf2', isOld: true, mtime: 999 },
+    { relRelease: 'firmware/card-10.uf2', isOld: false, mtime: 1 },
+    { relRelease: 'firmware/card-2.uf2', isOld: false, mtime: 500 },
+  ];
+  assert.deepEqual(candidates.sort(compareFirmwareCandidates).map(item => item.relRelease), [
+    'firmware/card-2.uf2', 'firmware/card-10.uf2', 'old/card-99.uf2',
+  ]);
+});
+
 test('curated firmware resolves case-insensitive paths, hashes files, and handles external links', async t => {
   const release = await fixture(t);
   const bytes = Buffer.from('fixture firmware');
   await write(path.join(release, 'Firmware', 'Card.UF2'), bytes);
   const { uf2Downloads, errors } = await curateUf2Downloads([
     { path: 'firmware/card.uf2', name: 'Local firmware' },
-    { name: 'Mirror', download: { url: 'https://downloads.example/fw.uf2', flashable: true } },
+    { name: 'Mirror', download: { url: 'https://downloads.example/fw.uf2', flashable: true, sha256: 'a'.repeat(64) } },
     { path: 'missing.uf2' },
   ], release, 'releases/42_fixture', relative => `https://raw.test/${relative}`);
   assert.equal(errors.length, 1);
@@ -98,7 +124,18 @@ test('curated firmware resolves case-insensitive paths, hashes files, and handle
   assert.equal(uf2Downloads[0].sha256, crypto.createHash('sha256').update(bytes).digest('hex'));
   assert.deepEqual(uf2Downloads[1], {
     name: 'Mirror', url: 'https://downloads.example/fw.uf2', host: 'downloads.example', external: true, flashable: true,
+    sha256: 'a'.repeat(64),
   });
+});
+
+test('external firmware rejects active protocols and unhashed browser flashing', async t => {
+  const release = await fixture(t);
+  const { uf2Downloads, errors } = await curateUf2Downloads([
+    { download: { url: 'javascript:alert(1)' } },
+    { download: { url: 'https://downloads.example/unhashed.uf2', flashable: true } },
+  ], release, 'releases/42_fixture', relative => `https://raw.test/${relative}`);
+  assert.deepEqual(uf2Downloads, []);
+  assert.equal(errors.length, 2);
 });
 
 test('custom panel discovery validates, renders, rewrites, and copies authored presentations', async t => {

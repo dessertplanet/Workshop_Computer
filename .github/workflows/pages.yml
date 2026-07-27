@@ -30,8 +30,7 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: |
-          npm ci --prefix tools/sitegen || npm install --prefix tools/sitegen
+        run: npm ci --prefix tools/sitegen
 
       - name: Check site curation
         run: |
