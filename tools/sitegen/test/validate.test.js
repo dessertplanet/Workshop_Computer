@@ -422,6 +422,13 @@ test('broken YAML yields a yaml-syntax diagnostic with a line, never throws', ()
   assert.equal(typeof syntax.line, 'number');
 });
 
+test('multiple recoverable YAML syntax errors are all reported', () => {
+  const result = validate('panel:\n  inputs\n    - id: A\nBlah\n  outputs:\n    - id: B\n');
+  const syntax = result.diagnostics.filter(d => d.ruleId === 'yaml-syntax');
+  assert.ok(syntax.length > 1);
+  assert.deepEqual(new Set(syntax.map(d => d.line)), new Set([2, 4]));
+});
+
 test('diagnostics are anchored to the offending key source line', () => {
   const result = validate(`Name: X\nCreator: S\nLanguage: C\nVersion: "1"\nStatus: WIP\ntags:\n  - Not Kebab\n`);
   const tagDiag = result.diagnostics.find(d => d.ruleId === 'tags-format');
