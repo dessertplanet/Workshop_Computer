@@ -184,3 +184,10 @@ test('basic author fields link to new-tab examples of their published usage', ()
   assert.match(preview, /Short description[\s\S]*class="author-field-guidance">\(used in card search and the all cards index; <a href="\.\.\/archive\/" target="_blank" rel="noopener noreferrer">see example ↗<\/a>/);
   assert.match(preview, /Summary[\s\S]*used beneath the title on card pages; <a href="\.\.\/programs\/15-mlrws\/" target="_blank" rel="noopener noreferrer">see example ↗<\/a>/);
 });
+
+test('basic author mode exposes live-preview web editor metadata', () => {
+  const preview = renderAuthorPage();
+  assert.match(preview, /data-add-optional="Editor"/);
+  assert.match(preview, /data-field="Editor"/);
+  assert.match(preview, /data-field="web-entry"/);
+});

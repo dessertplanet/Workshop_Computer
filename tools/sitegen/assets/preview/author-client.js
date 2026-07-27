@@ -8,13 +8,15 @@ import { panelPositions } from './lib/render/panelPositions.js';
 import { resolveAudioSamples, getAudioField } from './lib/utils/audio.js';
 import { getInfoYamlSchemaAdapter } from './lib/schema/schemaAdapter.js';
 import { arrayOrEmpty } from './lib/utils/strings.js';
+import { resolvePreviewWebConfig } from './lib/utils/previewWeb.js';
+import { resolvePreviewUf2Downloads } from './lib/utils/previewFirmware.js';
 import { renderPanelElementToSvgBlob } from '../assets/js/panel-export.js';
 
 const REQUIRED = getInfoYamlSchemaAdapter().requiredFields().map(field => field.path);
 const STORAGE_KEY = 'workshop-computer-author-new';
 const DIFFERENTIAL_STORAGE_KEY = 'workshop-computer-author-differential-controls';
 const SWITCH_POSITIONS = ['up', 'middle', 'down'];
-const OPTIONAL_KEYS = ['demo-link', 'tags', 'contact', 'discussion', 'readme'];
+const OPTIONAL_KEYS = ['demo-link', 'Editor', 'tags', 'contact', 'discussion', 'readme'];
 const SPLIT_STORAGE_KEY = 'workshop-computer-author-editor-width';
 const WHITESPACE_STORAGE_KEY = 'workshop-computer-author-show-whitespace';
 const DOCUMENT_KIND = document.querySelector('.author-page')?.dataset.documentKind || 'new';
@@ -461,9 +463,14 @@ function previewData() {
 function buildCard() {
   const base = rawBaseForCurrent();
   const audioSamples = resolveAudioSamples(getAudioField(data), rel => base ? base + rel.split('/').filter(Boolean).map(encodeURIComponent).join('/') : '');
+  const uf2Downloads = resolvePreviewUf2Downloads(previewData(), currentEntry?.availableUf2Downloads || []);
+  const web = resolvePreviewWebConfig(previewData(), {
+    slug: currentEntry?.slug || 'new-card',
+    discoveredWeb: currentEntry?.web || null,
+  });
   return buildCanonicalCardModel({
     folderName: currentEntry?.id || 'new_card', slug: currentEntry?.slug || 'new-card', info: {}, rawYaml: previewData(),
-    docs: [], downloads: [], latestUf2: currentEntry?.uf2Url ? { url: currentEntry.uf2Url } : null, uf2Downloads: currentEntry?.uf2Downloads || [], web: {}, audioSamples,
+    docs: [], downloads: [], latestUf2: uf2Downloads[0] || null, uf2Downloads, web, audioSamples,
     readmePath: '', sourceFile: currentEntry?.sourceFile || 'info.yaml', sourceUrl: currentEntry?.sourceUrl || '', readmeUrl: currentEntry?.readmeUrl || '',
     gitFirstDate: '', gitLastDate: '',
   });
@@ -475,10 +482,11 @@ function renderPreview() {
     if (card.panel_views?.items.some(item => item.id === activePosition)) {
       card.panel_views.default = activePosition;
     }
+    if (!card.uf2_downloads?.length) delete card.has_uf2_metadata;
     els.preview.innerHTML = renderCardArticle({
       card,
       panelImg: '../assets/program_cards/Standalone_computer_rev1.svg',
-      yamlUrl: currentEntry?.yamlUrl || '#', uf2Url: currentEntry?.uf2Url || '',
+      yamlUrl: currentEntry?.yamlUrl || '#', uf2Url: card.uf2_downloads?.[0]?.url || '',
       extraDocs: currentEntry?.extras ? renderReadmeAndDocs({ ...currentEntry.extras, inlinePdf: false, includeReadme: !card.documentation?.intro }) : '',
     });
     if (!cleanText(data.summary)) {
@@ -739,6 +747,7 @@ function syncFormFromData() {
 }
 
 function hasOptionalValue(key) {
+  if (key === 'Editor') return cleanText(data.Editor) !== '' || cleanText(data['web-entry']) !== '';
   const value = data[key];
   if (Array.isArray(value)) return value.length > 0;
   if (value && typeof value === 'object') return Object.keys(value).length > 0;
@@ -772,6 +781,7 @@ function addOptional(key) {
 function removeOptional(key) {
   openOptionals.delete(key);
   delete data[key];
+  if (key === 'Editor') delete data['web-entry'];
   prune(data);
   syncFormFromData();
   validateAndRender();
