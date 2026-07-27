@@ -74,10 +74,11 @@ test('cards without generated or custom panels omit both panel regions', () => {
 test('downloads and documentation use the right security and embedding attributes', () => {
   const html = renderCardArticle({ card: card({ uf2_downloads: [
     { name: 'Local', url: 'firmware.uf2', sha256: 'abc&123' },
-    { name: 'Mirror', url: 'https://downloads.test/fw', external: true, host: 'downloads.test' },
+    { name: 'Mirror', url: 'https://downloads.test/fw', external: true, host: 'downloads.test', flashable: true, sha256: 'a'.repeat(64) },
   ] }), panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
   assert.match(html, /href="firmware\.uf2" download data-uf2-url="firmware\.uf2" data-sha256="abc&amp;123"/);
   assert.match(html, /href="https:\/\/downloads\.test\/fw" target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /data-uf2-url="https:\/\/downloads\.test\/fw" data-sha256="a{64}"/);
 
   const inline = renderReadmeAndDocs({ readmeHtml: '<p>README</p>', docs: [{ name: 'Guide & Notes.pdf', url: 'Guide?x=1&y=2' }] });
   assert.match(inline, /<object[^>]+data="Guide\?x=1&amp;y=2"/);

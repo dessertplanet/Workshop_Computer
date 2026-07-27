@@ -162,6 +162,7 @@ export async function curateUf2Downloads(uf2Field, absReleaseDir, repoRelBase, m
       };
       const authorHash = readKeyCi(download, 'sha256');
       if (authorHash) item.sha256 = authorHash;
+      if (download.flashable === true) item.flashable = true;
       uf2Downloads.push(item);
       continue;
     }

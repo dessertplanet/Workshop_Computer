@@ -392,6 +392,7 @@ export const uf2Entries = {
       }
       const dl = isPlainObject(entry.download) ? entry.download : null;
       const urlEntry = dl && Object.entries(dl).find(([k]) => k.toLowerCase() === 'url');
+      const shaEntry = Object.entries(entry).find(([k]) => k.toLowerCase() === 'sha256');
       const hasPath = !isBlank(entry.path);
       const hasUrl = urlEntry && !isBlank(urlEntry[1]);
       // An entry needs either a repo firmware path or an external download URL.
@@ -405,6 +406,10 @@ export const uf2Entries = {
       if (entry.name !== undefined && typeof entry.name !== 'string') {
         out.push({ severity: 'warning', path: `${at}.name`, key: 'uf2',
           message: `${at}.name should be a string.` });
+      }
+      if (hasPath && !hasUrl && shaEntry && !isBlank(shaEntry[1])) {
+        out.push({ severity: 'warning', path: `${at}.sha256`, key: 'uf2',
+          message: `${at}.sha256 is not required for repository-hosted firmware; the build computes it automatically.` });
       }
       if (entry.download !== undefined) {
         if (!isPlainObject(entry.download)) {

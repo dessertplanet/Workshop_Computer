@@ -389,7 +389,10 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
         if (d.external) {
           const host = d.host ? `<small class="program-card-action__host">${esc(d.host)}</small>` : '';
           const tag = '<small class="program-card-action__tag">External \u2197</small>';
-          return `<a class="program-card-action program-card-action--download program-card-action--external" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer"><span>Download</span><small>${esc(d.name)}</small>${host}${tag}</a>`;
+          const flashAttrs = d.flashable && d.sha256
+            ? ` data-uf2-url="${esc(d.url)}" data-sha256="${esc(d.sha256)}"`
+            : '';
+          return `<a class="program-card-action program-card-action--download program-card-action--external" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer"${flashAttrs}><span class="program-card-action__label">Download</span><small>${esc(d.name)}</small>${host}${tag}</a>`;
         }
         // A repo file downloads directly, enables WebUSB, and exposes its SHA256.
         const hashAttr = d.sha256 ? ` data-sha256="${esc(d.sha256)}"` : '';

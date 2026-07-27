@@ -281,6 +281,46 @@ uf2:
   assert.ok(result.diagnostics.some(d => d.path === 'uf2.0.download.sha256'));
 });
 
+test('external firmware may opt into browser flashing', () => {
+  const result = validate(`
+Name: External Firmware
+short-description: Short
+summary: Long
+Language: C++
+Creator: Someone
+Version: "1.0"
+Status: Released
+uf2:
+  - name: Mirror
+    download:
+      url: https://downloads.example/card.uf2
+      sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      flashable: true
+`);
+  assert.ok(!result.diagnostics.some(d => d.path.startsWith('uf2')));
+});
+
+test('repository-hosted firmware warns that an authored hash is unnecessary', () => {
+  const result = validate(`
+Name: Repository Firmware
+short-description: Short
+summary: Long
+Language: C++
+Creator: Someone
+Version: "1.0"
+Status: Released
+uf2:
+  - path: firmware/card.uf2
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+`);
+  assert.ok(result.diagnostics.some(d =>
+    d.ruleId === 'uf2-entries'
+    && d.path === 'uf2[0].sha256'
+    && d.message.includes('not required for repository-hosted firmware')));
+  assert.ok(!result.diagnostics.some(d =>
+    d.ruleId === 'ajv-schema' && d.path === 'uf2.0.sha256'));
+});
+
 test('filesystem consumers can validate custom panel references', () => {
   const source = parseSource(`
 Name: Panels
