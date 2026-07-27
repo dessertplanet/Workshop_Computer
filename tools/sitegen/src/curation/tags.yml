@@ -45,7 +45,6 @@ available_tags:
     color: "#007a2f"
     text_color: "#ffffff"
 
-
 assignments:
   # 00 Simple Midi
   "00_Simple_MIDI":
@@ -112,7 +111,7 @@ assignments:
   # 22 Sheep
   "22_sheep":
     - "Classic"
-    
+
   # 23 Slowmod
   "23_SlowMod": []
 
@@ -326,3 +325,7 @@ assignments:
 
   # 96 Cathode Ray
   "96_cathode": []
+  # ZX
+  61_ZX_Spectrum: []
+  # Ouroboros
+  94_Ouroboros: []
