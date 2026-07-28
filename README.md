@@ -1,4 +1,4 @@
-![Music Thing Workshop System with headphones](https://www.musicthing.co.uk/images/900-workshopsystem-full-straight-headphones-colour-2.jpg)
+![Music Thing Workshop System with headphones](https://www.musicthing.co.uk/images/MTM_Workshop-System-above.jpg)
 
 # Workshop Computer  
 
