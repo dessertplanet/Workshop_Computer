@@ -2,14 +2,11 @@
 
 # Workshop Computer  
 
-[**CLICK HERE TO FIND PROGRAM CARDS TO DOWNLOAD**](https://tomwhitwell.github.io/Workshop_Computer/index.html) 
+If you're looking to to just browse cards to use on your Workshop System or Workshop Computer, [go here](https://tomwhitwell.github.io/Workshop_Computer/index.html). 
 
+If you're looking to develop a new card yourself, you're in the right place.
 
-Dev material for the Music Thing Workshop Computer  
-[Music Thing Workshop System Homepage](https://www.musicthing.co.uk/workshopsystem/)  
-Further discussion in the Discord - invite in the documentation below.   
-
-### DOCUMENTATION 
+### Quickstart Guide for Developers  
 
 At the moment, [this Google doc is the most up-to-date shortform documentation](https://docs.google.com/document/d/1NsRewxAu9X8dQMUTdN0eeJeRCr0HmU0pUjpKB4gM-xo/edit?usp=sharing) for pinouts and hardware details
 
