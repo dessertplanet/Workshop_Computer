@@ -15,6 +15,7 @@ export function renderAuthorPage({ documentKind = 'new', suggestions = {} } = {}
   <meta http-equiv="Content-Security-Policy" content="${CSP_PLACEHOLDER}">
   <base href="${baseHref}">
   <title>Author page – Workshop Computer</title>
+  <link rel="icon" type="image/png" href="../assets/favicon/favicon.png">
   <link rel="stylesheet" href="../assets/style.css">
   <link rel="stylesheet" href="../assets/program-cards.css">
   <link rel="stylesheet" href="../assets/github-markdown.css">

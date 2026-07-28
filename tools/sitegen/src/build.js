@@ -129,6 +129,14 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
     path.join(ROOT, 'tools', 'sitegen', 'assets', 'program-cards.css'),
     path.join(OUT_DIR, 'assets', 'program-cards.css')
   );
+  if (!incremental) {
+    const faviconDestDir = path.join(OUT_DIR, 'assets', 'favicon');
+    await ensureDir(faviconDestDir);
+    await fs.copyFile(
+      path.join(ROOT, 'tools', 'sitegen', 'assets', 'favicon', 'favicon.png'),
+      path.join(faviconDestDir, 'favicon.png')
+    );
+  }
   if (!incremental) await ensureDir(path.join(OUT_DIR, 'assets', 'fonts'));
   if (!incremental) await fs.copyFile(
     path.join(ROOT, 'tools', 'sitegen', 'node_modules', '@fontsource', 'inter', 'files', 'inter-latin-800-normal.woff2'),

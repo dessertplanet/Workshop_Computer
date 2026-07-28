@@ -8,6 +8,7 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Content-Security-Policy" content="${CSP_PLACEHOLDER}" />
   <title>${title ? String(title).replace(/</g, '&lt;') : 'Workshop Computer'}</title>
+  <link rel="icon" type="image/png" href="${relativeRoot}/assets/favicon/favicon.png" />
   <link rel="stylesheet" href="${relativeRoot}/assets/github-markdown.css" />
   <link rel="stylesheet" href="${relativeRoot}/assets/style.css" />
   <link rel="stylesheet" href="${relativeRoot}/assets/program-cards.css" />
