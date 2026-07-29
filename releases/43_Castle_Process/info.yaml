@@ -137,7 +137,7 @@ tag_labels:
   - Lo-Fi
 source_file: releases/43_Castle_Process/info.yaml
 metadata:
-  creator: Adrian Vos
+  creator: Adrian Vos with LLM/AI assistance
   language: C++
   version: 1.0
   status: Beta - stable in single-developer testing
