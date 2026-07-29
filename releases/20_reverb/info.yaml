@@ -1,6 +1,6 @@
 Name: Reverb+
 short-description: Reverb, plus a configurable toolkit of MIDI/pulse/CV utilities
-summary: "**Reverb+** combines a CV-controllable ‘Hall’ reverb algorithm with a flexible range of other utilities: MIDI to gate/CV, Bernoulli gate, Turing Machine, sample & hold, and two internal clock sources, all with associated clock dividers. These utilities are configured through a browser-based editor."
+summary: "**Reverb+** combines a CV-controllable Hall Reverb algorithm with a flexible range of other utilities: MIDI to gate/CV, Bernoulli gate, Turing Machine, sample & hold, and two internal clock sources, all with associated clock dividers. These utilities are configured through a browser-based editor."
 Language: C (RPi Pico SDK)
 Creator: Chris Johnson
 Version: 1.5
@@ -144,24 +144,22 @@ readme: |
 
   Hold the **Z** switch down while powering on or rebooting the card to restore the factory configuration.
 
-  #### Patch Tips
+  #### Reverb+ Patch Tips
 
   - The most straightforward role of Reverb+ is at both the start and end of the signal chain. CV and gate generation from Reverb+ modulates analogue filters and oscillators, which feed into the reverb. The stereo reverb outputs are connected to Mix channels 1 and 2, panned hard left and right.
   - Reverb+ benefits from a bit of effort with gain staging. The top right LED is an input clipping indicator. The left column of LEDs is a wet reverb output VU meter, with the top LED solidly on meaning output clipping.
-  - Reverb+ is designed to be fed back into itself, with tones ranging from a tonally coloured *halo* around the input signal, through sustained metallic timbres to outright distortion, depending on the amplitude of feedback. Try feedback through both the normal and inverting inputs, which may give different tones, or add filters, ring mod, or other effects into the feedback path.
-  - Modulating the **Reverb Decay** parameter causes a pitch shift, which can be exploited for unusual effects or even to create melodic patterns.
+  - Reverb+ is designed to be fed back into itself, with tones ranging from a tonally coloured 'halo' around the input signal, through sustained metallic timbres to outright distortion, depending on the amplitude of feedback. Try feedback through both the normal and inverting inputs, which may give different tones, or add filters, ring mod, or other effects into the feedback path.
+  - Modulating the Reverb Decay parameter causes a pitch shift, which can be exploited for unusual effects or even to create melodic patterns.
   - CV and gate outputs can be fed back into CV and gate inputs, allowing a Sample & Hold triggered by the output of a Bernoulli Gate, clocks with randomly varying frequency, self-modulated reverb parameters, and other feedback patches.
   - When the noise Sample & Hold is run continuously, the resulting white noise output reaches well into the audible range, making it useful as an audio source for percussion or for subsequent shaping with filters.
-  - Up to four independent pulse outputs at different frequencies can be generated, making it useful for exploring polyrhythms and phasing.
+  - Up to four independent pulse outputs at different frequencies can be generated - useful for exploring polyrhythms and phasing.
 
 
   #### Configuration Notes
 
-  - On 2025+ Workshop Computers (PCB revision ≥1.1), Reverb+ can operate as either a USB MIDI device or USB MIDI host.
-  - In USB host mode, Android devices can access the configuration editor using Chrome after setting the USB mode to **MIDI**.
-  - MIDI note pitches use the CV calibration created by the **Simple MIDI** card.
-  - Pulse outputs support both **gate** and **trigger** modes.
-  - Trigger mode outputs approximately 2 ms pulses on rising edges.
-  - Clock dividers are independent and are not synchronised.
-  - The Bernoulli Gate is inspired by Mutable Instruments **Branches**.
-  - The Turing Machine implementation is based on the Music Thing Modular Turing Machine.
+  - The configuration interface and MIDI input connect through USB. The Reverb+ card acts as a USB MIDI device (which is connected to USB MIDI host, such as a laptop). On Workshop System Computers made in 2025 onwards (PCB revision >= 1.1), it can also act as a USB MIDI host (connected to a USB MIDI device, such as an Android phone or MIDI controller/keyboard).
+     - On Android, you may need to go to `Settings` → `Default USB Configuration` and select MIDI. Connect the Android device when the Workshop System is powered off, then turn on the Workshop System power.
+  - MIDI note pitches use CV output calibration set by the *00 Simple MIDI* card.
+  - Pulse outputs have gate and trigger mode: the trigger mode generates a ~2ms pulse at a rising edge of the chosen gate source, useful for triggering the Slopes module on the Workshop System.
+  - The clock dividers for each output are independent (not synchronised)
+  - The Bernoulli Gate is based loosely on Mutable Instruments Branches, and the Turing Machine on the Music Thing Modular module, with similar inputs, outputs and parameters.
