@@ -233,3 +233,11 @@ assignments:
   433_sense_of_space:
     - magic
     - new
+  # Lockstep
+  89_Lockstep: []
+  # RYK 355 Pitch to Voltage / 350 Vocoder
+  355_RYK_Pitch-Vocoder: []
+  # RYK B77 Tape Sampler
+  877_RYK_Tape-Sampler: []
+  # RYK 910 Pitched Delay
+  910_RYK_Pitched-Delay: []
