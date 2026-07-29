@@ -10,6 +10,7 @@
 | 07_bumpers | 'Bouncing ball' style delay and trigger generators | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 08_bytebeat | Generates and mangles bytebeats | 0.1<br>Functional but WIP | C++/Arduino-Pico | Matt Kuebrich |
 | 09_DivCom | Comparator and VC clock divider, inspired by Serge NCOM | 0.1<br>Released | C++ (RPi Pico SDK) compat. cmake. | divmod |
+| 101_Gnarly_C1ZZL3 | No-Turing dual-oscillator C1ZZL3 branch with recipe wave banks, named Web MIDI sound presets, separate oscillator envelopes, CZ patch import support, and an eight-knob MIDI CC performance block.<br>[Web editor](https://tomwhitwell.github.io/Workshop_Computer/programs/101-gnarly-c1zzl3/web/index.html) | Gnarly protocol v11 stable<br>Beta - stable in single-developer testing | C++ (Pico SDK) | Adrian Vos |
 | 10_twists | A port of Mutable Instruments Braids with a web editor | 0.1<br>Functional but WIP | C (RPi Pico SDK) | Random Works |
 | 11_goldfish | Weird delay/looper for audio and CV | 2.0<br>Released | Pico SDK | Dune Desormeaux |
 | 12_am_coupler | AM radio transmitter / coupler | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
@@ -29,7 +30,7 @@
 | 26_clockwork | 6-channel polyrhythmic clock, gate, and LFO/envelope generator inspired by Pamela's Workout.<br>[Web editor](https://vincentmaurer.de/clockwork/index.html) | 1.0.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
 | 27_Siren | Multi-algorithm drone oscillator. Inspired by the Forge TME Vhikk X. | 0.2<br>Functional but WIP | C++ (ComputerCard / Pico SDK) | Moses Hoyt |
 | 28_eighties_bass | Bass-oriented complete monosynth voice consisting of five detuned saw wave oscillators with mixable white noise and adjustable resonant filter. | 0.1<br>Functional but WIP | Arduino (arduino-pico) with Mozzi 2 | Tod Kurt (@todbot) |
-| 29_XHT | A playable deep-note-inspired stereo chord swarm with manual scrubbing, one-shot movement, delay, reverb, CV, pulse, and optional MIDI control. | 0.1.0<br>Beta - stable in single-developer testing | C++ (Pico SDK) | Adrian Vos |
+| 29_XHT | A playable deep-note-inspired stereo chord swarm with manual scrubbing, one-shot movement, delay, reverb, CV, pulse, and optional MIDI control. | 0.1.0<br>Beta - stable in single-developer testing | C++ (Pico SDK) | Adrian Vos with LLM/AI assistance |
 | 303_acid | A 303-style step sequencer | 1.0.0<br>Released | C++ (ComputerCard) | Samuel Smith |
 | 30_cirpy_wavetable | Wavetable oscillator that using wavetables from Plaits, Braids, and Microwave, | 0.1<br>Functional but WIP | CircuitPython | Tod Kurt (@todbot) |
 | 31_esp | A MS-20-style External Signal Processor that includes a preamp, bandpass filter, envelope follower, gate, and 1v/oct pitch outs. | 1.0<br>Released | C++ (ComputerCard) | Ben Regnier |
@@ -91,4 +92,3 @@
 | 97_alloy | Fixed-point 15-zone cross-modulator with a clocked Turing CV and gate companion. | 0.2.0<br>Beta | C++ (RP2040 Pico SDK) | Eric Gao |
 | 98_duo_midi | A duophonic midi device/host interface | 0.1<br>Released | Lua / Blackbird | Dune Desormeaux |
 | 99_toolbox | Mixer, VCA, noise, S&H, clock generator, etc. | 0.1.1<br>Released | C++ (ComputerCard) | divmod |
-| 101_Gnarly_C1ZZL3 | Stable no-Turing dual-oscillator synth with recipe wave banks, full sound presets, CZ import handoff, and the shared advanced Web MIDI editor.<br>[Web editor](https://tomwhitwell.github.io/Workshop_Computer/programs/101-gnarly-c1zzl3/web/index.html) | Gnarly protocol v11 stable<br>Released | C++ (Pico SDK) | Adrian Vos |
