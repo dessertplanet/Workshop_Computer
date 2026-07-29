@@ -29,4 +29,9 @@ My suggestion for the first 100 projects is that people grab numbers & folders i
 
 Release documentation: I've been making [little](https://docs.google.com/presentation/d/19z0S9cpGnyhb7lVmBPHYjTZLpEB-Xg-v9zzfXCjCjOQ/copy) [leaflets](https://docs.google.com/presentation/d/10R8onfP5JAq9MpOgVSa4sAhxg-WTx7_0-Q1fY0MUDho/copy) for each card, designed in Google Sheets, but you might experiment with other types of documentation   
 
+### METADATA SITE DEVELOPMENT
+
+The public site is hosted at https://computer.musicthing.co.uk/
+[Read about how to run and use the metadata site locally here](documentation/metadata-site-development.md)
+
 
