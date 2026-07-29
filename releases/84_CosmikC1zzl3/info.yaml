@@ -1,5 +1,5 @@
 id: 84_CosmikC1zzl3
-title: Cosmik C1ZZL3
+Name: Cosmik C1ZZL3
 draft: false
 release: 84 / 1.4
 date-created: 2026-07-22
@@ -14,6 +14,11 @@ short-description: >-
   pitch-aware Web MIDI envelopes, envelope readback, PD, detune, eight waveform
   families, hosted CZ patch import, USB MIDI device/host operation, and optional
   Turing MIDI output that defaults off.
+Language: C++ (Pico SDK)
+Creator: Adrian Vos
+Version: "1.4"
+Status: Beta - stable in single-developer testing
+License: MIT
 panel:
   controls:
     main:
@@ -143,7 +148,7 @@ metadata:
   creator: Adrian Vos
   language: C++ (Pico SDK)
   version: 1.4
-  status: Released
+  status: Beta - stable in single-developer testing
   license: MIT
   editor_url: https://tomwhitwell.github.io/Workshop_Computer/programs/84-cosmikc1zzl3/web/index.html
   editor_note: Configure this card in Envelope Lab; use web/import/index.html for CZ patch translation.
