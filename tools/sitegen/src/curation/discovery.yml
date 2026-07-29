@@ -12,9 +12,9 @@
 # Shelves:
 # - `id` is a stable admin key; `title` is the visible heading.
 # - `intro` is optional. Most shelves read better without one.
-# - Use either `cards` for an explicit card-ID list, or `cards_from_tags` to pull from tags.yml.
-# - `limit` caps tag-driven shelves.
-# - `hide_tags` suppresses redundant badges inside that shelf, e.g. hide `recommended` on a Recommended shelf.
+# - Use either `cards` for an explicit card-ID list, or `cards_from_flairs` to pull from flairs.yml.
+# - `limit` caps flair-driven shelves.
+# - `hide_flairs` suppresses redundant badges inside that shelf, e.g. hide `new` on a New shelf.
 # - `layout` is optional:
 #   - omit it for the normal 3-column card grid
 #   - `list` for a tighter 2-column editorial list
@@ -57,9 +57,9 @@ shelves:
   - id: new
     title: Recommended new releases
     layout: list
-    cards_from_tags:
+    cards_from_flairs:
       - new
-    hide_tags:
+    hide_flairs:
       - new
     limit: 8
 
@@ -88,18 +88,18 @@ shelves:
   - id: properly-useful
     title: Properly useful
     layout: list
-    cards_from_tags:
+    cards_from_flairs:
       - useful
-    hide_tags:
+    hide_flairs:
       - useful
     limit: 4
     
   - id: amazing
     title:  🤯 Mind blown
     layout: list
-    cards_from_tags:
+    cards_from_flairs:
       - magic
-    hide_tags:
+    hide_flairs:
       - magic
     limit: 6
 

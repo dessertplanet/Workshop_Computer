@@ -6,7 +6,7 @@ import YAML, { Pair, Scalar, YAMLMap } from 'yaml';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../../../..');
 const RELEASES_DIR = path.join(ROOT, 'releases');
-const TAGS_FILE = path.join(__dirname, 'tags.yml');
+const FLAIRS_FILE = path.join(__dirname, 'flairs.yml');
 const DISCOVERY_FILE = path.join(__dirname, 'discovery.yml');
 const VALID_LAYOUTS = new Set(['grid', 'list', 'lead', 'video-lead', 'video-strip']);
 
@@ -41,55 +41,55 @@ function releaseCards() {
     .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 }
 
-function validate(tags, discovery, cards) {
+function validate(flairs, discovery, cards) {
   const errors = [];
   const warnings = [];
-  const available = Array.isArray(tags.available_tags) ? tags.available_tags : [];
-  if (!Array.isArray(tags.available_tags)) errors.push('tags.yml: available_tags must be a list');
+  const available = Array.isArray(flairs.available_flairs) ? flairs.available_flairs : [];
+  if (!Array.isArray(flairs.available_flairs)) errors.push('flairs.yml: available_flairs must be a list');
 
   const vocabulary = new Map();
   const definedIds = new Set();
   const definedLabels = new Set();
-  for (const [index, tag] of available.entries()) {
-    if (!tag || typeof tag !== 'object' || Array.isArray(tag)) {
-      errors.push(`tags.yml: available_tags[${index}] must be an object`);
+  for (const [index, flair] of available.entries()) {
+    if (!flair || typeof flair !== 'object' || Array.isArray(flair)) {
+      errors.push(`flairs.yml: available_flairs[${index}] must be an object`);
       continue;
     }
-    const id = slugify(tag.id);
-    const label = slugify(tag.label || tag.id);
-    if (!id) errors.push(`tags.yml: available_tags[${index}] needs an id`);
-    if (id && definedIds.has(id)) errors.push(`tags.yml: flair id "${id}" is defined more than once`);
-    if (label && definedLabels.has(label)) errors.push(`tags.yml: flair label "${tag.label || tag.id}" is defined more than once`);
+    const id = slugify(flair.id);
+    const label = slugify(flair.label || flair.id);
+    if (!id) errors.push(`flairs.yml: available_flairs[${index}] needs an id`);
+    if (id && definedIds.has(id)) errors.push(`flairs.yml: flair id "${id}" is defined more than once`);
+    if (label && definedLabels.has(label)) errors.push(`flairs.yml: flair label "${flair.label || flair.id}" is defined more than once`);
     definedIds.add(id);
     definedLabels.add(label);
     for (const alias of new Set([id, label])) {
       if (!alias) continue;
       if (vocabulary.has(alias) && vocabulary.get(alias) !== id) {
-        errors.push(`tags.yml: flair alias "${alias}" is ambiguous`);
+        errors.push(`flairs.yml: flair alias "${alias}" is ambiguous`);
       } else {
         vocabulary.set(alias, id);
       }
     }
   }
 
-  const assignments = tags.assignments;
+  const assignments = flairs.assignments;
   if (!assignments || typeof assignments !== 'object' || Array.isArray(assignments)) {
-    errors.push('tags.yml: assignments must be a mapping');
+    errors.push('flairs.yml: assignments must be a mapping');
   }
   const assignmentEntries = assignments && typeof assignments === 'object' && !Array.isArray(assignments)
     ? Object.entries(assignments)
     : [];
   for (const [cardId, assigned] of assignmentEntries) {
     if (!Array.isArray(assigned)) {
-      errors.push(`tags.yml: assignment for ${cardId} must be a list`);
+      errors.push(`flairs.yml: assignment for ${cardId} must be a list`);
       continue;
     }
     const seen = new Set();
     for (const flair of assigned) {
       const alias = slugify(typeof flair === 'object' ? flair.id || flair.label : flair);
-      if (!vocabulary.has(alias)) errors.push(`tags.yml: ${cardId} uses unknown flair "${String(flair)}"`);
+      if (!vocabulary.has(alias)) errors.push(`flairs.yml: ${cardId} uses unknown flair "${String(flair)}"`);
       const id = vocabulary.get(alias) || alias;
-      if (seen.has(id)) errors.push(`tags.yml: ${cardId} assigns flair "${id}" more than once`);
+      if (seen.has(id)) errors.push(`flairs.yml: ${cardId} assigns flair "${id}" more than once`);
       seen.add(id);
     }
   }
@@ -97,10 +97,10 @@ function validate(tags, discovery, cards) {
   const cardIds = new Set(cards.map(card => card.id));
   const assignmentIds = new Set(assignmentEntries.map(([id]) => id));
   for (const card of cards) {
-    if (!assignmentIds.has(card.id)) errors.push(`tags.yml: missing assignment for ${card.id}`);
+    if (!assignmentIds.has(card.id)) errors.push(`flairs.yml: missing assignment for ${card.id}`);
   }
   for (const id of assignmentIds) {
-    if (!cardIds.has(id)) errors.push(`tags.yml: stale assignment for ${id}`);
+    if (!cardIds.has(id)) errors.push(`flairs.yml: stale assignment for ${id}`);
   }
 
   const referencedCards = [];
@@ -123,14 +123,14 @@ function validate(tags, discovery, cards) {
     if (!shelf.id) errors.push(`${location} needs an id`);
     if (shelf.id && shelfIds.has(shelf.id)) errors.push(`${location} duplicates shelf id "${shelf.id}"`);
     shelfIds.add(shelf.id);
-    if (Array.isArray(shelf.cards) && Array.isArray(shelf.cards_from_tags)) errors.push(`${location} cannot use both cards and cards_from_tags`);
-    if (!Array.isArray(shelf.cards) && !Array.isArray(shelf.cards_from_tags)) errors.push(`${location} must use cards or cards_from_tags`);
+    if (Array.isArray(shelf.cards) && Array.isArray(shelf.cards_from_flairs)) errors.push(`${location} cannot use both cards and cards_from_flairs`);
+    if (!Array.isArray(shelf.cards) && !Array.isArray(shelf.cards_from_flairs)) errors.push(`${location} must use cards or cards_from_flairs`);
     addCards(shelf.cards, `${location}.cards`);
-    for (const flair of shelf.cards_from_tags || []) {
-      if (!vocabulary.has(slugify(flair))) errors.push(`${location}.cards_from_tags uses unknown flair "${flair}"`);
+    for (const flair of shelf.cards_from_flairs || []) {
+      if (!vocabulary.has(slugify(flair))) errors.push(`${location}.cards_from_flairs uses unknown flair "${flair}"`);
     }
-    for (const flair of shelf.hide_tags || []) {
-      if (!vocabulary.has(slugify(flair))) errors.push(`${location}.hide_tags uses unknown flair "${flair}"`);
+    for (const flair of shelf.hide_flairs || []) {
+      if (!vocabulary.has(slugify(flair))) errors.push(`${location}.hide_flairs uses unknown flair "${flair}"`);
     }
     if (shelf.layout && !VALID_LAYOUTS.has(shelf.layout)) errors.push(`${location} has unknown layout "${shelf.layout}"`);
     if (shelf.limit != null && (!Number.isInteger(shelf.limit) || shelf.limit < 1)) errors.push(`${location}.limit must be a positive integer`);
@@ -142,9 +142,9 @@ function validate(tags, discovery, cards) {
   return { errors, warnings };
 }
 
-function synchronize(tagsDocument, cards) {
-  let assignments = tagsDocument.get('assignments', true);
-  if (!(assignments instanceof YAMLMap)) throw new Error('tags.yml: assignments must be a mapping before it can be synchronized');
+function synchronize(flairsDocument, cards) {
+  let assignments = flairsDocument.get('assignments', true);
+  if (!(assignments instanceof YAMLMap)) throw new Error('flairs.yml: assignments must be a mapping before it can be synchronized');
   const existing = new Set(assignments.items.map(pair => String(pair.key?.value ?? pair.key)));
   const added = [];
   for (const card of cards) {
@@ -155,7 +155,7 @@ function synchronize(tagsDocument, cards) {
     existing.add(card.id);
     added.push(card.id);
   }
-  if (added.length) fs.writeFileSync(TAGS_FILE, String(tagsDocument));
+  if (added.length) fs.writeFileSync(FLAIRS_FILE, String(flairsDocument));
   return added;
 }
 
@@ -169,25 +169,25 @@ function main() {
   if (!['check', 'sync'].includes(mode)) throw new Error('Usage: node src/curation/cli.js [check|sync]');
 
   const cards = releaseCards();
-  const tagsDocument = readDocument(TAGS_FILE);
+  const flairsDocument = readDocument(FLAIRS_FILE);
   if (mode === 'sync') {
-    const added = synchronize(tagsDocument, cards);
+    const added = synchronize(flairsDocument, cards);
     console.log(added.length ? `Added ${added.length} curation assignment(s): ${added.join(', ')}` : 'Curation assignments are already synchronized.');
   }
 
-  const currentTags = readDocument(TAGS_FILE).toJS() || {};
+  const currentFlairs = readDocument(FLAIRS_FILE).toJS() || {};
   const discovery = readDocument(DISCOVERY_FILE).toJS() || {};
-  const result = validate(currentTags, discovery, cards);
+  const result = validate(currentFlairs, discovery, cards);
   report(result);
   if (result.errors.length) {
-    const missingAssignments = result.errors.filter(error => error.startsWith('tags.yml: missing assignment for '));
+    const missingAssignments = result.errors.filter(error => error.startsWith('flairs.yml: missing assignment for '));
     if (mode === 'check' && missingAssignments.length) {
-      console.error('Curation assignments are out of sync. Run `npm run sync-curation` from the repository root, then commit the updated tags.yml.');
+      console.error('Curation assignments are out of sync. Run `npm run sync-curation` from the repository root, then commit the updated flairs.yml.');
     }
     console.error(`Curation check failed with ${result.errors.length} error(s).`);
     process.exitCode = 1;
   } else {
-    console.log(`Curation check passed: ${cards.length} cards, ${Object.keys(currentTags.assignments || {}).length} assignments, ${(currentTags.available_tags || []).length} flairs.`);
+    console.log(`Curation check passed: ${cards.length} cards, ${Object.keys(currentFlairs.assignments || {}).length} assignments, ${(currentFlairs.available_flairs || []).length} flairs.`);
   }
 }
 
