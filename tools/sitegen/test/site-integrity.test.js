@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveLegacyTarget } from '../assets/js/legacy-redirects.js';
 
 const root = fileURLToPath(new URL('../../..', import.meta.url));
 const siteDir = path.join(root, 'site');
@@ -127,4 +128,26 @@ test('generator-owned layouts use external runtime scripts', () => {
       .filter(match => !/\btype=(['"])importmap\1/i.test(match[1]) && match[2].trim());
     assert.deepEqual(executableInline, [], `${relative} contains executable inline runtime code`);
   }
+});
+
+test('legacy public card URLs resolve only to known current routes', () => {
+  const { cards } = readJson('cards.json');
+  const slugs = new Set(cards.map(card => card.slug));
+
+  assert.equal(
+    resolveLegacyTarget('https://computer.musicthing.co.uk/#15-mlrws', '/', slugs),
+    'https://computer.musicthing.co.uk/programs/15-mlrws/',
+  );
+  assert.equal(
+    resolveLegacyTarget('https://computer.musicthing.co.uk/Workshop_Computer/programs/15-mlrws/web/index.html?mode=edit#patch', '/', slugs),
+    'https://computer.musicthing.co.uk/programs/15-mlrws/web/index.html?mode=edit#patch',
+  );
+  assert.equal(
+    resolveLegacyTarget('https://computer.musicthing.co.uk/#not-a-card', '/', slugs),
+    null,
+  );
+  assert.equal(
+    resolveLegacyTarget('https://dessertplanet.github.io/Workshop_Computer/programs/15-mlrws/', '/Workshop_Computer/', slugs),
+    null,
+  );
 });

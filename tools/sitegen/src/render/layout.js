@@ -1,6 +1,6 @@
 import { applyContentSecurityPolicy, CSP_PLACEHOLDER } from './csp.js';
 
-export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'https://github.com/TomWhitwell/Workshop_Computer', showProgramIdentity = false, programCardCount = null }) {
+export function renderLayout({ title, content, relativeRoot = '.', legacyRedirectRoot = relativeRoot, repoUrl = 'https://github.com/TomWhitwell/Workshop_Computer', showProgramIdentity = false, programCardCount = null }) {
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -54,6 +54,7 @@ export function renderLayout({ title, content, relativeRoot = '.', repoUrl = 'ht
     </div>
   </footer>
   <script src="${relativeRoot}/assets/js/site-menu.js"></script>
+  <script type="module" src="${legacyRedirectRoot}/assets/js/legacy-redirects.js"></script>
   <script type="module" src="${relativeRoot}/assets/js/program-cards.js"></script>
   <script src="${relativeRoot}/assets/js/catalogue-filters.js"></script>
 </body>

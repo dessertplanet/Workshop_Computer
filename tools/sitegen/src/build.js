@@ -36,7 +36,16 @@ const DEFAULT_BRANCH = 'main';
 // available for an explicit preview override.
 const REPO = process.env.SITE_REPOSITORY || process.env.GITHUB_REPOSITORY || DEFAULT_REPO;
 const BRANCH = process.env.SITE_REF || process.env.GITHUB_SHA || process.env.GITHUB_REF_NAME || DEFAULT_BRANCH;
-const PAGES_BASE = githubPagesBase(REPO);
+const SITE_BASE = (() => {
+  const configured = String(process.env.SITE_BASE_URL || '').trim();
+  if (!configured) return githubPagesBase(REPO);
+  const url = new URL(configured);
+  if (!/^https?:$/.test(url.protocol)) throw new Error('SITE_BASE_URL must be an HTTP(S) URL.');
+  url.search = '';
+  url.hash = '';
+  if (!url.pathname.endsWith('/')) url.pathname += '/';
+  return url.href;
+})();
 const schemaAdapter = getInfoYamlSchemaAdapter();
 
 
@@ -48,7 +57,7 @@ function makeRawUrl(relPathFromRepoRoot) {
 
 async function discoverRelease(folderName) {
   const outPrograms = path.join(OUT_DIR, 'programs');
-  return discoverReleaseMod(RELEASES_DIR, folderName, outPrograms, makeRawUrl, PAGES_BASE, REPO, BRANCH);
+  return discoverReleaseMod(RELEASES_DIR, folderName, outPrograms, makeRawUrl, SITE_BASE, REPO, BRANCH);
 }
 
 function escapeAttr(s) {
@@ -459,6 +468,9 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
   if (!incremental) await writeFileEnsured(path.join(OUT_DIR, '404.html'), renderLayout({
     title: 'Not found',
     relativeRoot: '.',
+    // GitHub Pages preserves the missing URL when it serves 404.html. Load the
+    // redirect helper from the custom-domain root regardless of path depth.
+    legacyRedirectRoot: '',
   repoUrl: `https://github.com/${REPO}`,
     content: '<h1>404</h1><p>Page not found.</p>'
   }));

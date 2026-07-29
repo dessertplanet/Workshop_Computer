@@ -18,6 +18,10 @@ jobs:
   build:
     if: github.event.repository.fork != true || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      # Fork previews retain their own github.io project URL. The upstream
+      # production build emits canonical web-editor links on the custom domain.
+      SITE_BASE_URL: ${{ github.repository == 'TomWhitwell/Workshop_Computer' && 'https://computer.musicthing.co.uk/' || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

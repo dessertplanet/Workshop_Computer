@@ -18,6 +18,32 @@ npm run build
 
 This performs a clean production build of the complete site.
 
+Absolute links to copied web editors default to the repository's GitHub Pages
+project URL. Set `SITE_BASE_URL` to override that public base, including its
+trailing path when applicable:
+
+```sh
+SITE_BASE_URL=https://computer.musicthing.co.uk/ npm run build
+```
+
+The Pages workflow applies this custom-domain base only in the upstream
+repository; fork previews retain their own `github.io/<repository>/` base.
+
+## Legacy URL compatibility
+
+Every existing card keeps its `programs/<slug>/` route. The generated site also
+redirects these client-side legacy forms after confirming the slug exists in
+`cards.json`:
+
+- a catalogue hash such as `/#15-mlrws` to `/programs/15-mlrws/`
+- a retained GitHub project prefix such as
+  `/Workshop_Computer/programs/15-mlrws/` to `/programs/15-mlrws/` on the root
+  custom domain
+
+Queries, fragments, and nested web-editor paths are preserved. The compatibility
+code deliberately does not strip the project prefix on fork previews, where it
+is part of the valid deployment path.
+
 ## Run the development server
 
 ```sh
