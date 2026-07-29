@@ -73,9 +73,9 @@
     var showAll=tagGroup&&tagGroup.classList.contains('is-showing-all');
     document.querySelectorAll('[data-tag-option]').forEach(function(option){
       var input=option.querySelector('input[name="filter-tag"]');
-      var curated=option.getAttribute('data-tag-source')==='curated';
+      var flair=option.getAttribute('data-tag-source')==='flair';
       var matches=!query||(option.getAttribute('data-tag-label')||'').indexOf(query)!==-1;
-      option.hidden=query?!matches:!(showAll||curated||(input&&input.checked));
+      option.hidden=query?!matches:!(showAll||flair||(input&&input.checked));
     });
   }
 

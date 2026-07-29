@@ -64,7 +64,7 @@ function detailPage(rel) {
 
   const article = renderCardArticle({
     card,
-    curatedTags: curation.resolveFlair(card.id),
+    flairs: curation.resolveFlair(card.id),
     panelImg: '../../assets/program_cards/Standalone_computer_rev1.svg',
     yamlUrl,
     uf2Url,
@@ -274,21 +274,21 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
   const creatorOptions = ['<option value="">All</option>'].concat(
     Array.from(creatorSet).sort((a,b)=>a.localeCompare(b)).map(v=>`<option value="${escapeAttr(v)}">${v}</option>`)
   ).join('');
-  const curatedTagIds = new Set(curation.availableTags.map(tag => tag.id));
-  const filterTags = new Map(curation.availableTags.map(tag => [tag.id, tag.label]));
+  const flairIds = new Set(curation.availableFlairs.map(flair => flair.id));
+  const filterTags = new Map(curation.availableFlairs.map(flair => [flair.id, flair.label]));
   for (const tag of normalizedCards.flatMap(card => Array.isArray(card.tags) ? card.tags : [])) {
     const id = curation.slugify(tag);
     if (id && !filterTags.has(id)) filterTags.set(id, tag);
   }
   const tagOptions = [...filterTags.entries()]
     .sort((a, b) => {
-      const sourceOrder = Number(curatedTagIds.has(b[0])) - Number(curatedTagIds.has(a[0]));
+      const sourceOrder = Number(flairIds.has(b[0])) - Number(flairIds.has(a[0]));
       return sourceOrder || a[1].localeCompare(b[1]);
     })
     .map(([id, label])=>{
-      const curated = curation.availableTags.find(tag => tag.id === id);
-      const style = curated?.color ? ` style="--tag-selected-bg:${escapeAttr(curated.color)}"` : '';
-      return `<label class="tag-filter-option" data-tag-option data-tag-label="${escapeAttr(label.toLowerCase())}" data-tag-source="${curated ? 'curated' : 'author'}"${curated ? '' : ' hidden'}${style}><input type="checkbox" name="filter-tag" value="${escapeAttr(id)}"> <span>${escapeAttr(label)}</span></label>`;
+      const flair = curation.availableFlairs.find(candidate => candidate.id === id);
+      const style = flair?.color ? ` style="--tag-selected-bg:${escapeAttr(flair.color)}"` : '';
+      return `<label class="tag-filter-option" data-tag-option data-tag-label="${escapeAttr(label.toLowerCase())}" data-tag-source="${flair ? 'flair' : 'author'}"${flair ? '' : ' hidden'}${style}><input type="checkbox" name="filter-tag" value="${escapeAttr(id)}"> <span>${escapeAttr(label)}</span></label>`;
     }).join('');
   const sortOptions = [
     ['', 'Card number'],
@@ -442,7 +442,7 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
     }
   }
 
-  const detailOutputs = incrementalCuration === 'tags' ? releases : releaseOutputs;
+  const detailOutputs = incrementalCuration === 'flairs' ? releases : releaseOutputs;
   for (const rel of detailOutputs) {
     const base = path.join(OUT_DIR, 'programs', rel.slug);
     await ensureDir(base);
@@ -471,12 +471,12 @@ async function build({ incrementalRelease = '', incrementalCuration = '' } = {})
     languages: suggestionValues('language'),
     statuses: [...new Set(['WIP', 'Beta', 'Released', ...suggestionValues('status')])].sort((a, b) => a.localeCompare(b)),
     tags: [...new Set([
-      ...curation.availableTags.map(tag => tag.label),
+      ...curation.availableFlairs.map(flair => flair.label),
       ...normalizedCards.flatMap(card => Array.isArray(card.tags) ? card.tags : []),
     ])].sort((a, b) => a.localeCompare(b)),
   };
   if (!incremental) await buildPreviewTool(suggestions);
-  else if (!incrementalCuration || incrementalCuration === 'tags') await buildPreviewPages(suggestions);
+  else if (!incrementalCuration || incrementalCuration === 'flairs') await buildPreviewPages(suggestions);
 
   if (!incrementalCuration) await writeDevCache(releases);
 
@@ -645,7 +645,7 @@ const options = {
   incrementalRelease: releaseArg >= 0 ? String(args[releaseArg + 1] || '') : '',
   incrementalCuration: curationArg >= 0 ? String(args[curationArg + 1] || '') : '',
 };
-if (options.incrementalCuration && !['discovery', 'tags'].includes(options.incrementalCuration)) {
+if (options.incrementalCuration && !['discovery', 'flairs'].includes(options.incrementalCuration)) {
   throw new Error(`Unknown incremental curation target: ${options.incrementalCuration}`);
 }
 

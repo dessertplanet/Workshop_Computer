@@ -40,6 +40,6 @@ After the initial complete build, common metadata and curation edits use faster 
 
 - Changing one `info.yaml` rediscovers that release and updates its page and dependent indexes.
 - Changing `discovery.yml` updates the program-card home page.
-- Changing `tags.yml` updates curation-dependent indexes and card pages.
+- Changing `flairs.yml` updates curation-dependent indexes and card pages.
 
 Mixed changes, deleted metadata, and structural or generator changes safely fall back to a clean complete build.

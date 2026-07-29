@@ -1,7 +1,7 @@
 // Presentation-only curation for the program-card discovery experience.
 //
 // Ported from MTM_Newsite_2022 _data/program_cards/{tags,discovery}.yml. These
-// are moderator-authored files (tag vocabulary + per-card flair assignments +
+// are moderator-authored files (flair vocabulary + per-card assignments +
 // shelf layout) and are intentionally kept out of releases/*/info.yaml.
 
 import fs from 'node:fs';
@@ -23,24 +23,24 @@ function slugify(value) {
   return String(value == null ? '' : value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-const tagsData = loadYaml('tags.yml');
+const flairsData = loadYaml('flairs.yml');
 const discovery = loadYaml('discovery.yml');
 
-const rawAvailable = Array.isArray(tagsData.available_tags) ? tagsData.available_tags : [];
-const assignments = (tagsData.assignments && typeof tagsData.assignments === 'object') ? tagsData.assignments : {};
+const rawAvailable = Array.isArray(flairsData.available_flairs) ? flairsData.available_flairs : [];
+const assignments = (flairsData.assignments && typeof flairsData.assignments === 'object') ? flairsData.assignments : {};
 
 // Index the tag vocabulary by both id-slug and label-slug for case-insensitive lookup.
-const tagBySlug = new Map();
-const availableTags = rawAvailable.map(tag => {
+const flairBySlug = new Map();
+const availableFlairs = rawAvailable.map(flair => {
   const entry = {
-    id: slugify(tag.id),
-    label: tag.label || tag.id,
-    color: tag.color || '',
-    textColor: tag.text_color || '',
-    description: tag.description || '',
+    id: slugify(flair.id),
+    label: flair.label || flair.id,
+    color: flair.color || '',
+    textColor: flair.text_color || '',
+    description: flair.description || '',
   };
-  tagBySlug.set(entry.id, entry);
-  tagBySlug.set(slugify(entry.label), entry);
+  flairBySlug.set(entry.id, entry);
+  flairBySlug.set(slugify(entry.label), entry);
   return entry;
 });
 
@@ -55,7 +55,7 @@ export function resolveFlair(cardId) {
   const seen = new Set();
   for (const tag of assigned) {
     const key = slugify(typeof tag === 'object' ? (tag.id || tag.label) : tag);
-    const entry = tagBySlug.get(key) || { id: key, label: String(tag), color: '', textColor: '' };
+    const entry = flairBySlug.get(key) || { id: key, label: String(tag), color: '', textColor: '' };
     if (!entry.id || seen.has(entry.id)) continue;
     seen.add(entry.id);
     out.push(entry);
@@ -63,9 +63,9 @@ export function resolveFlair(cardId) {
   return out;
 }
 
-/** Card ids assigned a given flair tag (by id or label), in curation order. */
-export function cardIdsForTag(tagSlug) {
-  const wanted = slugify(tagSlug);
+/** Card ids assigned a given flair (by id or label), in curation order. */
+export function cardIdsForFlair(flairSlug) {
+  const wanted = slugify(flairSlug);
   const ids = [];
   for (const [cardId] of Object.entries(assignments)) {
     if (resolveFlair(cardId).some(t => t.id === wanted)) ids.push(cardId);
@@ -74,10 +74,10 @@ export function cardIdsForTag(tagSlug) {
 }
 
 export const curation = {
-  availableTags,
+  availableFlairs,
   assignments,
   discovery,
   resolveFlair,
-  cardIdsForTag,
+  cardIdsForFlair,
   slugify,
 };

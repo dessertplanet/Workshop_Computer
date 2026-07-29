@@ -36,8 +36,8 @@ function rebuildSite() {
     if (relative === 'tools/sitegen/src/curation/discovery.yml') {
       return ['--prefix', 'tools/sitegen', 'run', 'build', '--', '--incremental-curation', 'discovery'];
     }
-    if (relative === 'tools/sitegen/src/curation/tags.yml') {
-      return ['--prefix', 'tools/sitegen', 'run', 'build', '--', '--incremental-curation', 'tags'];
+    if (relative === 'tools/sitegen/src/curation/flairs.yml') {
+      return ['--prefix', 'tools/sitegen', 'run', 'build', '--', '--incremental-curation', 'flairs'];
     }
     return ['run', 'build'];
   }

@@ -8,7 +8,7 @@ Curation is presentation-only. It belongs in `tools/sitegen/src/curation/`, not 
 
 | File | Controls |
 | --- | --- |
-| `tools/sitegen/src/curation/tags.yml` | Flair names, colours, descriptions, and the flairs assigned to each card |
+| `tools/sitegen/src/curation/flairs.yml` | Flair names, colours, descriptions, and the flairs assigned to each card |
 | `tools/sitegen/src/curation/discovery.yml` | Index heading, featured cards, shelf order, shelf membership, and shelf layout |
 
 Every release with an `info.yaml` is automatically included in the complete index and searchable card list. Curation decides whether it also receives an editorial flair or appears on a curated shelf.
@@ -23,19 +23,19 @@ npm run sync-curation
 
 This adds an empty assignment for every new card. It does not award a flair: an empty list means that the card has been registered but has not been given an editorial badge.
 
-The command preserves existing assignments and reports stale entries instead of deleting them. A stale entry usually means that a release folder was renamed or removed and should be investigated before editing `tags.yml`.
+The command preserves existing assignments and reports stale entries instead of deleting them. A stale entry usually means that a release folder was renamed or removed and should be investigated before editing `flairs.yml`.
 
 ## Curating flairs
 
 ### Assign or remove a flair
 
-Find the card ID under `assignments` in `tags.yml`. Card IDs exactly match folder names under `releases/`.
+Find the card ID under `assignments` in `flairs.yml`. Card IDs exactly match folder names under `releases/`.
 
 ```yaml
 assignments:
-  "71_degenerator":
-    - "new"
-    - "recommended"
+  "41_blackbird":
+    - "deep"
+    - "useful"
 
   "72_motorik": []
 ```
@@ -50,23 +50,28 @@ To remove a flair, remove that list item. Keep the card entry with `[]` when it 
 | --- | --- | --- |
 | `included` | Included | Ships with the Workshop Computer as an included Program Card |
 | `new` | New | A recent release that should receive temporary attention |
-| `recommended` | Recommended | A particularly useful card or good starting point |
 | `classic` | Classic | An established core card or familiar reference |
+| `start-here` | Start Here | A classic card recommended for new users and everyone else |
 | `updated` | Updated | Recently received a meaningful firmware or documentation revision |
-| `tom` | Monkey | Tom Whitwell's personal recommendation |
+| `toms-pick` | Tom's Pick | Recommended by Tom Whitwell |
+| `chris-pick` | Chris's Pick | Recommended by Chris Johnson |
 | `wild` | Wild | Unexpected, unusual, or deliberately unruly cards |
+| `useful` | Useful | Solves practical problems or makes the system easier to use |
+| `deep` | Deep | An intricate or ambitious card to explore in depth |
+| `magic` | Magic | An extraordinary card that feels impossible |
+| `instant-win` | Instant Win | A simple, immediately satisfying card |
 
 `New` and `Updated` are temporary editorial judgements. Review and remove them when they are no longer useful.
 
 ### Add or change a flair
 
-The `available_tags` section defines each flair:
+The `available_flairs` section defines each flair:
 
 ```yaml
-available_tags:
-  - id: "recommended"
-    label: "Recommended"
-    description: "Good starting points or especially useful cards."
+available_flairs:
+  - id: "useful"
+    label: "Useful"
+    description: "Properly useful cards that solve problems and make the system easier."
     color: "#a63d00"
     text_color: "#ffffff"
 ```
@@ -81,7 +86,7 @@ available_tags:
 
 These are intentionally different:
 
-- **Editorial flairs** are maintained in `tags.yml` and appear as curated badges. They may also drive shelves.
+- **Editorial flairs** are maintained in `flairs.yml` and appear as curated badges. They may also drive shelves.
 - **Author tags** come from `releases/*/info.yaml`. They describe a card for search and filtering, but do not place it on a curated shelf.
 
 Do not copy editorial choices into an author's metadata.
@@ -131,25 +136,25 @@ This is the best choice when the first card matters or when Tom wants a hand-pic
 
 ### Flair-driven shelves
 
-Use `cards_from_tags` when the shelf should follow flair assignments:
+Use `cards_from_flairs` when the shelf should follow flair assignments:
 
 ```yaml
-- id: recommended
-  title: Recommended
+- id: properly-useful
+  title: Properly useful
   layout: list
-  cards_from_tags:
-    - recommended
-  hide_tags:
-    - recommended
+  cards_from_flairs:
+    - useful
+  hide_flairs:
+    - useful
   limit: 6
 ```
 
 - A card is included when it has any listed flair.
 - `limit` caps the number displayed.
-- `hide_tags` hides a redundant badge within that shelf; it does not remove the assignment.
-- Flair-driven shelves currently use the site's canonical card-number order. Assignment order in `tags.yml` does not control them. Use an explicit `cards` shelf when editorial ordering is required.
+- `hide_flairs` hides a redundant badge within that shelf; it does not remove the assignment.
+- Flair-driven shelves currently use the site's canonical card-number order. Assignment order in `flairs.yml` does not control them. Use an explicit `cards` shelf when editorial ordering is required.
 
-Do not put both `cards` and `cards_from_tags` on one shelf.
+Do not put both `cards` and `cards_from_flairs` on one shelf.
 
 ### Layouts
 
@@ -168,13 +173,13 @@ Video layouts use a card's first valid demo video when one is available. They do
 #### Feature a newly released card
 
 1. Run `npm run sync-curation`.
-2. Add `new` to the card in `tags.yml`.
+2. Add `new` to the card in `flairs.yml`.
 3. It will enter the flair-driven **New** shelf, subject to that shelf's limit and numeric ordering.
 4. If it must appear first, use or create an explicit shelf instead.
 
-#### Recommend a card
+#### Mark a card as properly useful
 
-Add `recommended` to its assignment. The card enters the **Recommended** shelf and receives the badge elsewhere. Remove the flair when it should leave both.
+Add `useful` to its assignment. The card enters the **Properly useful** shelf and receives the badge elsewhere. Remove the flair when it should leave both.
 
 #### Put a card on one shelf without awarding a badge
 
@@ -195,7 +200,7 @@ npm run build
 
 The curation check catches:
 
-- cards missing from `tags.yml`
+- cards missing from `flairs.yml`
 - stale card assignments
 - unknown or duplicate flairs
 - invalid assignment shapes
@@ -213,7 +218,7 @@ Then serve the generated `site/` directory with the usual local preview and insp
 - the **Browse all cards** archive
 - tag filtering under **Advanced search**
 
-The GitHub Pages workflow runs `check-curation` before building. A pull request that adds a release without synchronizing `tags.yml`, or references a nonexistent card or flair, will fail with an actionable error.
+The GitHub Pages workflow runs `check-curation` before building. A pull request that adds a release without synchronizing `flairs.yml`, or references a nonexistent card or flair, will fail with an actionable error.
 
 ## Safe editing rules
 
@@ -222,5 +227,5 @@ The GitHub Pages workflow runs `check-curation` before building. A pull request 
 - Never delete a stale assignment until the corresponding release rename or deletion is understood.
 - Prefer flair IDs, not visible labels, in assignments and shelves.
 - Keep empty assignment entries.
-- Treat `New`, `Updated`, `Recommended`, and `Monkey` as editorial choices, not objective card metadata.
+- Treat `New`, `Updated`, `Tom's Pick`, and `Chris's Pick` as editorial choices, not objective card metadata.
 - Run the curation check before committing.

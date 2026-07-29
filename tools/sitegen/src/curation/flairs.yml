@@ -1,8 +1,8 @@
-# Tag administration for generated card pages.
+# Flair administration for generated card pages.
 # Edit this file to add, rename, remove, or reassign flairs.
-# `available_tags` defines the vocabulary; `assignments` maps card IDs to flair IDs.
+# `available_flairs` defines the vocabulary; `assignments` maps card IDs to flair IDs.
 
-available_tags:
+available_flairs:
   - id: included
     label: Included
     description: Ships with the Workshop Computer as an included Program Card.
