@@ -6,7 +6,7 @@
 | 03_Turing_Machine | Dual Turing Machine with quantized outputs and tap tempo<br>[Web editor](https://www.musicthing.co.uk/web_config/turing.html) | 1.5.3<br>Live | C++ (ComputerCard) | Tom Whitwell |
 | 04_BYO_Benjolin | Rungler, Chaotic VCO, Noise Source, Turing Machine, Quantizer | 1.1<br>Released | Pico SDK | Dune Desormeaux |
 | 05_chord_blimey | Generates CV/Pulse arpeggios | 0.9<br>Mostly complete (for now) | C (RPi Pico SDK) | Tom Waters |
-| 06_usb_audio | 6-Channel USB Audio & MIDI firmware with CV/Gate support<br>[Web editor](https://vincentmaurer.de/usb-audio/midi_config.html) | 1.0<br>Release | C++ (RPi Pico SDK) | Vincent Maurer (vincentmaurer.de) |
+| 06_usb_audio | 6-channel USB audio interface and USB MIDI device with configurable CV/gate mapping.<br>[Web editor](https://vincentmaurer.de/usb-audio/midi_config.html) | 1.0<br>Released | C++ (RPi Pico SDK) | Vincent Maurer |
 | 07_bumpers | 'Bouncing ball' style delay and trigger generators | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
 | 08_bytebeat | Generates and mangles bytebeats | 0.1<br>Functional but WIP | C++/Arduino-Pico | Matt Kuebrich |
 | 09_DivCom | Comparator and VC clock divider, inspired by Serge NCOM | 0.1<br>Released | C++ (RPi Pico SDK) compat. cmake. | divmod |
@@ -27,7 +27,7 @@
 | 23_SlowMod | Chaotic quad-LFO with VCAs | 0.1<br>Released | C++ (RPi Pico SDK) compat. w/ cmake and Arduino IDE. | divmod |
 | 24_crafted_volts | Manually set control voltages (CV) with the input knobs and switch. It also attenuverts (attenuates and inverts) incoming voltages. | (see source repo)<br>Released | Rust (Embassy framework) | Brian Dorsey |
 | 25_utility_pair | 25 small utilities, which can be combined in pairs | 1.0<br>Released | C++ (ComputerCard) | Chris Johnson |
-| 26_clockwork | 6-channel polyrhythmic clock, gate, and LFO/envelope generator inspired by Pamela's Workout.<br>[Web editor](https://vincentmaurer.de/clockwork/index.html) | 1.0.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
+| 26_clockwork | 6-channel polyrhythmic timing and modulation generator inspired by Pamela's Workout.<br>[Web editor](https://vincentmaurer.de/clockwork/index.html) | 1.0.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
 | 27_Siren | Multi-algorithm drone oscillator. Inspired by the Forge TME Vhikk X. | 0.2<br>Functional but WIP | C++ (ComputerCard / Pico SDK) | Moses Hoyt |
 | 28_eighties_bass | Bass-oriented complete monosynth voice consisting of five detuned saw wave oscillators with mixable white noise and adjustable resonant filter. | 0.1<br>Functional but WIP | Arduino (arduino-pico) with Mozzi 2 | Tod Kurt (@todbot) |
 | 29_XHT | A playable deep-note-inspired stereo chord swarm with manual scrubbing, one-shot movement, delay, reverb, CV, pulse, and optional MIDI control. | 0.1.0<br>Beta - stable in single-developer testing | C++ (Pico SDK) | Adrian Vos with LLM/AI assistance |
@@ -50,8 +50,8 @@
 | 44_Birds | Two birds sing to each other controlled by a Turing-style shift register sequencer with clock in and CV/pulse out. | 0.5.0<br>Beta | C++ (Pico SDK / ComputerCard) | Tom Whitwell |
 | 47_NZT | Grain Noise and Noise Tools | 1.0.0<br>Released | C++ (ComputerCard) | @kjnilsson |
 | 48_two_tracks | Two Tracks — Dual-read-head phase looper. Record a mono loop to flash (IMA-ADPCM) and play it through two independent heads with separately controllable positions and loop lengths for evolving phase patterns and interference textures. | 1.2<br>Released | C++ (Pico SDK) | Joep Vermaat |
-| 50_flux | Effects, Synthesizer and Utility<br>[Web editor](https://vincentmaurer.de/flux/flux_manager.html) | 1.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
-| 51_grains | Granular Sampler and Effect<br>[Web editor](https://vincentmaurer.de/grains/grains_manager.html) | 1.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
+| 50_flux | Multi-FX processor, polyphonic synthesizer, and CV utility module.<br>[Web editor](https://vincentmaurer.de/flux/flux_manager.html) | 1.0.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
+| 51_grains | Granular sampler, live audio cloud processor, and scrubbable tape player.<br>[Web editor](https://vincentmaurer.de/grains/grains_manager.html) | 1.0.0<br>Released | C++ (RP2040 Pico SDK) | Vincent Maurer |
 | 53_glitter | Granular Looping Sampler | 0.1.2-beta<br>Beta | C++ (Pico SDK 2.1.1, UF2 release) | Steve Jones |
 | 54_Tapegrade | Mono-input stereo cassette warble processor with wow, flutter, hiss, crackle, and tape wear morphing. | 0.8.0<br>Beta - stable in single-developer testing | C++ (RP2040 Pico SDK) | Adrian Vos |
 | 55_fifths | A quantizer/sequencer that can create harmony and nimbly traverse the circle of fifths in attempts to make jazz | 1.1<br>Released | C++ (RP2040 Pico SDK) | Dune Desormeaux |
