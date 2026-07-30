@@ -282,7 +282,7 @@ Every card must include **`Name`** — the site index and detail page title come
 
 ## Automation
 
-- **`pages.yml`** — runs `tools/sitegen`, deploys `site/` (including copied `web/` folders).
-- **`update-readme.yml`** — regenerates `releases/README.md` from each card’s `info.yaml`.
+- **`pages.yml`** — synchronizes curation, runs `tools/sitegen`, and deploys `site/` (including copied `web/` folders).
+- **`update-readme.yml`** — after changes land on `main`, regenerates `releases/README.md`, synchronizes `tools/sitegen/src/curation/flairs.yml`, and commits any updates.
 
 **Future:** per-card `npm` builds in CI before copying `dist/` to Pages; commit built assets and set `Editor: dist` (or whatever your output folder is) until then.

@@ -1,4 +1,4 @@
-name: Update README
+name: Update repository indexes
 
 on:
   push:
@@ -7,14 +7,14 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: update-readme
+  group: update-repository-indexes
   cancel-in-progress: true
 
 permissions:
   contents: write
 
 jobs:
-  update-readme:
+  update-indexes:
     runs-on: ubuntu-latest
 
     steps:
@@ -26,22 +26,33 @@ jobs:
       with:
         python-version: '3.x'
 
+    - name: Set up Node.js
+      uses: actions/setup-node@v5
+      with:
+        node-version: '20'
+        cache: npm
+        cache-dependency-path: tools/sitegen/package-lock.json
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install pyyaml
+        npm ci --prefix tools/sitegen
 
     - name: Update README
       run: python .github/scripts/update-readme.py
 
-    - name: Check for changes in README.md
+    - name: Synchronize site curation
+      run: npm run sync-curation
+
+    - name: Check for generated changes
       id: check_changes
       run: |
-        if git diff --exit-code releases/README.md; then
-          echo "No changes in README.md"
+        if git diff --exit-code releases/README.md tools/sitegen/src/curation/flairs.yml; then
+          echo "Repository indexes are already synchronized"
           echo "changed=false" >> "$GITHUB_OUTPUT"
         else
-          echo "README.md has changed"
+          echo "Repository indexes have changed"
           echo "changed=true" >> "$GITHUB_OUTPUT"
         fi
 
@@ -50,8 +61,8 @@ jobs:
       run: |
         git config --global user.name 'github-actions'
         git config --global user.email 'github-actions@github.com'
-        git add releases/README.md
-        git commit -m 'Update README with folder information'
+        git add releases/README.md tools/sitegen/src/curation/flairs.yml
+        git commit -m 'Update repository indexes'
         git push
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
