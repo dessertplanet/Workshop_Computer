@@ -111,6 +111,16 @@ test('card details render configured creation and update dates', () => {
   assert.match(html, /<dt>Updated<\/dt><dd>2025-06-07<\/dd>/);
 });
 
+test('card details hide inferred creation dates', () => {
+  const html = renderCardArticle({
+    card: card({ metadata: { created: '2024-02-03', created_inferred: true, updated: '2025-06-07' } }),
+    panelImg: 'panel.svg', yamlUrl: 'source.yaml',
+  });
+  assert.doesNotMatch(html, /<dt>Created<\/dt>/);
+  assert.doesNotMatch(html, /2024-02-03/);
+  assert.match(html, /<dt>Updated<\/dt><dd>2025-06-07<\/dd>/);
+});
+
 test('discovery renderers escape searchable attributes and ignore absent shelf cards', () => {
   const testCard = card({
     title: 'A "quoted" <card>', slug: 'safe-slug',
@@ -126,6 +136,14 @@ test('discovery renderers escape searchable attributes and ignore absent shelf c
   const shelf = renderShelf({ title: 'Shelf <One>', cards: ['missing', testCard.id] }, new Map([[testCard.id, testCard]]));
   assert.match(shelf, /Shelf &lt;One&gt;/);
   assert.equal((shelf.match(/program-card-tile__link/g) || []).length, 1);
+});
+
+test('catalogue sorting uses inferred creation dates', () => {
+  const inferred = card({
+    metadata: { created: '2026-07-29', created_inferred: true },
+  });
+  assert.match(renderTile(inferred), /data-date="2026-07-29"/);
+  assert.match(renderArchive([inferred]), /data-date="2026-07-29"/);
 });
 
 test('featured blank card overlays its label artwork on the randomized card icon', () => {
