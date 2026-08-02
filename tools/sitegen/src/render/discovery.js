@@ -82,6 +82,7 @@ export function renderTile(card, opts = {}) {
   const number = cardNumber(card);
   const summary = card.short_description || '';
   const metadata = card.metadata || {};
+  const sortDate = metadata.created || '';
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
   const featuredCopy = showArtwork ? FEATURED_COPY[card.id] : null;
 
@@ -107,7 +108,7 @@ export function renderTile(card, opts = {}) {
 
   return `<article class="program-card-tile${media ? ' program-card-tile--video' : ''}${artwork ? ' program-card-tile--artwork' : ''}"` +
     ` data-creator="${escapeAttr(metadata.creator || '')}" data-language="${escapeAttr(metadata.language || '')}"` +
-    ` data-type="${escapeAttr(metadata.status || '')}" data-date="${escapeAttr(metadata.created || '')}"` +
+    ` data-type="${escapeAttr(metadata.status || '')}" data-date="${escapeAttr(sortDate)}"` +
     ` data-name="${escapeAttr(String(card.title || card.id || '').toLowerCase())}" data-num="${escapeAttr(String(parseInt(number, 10) || 0))}"` +
     ` data-tags="${escapeAttr(tagFilter)}" data-search="${escapeAttr(searchText)}">
     <a class="program-card-tile__link" href="${card.id === '88_Blank' && showArtwork ? `${root}/random/` : `${root}/programs/${card.slug}/`}">
