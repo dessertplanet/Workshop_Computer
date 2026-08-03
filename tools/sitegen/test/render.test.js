@@ -83,6 +83,41 @@ test('custom panel rendering sanitizes authored content and escapes image metada
   assert.doesNotMatch(html, /program-card-panel-switch-position/);
 });
 
+test('hybrid panel rendering selects generated or authored visuals and content independently', () => {
+  const hybrid = card({ panel_views: {
+    source: 'custom', default: 'generated', items: [
+      {
+        id: 'generated', name: 'Generated', kind: 'generated', image_kind: 'custom', content_kind: 'generated',
+        image: { url: 'panels/generated.svg', width: 560, height: 1785 },
+        panel: { controls: { main: { label: 'Generated role' } } },
+        switch_modes: {}, leds: [], content_html: null,
+      },
+      {
+        id: 'authored', name: 'Authored', kind: 'custom', image_kind: 'custom', content_kind: 'custom',
+        image: { url: 'panels/authored.svg', width: 560, height: 1785 },
+        panel: {}, switch_modes: {}, leds: [], content_html: '<p>Authored explanation</p>',
+      },
+      {
+        id: 'auto-visual', name: 'Auto visual', kind: 'custom', image_kind: 'generated', content_kind: 'custom',
+        panel: { controls: { x: { label: 'Automatic visual role' } } },
+        switch_modes: { up: 'Freeze', middle: 'Run', down: 'Reset' }, leds: [],
+        content_html: '<p>Automatic visual explanation</p>',
+      },
+    ],
+  } });
+  const html = renderCardArticle({ card: hybrid, panelImg: 'panel.svg', yamlUrl: 'source.yaml' });
+  assert.match(html, /data-panel-position-view="generated"/);
+  assert.match(html, /src="panels\/generated\.svg"/);
+  assert.match(html, /Generated role/);
+  assert.match(html, /data-panel-position-view="authored" hidden aria-hidden="true"/);
+  assert.match(html, /src="panels\/authored\.svg"/);
+  assert.match(html, /Authored explanation/);
+  assert.match(html, /data-panel-position-view="auto-visual" hidden aria-hidden="true"/);
+  assert.match(html, /src="panel\.svg"/);
+  assert.match(html, /Automatic visual role/);
+  assert.match(html, /Automatic visual explanation/);
+});
+
 test('basic rendering omits generated features but keeps actions, metadata, and extra docs', () => {
   const html = renderCardArticle({
     card: card({ videos: [{ id: 'abc', url: 'https://youtu.be/abc' }], audio_samples: [{ kind: 'file', url: 'demo.mp3' }] }),
