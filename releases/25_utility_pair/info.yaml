@@ -7,6 +7,7 @@ Status: Released
 License: MIT
 date-created: 2025-01-21
 date-updated: 2025-05-29
+discussion: https://discord.com/channels/1210238368898879569/1484219323039092938/threads/1486127850364080310
 Repository: https://github.com/chrisgjohnson/Utility-Pair
 contact:
   social:
@@ -25,7 +26,6 @@ summary: |
   Utility Pair splits the Computer module into two halves, each running a 'utility' module to do simple but useful things with the signals in the system.
    Any pair of utilities can be combined.
 
-# certainty: low — exact jack behavior is pair-dependent and selected utility-specific
 panel:
   inputs:
     - id: AudioIn1
