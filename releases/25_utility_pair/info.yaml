@@ -24,7 +24,7 @@ tags:
 
 summary: |
   Utility Pair splits the Computer module into two halves, each running a 'utility' module to do simple but useful things with the signals in the system.
-   Any pair of utilities can be combined.
+   Any pair of utilities can be combined.  Download from [chris-j.co.uk/utility_pair](https://www.chris-j.co.uk/utility_pair).
 
 panel:
   inputs:
