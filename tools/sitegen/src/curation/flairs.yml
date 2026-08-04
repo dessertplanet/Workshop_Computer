@@ -77,7 +77,7 @@ available_flairs:
 assignments:
   "00_Simple_MIDI":
     - included
-  "02_comingsoon": []
+  "02_PatcherPlus": []
   "03_Turing_Machine":
     - included
   "04_BYO_Benjolin":
