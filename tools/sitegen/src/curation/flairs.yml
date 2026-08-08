@@ -237,3 +237,5 @@ assignments:
   "877_RYK_Tape-Sampler": []
   "910_RYK_Pitched-Delay":
     - classic
+  # NIBBLE
+  63_Nibble: []
