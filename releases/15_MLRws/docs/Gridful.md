@@ -189,11 +189,11 @@ Multiple tracks can be linked into a **group** so that play/pause behaves as a s
 
 ### Recording
 
-Recording is **speed-linked** — whatever rate the track is set to on the REC
-page becomes the record rate too, so half-speed recording captures twice as
-many seconds of maximum audio length and trades quality for more time. The slower the recording speed the more noise and distortion will be introduced.
-
-It is possible to record at faster than 1x but you will encounter potentially interesting weirdness- only recommended if you like strange digital noise. The resampling trips over itself and encodes who-knows-what.
+Recording is **speed-linked up to 1×**. Slower settings on the REC page become
+the record rate, so half-speed recording captures twice as many seconds of
+maximum audio length and trades quality for more time. The slower the recording
+speed, the more noise and distortion will be introduced. Settings above 1× are
+playback-only; recording is capped at 1×.
 
 While a track is armed or recording, **Knob X** controls how loud the input
 is recorded. The same level is applied to the monitor mix so what you hear

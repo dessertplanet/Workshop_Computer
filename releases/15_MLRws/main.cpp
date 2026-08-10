@@ -19,7 +19,8 @@
  *
  * Recording: hold col 0 (or col 1 on 16-wide, to select input
  *   channel 2) on a track row + switch up/down.
- *   Speed-linked — tape speed controls both record and playback rate.
+ *   Speed-linked up to 1× — slower tape speeds affect recording and
+ *   playback; faster settings remain playback-only.
  *   Records from position 0, variable length up to flash limit.
  *
  * Knob Main      = master output volume
@@ -44,50 +45,50 @@ extern "C" {
 }
 
 /* ------------------------------------------------------------------ */
-/* Grid LED update rate (sub-sampled from 48 kHz)                     */
+/* Grid LED update rate (sub-sampled from MLR_SAMPLE_RATE_HZ)         */
 /* ------------------------------------------------------------------ */
-#define LED_UPDATE_INTERVAL 2400  /* ~50 ms at 48 kHz → 20 fps grid update */
-#define PAT_TICK_INTERVAL     48  /* ~1 ms at 48 kHz → pattern playback resolution */
-#define MAIN_CTRL_DIV        16   /* 48 kHz / 16 = 3 kHz UI/control polling (~333 us quantization) */
+#define LED_UPDATE_INTERVAL (MLR_SAMPLE_RATE_HZ / 20u)    /* ~50 ms → 20 fps grid update */
+#define PAT_TICK_INTERVAL   (MLR_SAMPLE_RATE_HZ / 1000u)  /* ~1 ms pattern playback resolution */
+#define MAIN_CTRL_DIV       (MLR_SAMPLE_RATE_HZ / 3000u)  /* 3 kHz UI/control polling (~333 us quantization) */
 #define GRID_POLL_MAX_EVENTS 16   /* Bound USB/grid event burst work per UI-control tick */
-#define GATE_HOLD_THRESHOLD 48000  /* 1 second at 48 kHz sample rate */
+#define GATE_HOLD_THRESHOLD MLR_SAMPLE_RATE_HZ  /* 1 second */
 
-/* Group-creation/dissolve flash feedback (samples at 48 kHz). */
-#define GROUP_FLASH_CREATE_SAMPLES   24000  /* ~500 ms total */
-#define GROUP_FLASH_CREATE_PERIOD     6000  /* ~125 ms half-period (~4 Hz blink) */
-#define GROUP_FLASH_DISSOLVE_SAMPLES 36000  /* ~750 ms total: three quick confirmation flashes */
-#define GROUP_FLASH_DISSOLVE_PERIOD   6000  /* ~125 ms half-period (~4 Hz blink) */
-#define COPY_FLASH_SAMPLES            24000  /* ~500 ms total */
-#define COPY_FLASH_PERIOD              6000  /* ~125 ms half-period */
+/* Group-creation/dissolve flash feedback (audio-sample counts). */
+#define GROUP_FLASH_CREATE_SAMPLES   (MLR_SAMPLE_RATE_HZ / 2u)        /* ~500 ms total */
+#define GROUP_FLASH_CREATE_PERIOD    (MLR_SAMPLE_RATE_HZ / 8u)        /* ~125 ms half-period (~4 Hz blink) */
+#define GROUP_FLASH_DISSOLVE_SAMPLES ((MLR_SAMPLE_RATE_HZ * 3u) / 4u) /* ~750 ms total: three quick confirmation flashes */
+#define GROUP_FLASH_DISSOLVE_PERIOD  (MLR_SAMPLE_RATE_HZ / 8u)        /* ~125 ms half-period (~4 Hz blink) */
+#define COPY_FLASH_SAMPLES           (MLR_SAMPLE_RATE_HZ / 2u)        /* ~500 ms total */
+#define COPY_FLASH_PERIOD            (MLR_SAMPLE_RATE_HZ / 8u)        /* ~125 ms half-period */
 
 /* How long to highlight each group when DELETE is held (in gate_pulse ticks;
  * gate_pulse advances at the LED refresh rate, ~60 Hz). */
 #define GROUP_CYCLE_TICKS             16    /* two blink pulses per group */
 #define KNOB_HARD_TAKEOVER_THRESHOLD 80  /* ADC counts (0..4095) — must exceed ADC noise floor */
-#define GRIDLESS_REC_HOLD_SAMPLES 96000u  /* 2 seconds at 48 kHz */
-#define RECORD_REARM_DELAY_SAMPLES 24000u /* 0.5 seconds at 48 kHz */
+#define GRIDLESS_REC_HOLD_SAMPLES (MLR_SAMPLE_RATE_HZ * 2u)  /* 2 seconds */
+#define RECORD_REARM_DELAY_SAMPLES (MLR_SAMPLE_RATE_HZ / 2u) /* 0.5 seconds */
 #define FORCE_8X8_GRID_LAYOUT 0  /* for testing: force compact grid layout regardless of detected width */
-#define CUT_PULSE_TRIG_SAMPLES 960u  /* 20 ms at 48 kHz: PulseOut1 trigger width fired on output-enabled cut events (manual or pattern/recall playback) */
+#define CUT_PULSE_TRIG_SAMPLES (MLR_SAMPLE_RATE_HZ / 50u) /* 20 ms: PulseOut1 trigger width fired on output-enabled cut events (manual or pattern/recall playback) */
 #define EMPTY_KEYBOARD_LINGER_US 3000000ull  /* 3 seconds */
 #define RECALL_KEY_GATE_US      100000u
 #define CV_ENV_PEAK            2047  /* CV2 envelope peak (matches CV full positive range) */
 #define CV2_FLOOR_OFFSET       341   /* raw DAC subtract: -1 V at rest (assuming +6 V = +2047 raw) */
 #define CV_ATTACK_MIN_SAMPLES  0u       /* instant attack at Y=0 */
-#define CV_ATTACK_MAX_SAMPLES  48000u   /* 1 s at 48 kHz: attack length at Y=4095 */
-#define CV_DECAY_MIN_SAMPLES   480u     /* 10 ms at 48 kHz: decay length at Y=0 */
-#define CV_DECAY_MAX_SAMPLES   144000u  /* 3 s at 48 kHz: decay length at Y=4095 */
+#define CV_ATTACK_MAX_SAMPLES  MLR_SAMPLE_RATE_HZ          /* 1 s: attack length at Y=4095 */
+#define CV_DECAY_MIN_SAMPLES   (MLR_SAMPLE_RATE_HZ / 100u) /* 10 ms: decay length at Y=0 */
+#define CV_DECAY_MAX_SAMPLES   (MLR_SAMPLE_RATE_HZ * 3u)   /* 3 s: decay length at Y=4095 */
 #define CV_NOTE_BASE_MIDI      48       /* C3: column 0 with X knob centered yields MIDI 48 */
 #define CV_X_OFFSET_SEMITONES  24       /* ±24 semitones (~±2 V) at X knob extremes */
-#define X_KNOB_LPF_SHIFT       10       /* one-pole IIR on Knob::X (sample-rate). tau≈21 ms */
-#define DELETE_RESET_HOLD_SAMPLES 240000u  /* 5 seconds at 48 kHz */
-#define DELETE_RESET_FLASH_PERIOD_SAMPLES 4800u  /* 100 ms half-period */
+#define X_KNOB_LPF_SHIFT       9        /* one-pole IIR on Knob::X (sample-rate). tau≈21 ms */
+#define DELETE_RESET_HOLD_SAMPLES (MLR_SAMPLE_RATE_HZ * 5u) /* 5 seconds */
+#define DELETE_RESET_FLASH_PERIOD_SAMPLES (MLR_SAMPLE_RATE_HZ / 10u) /* 100 ms half-period */
 #define DELETE_RESET_FLASH_SAMPLES (DELETE_RESET_FLASH_PERIOD_SAMPLES * 6u)  /* three quick flashes */
 #define EXTRA_GUIDE_ENABLED 0x80u
 #define EXTRA_PATTERN_KEY_MASK 0x7Fu
 #define EXTRA_PATTERN_KEY_NONE 0x70u
 
-/* Monitor fade step per sample (Q8). 256/4 = 64 samples ≈ 1.3 ms fade. */
-#define MLR_MON_FADE_STEP 4
+/* Monitor fade step per sample (Q8). 256/8 = 32 samples ≈ 1.3 ms fade. */
+#define MLR_MON_FADE_STEP 8
 
 /* ------------------------------------------------------------------ */
 /* Pages                                                              */
@@ -596,7 +597,7 @@ public:
 		PERF_UI_SECTION_END(1);
 
 		PERF_UI_SECTION_START(2);
-		/* ---- speed-linked recording ---- */
+		/* ---- speed-linked recording (capped at 1x) ---- */
 		int16_t dry_in;
 		{
 			int audio_in1 = (int)AudioIn1();
@@ -620,6 +621,7 @@ public:
 			if (scaled > 2047) scaled = 2047;
 			if (scaled < -2048) scaled = -2048;
 			uint16_t spd = mlr_tracks[mlr_rec_track].speed_frac;
+			if (spd > 256u) spd = 256u;
 			rec_speed_accum += spd;
 			while (rec_speed_accum >= 256) {
 				rec_speed_accum -= 256;
@@ -1678,7 +1680,7 @@ private:
 			gl_post_record_start_track_ = -1;
 		}
 
-		/* Match gridful UI/control rate: 48 kHz / 16 = 3 kHz. */
+		/* Match gridful UI/control rate: 24 kHz / 8 = 3 kHz. */
 		const uint8_t kGridlessControlDiv = MAIN_CTRL_DIV;
 		gl_ctrl_div_++;
 		bool run_control = false;
