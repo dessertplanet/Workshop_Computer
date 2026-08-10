@@ -77,7 +77,7 @@ available_flairs:
 assignments:
   "00_Simple_MIDI":
     - included
-  "02_comingsoon": []
+  "02_PatcherPlus": []
   "03_Turing_Machine":
     - included
   "04_BYO_Benjolin":
@@ -154,7 +154,7 @@ assignments:
     - wild
   "44_Birds":
     - instant-win
-  "45_bends": 
+  "45_bends":
     - new
   "47_NZT": []
   "48_two_tracks":
@@ -179,6 +179,7 @@ assignments:
     - magic
     - deep
     - new
+  "62_BioMimicry": []
   "64_voices_of_sid":
     - magic
   "66_stretchcore":
@@ -205,6 +206,7 @@ assignments:
   "84_CosmikC1zzl3":
     - deep
     - new
+  "85_plant_holder": []
   "86_tesserae": []
   "87_fr330hfr33": []
   "88_Blank":
@@ -235,3 +237,5 @@ assignments:
   "877_RYK_Tape-Sampler": []
   "910_RYK_Pitched-Delay":
     - classic
+  # NIBBLE
+  63_Nibble: []
