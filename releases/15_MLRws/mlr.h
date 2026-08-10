@@ -25,6 +25,8 @@ extern "C" {
 /* Constants                                                          */
 /* ------------------------------------------------------------------ */
 
+#define MLR_SAMPLE_RATE_HZ     24000u
+
 #define MLR_NUM_TRACKS         6
 #define MLR_GRID_COLS          16
 
@@ -53,11 +55,12 @@ extern "C" {
 #define MLR_MAX_KEYFRAMES      ((MLR_MAX_SAMPLES / MLR_KEYFRAME_INTERVAL) + 1)
 
 /* Per-track playback ring buffer (decoded PCM, consumed by core 0) */
-#define MLR_RING_SAMPLES       8192  /* frames (~171ms at 48kHz mono); power-of-two keeps ring indexing cheap */
-#define MLR_DECLICK_SHIFT      5
-#define MLR_DECLICK_SAMPLES    (1u << MLR_DECLICK_SHIFT)  /* 32-sample crossfade */
-#define MLR_FADE_SAMPLES       120                        /* 2.5ms V-fade samples (total 5ms) */
-#define MLR_SEEK_PREVIEW_SAMPLES 256                      /* CUT-page overlap crossfade bridge */
+#define MLR_RING_SAMPLES       8192  /* frames (~341ms at 24kHz mono); power-of-two keeps ring indexing cheap */
+#define MLR_DECLICK_SHIFT      4
+#define MLR_DECLICK_SAMPLES    (1u << MLR_DECLICK_SHIFT)  /* 16-sample crossfade */
+#define MLR_FADE_SAMPLES       60                         /* 2.5ms V-fade samples (total 5ms) */
+#define MLR_SEEK_PREVIEW_SHIFT 7
+#define MLR_SEEK_PREVIEW_SAMPLES (1u << MLR_SEEK_PREVIEW_SHIFT) /* CUT-page overlap crossfade bridge */
 #define MLR_SEEK_PRIME_SAMPLES (MLR_KEYFRAME_INTERVAL * 2)  /* post-seek refill to cover direction changes */
 #define MLR_PERF_UI_SECTIONS   8
 

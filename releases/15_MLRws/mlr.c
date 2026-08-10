@@ -182,11 +182,12 @@ void mlr_perf_reset(void)
 
 void mlr_perf_note_ui_section_us(uint32_t section, uint32_t elapsed_us)
 {
+	const uint32_t sample_budget_us = 1000000u / MLR_SAMPLE_RATE_HZ;
 	if (section >= MLR_PERF_UI_SECTIONS) return;
 	mlr_perf_ui_section_last_us[section] = elapsed_us;
 	if (elapsed_us > mlr_perf_ui_section_max_us[section])
 		mlr_perf_ui_section_max_us[section] = elapsed_us;
-	if (elapsed_us > 20)
+	if (elapsed_us > sample_budget_us)
 		mlr_perf_ui_section_overruns[section]++;
 }
 
@@ -232,10 +233,11 @@ void mlr_perf_count_process_sample(void)
 
 void mlr_perf_note_process_sample_us(uint32_t elapsed_us, bool ui_tick)
 {
+	const uint32_t sample_budget_us = 1000000u / MLR_SAMPLE_RATE_HZ;
 	mlr_perf_process_sample_last_us = elapsed_us;
 	if (elapsed_us > mlr_perf_process_sample_max_us)
 		mlr_perf_process_sample_max_us = elapsed_us;
-	if (elapsed_us > 20) {
+	if (elapsed_us > sample_budget_us) {
 		mlr_perf_process_sample_overruns++;
 		if (ui_tick)
 			mlr_perf_process_sample_ui_overruns++;
@@ -612,7 +614,8 @@ static inline int32_t apply_seek_preview_xfade(mlr_track_t *tr, int32_t old_samp
 	uint32_t old_gain = (uint32_t)count - new_gain;
 	int32_t mixed;
 	if (count == MLR_SEEK_PREVIEW_SAMPLES) {
-		mixed = (old_sample * (int32_t)old_gain + new_sample * (int32_t)new_gain) >> 8;
+		mixed = (old_sample * (int32_t)old_gain + new_sample * (int32_t)new_gain)
+			>> MLR_SEEK_PREVIEW_SHIFT;
 	} else {
 		mixed = (old_sample * (int32_t)old_gain + new_sample * (int32_t)new_gain) / (int32_t)count;
 	}
@@ -963,8 +966,9 @@ void __not_in_flash_func(mlr_start_record)(int track)
 
 	tr->pcm.w = 0;
 	tr->pcm.r = 0;
-	/* preserve speed_shift / speed_frac — recording is speed-linked */
-	tr->record_speed_shift = tr->speed_shift;
+	/* Recording follows slower speed slots but is capped at 1x. Preserve the
+	 * selected playback speed while storing the actual recording speed. */
+	tr->record_speed_shift = tr->speed_shift > 0 ? 0 : tr->speed_shift;
 	tr->speed_frac  = speed_shift_to_frac(tr->speed_shift);
 	tr->speed_accum = 0;
 	reset_track_audio_state(tr);

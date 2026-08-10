@@ -170,7 +170,7 @@ MONOME_WS_EVENT_ARC_KEY    // ev.arc_key.n, ev.arc_key.z
 Core 0                                Core 1
 ──────                                ──────
 ComputerCard::Run()                   board_init() + tusb_init()/tud_init()
-  └─ ProcessSample() @ 48kHz         └─ while(true) { monome_ws_task(); ... }
+  └─ ProcessSample() @ 24kHz         └─ while(true) { monome_ws_task(); ... }
        │                                    │
        ├─ grid.poll() on UI tick            ├─ tuh_task()/tud_task() ← USB stack
        ├─ grid.keyDown() ...                ├─ CDC read/write        ← serial RX/TX
