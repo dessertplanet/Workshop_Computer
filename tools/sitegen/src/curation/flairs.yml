@@ -117,7 +117,7 @@ assignments:
     - classic
   "23_SlowMod": []
   "24_crafted_volts":
-      - useful
+    - useful
   "25_utility_pair":
     - classic
     - start-here
@@ -136,7 +136,7 @@ assignments:
     - useful
   "32_vink":
     - wild
-  "33_drumdrum": 
+  "33_drumdrum":
     - useful
   "34_dual_quant": []
   "35_FreqShift":
@@ -237,7 +237,9 @@ assignments:
   "666_ws_doom":
     - toms-pick
     - new
-  "877_RYK_Tape-Sampler": 
-      - magic
+  "877_RYK_Tape-Sampler":
+    - magic
   "910_RYK_Pitched-Delay":
     - classic
+  # Punk Confusion
+  77_PunkConfusion: []
