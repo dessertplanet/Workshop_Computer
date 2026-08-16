@@ -9,7 +9,8 @@ dirty room and damaged PA treatment for external audio. `Switch Down` and
 
 ## Quick Start
 
-1. Flash `uf2/punk_confusion.uf2`.
+1. Flash `uf2/punk_confusion_2mb.uf2` for a standard 2 MB card, or
+   `uf2/punk_confusion_16mb.uf2` for a 16 MB card.
 2. Patch `Audio Out 1` to your mixer. Patch `Audio Out 2` as well for stereo
    room output in Broken Venue mode.
 3. For APC mode, set the switch Up and turn `Main` up.
@@ -84,8 +85,27 @@ filtering engine.
   retrigger it, and low stops it.
 - Driving `Pulse In 2` at audio rate can chop the shout into a raw vocal
   texture. That is intentional.
+- `Audio In 2` is a beta vocal slice/reverse CV input.
+  When patched, positive voltage selects a later start slice for the next
+  trigger; negative voltage selects a slice and plays it backwards. Unpatched,
+  calls play normally from the start.
 - The vocal is routed through the same Broken Venue path and gets an extra send
   into the room delay so it sits inside the venue.
+
+`Audio In 2` is sampled only when the vocal is triggered. It does not scrub an
+already-playing shout.
+
+| `Audio In 2` voltage | Slice behaviour |
+|---|---|
+| Unpatched | Normal forward playback from the start |
+| Near 0 V | Forward slice 0, starts at 0% |
+| Positive CV, low to high | Forward slices 0-7, starting at 0%, 12.5%, 25%, 37.5%, 50%, 62.5%, 75%, and 87.5% |
+| Negative CV, low to high magnitude | Reverse slices 0-7, starting around 12.5%, 25%, 37.5%, 50%, 62.5%, 75%, 87.5%, and near the end |
+
+The Computer audio inputs clip at about `+/-6 V`. Hotter control signals, such
+as a full-range Workshop System Slopes output, are safe but do not give extra
+slice range: high positive voltages hold the last forward slice, and high
+negative voltages hold the last reverse slice.
 
 While holding Down, `Main` edits the saved vocal-call trim rather than the main
 room input gain. The trim has soft pickup and is multiplied by the saved room
@@ -106,35 +126,54 @@ avoid extra digital clipping after the Colourbox drive.
 | `Whisky a Go Go` | `Let's Go` |
 
 The source WAVs are kept in `samples/`, matching the organisation used by other
-sample-based releases in this repo. Punk Confusion does not load samples onto an
-already-flashed card; instead, custom calls are compiled into a new UF2. This
-keeps the firmware simple, reliable, and self-contained.
+sample-based releases in this repo. The beta firmware includes those calls as
+factory fallback samples, but the normal user workflow is now WebSerial loading:
+flash the card once, then change the four vocal calls from a browser without
+rebuilding or reflashing the UF2.
 
-To build with your own calls, replace the four WAVs in `samples/`, keeping the
-same filenames:
+### WebSerial Sample Loader
 
-- `marquee_oi.wav`
-- `cbgb_hey_ho.wav`
-- `club100_no_future.wav`
-- `whisky_lets_go.wav`
+The WebSerial loader stores uploaded calls in a reserved flash sample bank.
+Uploaded samples persist across normal restarts and may also persist after
+reflashing, so the web page includes a simple factory-restore button.
 
-Then run:
+Use it like this:
 
-```sh
-python3 tools/generate_vocal_samples.py
-```
+1. Flash `uf2/punk_confusion_2mb.uf2` for a standard 2 MB Workshop Computer
+   card, or `uf2/punk_confusion_16mb.uf2` for a 16 MB card.
+2. Open `web/index.html` in Chrome, Edge, or another Chromium-based browser
+   with WebSerial support.
+3. Choose the matching card size in the page.
+4. Drop one audio file into each venue slot on the page.
+5. Hold the card switch Down while powering or resetting the card.
+6. Wait for confirmation: all LEDs flash three times, then LEDs 1, 3, and 5
+   stay lit while the card waits for the browser.
+7. Press `Connect card`, choose the Workshop Computer serial device, then press
+   `Send these sounds to the card`.
+8. Restart the card and use it normally with the new shouts.
 
-This regenerates `VocalSamples.h`, which is compiled directly into the firmware.
-Keep replacement samples mono, 16-bit PCM, 24 kHz, short, and conservatively
-levelled. The card targets a 2 MB program card, so all samples and firmware must
-fit in flash.
+The uploaded samples are stored in flash, so they can persist even after you
+reflash the firmware. To return to the embedded factory shouts, enter loader
+mode again and press `Use built-in sounds again` in the web page. That erases
+the uploaded sample-bank header, so the firmware falls back to `VocalSamples.h`.
+
+The WebSerial builds use 24 kHz 8-bit µ-law samples in the flash sample bank.
+This is deliberately more compact than the embedded 16-bit PCM header and lets
+the firmware jump to slice points or play backwards without loading whole files
+into RAM. The standard 2 MB build reserves about `1 MB` for uploaded samples;
+the 16 MB build reserves about `14 MB`.
+
+The web page converts source files to mono 24 kHz µ-law and shows how much of
+the sample bank they will use before upload. If the sounds are too large, the
+page will ask you to shorten them or use the 16 MB build. Factory fallback WAVs
+and `VocalSamples.h` are backed up in `factory-samples/` for maintainers.
 
 ## Jack Map
 
 | Jack | Role |
 |---|---|
 | `Audio In 1` | Broken Venue input |
-| `Audio In 2` | Unused |
+| `Audio In 2` | Beta vocal slice/reverse CV |
 | `CV In 1` | APC timing CV for `X` |
 | `CV In 2` | APC timing CV for `Y` |
 | `Pulse In 1` | APC hard gate when patched |
@@ -171,18 +210,31 @@ meter for the saved vocal-call trim.
 
 ## Building
 
-This release includes source, `CMakeLists.txt`, a local `ComputerCard.h`, the
-generated `VocalSamples.h`, and the source WAVs used to generate it.
+This release builds two beta firmware targets from the same source: one for
+standard 2 MB cards and one for 16 MB cards.
 
 ```sh
 cmake -S . -B build
 cmake --build build -j2
 ```
 
-The firmware uses `set_sys_clock_khz(192000, true)` and
-`PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64`. The build uses the default flash binary
-type rather than `copy_to_ram`, because the embedded vocal PCM is too large for
-a RAM-copy build.
+The generated UF2s are:
+
+- `build/punk_confusion_2mb.uf2`
+- `build/punk_confusion_16mb.uf2`
+
+The firmware uses `set_sys_clock_khz(192000, true)`,
+`PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64`, and the default flash binary type. The
+2 MB target reserves `1 MB` at the top of flash for user samples; the 16 MB
+target reserves `14 MB`.
+
+To run the WebSerial loader page locally:
+
+```sh
+make webui
+```
+
+Then open `http://127.0.0.1:8765/` in a Chromium-based browser.
 
 ## Credits
 
