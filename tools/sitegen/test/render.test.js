@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderCardArticle, renderPanelArtwork, renderReadmeAndDocs } from '../src/render/cardPage.js';
-import { renderArchive, renderShelf, renderTile } from '../src/render/discovery.js';
+import { orderFlairShelfCards, renderArchive, renderShelf, renderTile } from '../src/render/discovery.js';
 import { renderLayout } from '../src/render/layout.js';
 import { renderAuthorPage } from '../src/render/authorPage.js';
 
@@ -238,6 +238,59 @@ test('discovery renderers escape searchable attributes and ignore absent shelf c
   const shelf = renderShelf({ title: 'Shelf <One>', cards: ['missing', testCard.id] }, new Map([[testCard.id, testCard]]));
   assert.match(shelf, /Shelf &lt;One&gt;/);
   assert.equal((shelf.match(/program-card-tile__link/g) || []).length, 1);
+});
+
+test('flair-driven shelves sort by recency then apply the limit', () => {
+  const olderNumberNewerDate = card({
+    id: '26_clockwork', slug: '26-clockwork', title: 'Clockwork',
+    metadata: { created: '2024-01-01', updated: '2026-08-01' },
+  });
+  const newerNumberOlderDate = card({
+    id: '85_plant_holder', slug: '85-plant-holder', title: 'Plant Holder',
+    metadata: { created: '2026-05-17', updated: '2026-05-17' },
+  });
+  const newestNumberOldestDate = card({
+    id: '90_Pantograph', slug: '90-pantograph', title: 'Pantograph',
+    metadata: { created: '2023-01-01', updated: '2023-06-01' },
+  });
+  const cardsById = new Map([
+    [olderNumberNewerDate.id, olderNumberNewerDate],
+    [newerNumberOlderDate.id, newerNumberOlderDate],
+    [newestNumberOldestDate.id, newestNumberOldestDate],
+  ]);
+  const html = renderShelf({
+    title: 'New',
+    cards_from_flairs: ['new'],
+    limit: 2,
+  }, cardsById);
+  const names = [...html.matchAll(/program-card-tile__name">([^<]+)/g)].map(match => match[1]);
+  assert.deepEqual(names, ['Clockwork', 'Plant Holder']);
+  assert.doesNotMatch(html, /Pantograph/);
+});
+
+test('explicit card shelves keep YAML list order', () => {
+  const first = card({ id: '90_Pantograph', slug: '90-pantograph', title: 'Pantograph', metadata: { updated: '2023-01-01' } });
+  const second = card({ id: '26_clockwork', slug: '26-clockwork', title: 'Clockwork', metadata: { updated: '2026-08-01' } });
+  const html = renderShelf(
+    { title: 'Picked', cards: [first.id, second.id] },
+    new Map([[first.id, first], [second.id, second]]),
+  );
+  const names = [...html.matchAll(/program-card-tile__name">([^<]+)/g)].map(match => match[1]);
+  assert.deepEqual(names, ['Pantograph', 'Clockwork']);
+});
+
+test('orderFlairShelfCards prefers updated dates and puts missing dates last', () => {
+  const recentUpdate = card({ id: '10_old', metadata: { created: '2020-01-01', updated: '2026-08-06' } });
+  const recentCreate = card({ id: '20_mid', metadata: { created: '2026-07-01' } });
+  const undated = card({ id: '99_none', metadata: { created: 'n/a', updated: 'n/a' } });
+  const sameDayHigh = card({ id: '85_plant_holder', metadata: { created: '2026-05-17', updated: '2026-05-17' } });
+  const sameDayLow = card({ id: '26_clockwork', metadata: { created: '2026-05-17', updated: '2026-05-17' } });
+
+  const ordered = orderFlairShelfCards(
+    [undated, sameDayLow, recentCreate, sameDayHigh, recentUpdate],
+    4,
+  ).map(item => item.id);
+  assert.deepEqual(ordered, ['10_old', '20_mid', '85_plant_holder', '26_clockwork']);
 });
 
 test('video shelf layouts show media on the intended cards', () => {

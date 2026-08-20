@@ -14,7 +14,7 @@
 # - `id` is a stable admin key; `title` is the visible heading.
 # - `intro` is optional. Most shelves read better without one.
 # - Use either `cards` for an explicit card-ID list, or `cards_from_flairs` to pull from flairs.yml.
-# - `limit` caps flair-driven shelves.
+# - Flair-driven shelves are reverse-sorted by card date (updated, then created) before `limit` caps them.
 # - `hide_flairs` suppresses redundant badges inside that shelf, e.g. hide `new` on a New shelf.
 # - `layout` is optional:
 #   - omit it for the normal 3-column card grid
