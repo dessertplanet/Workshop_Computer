@@ -25,7 +25,7 @@ const FONT_FAMILY = 'Inter';
 const CARD_LABEL = '#e3d69e';
 const CARD_GREEN = '#27743a';
 const GROUND = '#111';
-const BRAND = 'Music Thing Modular';
+const BRAND = 'Workshop Computer';
 const markSource = readFileSync(new URL('../../assets/program_cards/88-blank.svg', import.meta.url), 'utf8');
 const markInner = markSource
   .replace(/<\/?svg\b[^>]*>/gi, '')

@@ -26,7 +26,7 @@ test('og SVG escapes title, creator, and description text', () => {
   assert.match(svg, /Uses &lt;cv&gt; &amp; clocks/);
   assert.doesNotMatch(svg, /Test & "Card"/);
   assert.match(svg, /transform="rotate\(-90 /);
-  assert.match(svg, /Music Thing Modular/);
+  assert.match(svg, /Workshop Computer/);
   assert.match(svg, /font-family="Inter"/);
   assert.match(svg, /<rect width="1200" height="630" fill="#111"/);
   assert.match(svg, /<circle cx="[\d.]+" cy="[\d.]+" r="[\d.]+" fill="#111"/);
