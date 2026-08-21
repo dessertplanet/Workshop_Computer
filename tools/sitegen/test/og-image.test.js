@@ -31,6 +31,10 @@ test('og SVG escapes title, creator, and description text', () => {
   assert.match(svg, /<rect width="1200" height="630" fill="#111"/);
   assert.match(svg, /<circle cx="[\d.]+" cy="[\d.]+" r="[\d.]+" fill="#111"/);
   assert.doesNotMatch(svg, /<circle[^>]*fill="#fdfdfd"/);
+  assert.match(svg, /font-size="88" font-weight="650" fill="#e3d69e"/);
+  assert.match(svg, /font-size="32" font-weight="650" fill="#e3d69e"/);
+  assert.match(svg, /font-size="30" font-weight="500" fill="#fff"/);
+  assert.match(svg, /y="278\.[\d]+" text-anchor="middle" transform="rotate\(-90 [\d.]+ 278\.[\d]+\)"[^>]+font-size="40" font-weight="650" fill="#e3d69e">Workshop Computer/);
   assert.match(svg, /width="1200"/);
 });
 
@@ -38,6 +42,23 @@ test('og text wrapping truncates overflowing lines', () => {
   assert.deepEqual(wrapText('alpha beta gamma delta', 10, 2), ['alpha beta', 'gamma del\u2026']);
   assert.deepEqual(wrapText('', 24, 3), []);
   assert.equal(formatCardNumber({ id: '42_test', release: '42 / 1.0' }), '42');
+});
+
+test('og short descriptions allow five lines before truncation', () => {
+  const svg = renderOgSvg({
+    description: 'First line has enough words here Second line has enough words here Third line has enough words here Fourth line has enough words here Fifth line is visible Sixth line is truncated',
+  });
+  assert.match(svg, /Fourth line has enough words here/);
+  assert.match(svg, /Fifth line is visible Sixth line is t\u2026/);
+  assert.doesNotMatch(svg, />Sixth line/);
+});
+
+test('og centers the author and maximum description block below the title', () => {
+  const svg = renderOgSvg({ creator: 'Test Author', description: 'One two three four five' });
+  const authorY = Number(svg.match(/<text x="[^"]+" y="([^"]+)"[^>]+font-size="32"/)?.[1]);
+  const descriptionY = Number(svg.match(/<text x="[^"]+" y="([^"]+)"[^>]+font-size="30"/)?.[1]);
+  assert.ok(authorY > 270 && authorY < 275);
+  assert.equal(descriptionY, authorY + 44);
 });
 
 test('og PNG is 1200 by 630 and includes rendered title text', async () => {

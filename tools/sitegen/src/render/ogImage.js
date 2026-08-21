@@ -21,6 +21,14 @@ const FONT_SOURCES = [
 
 const MARK_WIDTH = 306;
 const MARK_HEIGHT = 178;
+// At the right edge, the green card spans y=13..143 after the source SVG's
+// vertical flip. Centre the vertical wordmark within that visible area.
+const MARK_RIGHT_GREEN_CENTER_Y = (13 + 143) / 2;
+// The shorter lower edge on the right begins at y=156 in the flipped artwork.
+const MARK_RIGHT_GREEN_BOTTOM_Y = 156;
+const DESCRIPTION_MAX_LINES = 5;
+const DESCRIPTION_LINE_HEIGHT = 40;
+const BYLINE_LINE_HEIGHT = 44;
 const FONT_FAMILY = 'Inter';
 const CARD_LABEL = '#e3d69e';
 const CARD_GREEN = '#27743a';
@@ -130,34 +138,38 @@ export function renderOgSvg({
   const textX = holeX + holeR + 24;
   const titleLines = wrapText(title, 14, 2);
   const caption = description || (sitewide ? DEFAULT_OG_DESCRIPTION : '');
-  const descriptionLines = wrapText(caption, 38, 3);
+  const descriptionLines = wrapText(caption, 38, DESCRIPTION_MAX_LINES);
   const byline = creator ? `By ${creator}` : '';
   const numberSize = String(number).length > 2 ? 144 : 192;
   const numberX = cardX + 56 * scale;
   const numberY = cardY + (MARK_HEIGHT - 52) * scale;
-  const titleSize = 78;
-  const titleLineHeight = 87;
+  const titleSize = 88;
+  const titleLineHeight = 98;
 
-  let cursor = holeY + 22;
+  const titleY = holeY + 22;
   const numberOnCard = number
     ? `<text x="${numberX}" y="${numberY}" text-anchor="middle" transform="rotate(-90 ${numberX} ${numberY})" font-family="${FONT_FAMILY}" font-size="${numberSize}" font-weight="650" fill="${CARD_LABEL}">${escapeXml(number)}</text>`
     : '';
   const titleOnCard = textLinesMarkup(titleLines, {
-    x: textX, y: cursor, fontSize: titleSize, fontWeight: 650, fill: CARD_LABEL, lineHeight: titleLineHeight,
+    x: textX, y: titleY, fontSize: titleSize, fontWeight: 650, fill: CARD_LABEL, lineHeight: titleLineHeight,
   });
-  cursor += Math.max(titleLines.length, 1) * titleLineHeight + 8;
+  const titleBottom = titleY + (Math.max(titleLines.length, 1) - 1) * titleLineHeight + 16;
+  const contentBottom = cardY + MARK_RIGHT_GREEN_BOTTOM_Y * scale;
+  const contentHeight = (byline ? BYLINE_LINE_HEIGHT : 0) + DESCRIPTION_MAX_LINES * DESCRIPTION_LINE_HEIGHT;
+  const contentTop = titleBottom + Math.max(0, contentBottom - titleBottom - contentHeight) / 2;
+  let cursor = contentTop + (byline ? 32 : 30);
   const bylineMarkup = byline
     ? textLinesMarkup([truncateLine(byline, 38)], {
-      x: textX, y: cursor, fontSize: 24, fontWeight: 650, fill: CARD_LABEL, lineHeight: 30,
+      x: textX, y: cursor, fontSize: 32, fontWeight: 650, fill: CARD_LABEL, lineHeight: 40,
     })
     : '';
-  if (byline) cursor += 36;
+  if (byline) cursor += BYLINE_LINE_HEIGHT;
   const descriptionMarkup = textLinesMarkup(descriptionLines, {
-    x: textX, y: cursor, fontSize: 22, fontWeight: 400, fill: '#fdfdfd', lineHeight: 30,
+    x: textX, y: cursor, fontSize: 30, fontWeight: 500, fill: '#fff', lineHeight: DESCRIPTION_LINE_HEIGHT,
   });
   const brandX = cardX + (MARK_WIDTH - 10) * scale;
-  const brandY = cardY + (MARK_HEIGHT / 2) * scale;
-  const brandMarkup = `<text x="${brandX}" y="${brandY}" text-anchor="middle" transform="rotate(-90 ${brandX} ${brandY})" font-family="${FONT_FAMILY}" font-size="32" font-weight="650" fill="${CARD_LABEL}">${escapeXml(BRAND)}</text>`;
+  const brandY = cardY + MARK_RIGHT_GREEN_CENTER_Y * scale;
+  const brandMarkup = `<text x="${brandX}" y="${brandY}" text-anchor="middle" transform="rotate(-90 ${brandX} ${brandY})" font-family="${FONT_FAMILY}" font-size="40" font-weight="650" fill="${CARD_LABEL}">${escapeXml(BRAND)}</text>`;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${OG_IMAGE_WIDTH}" height="${OG_IMAGE_HEIGHT}" viewBox="0 0 ${OG_IMAGE_WIDTH} ${OG_IMAGE_HEIGHT}">
