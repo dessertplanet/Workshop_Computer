@@ -8,6 +8,15 @@
 #include <numbers>
 #include <algorithm>
 
+// Optional signal-range instrumentation for the fixed-point migration. Zero
+// cost unless SSIVOICE_PROBE is defined (host tooling only).
+#ifdef SSIVOICE_PROBE
+#include "tools/ssi_probe.h"
+#define PROBE(idx, val) SsiProbeUpdate((idx), (double)(val))
+#else
+#define PROBE(idx, val) ((void)0)
+#endif
+
 namespace {
 
 // Synthesis constants (identical to the reference engine).
@@ -28,6 +37,39 @@ float OnePoleCoef(double tauSec, double fs)
 {
 	return static_cast<float>(1.0 - std::exp(-1.0 / (tauSec * fs)));
 }
+
+// Q8.24 fixed-point: +-128 range, 24 fractional bits. The recursive resonators
+// run here; products accumulate in int64 and narrow once (a single 3-tap term
+// can momentarily exceed the +-128 range, but the settled output cannot).
+constexpr int kFxShift = 24;
+inline int32_t FxFromF(float v) { return static_cast<int32_t>(std::lrint(v * 16777216.0)); }
+inline float   FxToF(int32_t v) { return static_cast<float>(v) * (1.0f / 16777216.0f); }
+
+// One two-pole resonator step in fixed-point. State is Q8.24; b, c, a0 are
+// passed as floats (control-rate) and converted here.
+inline int32_t FxResonate(int32_t &y1, int32_t &y2, int32_t xin, float a0, float b, float c)
+{
+	int64_t acc = static_cast<int64_t>(FxFromF(a0)) * xin
+	            + static_cast<int64_t>(FxFromF(b)) * y1
+	            + static_cast<int64_t>(FxFromF(c)) * y2;
+	int32_t y = static_cast<int32_t>(acc >> kFxShift);
+	y2 = y1;
+	y1 = y;
+	return y;
+}
+
+inline int32_t FxMul(int32_t a, int32_t b)
+{
+	return static_cast<int32_t>((static_cast<int64_t>(a) * b) >> kFxShift);
+}
+
+// One-pole: state += coef * (in - state), all Q8.24 (coef < 1).
+inline void FxOnePole(int32_t &state, int32_t in, int32_t coefQ)
+{
+	state += static_cast<int32_t>((static_cast<int64_t>(coefQ) * (in - state)) >> kFxShift);
+}
+
+constexpr int32_t kFxOne = 1 << kFxShift;
 
 } // namespace
 
@@ -79,6 +121,15 @@ void SsiVoice::BuildTables()
 	m_fricTwoR = static_cast<float>(2.0 * fr);
 
 	m_radScale = static_cast<float>(fs / 44100.0);
+
+	// Fixed-point (Q8.24) copies of the audio-rate one-pole coefficients.
+	m_sourcePoleQ = FxFromF(m_sourcePole);
+	m_noiseLpQ    = FxFromF(kNoiseLpCoef);
+	m_fricLpQ     = FxFromF(kFricLpCoef);
+	m_outLpQ      = FxFromF(kOutputLpCoef);
+	m_attackQ     = FxFromF(m_attackCoef);
+	m_releaseQ    = FxFromF(m_releaseCoef);
+	m_radScaleQ   = FxFromF(m_radScale);
 
 	// cosLut_[i] = cos(pi * i / N); a hz maps to index round(2*fc/fs * N).
 	for (int i = 0; i <= kCosLutSize; i++)
@@ -210,17 +261,17 @@ void SsiVoice::Reset()
 	for (int i = 0; i < 3; i++)
 	{
 		m_fCur[i] = 0.0;
-		m_resY1[i] = 0.0f;
-		m_resY2[i] = 0.0f;
+		m_resY1[i] = 0;
+		m_resY2[i] = 0;
 	}
-	m_envLevel = 0.0f;
-	m_radPrev = 0.0f;
-	m_outLp = m_outLp2 = 0.0f;
-	m_excLp1 = m_excLp2 = 0.0f;
-	m_noiseLp = 0.0f;
+	m_envLevel = 0;
+	m_radPrev = 0;
+	m_outLp = m_outLp2 = 0;
+	m_excLp1 = m_excLp2 = 0;
+	m_noiseLp = 0;
 	m_vaCur = m_faCur = 0.0f;
-	m_fricLp = m_fricLp2 = m_fricLp3 = 0.0f;
-	m_fricY1 = m_fricY2 = 0.0f;
+	m_fricLp = m_fricLp2 = m_fricLp3 = 0;
+	m_fricY1 = m_fricY2 = 0;
 	m_lfsr = 0xACE1u;
 }
 
@@ -348,7 +399,7 @@ float SsiVoice::GenerateSample()
 	GlideLevels();
 
 	// Phase B: per-voice excitation, summed.
-	float impulseSum = 0.0f;
+	int impulseCount = 0;
 	for (int v = 0; v < kMaxVoices; v++)
 	{
 		if (!m_voices[v].active)
@@ -357,74 +408,79 @@ float SsiVoice::GenerateSample()
 		if (m_voices[v].phase >= 1.0)
 		{
 			m_voices[v].phase -= 1.0;
-			impulseSum += 1.0f;
+			impulseCount++;
 		}
 	}
-	// Excitation smoothing + voiced gain are linear/shared: smooth the summed
-	// impulse train once rather than per voice.
-	m_excLp1 += m_sourcePole * (impulseSum - m_excLp1);
-	m_excLp2 += m_sourcePole * (m_excLp1 - m_excLp2);
-	float exc = m_excLp2 * kVoicedGain * m_vaCur;
-	exc *= static_cast<float>(731.0 / std::max(m_fCur[0], 170.0));
+	// Excitation smoothing is linear/shared: smooth the summed impulse train
+	// once (fixed-point), then apply the voiced gain + F1 correction (the 966
+	// gain and per-sample divide stay float, isolated to this one spot).
+	FxOnePole(m_excLp1, impulseCount * kFxOne, m_sourcePoleQ);
+	FxOnePole(m_excLp2, m_excLp1, m_sourcePoleQ);
+	float excF = FxToF(m_excLp2) * kVoicedGain * m_vaCur;
+	excF *= static_cast<float>(731.0 / std::max(m_fCur[0], 170.0));
+	PROBE(0, impulseCount); PROBE(1, FxToF(m_excLp2)); PROBE(2, excF);
 
-	// Phase C: shared tract cascade.
+	// Phase C: shared tract cascade (fixed-point resonators, int64 accumulate).
 	double fs = static_cast<double>(m_sampleRate);
-	float sample = exc;
+	int32_t sig = FxFromF(excF);
 	for (int s = 0; s < 3; s++)
 	{
 		double fc = std::clamp(m_fCur[s] * m_scale, 50.0, fs * 0.45);
 		float b = m_twoR[s] * CosForHz(fc);
-		float c = m_rr[s];
+		float c = static_cast<float>(m_rr[s]);
 		float a0 = 1.0f - b - c;
-		float y = a0 * sample + b * m_resY1[s] + c * m_resY2[s];
-		m_resY2[s] = m_resY1[s];
-		m_resY1[s] = y;
-		sample = y;
+		sig = FxResonate(m_resY1[s], m_resY2[s], sig, a0, b, c);
+		PROBE(3 + s, FxToF(sig)); PROBE(10, a0); PROBE(11, b);
 	}
+	int32_t sampleQ = sig;
 
 	// Parallel fricative branch.
 	if (GetActiveSpec().fricative || m_faCur > 0.0001f)
 	{
-		// LFSR noise, one-pole smoothed.
+		// LFSR noise, one-pole smoothed (fixed-point).
 		uint8_t bit = static_cast<uint8_t>(m_lfsr & 1u);
 		m_lfsr >>= 1;
 		if (bit != 0)
 			m_lfsr ^= 0xB400u;
-		m_noiseLp += kNoiseLpCoef * (((bit != 0) ? 1.0f : -1.0f) - m_noiseLp);
+		FxOnePole(m_noiseLp, (bit != 0) ? kFxOne : -kFxOne, m_noiseLpQ);
 
 		double fc = std::clamp(m_fCur[1] * m_scale, 50.0, fs * 0.45);
 		float b = m_fricTwoR * CosForHz(fc);
 		float c = m_fricRR;
 		float a0 = 1.0f - b - c;
-		float fric = a0 * m_noiseLp + b * m_fricY1 + c * m_fricY2;
-		m_fricY2 = m_fricY1;
-		m_fricY1 = fric;
+		int32_t fricQ = FxResonate(m_fricY1, m_fricY2, m_noiseLp, a0, b, c);
 
-		m_fricLp  += kFricLpCoef * (fric - m_fricLp);
-		m_fricLp2 += kFricLpCoef * (m_fricLp - m_fricLp2);
-		m_fricLp3 += kFricLpCoef * (m_fricLp2 - m_fricLp3);
+		FxOnePole(m_fricLp, fricQ, m_fricLpQ);
+		FxOnePole(m_fricLp2, m_fricLp, m_fricLpQ);
+		FxOnePole(m_fricLp3, m_fricLp2, m_fricLpQ);
 
-		sample += m_fricLp3 * kNoiseGain * m_faCur;
+		// noiseGain * faCur is control-rate; convert once and mix in.
+		sampleQ += FxMul(m_fricLp3, FxFromF(kNoiseGain * m_faCur));
+		PROBE(6, FxToF(fricQ)); PROBE(7, FxToF(m_fricLp3));
 	}
 
 	// Radiation differentiator (+6 dB/oct), host-rate normalized.
-	float diffed = (sample - m_radPrev) * m_radScale;
-	m_radPrev = sample;
-	sample = diffed;
+	int32_t diffed = FxMul(m_radScaleQ, sampleQ - m_radPrev);
+	m_radPrev = sampleQ;
+	sampleQ = diffed;
+	PROBE(8, FxToF(sampleQ));
 
 	// Output low-pass x2.
-	m_outLp  += kOutputLpCoef * (sample - m_outLp);
-	m_outLp2 += kOutputLpCoef * (m_outLp - m_outLp2);
-	sample = m_outLp2;
+	FxOnePole(m_outLp, sampleQ, m_outLpQ);
+	FxOnePole(m_outLp2, m_outLp, m_outLpQ);
+	sampleQ = m_outLp2;
 
 	// Amplitude envelope.
-	float target = m_sounding
-	                   ? (HasAnySource(GetActiveSpec()) ? 1.0f : 0.0f) *
-	                         (static_cast<float>(GetAmplitude()) / 15.0f)
-	                   : 0.0f;
-	float coef = (target > m_envLevel) ? m_attackCoef : m_releaseCoef;
-	m_envLevel += coef * (target - m_envLevel);
-	sample *= m_envLevel * kOutputGain;
+	float targetF = m_sounding
+	                    ? (HasAnySource(GetActiveSpec()) ? 1.0f : 0.0f) *
+	                          (static_cast<float>(GetAmplitude()) / 15.0f)
+	                    : 0.0f;
+	int32_t targetQ = FxFromF(targetF);
+	FxOnePole(m_envLevel, targetQ, (targetQ > m_envLevel) ? m_attackQ : m_releaseQ);
+	int32_t envGainQ = FxMul(m_envLevel, FxFromF(kOutputGain));
+	sampleQ = FxMul(sampleQ, envGainQ);
+	float outF = FxToF(sampleQ);
+	PROBE(9, outF);
 
-	return std::clamp(sample, -1.0f, 1.0f);
+	return std::clamp(outF, -1.0f, 1.0f);
 }

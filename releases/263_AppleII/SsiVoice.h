@@ -143,23 +143,33 @@ private:
 	float    m_cosLut[kCosLutSize + 1] = {};
 	double   m_scale = 1.0;         // filter-freq voice-type scale, from reg4
 
+	// Fixed-point (Q8.24) coefficients for the audio-rate one-poles etc.
+	int32_t  m_sourcePoleQ = 0;
+	int32_t  m_noiseLpQ = 0;
+	int32_t  m_fricLpQ = 0;
+	int32_t  m_outLpQ = 0;
+	int32_t  m_attackQ = 0;
+	int32_t  m_releaseQ = 0;
+	int32_t  m_radScaleQ = 0;
+
 	// ---- Glide state (shared) --------------------------------------------
 	double   m_fCur[3] = { 0.0, 0.0, 0.0 };
 	float    m_vaCur = 0.0f;
 	float    m_faCur = 0.0f;
 
 	// ---- Shared synthesis state ------------------------------------------
-	float    m_resY1[3] = {};
-	float    m_resY2[3] = {};
-	float    m_excLp1 = 0.0f;
-	float    m_excLp2 = 0.0f;
+	// Audio-rate DSP state is Q8.24 fixed-point (int32).
+	int32_t  m_resY1[3] = {};
+	int32_t  m_resY2[3] = {};
+	int32_t  m_excLp1 = 0;
+	int32_t  m_excLp2 = 0;
 	uint32_t m_lfsr = 0xACE1u;
-	float    m_noiseLp = 0.0f;
-	float    m_fricLp = 0.0f, m_fricLp2 = 0.0f, m_fricLp3 = 0.0f;
-	float    m_fricY1 = 0.0f, m_fricY2 = 0.0f;
-	float    m_radPrev = 0.0f;
-	float    m_outLp = 0.0f, m_outLp2 = 0.0f;
-	float    m_envLevel = 0.0f;
+	int32_t  m_noiseLp = 0;
+	int32_t  m_fricLp = 0, m_fricLp2 = 0, m_fricLp3 = 0;
+	int32_t  m_fricY1 = 0, m_fricY2 = 0;   // Q8.24
+	int32_t  m_radPrev = 0;
+	int32_t  m_outLp = 0, m_outLp2 = 0;
+	int32_t  m_envLevel = 0;
 
 	// ---- Per-voice glottal oscillators -----------------------------------
 	struct Voice
