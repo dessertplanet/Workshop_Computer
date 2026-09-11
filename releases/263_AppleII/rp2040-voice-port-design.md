@@ -325,6 +325,14 @@ device mode (and, if a controller sends it, host mode too). Note that the USB
 power circuitry may only latch the correct port state on a cold power-up, not a
 bare RP2040 reset — so the role is fixed for the session at power-on.
 
+Current device-mode bring-up accepts note-on and note-off messages on all MIDI
+channels through a 16-entry single-producer/single-consumer queue. The first
+note switches from the built-in eight-voice demo chord to DAW-controlled pitch;
+the Daisy phoneme timeline continues to loop. Up to eight held notes are
+allocated, with oldest-voice stealing when full, and all-notes-up closes the
+synthesis output gate with its normal release. Pitch bend, STEP pacing, SysEx,
+and host-mode note parsing are not implemented yet.
+
 So: **Keystep session = host mode**, **website session = device mode**, decided
 by what is connected when the card powers up (a distinct boot LED animation for
 each, as MLRws does). A given power cycle is one or the other.

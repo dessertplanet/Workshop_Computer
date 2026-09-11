@@ -330,7 +330,7 @@ void SsiVoice::Tick(uint32_t cycles)
 
 bool SsiVoice::IsSilent() const
 {
-	bool quiet = IsPoweredDown() || (GetAmplitude() == 0) || !m_sounding;
+	bool quiet = IsPoweredDown() || (GetAmplitude() == 0) || !m_sounding || !m_outputGate;
 	return quiet && (m_envLevel < 16777); // 0.001 in Q8.24
 }
 
@@ -537,7 +537,7 @@ int32_t SsiVoice::GenerateSample()
 	sampleQ = m_outLp2;
 
 	// Amplitude envelope.
-	int32_t targetQ = (m_sounding && m_hasSource) ? m_amplitudeQ : 0;
+	int32_t targetQ = (m_sounding && m_hasSource && m_outputGate) ? m_amplitudeQ : 0;
 	FxOnePole(m_envLevel, targetQ, (targetQ > m_envLevel) ? m_attackQ : m_releaseQ);
 	int32_t envGainQ = m_envLevel * static_cast<int32_t>(kOutputGain);
 	sampleQ = FxMul(sampleQ, envGainQ);

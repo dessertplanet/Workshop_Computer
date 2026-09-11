@@ -74,6 +74,7 @@ public:
 	void SetVoicePitch(int i, double hz);       // hz <= 0 deactivates
 	void SetVoicePhaseIncrement(int i, uint32_t increment);
 	void SetVoiceActive(int i, bool on);
+	void SetOutputGate(bool open) { m_outputGate = open; }
 	int  ActiveVoiceCount() const;
 
 	// Render one mono Q8.24 sample summing all active voices through one tract.
@@ -164,6 +165,7 @@ private:
 	int32_t  m_amplitudeQ = 0;
 	bool     m_fricativeActive = false;
 	bool     m_hasSource = false;
+	bool     m_outputGate = true;
 
 	// Fixed-point (Q8.24) coefficients for the audio-rate one-poles etc.
 	int32_t  m_sourcePoleQ = 0;

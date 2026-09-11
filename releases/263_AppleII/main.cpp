@@ -4,8 +4,8 @@
 //
 // See rp2040-voice-port-design.md for the full design. This build is the first
 // hardware bring-up: it plays a hard-coded "Daisy Bell" score (daisy_demo.h) on
-// loop so the synthesis can be heard on-device. MIDI note/pacing and the SysEx
-// phrase bank come next (Phase 3+); the USB role detection is already wired.
+// loop so the synthesis can be heard on-device. Device-mode MIDI notes replace
+// the demo chord pitches; STEP pacing and the SysEx phrase bank come next.
 
 #include "ComputerCard.h"
 
@@ -28,6 +28,10 @@ static constexpr int kNumSlots = 6;
 // between invocations; timerawl is a low-overhead 1 MHz free-running clock.
 volatile uint32_t processSampleMaxUs = 0;
 volatile uint32_t processSampleOverruns = 0;
+volatile uint32_t midiEventsReceived = 0;
+volatile uint32_t midiEventsDropped = 0;
+volatile uint32_t midiActiveVoices = 0;
+volatile uint32_t midiModeActive = 0;
 
 static inline void RecordProcessSampleTiming(uint32_t startUs)
 {
@@ -68,6 +72,18 @@ public:
 		segIndex_ = 0;
 		segSamplesLeft_ = 0;
 		curReg0_ = 0;
+		midiMode_ = false;
+		midiWrite_ = 0;
+		midiRead_ = 0;
+		voiceAgeCounter_ = 0;
+		for (int note = 0; note < 128; note++)
+			midiPhaseIncrement_[note] = MidiToPhaseIncrement(static_cast<uint8_t>(note));
+		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
+		{
+			voiceNote_[voice] = kNoNote;
+			voiceChannel_[voice] = 0;
+			voiceAge_[voice] = 0;
+		}
 		for (int segment = 0; segment < kDaisyLen; segment++)
 			for (int voice = 0; voice < kDemoVoiceCount; voice++)
 				daisyPhaseIncrement_[segment][voice] = MidiToPhaseIncrement(
@@ -120,12 +136,14 @@ public:
 			else
 			{
 				tud_task();
-				uint8_t packet[64];
+				uint8_t packet[4];
 				while (tud_midi_available())
 				{
-					tud_midi_stream_read(packet, sizeof(packet));
-					// TODO (Phase 3): parse note-on/off (pitch + pacing) and
-					// SysEx (phrase-bank load / mode).
+					if (!tud_midi_packet_read(packet))
+						break;
+					uint8_t type = packet[1] & 0xF0;
+					if (type == 0x80 || type == 0x90)
+						QueueMidiEvent(packet[1], packet[2], packet[3]);
 				}
 			}
 		}
@@ -136,6 +154,7 @@ public:
 	virtual void ProcessSample() override
 	{
 		uint32_t startUs = timer_hw->timerawl;
+		ProcessMidiEvents();
 
 		// Half a second of silence at power-up while the DAC settles.
 		if (bootCounter_ < kBootMute)
@@ -180,14 +199,125 @@ private:
 		const DaisySeg &seg = kDaisy[currentSegment];
 		segIndex_ = (segIndex_ + 1) % kDaisyLen;
 
-		for (int voice = 0; voice < kDemoVoiceCount; voice++)
-			engine_.SetVoicePhaseIncrement(voice, daisyPhaseIncrement_[currentSegment][voice]);
+		if (!midiMode_)
+			for (int voice = 0; voice < kDemoVoiceCount; voice++)
+				engine_.SetVoicePhaseIncrement(voice, daisyPhaseIncrement_[currentSegment][voice]);
 		curReg0_ = seg.phoneme;
 		engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0_);
 		segSamplesLeft_ = static_cast<int32_t>(seg.units) * kDaisyUnitSamples;
 
 		for (int i = 0; i < kNumSlots; i++)
 			LedOn(i, i == (segIndex_ % kNumSlots));
+	}
+
+	static constexpr uint8_t kMidiQueueSize = 16;
+	static constexpr uint8_t kMidiQueueMask = kMidiQueueSize - 1;
+	static constexpr uint8_t kNoNote = 0xFF;
+
+	void QueueMidiEvent(uint8_t status, uint8_t data1, uint8_t data2)
+	{
+		uint8_t next = static_cast<uint8_t>((midiWrite_ + 1) & kMidiQueueMask);
+		if (next == midiRead_)
+		{
+			midiEventsDropped++;
+			return;
+		}
+		midiQueue_[midiWrite_] = static_cast<uint32_t>(status)
+		                            | (static_cast<uint32_t>(data1) << 8)
+		                            | (static_cast<uint32_t>(data2) << 16);
+		__dmb();
+		midiWrite_ = next;
+		midiEventsReceived++;
+	}
+
+	bool PopMidiEvent(uint32_t &event)
+	{
+		uint8_t read = midiRead_;
+		if (read == midiWrite_)
+			return false;
+		__dmb();
+		event = midiQueue_[read];
+		__dmb();
+		midiRead_ = static_cast<uint8_t>((read + 1) & kMidiQueueMask);
+		return true;
+	}
+
+	void ProcessMidiEvents()
+	{
+		uint32_t event;
+		for (int count = 0; count < 2 && PopMidiEvent(event); count++)
+		{
+			uint8_t status = static_cast<uint8_t>(event);
+			uint8_t note = static_cast<uint8_t>(event >> 8) & 0x7F;
+			uint8_t velocity = static_cast<uint8_t>(event >> 16) & 0x7F;
+			uint8_t type = status & 0xF0;
+			uint8_t channel = status & 0x0F;
+			if (type == 0x90 && velocity != 0)
+				NoteOn(channel, note);
+			else
+				NoteOff(channel, note);
+		}
+	}
+
+	void EnterMidiMode()
+	{
+		if (midiMode_)
+			return;
+		midiMode_ = true;
+		midiModeActive = 1;
+		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
+		{
+			engine_.SetVoiceActive(voice, false);
+			voiceNote_[voice] = kNoNote;
+		}
+		engine_.SetOutputGate(false);
+	}
+
+	void NoteOn(uint8_t channel, uint8_t note)
+	{
+		EnterMidiMode();
+		int selected = -1;
+		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
+		{
+			if (voiceNote_[voice] == note && voiceChannel_[voice] == channel)
+			{
+				selected = voice;
+				break;
+			}
+			if (selected < 0 && voiceNote_[voice] == kNoNote)
+				selected = voice;
+		}
+		if (selected < 0)
+		{
+			selected = 0;
+			for (int voice = 1; voice < SsiVoice::kMaxVoices; voice++)
+				if (voiceAge_[voice] < voiceAge_[selected])
+					selected = voice;
+		}
+
+		voiceNote_[selected] = note;
+		voiceChannel_[selected] = channel;
+		voiceAge_[selected] = ++voiceAgeCounter_;
+		engine_.SetVoicePhaseIncrement(selected, midiPhaseIncrement_[note]);
+		engine_.SetOutputGate(true);
+		midiActiveVoices = static_cast<uint32_t>(engine_.ActiveVoiceCount());
+	}
+
+	void NoteOff(uint8_t channel, uint8_t note)
+	{
+		if (!midiMode_)
+			return;
+		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
+		{
+			if (voiceNote_[voice] == note && voiceChannel_[voice] == channel)
+			{
+				voiceNote_[voice] = kNoNote;
+				engine_.SetVoiceActive(voice, false);
+			}
+		}
+		if (engine_.ActiveVoiceCount() == 0)
+			engine_.SetOutputGate(false);
+		midiActiveVoices = static_cast<uint32_t>(engine_.ActiveVoiceCount());
 	}
 
 	SsiVoice engine_;
@@ -198,6 +328,16 @@ private:
 	int32_t  segSamplesLeft_;
 	uint8_t  curReg0_;
 	uint32_t daisyPhaseIncrement_[kDaisyLen][kDemoVoiceCount];
+	uint32_t midiPhaseIncrement_[128];
+	uint8_t  voiceNote_[SsiVoice::kMaxVoices];
+	uint8_t  voiceChannel_[SsiVoice::kMaxVoices];
+	uint32_t voiceAge_[SsiVoice::kMaxVoices];
+	uint32_t voiceAgeCounter_;
+	bool     midiMode_;
+
+	volatile uint32_t midiQueue_[kMidiQueueSize] = {};
+	volatile uint8_t midiWrite_;
+	volatile uint8_t midiRead_;
 
 	volatile USBPowerState_t powerState_;
 	bool isUSBMIDIHost_;
