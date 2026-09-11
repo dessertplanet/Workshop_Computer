@@ -4,8 +4,8 @@
 //
 // See rp2040-voice-port-design.md for the full design. This build is the first
 // hardware bring-up: it plays a hard-coded "Daisy Bell" score (daisy_demo.h) on
-// loop so the synthesis can be heard on-device. Device-mode MIDI notes replace
-// the demo chord pitches; STEP pacing and the SysEx phrase bank come next.
+// loop so the synthesis can be heard on-device. Device-mode MIDI notes drive
+// STEP pacing through that phrase; the SysEx phrase bank comes next.
 
 #include "ComputerCard.h"
 
@@ -32,6 +32,8 @@ volatile uint32_t midiEventsReceived = 0;
 volatile uint32_t midiEventsDropped = 0;
 volatile uint32_t midiActiveVoices = 0;
 volatile uint32_t midiModeActive = 0;
+volatile int32_t midiStepIndex = -1;
+volatile uint32_t midiStepState = 0;
 
 static inline void RecordProcessSampleTiming(uint32_t startUs)
 {
@@ -76,6 +78,12 @@ public:
 		midiWrite_ = 0;
 		midiRead_ = 0;
 		voiceAgeCounter_ = 0;
+		heldNoteCount_ = 0;
+		releaseVoice_ = -1;
+		stepIndex_ = -1;
+		stepState_ = StepState::Demo;
+		stepSamplesLeft_ = 0;
+		releasePending_ = false;
 		for (int note = 0; note < 128; note++)
 			midiPhaseIncrement_[note] = MidiToPhaseIncrement(static_cast<uint8_t>(note));
 		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
@@ -142,7 +150,7 @@ public:
 					if (!tud_midi_packet_read(packet))
 						break;
 					uint8_t type = packet[1] & 0xF0;
-					if (type == 0x80 || type == 0x90)
+					if (type == 0x80 || type == 0x90 || type == 0xB0)
 						QueueMidiEvent(packet[1], packet[2], packet[3]);
 				}
 			}
@@ -166,13 +174,18 @@ public:
 			return;
 		}
 
-		if (segSamplesLeft_ == 0)
-			AdvanceSegment();
-		segSamplesLeft_--;
+		if (midiMode_)
+			ProcessStep();
+		else
+		{
+			if (segSamplesLeft_ == 0)
+				AdvanceSegment();
+			segSamplesLeft_--;
+		}
 
 		// A phoneme whose own duration has expired is re-triggered so the
 		// syllable sustains for the whole score segment.
-		if (engine_.IsRequesting())
+		if (engine_.IsRequesting() && (!midiMode_ || stepState_ != StepState::Idle))
 			engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0_);
 
 		int32_t sQ = engine_.GenerateSample();
@@ -213,6 +226,7 @@ private:
 	static constexpr uint8_t kMidiQueueSize = 16;
 	static constexpr uint8_t kMidiQueueMask = kMidiQueueSize - 1;
 	static constexpr uint8_t kNoNote = 0xFF;
+	enum class StepState : uint8_t { Demo, Idle, Onset, Nucleus, Coda };
 
 	void QueueMidiEvent(uint8_t status, uint8_t data1, uint8_t data2)
 	{
@@ -254,8 +268,10 @@ private:
 			uint8_t channel = status & 0x0F;
 			if (type == 0x90 && velocity != 0)
 				NoteOn(channel, note);
-			else
+			else if (type == 0x80 || type == 0x90)
 				NoteOff(channel, note);
+			else if (type == 0xB0 && (note == 120 || note == 123))
+				AllNotesOff();
 		}
 	}
 
@@ -271,17 +287,27 @@ private:
 			voiceNote_[voice] = kNoNote;
 		}
 		engine_.SetOutputGate(false);
+		stepState_ = StepState::Idle;
+		midiStepState = static_cast<uint32_t>(stepState_);
 	}
 
 	void NoteOn(uint8_t channel, uint8_t note)
 	{
 		EnterMidiMode();
+		bool freshOnset = heldNoteCount_ == 0;
+		if (freshOnset && releaseVoice_ >= 0)
+		{
+			engine_.SetVoiceActive(releaseVoice_, false);
+			releaseVoice_ = -1;
+		}
 		int selected = -1;
+		bool existing = false;
 		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
 		{
 			if (voiceNote_[voice] == note && voiceChannel_[voice] == channel)
 			{
 				selected = voice;
+				existing = true;
 				break;
 			}
 			if (selected < 0 && voiceNote_[voice] == kNoNote)
@@ -299,25 +325,150 @@ private:
 		voiceChannel_[selected] = channel;
 		voiceAge_[selected] = ++voiceAgeCounter_;
 		engine_.SetVoicePhaseIncrement(selected, midiPhaseIncrement_[note]);
-		engine_.SetOutputGate(true);
-		midiActiveVoices = static_cast<uint32_t>(engine_.ActiveVoiceCount());
+		if (!existing && heldNoteCount_ < SsiVoice::kMaxVoices)
+			heldNoteCount_++;
+		midiActiveVoices = heldNoteCount_;
+		if (freshOnset)
+			StartNextStep();
 	}
 
 	void NoteOff(uint8_t channel, uint8_t note)
 	{
 		if (!midiMode_)
 			return;
+		int releasedVoice = -1;
 		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
 		{
 			if (voiceNote_[voice] == note && voiceChannel_[voice] == channel)
 			{
 				voiceNote_[voice] = kNoNote;
-				engine_.SetVoiceActive(voice, false);
+				releasedVoice = voice;
+				if (heldNoteCount_ > 0)
+					heldNoteCount_--;
+				break;
 			}
 		}
-		if (engine_.ActiveVoiceCount() == 0)
-			engine_.SetOutputGate(false);
-		midiActiveVoices = static_cast<uint32_t>(engine_.ActiveVoiceCount());
+		if (releasedVoice < 0)
+			return;
+		if (heldNoteCount_ > 0)
+			engine_.SetVoiceActive(releasedVoice, false);
+		else
+		{
+			releaseVoice_ = releasedVoice;
+			BeginStepRelease();
+		}
+		midiActiveVoices = heldNoteCount_;
+	}
+
+	void AllNotesOff()
+	{
+		if (!midiMode_ || heldNoteCount_ == 0)
+			return;
+		releaseVoice_ = -1;
+		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
+		{
+			if (voiceNote_[voice] != kNoNote && releaseVoice_ < 0)
+				releaseVoice_ = voice;
+			else
+				engine_.SetVoiceActive(voice, false);
+			voiceNote_[voice] = kNoNote;
+		}
+		heldNoteCount_ = 0;
+		midiActiveVoices = 0;
+		BeginStepRelease();
+	}
+
+	void WriteStepPhoneme(uint8_t phoneme)
+	{
+		curReg0_ = phoneme;
+		engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0_);
+	}
+
+	void StartNextStep()
+	{
+		stepIndex_ = (stepIndex_ + 1) % kDaisyStepCount;
+		midiStepIndex = stepIndex_;
+		releasePending_ = false;
+		engine_.SetOutputGate(true);
+		const DaisyStep &step = kDaisySteps[stepIndex_];
+		if (step.onset != kNoPhoneme)
+		{
+			WriteStepPhoneme(step.onset);
+			stepSamplesLeft_ = static_cast<int32_t>(step.onsetUnits) * kDaisyUnitSamples;
+			stepState_ = StepState::Onset;
+		}
+		else
+		{
+			StartNucleus();
+		}
+		midiStepState = static_cast<uint32_t>(stepState_);
+		for (int i = 0; i < kNumSlots; i++)
+			LedOn(i, i == (stepIndex_ % kNumSlots));
+	}
+
+	void StartNucleus()
+	{
+		WriteStepPhoneme(kDaisySteps[stepIndex_].nucleus);
+		stepState_ = StepState::Nucleus;
+		midiStepState = static_cast<uint32_t>(stepState_);
+	}
+
+	void BeginStepRelease()
+	{
+		if (stepState_ == StepState::Onset)
+		{
+			releasePending_ = true;
+			return;
+		}
+		StartCoda();
+	}
+
+	void StartCoda()
+	{
+		const DaisyStep &step = kDaisySteps[stepIndex_];
+		if (step.coda == kNoPhoneme)
+		{
+			FinishStep();
+			return;
+		}
+		WriteStepPhoneme(step.coda);
+		stepSamplesLeft_ = static_cast<int32_t>(step.codaUnits) * kDaisyUnitSamples;
+		stepState_ = StepState::Coda;
+		midiStepState = static_cast<uint32_t>(stepState_);
+	}
+
+	void FinishStep()
+	{
+		engine_.SetOutputGate(false);
+		if (releaseVoice_ >= 0)
+		{
+			engine_.SetVoiceActive(releaseVoice_, false);
+			releaseVoice_ = -1;
+		}
+		stepState_ = StepState::Idle;
+		midiStepState = static_cast<uint32_t>(stepState_);
+	}
+
+	void ProcessStep()
+	{
+		if (stepState_ != StepState::Onset && stepState_ != StepState::Coda)
+			return;
+		if (stepSamplesLeft_ > 0)
+			stepSamplesLeft_--;
+		if (stepSamplesLeft_ != 0)
+			return;
+
+		if (stepState_ == StepState::Onset)
+		{
+			if (heldNoteCount_ > 0 && !releasePending_)
+				StartNucleus();
+			else
+				StartCoda();
+		}
+		else
+		{
+			FinishStep();
+		}
 	}
 
 	SsiVoice engine_;
@@ -333,7 +484,13 @@ private:
 	uint8_t  voiceChannel_[SsiVoice::kMaxVoices];
 	uint32_t voiceAge_[SsiVoice::kMaxVoices];
 	uint32_t voiceAgeCounter_;
+	uint32_t heldNoteCount_;
+	int      releaseVoice_;
 	bool     midiMode_;
+	int      stepIndex_;
+	StepState stepState_;
+	int32_t  stepSamplesLeft_;
+	bool     releasePending_;
 
 	volatile uint32_t midiQueue_[kMidiQueueSize] = {};
 	volatile uint8_t midiWrite_;

@@ -46,3 +46,30 @@ static constexpr DaisySeg kDaisy[] = {
 };
 
 static constexpr int kDaisyLen = static_cast<int>(sizeof(kDaisy) / sizeof(kDaisy[0]));
+
+static constexpr uint8_t kNoPhoneme = 0xFF;
+
+struct DaisyStep
+{
+	uint8_t onset;
+	uint8_t onsetUnits;
+	uint8_t nucleus;
+	uint8_t coda;
+	uint8_t codaUnits;
+};
+
+static constexpr DaisyStep kDaisySteps[] = {
+	{ 0x25, 1, 0x08, 0x01,  6 }, // Dai:  D - A  - E
+	{ 0x2F, 3, 0x01, kNoPhoneme, 0 }, // sy:   Z - E
+	{ 0x25, 1, 0x08, 0x01,  6 }, // Dai:  D - A  - E
+	{ 0x2F, 3, 0x01, kNoPhoneme, 0 }, // sy:   Z - E
+	{ 0x26, 1, 0x07, 0x33,  2 }, // give: KV - I  - V
+	{ 0x37, 2, 0x01, kNoPhoneme, 0 }, // me:   M - E
+	{ 0x03, 2, 0x11, kNoPhoneme, 0 }, // your: Y - O
+	{ kNoPhoneme, 0, 0x0C, 0x38, 3 }, // an:       AE - N
+	{ 0x30, 3, 0x1C, kNoPhoneme, 0 }, // swer: S - ER
+	{ 0x25, 1, 0x16, 0x00, 10 }, // do:   D - U  - pause
+};
+
+static constexpr int kDaisyStepCount =
+	static_cast<int>(sizeof(kDaisySteps) / sizeof(kDaisySteps[0]));
