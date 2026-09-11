@@ -42,11 +42,11 @@ float OnePoleCoef(double tauSec, double fs)
 // run here; products accumulate in int64 and narrow once (a single 3-tap term
 // can momentarily exceed the +-128 range, but the settled output cannot).
 constexpr int kFxShift = 24;
-inline int32_t FxFromF(float v) { return static_cast<int32_t>(std::lrint(v * 16777216.0)); }
+inline int32_t FxFromF(float v) { return static_cast<int32_t>(std::lrintf(v * 16777216.0f)); }
 inline float   FxToF(int32_t v) { return static_cast<float>(v) * (1.0f / 16777216.0f); }
 
 // One two-pole resonator step in fixed-point. State is Q8.24; b, c, a0 are
-// passed as floats (control-rate) and converted here.
+// converted here through the fast float->int path.
 inline int32_t FxResonate(int32_t &y1, int32_t &y2, int32_t xin, float a0, float b, float c)
 {
 	int64_t acc = static_cast<int64_t>(FxFromF(a0)) * xin
@@ -121,6 +121,8 @@ void SsiVoice::BuildTables()
 	m_fricTwoR = static_cast<float>(2.0 * fr);
 
 	m_radScale = static_cast<float>(fs / 44100.0);
+	m_cosIndexScale = static_cast<float>(2.0 * kCosLutSize / fs);
+	m_excRateComp = static_cast<float>(fs / 48000.0);
 
 	// Fixed-point (Q8.24) copies of the audio-rate one-pole coefficients.
 	m_sourcePoleQ = FxFromF(m_sourcePole);
@@ -136,14 +138,13 @@ void SsiVoice::BuildTables()
 		m_cosLut[i] = static_cast<float>(std::cos(std::numbers::pi * i / kCosLutSize));
 }
 
-float SsiVoice::CosForHz(double hz) const
+float SsiVoice::CosForHz(float hz) const
 {
-	double x = 2.0 * hz / static_cast<double>(m_sampleRate); // in [0,1)
-	double f = x * kCosLutSize;
+	float f = hz * m_cosIndexScale; // = 2*hz/fs * kCosLutSize
 	int idx = static_cast<int>(f);
-	if (idx < 0) { idx = 0; f = 0.0; }
-	if (idx >= kCosLutSize) { idx = kCosLutSize - 1; f = idx + 1.0; }
-	float frac = static_cast<float>(f - idx);
+	if (idx < 0) { idx = 0; f = 0.0f; }
+	if (idx >= kCosLutSize) { idx = kCosLutSize - 1; f = static_cast<float>(idx + 1); }
+	float frac = f - idx;
 	// Linear interpolation between adjacent LUT entries: keeps the high-Q
 	// resonators from amplifying quantization error into audible detuning.
 	return m_cosLut[idx] + frac * (m_cosLut[idx + 1] - m_cosLut[idx]);
@@ -154,7 +155,7 @@ void SsiVoice::RecomputeScale()
 	double divisor = 2.0 * (256.0 - static_cast<double>(m_reg[kRegFilterFreq]));
 	double ff = (divisor > 0.0) ? (m_xckHz / divisor) : 0.0;
 	double s = ff / kNominalFilterHz;
-	m_scale = std::clamp(s, 0.5, 2.0);
+	m_scale = static_cast<float>(std::clamp(s, 0.5, 2.0));
 }
 
 void SsiVoice::SetXckClock(double xckHz)
@@ -366,9 +367,9 @@ void SsiVoice::GlideFormants()
 	if (spec.f1 == 0)
 		return; // pause/closure: hold position
 
-	double target[3] = { double(spec.f1), double(spec.f2), double(spec.f3) };
+	float target[3] = { float(spec.f1), float(spec.f2), float(spec.f3) };
 
-	if (m_fCur[0] <= 0.0)
+	if (m_fCur[0] <= 0.0f)
 	{
 		for (int i = 0; i < 3; i++)
 			m_fCur[i] = target[i];
@@ -416,16 +417,17 @@ float SsiVoice::GenerateSample()
 	// gain and per-sample divide stay float, isolated to this one spot).
 	FxOnePole(m_excLp1, impulseCount * kFxOne, m_sourcePoleQ);
 	FxOnePole(m_excLp2, m_excLp1, m_sourcePoleQ);
-	float excF = FxToF(m_excLp2) * kVoicedGain * m_vaCur;
-	excF *= static_cast<float>(731.0 / std::max(m_fCur[0], 170.0));
+	float excF = FxToF(m_excLp2) * kVoicedGain * m_excRateComp * m_vaCur;
+	excF *= 731.0f / std::max(m_fCur[0], 170.0f);
 	PROBE(0, impulseCount); PROBE(1, FxToF(m_excLp2)); PROBE(2, excF);
 
 	// Phase C: shared tract cascade (fixed-point resonators, int64 accumulate).
 	double fs = static_cast<double>(m_sampleRate);
 	int32_t sig = FxFromF(excF);
+	float fcMax = static_cast<float>(fs * 0.45);
 	for (int s = 0; s < 3; s++)
 	{
-		double fc = std::clamp(m_fCur[s] * m_scale, 50.0, fs * 0.45);
+		float fc = std::clamp(m_fCur[s] * m_scale, 50.0f, fcMax);
 		float b = m_twoR[s] * CosForHz(fc);
 		float c = static_cast<float>(m_rr[s]);
 		float a0 = 1.0f - b - c;
@@ -444,7 +446,7 @@ float SsiVoice::GenerateSample()
 			m_lfsr ^= 0xB400u;
 		FxOnePole(m_noiseLp, (bit != 0) ? kFxOne : -kFxOne, m_noiseLpQ);
 
-		double fc = std::clamp(m_fCur[1] * m_scale, 50.0, fs * 0.45);
+		float fc = std::clamp(m_fCur[1] * m_scale, 50.0f, fcMax);
 		float b = m_fricTwoR * CosForHz(fc);
 		float c = m_fricRR;
 		float a0 = 1.0f - b - c;

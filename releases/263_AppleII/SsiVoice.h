@@ -114,7 +114,7 @@ private:
 
 	// Cosine lookup: cosLut_[i] = cos(pi * i / kCosLutSize), i in [0, kCosLutSize].
 	static constexpr int kCosLutSize = 4096;
-	float  CosForHz(double hz) const;
+	float  CosForHz(float hz) const;
 
 	// ---- Register / timing state (shared, cheap) -------------------------
 	double   m_xckHz       = kDefaultXckHz;
@@ -141,7 +141,8 @@ private:
 	float    m_fricTwoR = 0.0f;
 	float    m_radScale = 1.0f;     // (fs / 44100)
 	float    m_cosLut[kCosLutSize + 1] = {};
-	double   m_scale = 1.0;         // filter-freq voice-type scale, from reg4
+	float    m_cosIndexScale = 0.0f; // hz -> LUT index: 2*kCosLutSize/fs
+	float    m_scale = 1.0f;        // filter-freq voice-type scale, from reg4
 
 	// Fixed-point (Q8.24) coefficients for the audio-rate one-poles etc.
 	int32_t  m_sourcePoleQ = 0;
@@ -151,9 +152,12 @@ private:
 	int32_t  m_attackQ = 0;
 	int32_t  m_releaseQ = 0;
 	int32_t  m_radScaleQ = 0;
+	// Excitation level scales with 1/fs; this normalizes it to the 48 kHz the
+	// chip model was voiced at, so lower sample rates keep the same loudness.
+	float    m_excRateComp = 1.0f;
 
 	// ---- Glide state (shared) --------------------------------------------
-	double   m_fCur[3] = { 0.0, 0.0, 0.0 };
+	float    m_fCur[3] = { 0.0f, 0.0f, 0.0f };
 	float    m_vaCur = 0.0f;
 	float    m_faCur = 0.0f;
 

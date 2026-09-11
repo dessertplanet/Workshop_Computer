@@ -30,7 +30,7 @@ pico_sdk_init()
 
 add_executable(${CARD_NAME}
   main.cpp
-  Ssi263.cpp
+  SsiVoice.cpp
   usb_descriptors.c
   usb_midi_host.c
   usb_midi_host_app_driver.c)
