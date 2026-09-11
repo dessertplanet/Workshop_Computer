@@ -63,6 +63,8 @@ public:
 		segIndex_ = 0;
 		segSamplesLeft_ = 0;
 		curReg0_ = 0;
+		for (int i = 0; i < kDaisyLen; i++)
+			daisyPitchHz_[i] = MidiToHz(kDaisy[i].note);
 
 		// The ComputerCard callback is configured for 24 kHz in ComputerCard.h.
 		engine_.SetSampleRate(24000);
@@ -147,13 +149,9 @@ public:
 		engine_.Tick(1);
 
 		// Single-voice peaks reach ~0.5; 3200 uses the range with headroom.
-		int32_t out = sQ >> 13;
+		int32_t out = ((sQ >> 8) * 3200) >> 16;
 		if (out > 2047) out = 2047;
 		if (out < -2047) out = -2047;
-
-		// Simple visual: one LED walks with the syllable.
-		for (int i = 0; i < kNumSlots; i++)
-			LedOn(i, i == (segIndex_ % kNumSlots));
 
 		AudioOut1(static_cast<int16_t>(out));
 		AudioOut2(static_cast<int16_t>(out));
@@ -166,13 +164,17 @@ public:
 private:
 	void AdvanceSegment()
 	{
-		const DaisySeg &seg = kDaisy[segIndex_];
+		int currentSegment = segIndex_;
+		const DaisySeg &seg = kDaisy[currentSegment];
 		segIndex_ = (segIndex_ + 1) % kDaisyLen;
 
-		engine_.SetVoicePitch(0, MidiToHz(seg.note));
+		engine_.SetVoicePitch(0, daisyPitchHz_[currentSegment]);
 		curReg0_ = static_cast<uint8_t>((kDurBits << 6) | seg.phoneme);
 		engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0_);
 		segSamplesLeft_ = static_cast<int32_t>(seg.durMs) * 24; // ms -> 24 kHz samples
+
+		for (int i = 0; i < kNumSlots; i++)
+			LedOn(i, i == (segIndex_ % kNumSlots));
 	}
 
 	SsiVoice engine_;
@@ -182,6 +184,7 @@ private:
 	int      segIndex_;
 	int32_t  segSamplesLeft_;
 	uint8_t  curReg0_;
+	float    daisyPitchHz_[kDaisyLen];
 
 	volatile USBPowerState_t powerState_;
 	bool isUSBMIDIHost_;

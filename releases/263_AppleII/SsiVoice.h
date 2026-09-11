@@ -14,9 +14,8 @@
 // running one tract per voice and summing — valid while all voices share the
 // phoneme program, which they do. The final clamp is the only nonlinearity.
 //
-// This revision is float arithmetic with LUTs/precomputed coefficients (no
-// per-sample transcendentals); the fixed-point conversion is a follow-up that
-// keeps this structure.
+// Audio-rate state and processing use fixed point. Floating-point control
+// calculations are staggered across samples and run at 4 kHz.
 #pragma once
 
 #include <cstdint>
@@ -76,8 +75,8 @@ public:
 	void SetVoiceActive(int i, bool on);
 	int  ActiveVoiceCount() const;
 
-	// Render one mono sample summing all active voices through one tract.
-	float GenerateSample();
+	// Render one mono Q8.24 sample summing all active voices through one tract.
+	int32_t GenerateSample();
 
 	// ---- Status / getters ------------------------------------------------
 	bool    IsRequesting()  const { return m_request; }
@@ -106,6 +105,7 @@ private:
 	void BeginPhoneme();
 	void GlideFormants();
 	void GlideLevels();
+	void UpdateControlState(uint8_t phase);
 	void RecomputeScale();
 	void BuildTables();
 
@@ -131,6 +131,8 @@ private:
 	float    m_sourcePole = 0.0065f;
 	float    m_articCoef[8] = {};   // formant glide, by articulation 0..7
 	float    m_levelCoef = 0.0f;    // source-amplitude glide
+	float    m_articControlCoef[8] = {};
+	float    m_levelControlCoef = 0.0f;
 	float    m_attackCoef = 0.0f;
 	float    m_releaseCoef = 0.0f;
 	float    m_r[3] = {};           // resonator pole radius per stage
@@ -143,6 +145,19 @@ private:
 	float    m_cosLut[kCosLutSize + 1] = {};
 	float    m_cosIndexScale = 0.0f; // hz -> LUT index: 2*kCosLutSize/fs
 	float    m_scale = 1.0f;        // filter-freq voice-type scale, from reg4
+	static constexpr uint8_t kControlDivider = 6; // 24 kHz / 6 = 4 kHz
+	uint8_t  m_controlCounter = 0;
+	int32_t  m_resA0Q[3] = {};
+	int32_t  m_resBQ[3] = {};
+	int32_t  m_resCQ[3] = {};
+	int32_t  m_fricA0Q = 0;
+	int32_t  m_fricBQ = 0;
+	int32_t  m_fricCQ = 0;
+	int32_t  m_voicedGainQ16 = 0;
+	int32_t  m_fricGainQ = 0;
+	int32_t  m_amplitudeQ = 0;
+	bool     m_fricativeActive = false;
+	bool     m_hasSource = false;
 
 	// Fixed-point (Q8.24) coefficients for the audio-rate one-poles etc.
 	int32_t  m_sourcePoleQ = 0;
@@ -179,8 +194,8 @@ private:
 	struct Voice
 	{
 		bool     active = false;
-		double   phase = 0.0;   // [0,1)
-		double   inc = 0.0;     // pitch / fs
+		uint32_t phase = 0;     // Q0.32, wraps once per glottal impulse
+		uint32_t inc = 0;       // pitch / sample rate in Q0.32
 		double   hz = 0.0;
 	};
 	Voice    m_voices[kMaxVoices];

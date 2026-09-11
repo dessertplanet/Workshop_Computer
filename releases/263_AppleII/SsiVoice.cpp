@@ -47,11 +47,12 @@ inline float   FxToF(int32_t v) { return static_cast<float>(v) * (1.0f / 1677721
 
 // One two-pole resonator step in fixed-point. State is Q8.24; b, c, a0 are
 // converted here through the fast float->int path.
-inline int32_t FxResonate(int32_t &y1, int32_t &y2, int32_t xin, float a0, float b, float c)
+inline int32_t FxResonate(int32_t &y1, int32_t &y2, int32_t xin,
+	                     int32_t a0Q, int32_t bQ, int32_t cQ)
 {
-	int64_t acc = static_cast<int64_t>(FxFromF(a0)) * xin
-	            + static_cast<int64_t>(FxFromF(b)) * y1
-	            + static_cast<int64_t>(FxFromF(c)) * y2;
+	int64_t acc = static_cast<int64_t>(a0Q) * xin
+	            + static_cast<int64_t>(bQ) * y1
+	            + static_cast<int64_t>(cQ) * y2;
 	int32_t y = static_cast<int32_t>(acc >> kFxShift);
 	y2 = y1;
 	y1 = y;
@@ -91,7 +92,8 @@ void SsiVoice::SetSampleRate(uint32_t sampleRate)
 	// Voice increments depend on the sample rate.
 	for (auto &v : m_voices)
 		if (v.active)
-			v.inc = v.hz / static_cast<double>(m_sampleRate);
+			v.inc = static_cast<uint32_t>(v.hz * 4294967296.0 /
+			                              static_cast<double>(m_sampleRate));
 }
 
 void SsiVoice::BuildTables()
@@ -101,9 +103,14 @@ void SsiVoice::BuildTables()
 	m_sourcePole = static_cast<float>(1.0 - std::exp(-2.0 * std::numbers::pi * kSourceBreakHz / fs));
 
 	for (int a = 0; a < 8; a++)
+	{
 		m_articCoef[a] = OnePoleCoef((8.0 - a) * 0.010, fs);
+		m_articControlCoef[a] = 1.0f - std::pow(1.0f - m_articCoef[a],
+		                                             kControlDivider);
+	}
 
 	m_levelCoef   = OnePoleCoef(kLevelTauSec, fs);
+	m_levelControlCoef = 1.0f - std::pow(1.0f - m_levelCoef, kControlDivider);
 	m_attackCoef  = OnePoleCoef(kAttackTauSec, fs);
 	m_releaseCoef = OnePoleCoef(kReleaseTauSec, fs);
 
@@ -123,6 +130,9 @@ void SsiVoice::BuildTables()
 	m_radScale = static_cast<float>(fs / 44100.0);
 	m_cosIndexScale = static_cast<float>(2.0 * kCosLutSize / fs);
 	m_excRateComp = static_cast<float>(fs / 48000.0);
+	for (int s = 0; s < 3; s++)
+		m_resCQ[s] = FxFromF(m_rr[s]);
+	m_fricCQ = FxFromF(m_fricRR);
 
 	// Fixed-point (Q8.24) copies of the audio-rate one-pole coefficients.
 	m_sourcePoleQ = FxFromF(m_sourcePole);
@@ -194,7 +204,8 @@ void SsiVoice::SetVoicePitch(int i, double hz)
 	m_voices[i].active = true;
 	m_voices[i].hz = hz;
 	if (m_sampleRate > 0)
-		m_voices[i].inc = hz / static_cast<double>(m_sampleRate);
+		m_voices[i].inc = static_cast<uint32_t>(hz * 4294967296.0 /
+		                                      static_cast<double>(m_sampleRate));
 }
 
 void SsiVoice::SetVoiceActive(int i, bool on)
@@ -229,6 +240,7 @@ void SsiVoice::WriteRegister(uint8_t reg, uint8_t value)
 
 	if (sel == kRegCtlArtAmp)
 	{
+		m_amplitudeQ = (static_cast<int32_t>(GetAmplitude()) * kFxOne) / 15;
 		if (wasDown && !IsPoweredDown())
 			LatchMode();
 		else if (!wasDown && IsPoweredDown())
@@ -253,6 +265,7 @@ void SsiVoice::Reset()
 	for (int i = 0; i < kRegCount; i++)
 		m_reg[i] = 0;
 	m_reg[kRegCtlArtAmp] = kCtl;
+	m_amplitudeQ = 0;
 
 	m_mode = kModeArDisabled;
 	m_request = false;
@@ -274,6 +287,7 @@ void SsiVoice::Reset()
 	m_fricLp = m_fricLp2 = m_fricLp3 = 0;
 	m_fricY1 = m_fricY2 = 0;
 	m_lfsr = 0xACE1u;
+	m_controlCounter = 0;
 }
 
 void SsiVoice::Tick(uint32_t cycles)
@@ -294,7 +308,7 @@ void SsiVoice::Tick(uint32_t cycles)
 bool SsiVoice::IsSilent() const
 {
 	bool quiet = IsPoweredDown() || (GetAmplitude() == 0) || !m_sounding;
-	return quiet && (m_envLevel < 0.001f);
+	return quiet && (m_envLevel < 16777); // 0.001 in Q8.24
 }
 
 uint16_t SsiVoice::GetInflectionValue() const
@@ -376,7 +390,7 @@ void SsiVoice::GlideFormants()
 		return;
 	}
 
-	float coef = m_articCoef[GetArticulation()];
+	float coef = m_articControlCoef[GetArticulation()];
 	for (int i = 0; i < 3; i++)
 		m_fCur[i] += coef * (target[i] - m_fCur[i]);
 }
@@ -384,20 +398,55 @@ void SsiVoice::GlideFormants()
 void SsiVoice::GlideLevels()
 {
 	const PhonemeSpec &spec = GetActiveSpec();
-	m_vaCur += m_levelCoef * (spec.voicedLevel - m_vaCur);
-	m_faCur += m_levelCoef * (spec.fricLevel - m_faCur);
+	m_vaCur += m_levelControlCoef * (spec.voicedLevel - m_vaCur);
+	m_faCur += m_levelControlCoef * (spec.fricLevel - m_faCur);
+}
+
+void SsiVoice::UpdateControlState(uint8_t phase)
+{
+	float fcMax = static_cast<float>(m_sampleRate) * 0.45f;
+	if (phase == 0)
+	{
+		GlideFormants();
+		GlideLevels();
+		m_fricativeActive = GetActiveSpec().fricative || m_faCur > 0.0001f;
+		m_hasSource = HasAnySource(GetActiveSpec());
+	}
+	else if (phase == 1)
+	{
+		float voicedGain = kVoicedGain * m_excRateComp * m_vaCur;
+		voicedGain *= 731.0f / std::max(m_fCur[0], 170.0f);
+		m_voicedGainQ16 = static_cast<int32_t>(std::lrintf(voicedGain * 65536.0f));
+		m_fricGainQ = FxFromF(kNoiseGain * m_faCur);
+	}
+	else if (phase < 5)
+	{
+		int stage = phase - 2;
+		float fc = std::clamp(m_fCur[stage] * m_scale, 50.0f, fcMax);
+		float b = m_twoR[stage] * CosForHz(fc);
+		m_resBQ[stage] = FxFromF(b);
+		m_resA0Q[stage] = kFxOne - m_resBQ[stage] - m_resCQ[stage];
+	}
+	else if (phase == 5)
+	{
+		float fc = std::clamp(m_fCur[1] * m_scale, 50.0f, fcMax);
+		float b = m_fricTwoR * CosForHz(fc);
+		m_fricBQ = FxFromF(b);
+		m_fricA0Q = kFxOne - m_fricBQ - m_fricCQ;
+	}
 }
 
 // ---- Synthesis: 3-phase vocoder --------------------------------------------
 
-float SsiVoice::GenerateSample()
+int32_t SsiVoice::GenerateSample()
 {
 	if (IsSilent() || m_sampleRate == 0)
-		return 0.0f;
+		return 0;
 
-	// Phase A: shared per-sample update.
-	GlideFormants();
-	GlideLevels();
+	// Phase A: update one coefficient set per sample. Every set runs at 6 kHz,
+	// but the expensive work is spread out instead of causing a periodic spike.
+	UpdateControlState(m_controlCounter);
+	m_controlCounter = static_cast<uint8_t>((m_controlCounter + 1) % kControlDivider);
 
 	// Phase B: per-voice excitation, summed.
 	int impulseCount = 0;
@@ -405,10 +454,10 @@ float SsiVoice::GenerateSample()
 	{
 		if (!m_voices[v].active)
 			continue;
+		uint32_t oldPhase = m_voices[v].phase;
 		m_voices[v].phase += m_voices[v].inc;
-		if (m_voices[v].phase >= 1.0)
+		if (m_voices[v].phase < oldPhase)
 		{
-			m_voices[v].phase -= 1.0;
 			impulseCount++;
 		}
 	}
@@ -417,27 +466,21 @@ float SsiVoice::GenerateSample()
 	// gain and per-sample divide stay float, isolated to this one spot).
 	FxOnePole(m_excLp1, impulseCount * kFxOne, m_sourcePoleQ);
 	FxOnePole(m_excLp2, m_excLp1, m_sourcePoleQ);
-	float excF = FxToF(m_excLp2) * kVoicedGain * m_excRateComp * m_vaCur;
-	excF *= 731.0f / std::max(m_fCur[0], 170.0f);
-	PROBE(0, impulseCount); PROBE(1, FxToF(m_excLp2)); PROBE(2, excF);
+	int32_t sig = static_cast<int32_t>((static_cast<int64_t>(m_excLp2) *
+	                                   m_voicedGainQ16) >> 16);
+	PROBE(0, impulseCount); PROBE(1, FxToF(m_excLp2)); PROBE(2, FxToF(sig));
 
 	// Phase C: shared tract cascade (fixed-point resonators, int64 accumulate).
-	double fs = static_cast<double>(m_sampleRate);
-	int32_t sig = FxFromF(excF);
-	float fcMax = static_cast<float>(fs * 0.45);
 	for (int s = 0; s < 3; s++)
 	{
-		float fc = std::clamp(m_fCur[s] * m_scale, 50.0f, fcMax);
-		float b = m_twoR[s] * CosForHz(fc);
-		float c = static_cast<float>(m_rr[s]);
-		float a0 = 1.0f - b - c;
-		sig = FxResonate(m_resY1[s], m_resY2[s], sig, a0, b, c);
-		PROBE(3 + s, FxToF(sig)); PROBE(10, a0); PROBE(11, b);
+		sig = FxResonate(m_resY1[s], m_resY2[s], sig,
+		                 m_resA0Q[s], m_resBQ[s], m_resCQ[s]);
+		PROBE(3 + s, FxToF(sig));
 	}
 	int32_t sampleQ = sig;
 
 	// Parallel fricative branch.
-	if (GetActiveSpec().fricative || m_faCur > 0.0001f)
+	if (m_fricativeActive)
 	{
 		// LFSR noise, one-pole smoothed (fixed-point).
 		uint8_t bit = static_cast<uint8_t>(m_lfsr & 1u);
@@ -446,18 +489,15 @@ float SsiVoice::GenerateSample()
 			m_lfsr ^= 0xB400u;
 		FxOnePole(m_noiseLp, (bit != 0) ? kFxOne : -kFxOne, m_noiseLpQ);
 
-		float fc = std::clamp(m_fCur[1] * m_scale, 50.0f, fcMax);
-		float b = m_fricTwoR * CosForHz(fc);
-		float c = m_fricRR;
-		float a0 = 1.0f - b - c;
-		int32_t fricQ = FxResonate(m_fricY1, m_fricY2, m_noiseLp, a0, b, c);
+		int32_t fricQ = FxResonate(m_fricY1, m_fricY2, m_noiseLp,
+		                               m_fricA0Q, m_fricBQ, m_fricCQ);
 
 		FxOnePole(m_fricLp, fricQ, m_fricLpQ);
 		FxOnePole(m_fricLp2, m_fricLp, m_fricLpQ);
 		FxOnePole(m_fricLp3, m_fricLp2, m_fricLpQ);
 
 		// noiseGain * faCur is control-rate; convert once and mix in.
-		sampleQ += FxMul(m_fricLp3, FxFromF(kNoiseGain * m_faCur));
+		sampleQ += FxMul(m_fricLp3, m_fricGainQ);
 		PROBE(6, FxToF(fricQ)); PROBE(7, FxToF(m_fricLp3));
 	}
 
@@ -473,16 +513,11 @@ float SsiVoice::GenerateSample()
 	sampleQ = m_outLp2;
 
 	// Amplitude envelope.
-	float targetF = m_sounding
-	                    ? (HasAnySource(GetActiveSpec()) ? 1.0f : 0.0f) *
-	                          (static_cast<float>(GetAmplitude()) / 15.0f)
-	                    : 0.0f;
-	int32_t targetQ = FxFromF(targetF);
+	int32_t targetQ = (m_sounding && m_hasSource) ? m_amplitudeQ : 0;
 	FxOnePole(m_envLevel, targetQ, (targetQ > m_envLevel) ? m_attackQ : m_releaseQ);
-	int32_t envGainQ = FxMul(m_envLevel, FxFromF(kOutputGain));
+	int32_t envGainQ = m_envLevel * static_cast<int32_t>(kOutputGain);
 	sampleQ = FxMul(sampleQ, envGainQ);
-	float outF = FxToF(sampleQ);
-	PROBE(9, outF);
+	PROBE(9, FxToF(sampleQ));
 
-	return std::clamp(outF, -1.0f, 1.0f);
+	return std::clamp(sampleQ, -kFxOne, kFxOne);
 }

@@ -85,7 +85,7 @@ int main()
 	{
 		float a = ref.GenerateSample();
 		ref.Tick(1);
-				float b = port.GenerateSample();
+		float b = static_cast<float>(port.GenerateSample()) * (1.0f / 16777216.0f);
 		port.Tick(1);
 
 		double e = double(a) - double(b);
