@@ -88,12 +88,13 @@ public:
 		engine_.WriteRegister(SsiVoice::kRegFilterFreq, kDaisyFilter);
 
 		// Core 1 owns the USB stack; core 0 runs the audio ISR via Run().
+		instance_ = this;
 		multicore_launch_core1(Core1Entry);
 	}
 
 	// ---- Core 1: USB (device or host, chosen at power-on) ----------------
 
-	static void Core1Entry() { static_cast<VoiceCard *>(ThisPtr())->USBCore(); }
+	static void Core1Entry() { instance_->USBCore(); }
 
 	void USBCore()
 	{
@@ -170,6 +171,7 @@ public:
 
 	// MIDI host device address, set by the rppicomidi mount callback below.
 	static uint8_t midiDevAddr;
+	static VoiceCard *instance_;
 
 private:
 	void AdvanceSegment()
@@ -202,6 +204,7 @@ private:
 };
 
 uint8_t VoiceCard::midiDevAddr = 0;
+VoiceCard *VoiceCard::instance_ = nullptr;
 
 // ---- rppicomidi/usb_midi_host callbacks (host mode) ----------------------
 

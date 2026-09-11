@@ -145,6 +145,20 @@ void SsiVoice::BuildTables()
 	// cosLut_[i] = cos(pi * i / N); a hz maps to index round(2*fc/fs * N).
 	for (int i = 0; i <= kCosLutSize; i++)
 		m_cosLut[i] = static_cast<float>(std::cos(std::numbers::pi * i / kCosLutSize));
+	// Peak-compressor gain curve over input magnitudes 0..4. It is exactly
+	// unity below 0.75, then follows a tanh knee toward full scale.
+	for (int i = 0; i <= kCompressorLutSize; i++)
+	{
+		float magnitude = static_cast<float>(i) / 64.0f;
+		float gain = 1.0f;
+		if (magnitude > 0.75f)
+		{
+			float limited = 0.75f + 0.25f * std::tanh((magnitude - 0.75f) / 0.25f);
+			gain = limited / magnitude;
+		}
+		m_compressorGainLut[i] = FxFromF(gain);
+	}
+	m_compressorReleaseQ = FxFromF(OnePoleCoef(0.005, fs));
 }
 
 float SsiVoice::CosForHz(float hz) const
@@ -296,6 +310,7 @@ void SsiVoice::Reset()
 	m_lfsr = 0xACE1u;
 	m_controlCounter = 0;
 	m_activeVoiceCount = 0;
+	m_compressorEnvelope = 0;
 }
 
 void SsiVoice::Tick(uint32_t cycles)
@@ -425,8 +440,6 @@ void SsiVoice::UpdateControlState(uint8_t phase)
 		float voicedGain = kVoicedGain * m_vaCur;
 		voicedGain *= 731.0f / std::max(m_fCur[0], 170.0f);
 		voicedGain /= static_cast<float>(std::max(m_activeVoiceCount, 1));
-		if (m_activeVoiceCount > 1)
-			voicedGain *= 0.7071f;
 		m_voicedGainQ16 = static_cast<int32_t>(std::lrintf(voicedGain * 65536.0f));
 		m_fricGainQ = FxFromF(kNoiseGain * m_faCur);
 	}
@@ -530,5 +543,32 @@ int32_t SsiVoice::GenerateSample()
 	sampleQ = FxMul(sampleQ, envGainQ);
 	PROBE(9, FxToF(sampleQ));
 
-	return std::clamp(sampleQ, -kFxOne, kFxOne);
+	return Compress(sampleQ);
+}
+
+int32_t SsiVoice::Compress(int32_t sample)
+{
+	uint32_t magnitude = sample < 0
+	                       ? static_cast<uint32_t>(-static_cast<int64_t>(sample))
+	                       : static_cast<uint32_t>(sample);
+	if (magnitude > static_cast<uint32_t>(m_compressorEnvelope))
+		m_compressorEnvelope = static_cast<int32_t>(std::min<uint32_t>(magnitude, INT32_MAX));
+	else
+		FxOnePole(m_compressorEnvelope, static_cast<int32_t>(magnitude), m_compressorReleaseQ);
+
+	uint32_t index = static_cast<uint32_t>(m_compressorEnvelope) >> 18;
+	uint32_t fraction = static_cast<uint32_t>(m_compressorEnvelope) & 0x3FFFFu;
+	int32_t gainQ;
+	if (index >= kCompressorLutSize)
+	{
+		gainQ = m_compressorGainLut[kCompressorLutSize];
+	}
+	else
+	{
+		int32_t delta = m_compressorGainLut[index + 1] - m_compressorGainLut[index];
+		gainQ = m_compressorGainLut[index] + static_cast<int32_t>(
+			(static_cast<int64_t>(delta) * fraction) >> 18);
+	}
+
+	return std::clamp(FxMul(sample, gainQ), -kFxOne, kFxOne);
 }

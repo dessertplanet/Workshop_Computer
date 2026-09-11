@@ -58,6 +58,8 @@ int main(int argc, char **argv)
 	uint32_t clippedSamples = 0;
 	double segmentPeak[kDaisyLen] = {};
 	double segmentMaxStep[kDaisyLen] = {};
+	double segmentBoundaryStep[kDaisyLen] = {};
+	double segmentAttackMaxStep[kDaisyLen] = {};
 	uint32_t segmentClipped[kDaisyLen] = {};
 	float previousSample = 0.0f;
 
@@ -75,6 +77,7 @@ int main(int argc, char **argv)
 			eng.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0);
 			segLeft = int(seg.units) * kDaisyUnitSamples;
 
+			int sampleInSegment = 0;
 			while (segLeft-- > 0)
 			{
 				if (eng.IsRequesting())
@@ -85,9 +88,16 @@ int main(int argc, char **argv)
 				double v = s;
 				if (std::fabs(v) > peak) peak = std::fabs(v);
 				segmentPeak[currentSegment] = std::max(segmentPeak[currentSegment], std::fabs(v));
-				segmentMaxStep[currentSegment] = std::max(
-					segmentMaxStep[currentSegment], std::fabs(v - previousSample));
+				double step = std::fabs(v - previousSample);
+				segmentMaxStep[currentSegment] = std::max(segmentMaxStep[currentSegment], step);
+				if (sampleInSegment == 0)
+					segmentBoundaryStep[currentSegment] = std::max(
+						segmentBoundaryStep[currentSegment], step);
+				if (sampleInSegment < static_cast<int>(kSampleRate / 200))
+					segmentAttackMaxStep[currentSegment] = std::max(
+						segmentAttackMaxStep[currentSegment], step);
 				previousSample = s;
+				sampleInSegment++;
 				if (std::fabs(v) >= 1.0f)
 				{
 					clippedSamples++;
@@ -106,8 +116,9 @@ int main(int argc, char **argv)
 	            out, voiceCount, pcm.size(), pcm.size() / double(kSampleRate), peak, rms,
 	            clippedSamples, 100.0 * clippedSamples / pcm.size());
 	for (int i = 0; i < kDaisyLen; i++)
-		std::printf("  %2d ph=%02X note=%u units=%u peak=%.3f step=%.4f clipped=%u\n",
+		std::printf("  %2d ph=%02X note=%u units=%u peak=%.3f boundary=%.4f attack=%.4f step=%.4f clipped=%u\n",
 		            i, kDaisy[i].phoneme, kDaisy[i].note, kDaisy[i].units,
-		            segmentPeak[i], segmentMaxStep[i], segmentClipped[i]);
+		            segmentPeak[i], segmentBoundaryStep[i], segmentAttackMaxStep[i],
+		            segmentMaxStep[i], segmentClipped[i]);
 	return 0;
 }

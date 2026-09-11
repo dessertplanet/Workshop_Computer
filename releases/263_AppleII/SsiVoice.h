@@ -107,6 +107,7 @@ private:
 	void GlideFormants();
 	void GlideLevels();
 	void UpdateControlState(uint8_t phase);
+	int32_t Compress(int32_t sample);
 	void RecomputeScale();
 	void BuildTables();
 
@@ -116,6 +117,10 @@ private:
 	// Cosine lookup: cosLut_[i] = cos(pi * i / kCosLutSize), i in [0, kCosLutSize].
 	static constexpr int kCosLutSize = 4096;
 	float  CosForHz(float hz) const;
+	static constexpr int kCompressorLutSize = 256;
+	int32_t m_compressorGainLut[kCompressorLutSize + 1] = {};
+	int32_t m_compressorEnvelope = 0;
+	int32_t m_compressorReleaseQ = 0;
 
 	// ---- Register / timing state (shared, cheap) -------------------------
 	double   m_xckHz       = kDefaultXckHz;
