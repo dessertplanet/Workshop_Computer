@@ -41,7 +41,7 @@ void SetInflection(Chip &chip, uint16_t inflection, uint8_t rate)
 
 const uint8_t kScript[] = {
 	0x01, 0x08, 0x0E, 0x11, 0x16, 0x1C, 0x20, 0x00, 0x01,
-	0x30, 0x2F, 0x08, // add S, Z, A to exercise the fricative branch
+		0x30, 0x2F, 0x08, // add S, Z, A to exercise the fricative branch
 };
 constexpr int kNSeg = static_cast<int>(sizeof(kScript));
 
@@ -85,7 +85,7 @@ int main()
 	{
 		float a = ref.GenerateSample();
 		ref.Tick(1);
-		float b = port.GenerateSample();
+				float b = port.GenerateSample();
 		port.Tick(1);
 
 		double e = double(a) - double(b);

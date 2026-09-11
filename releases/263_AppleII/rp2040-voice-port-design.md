@@ -78,6 +78,56 @@ But those transcendentals mostly compute **near-constants**:
 So the port is a **fixed-point (Q15/Q16) + LUT rewrite**, not a DSP redesign.
 The topology ports intact. Drop to 22.05–24 kHz if headroom is tight.
 
+### Fixed-point migration strategy
+
+The float implementation is the waveform oracle. The comparison harness must
+stay below 2% relative RMS error, with the current float-control port measuring
+0.068% against `Ssi263` on the scripted vowel and fricative sequence. Do not
+replace the entire numeric path in one change: that makes a phase, timing, or
+Q-format error look like a vocoder error and removes the first useful failure
+location.
+
+Migrate in these stages, keeping the comparison harness green after each one:
+
+1. Keep the public sample API as `float` and keep phoneme timing as `double`.
+  Convert only at the final hardware output boundary. This prevents output
+  normalization and fractional phoneme-cycle changes from contaminating DSP
+  comparisons.
+2. Convert the constant-coefficient audio-rate one-poles to fixed point:
+  excitation smoothing, noise smoothing, fricative LPs, output LPs, and the
+  envelope. Compare each state against the float implementation before moving
+  on.
+3. Convert the resonator state and coefficients. Keep formant positions and
+  cosine lookup inputs in float until the fixed resonator recurrence matches;
+  only then quantize the formant control path and replace `cos` with the LUT.
+4. Convert the per-voice phase accumulators last. Check impulse indices and
+  wrap positions directly against the float phase accumulator; a one-sample
+  phase slip destroys sample correlation even when the spectrum sounds right.
+5. Convert the hardware output representation and measure the resulting
+  `AudioOut` range separately from the host/reference waveform comparison.
+
+Every fixed-point value must document its format at the declaration and at
+each conversion boundary. In particular:
+
+- If frequency is Q16 and the result of `731 / F1` is Q8.24, the numerator is
+  `731 << 40` when dividing by the Q16 frequency. A `<< 33` numerator is 128
+  times too small.
+- A Q8.24 envelope must be compared with a Q8.24 silence threshold, not a
+  floating-point literal such as `0.001f`.
+- Do not change `double` phoneme-cycle state to an integer tick count during
+  the DSP migration. Fractional truncation changes phoneme boundaries and
+  oscillator phase.
+- If `GenerateSample()` returns Q8.24 during an embedded-only experiment, the
+  comparison harness must be changed at the same time. Otherwise it will
+  interpret fixed-point integers as floats or normalize a float twice.
+
+The diagnostic harness should expose stage traces for impulse count, smoothed
+excitation, each resonator, frication, radiation, output LP, envelope, and
+final sample. Require correlation above 0.999 at each intermediate stage and
+above 0.995 for the final waveform before deleting the corresponding float
+stage. If correlation is near zero, stop tuning gain: the error is in timing,
+phase, state initialization, or coefficient conversion.
+
 ## The vocoder optimization (the important part)
 
 Because every voice runs the **same phoneme program in lockstep** and differs

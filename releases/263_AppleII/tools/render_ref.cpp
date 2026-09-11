@@ -125,7 +125,7 @@ int main(int argc, char **argv)
 
 	while (guardSamples-- > 0)
 	{
-		float s = chip.GenerateSample();
+		float s = static_cast<float>(chip.GenerateSample()) * (1.0f / 16777216.0f);
 		chip.Tick(1);
 
 		double v = s;
@@ -157,7 +157,7 @@ int main(int argc, char **argv)
 	// Render a short release tail so the final envelope decay is captured.
 	for (int i = 0; i < static_cast<int>(kSampleRate * 0.2); i++)
 	{
-		float s = chip.GenerateSample();
+		float s = static_cast<float>(chip.GenerateSample()) * (1.0f / 16777216.0f);
 		chip.Tick(1);
 		int iv = static_cast<int>(std::lround(s * 32767.0));
 		if (iv > 32767) iv = 32767;

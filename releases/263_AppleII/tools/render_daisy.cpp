@@ -66,7 +66,8 @@ int main(int argc, char **argv)
 			{
 				if (eng.IsRequesting())
 					eng.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0);
-				float s = eng.GenerateSample();
+				int32_t sampleQ = eng.GenerateSample();
+				float s = static_cast<float>(sampleQ) * (1.0f / 16777216.0f);
 				eng.Tick(1);
 				double v = s;
 				if (std::fabs(v) > peak) peak = std::fabs(v);

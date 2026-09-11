@@ -12,6 +12,7 @@
 #include "pico/multicore.h"
 #include "pico/time.h"
 #include "hardware/clocks.h"
+#include "hardware/timer.h"
 #include "tusb.h"
 #include "usb_midi_host.h"
 
@@ -23,9 +24,23 @@
 // Number of phrase slots in the bank (one per panel LED).
 static constexpr int kNumSlots = 6;
 
+// Debugger-visible audio timing counters. The 24 kHz callback has 41.67 us
+// between invocations; timerawl is a low-overhead 1 MHz free-running clock.
+volatile uint32_t processSampleMaxUs = 0;
+volatile uint32_t processSampleOverruns = 0;
+
+static inline void RecordProcessSampleTiming(uint32_t startUs)
+{
+	uint32_t elapsedUs = timer_hw->timerawl - startUs;
+	if (elapsedUs > processSampleMaxUs)
+		processSampleMaxUs = elapsedUs;
+	if (elapsedUs > 41)
+		processSampleOverruns++;
+}
+
 // Boot mute, in samples: silence while the DAC settles and core 1 brings USB
 // up, so the card does not click on power-up.
-static constexpr int32_t kBootMute = 24000; // 0.5 s at 48 kHz
+static constexpr int32_t kBootMute = 12000; // 0.5 s at 24 kHz
 
 // Duration/mode bits written into the phoneme register: mode 2 keeps A/R
 // active so a phoneme that expires can be re-triggered to sustain the syllable.
@@ -48,12 +63,8 @@ public:
 		segIndex_ = 0;
 		segSamplesLeft_ = 0;
 		curReg0_ = 0;
-		computeNext_ = true;
-		heldOut_ = 0;
 
-		// The engine synthesizes at 24 kHz and each sample is held across two
-		// 48 kHz ISR calls (see ProcessSample). This halves the average DSP load
-		// so the M0+ keeps up; the chip is lo-fi enough that 24 kHz is ample.
+		// The ComputerCard callback is configured for 24 kHz in ComputerCard.h.
 		engine_.SetSampleRate(24000);
 		engine_.SetTickClock(24000);
 
@@ -107,50 +118,46 @@ public:
 		}
 	}
 
-	// ---- Core 0: 48 kHz audio + panel ------------------------------------
+	// ---- Core 0: 24 kHz audio + panel ------------------------------------
 
 	virtual void ProcessSample() override
 	{
+		uint32_t startUs = timer_hw->timerawl;
+
 		// Half a second of silence at power-up while the DAC settles.
 		if (bootCounter_ < kBootMute)
 		{
 			bootCounter_++;
 			AudioOut1(0);
 			AudioOut2(0);
+			RecordProcessSampleTiming(startUs);
 			return;
 		}
 
-		// Step the hard-coded Daisy Bell score.
-		// Synthesize at 24 kHz: compute a fresh sample every other 48 kHz ISR
-		// and hold it in between, so the DSP has a two-ISR window on average.
-		if (computeNext_)
-		{
-			if (segSamplesLeft_ == 0)
-				AdvanceSegment();
-			segSamplesLeft_--;
+		if (segSamplesLeft_ == 0)
+			AdvanceSegment();
+		segSamplesLeft_--;
 
-			// A phoneme whose own duration has expired is re-triggered so the
-			// syllable sustains for the whole score segment.
-			if (engine_.IsRequesting())
-				engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0_);
+		// A phoneme whose own duration has expired is re-triggered so the
+		// syllable sustains for the whole score segment.
+		if (engine_.IsRequesting())
+			engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0_);
 
-			float s = engine_.GenerateSample();
-			engine_.Tick(1);
+		int32_t sQ = engine_.GenerateSample();
+		engine_.Tick(1);
 
-			// Single-voice peaks reach ~0.5; 3200 uses the range with headroom.
-			int32_t out = static_cast<int32_t>(s * 3200.0f);
-			if (out > 2047) out = 2047;
-			if (out < -2047) out = -2047;
-			heldOut_ = static_cast<int16_t>(out);
+		// Single-voice peaks reach ~0.5; 3200 uses the range with headroom.
+		int32_t out = sQ >> 13;
+		if (out > 2047) out = 2047;
+		if (out < -2047) out = -2047;
 
-			// Simple visual: one LED walks with the syllable.
-			for (int i = 0; i < kNumSlots; i++)
-				LedOn(i, i == (segIndex_ % kNumSlots));
-		}
-		computeNext_ = !computeNext_;
+		// Simple visual: one LED walks with the syllable.
+		for (int i = 0; i < kNumSlots; i++)
+			LedOn(i, i == (segIndex_ % kNumSlots));
 
-		AudioOut1(heldOut_);
-		AudioOut2(heldOut_);
+		AudioOut1(static_cast<int16_t>(out));
+		AudioOut2(static_cast<int16_t>(out));
+		RecordProcessSampleTiming(startUs);
 	}
 
 	// MIDI host device address, set by the rppicomidi mount callback below.
@@ -175,8 +182,6 @@ private:
 	int      segIndex_;
 	int32_t  segSamplesLeft_;
 	uint8_t  curReg0_;
-	bool     computeNext_;
-	int16_t  heldOut_;
 
 	volatile USBPowerState_t powerState_;
 	bool isUSBMIDIHost_;
