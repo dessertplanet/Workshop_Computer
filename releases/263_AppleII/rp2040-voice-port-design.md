@@ -161,11 +161,12 @@ hoist out of the voice loop (sum the raw impulse trains, smooth once). Voice
 
 Hardware validation on 2026-09-11 proved all eight configured voices with the
 Daisy demo playing a fixed spread chord. The summed voiced excitation is
-normalized by active voice count before entering the shared tract. At 192 MHz
+normalized by active voice count before entering the shared tract. Changes to
+that normalization are slewed over approximately 2 ms, preventing a note-on or
+note-off from abruptly rescaling voices that are already sounding. At 192 MHz
 and a 24 kHz sample rate, the measured worst-case `ProcessSample()` time was
-29 us with zero overruns against the 41.67 us callback budget. The host render
-reached the final model clamp on 0.0282% of samples, with no additional DAC
-clipping.
+28 us with zero overruns against the 41.67 us callback budget. A short envelope
+compressor handles remaining peaks without voice-count-dependent level changes.
 
 ## Target structure (restructure `GenerateSample` into 3 phases)
 

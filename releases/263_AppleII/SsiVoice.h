@@ -108,6 +108,7 @@ private:
 	void GlideFormants();
 	void GlideLevels();
 	void UpdateControlState(uint8_t phase);
+	void UpdateVoiceNormalizationTarget();
 	int32_t Compress(int32_t sample);
 	void RecomputeScale();
 	void BuildTables();
@@ -161,6 +162,8 @@ private:
 	int32_t  m_fricBQ = 0;
 	int32_t  m_fricCQ = 0;
 	int32_t  m_voicedGainQ16 = 0;
+	int32_t  m_voiceNormQ16 = 65536;
+	int32_t  m_voiceNormTargetQ16 = 65536;
 	int32_t  m_fricGainQ = 0;
 	int32_t  m_amplitudeQ = 0;
 	bool     m_fricativeActive = false;

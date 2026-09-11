@@ -226,7 +226,10 @@ void SsiVoice::SetVoicePhaseIncrement(int i, uint32_t increment)
 		return;
 	bool active = increment != 0;
 	if (m_voices[i].active != active)
+	{
 		m_activeVoiceCount += active ? 1 : -1;
+		UpdateVoiceNormalizationTarget();
+	}
 	m_voices[i].active = active;
 	m_voices[i].inc = increment;
 }
@@ -236,13 +239,24 @@ void SsiVoice::SetVoiceActive(int i, bool on)
 	if (i < 0 || i >= kMaxVoices)
 		return;
 	if (m_voices[i].active != on)
+	{
 		m_activeVoiceCount += on ? 1 : -1;
+		UpdateVoiceNormalizationTarget();
+	}
 	m_voices[i].active = on;
 }
 
 int SsiVoice::ActiveVoiceCount() const
 {
 	return m_activeVoiceCount;
+}
+
+void SsiVoice::UpdateVoiceNormalizationTarget()
+{
+	static constexpr int32_t kNormQ16[kMaxVoices + 1] = {
+		65536, 65536, 32768, 21845, 16384, 13107, 10923, 9362, 8192
+	};
+	m_voiceNormTargetQ16 = kNormQ16[m_activeVoiceCount];
 }
 
 // ---- Register / timing (mirrors Ssi263) ------------------------------------
@@ -310,6 +324,8 @@ void SsiVoice::Reset()
 	m_lfsr = 0xACE1u;
 	m_controlCounter = 0;
 	m_activeVoiceCount = 0;
+	m_voiceNormQ16 = 65536;
+	m_voiceNormTargetQ16 = 65536;
 	m_compressorEnvelope = 0;
 }
 
@@ -439,8 +455,10 @@ void SsiVoice::UpdateControlState(uint8_t phase)
 	{
 		float voicedGain = kVoicedGain * m_vaCur;
 		voicedGain *= 731.0f / std::max(m_fCur[0], 170.0f);
-		voicedGain /= static_cast<float>(std::max(m_activeVoiceCount, 1));
-		m_voicedGainQ16 = static_cast<int32_t>(std::lrintf(voicedGain * 65536.0f));
+		m_voiceNormQ16 += (m_voiceNormTargetQ16 - m_voiceNormQ16) >> 3;
+		int32_t baseGainQ16 = static_cast<int32_t>(std::lrintf(voicedGain * 65536.0f));
+		m_voicedGainQ16 = static_cast<int32_t>(
+			(static_cast<int64_t>(baseGainQ16) * m_voiceNormQ16) >> 16);
 		m_fricGainQ = FxFromF(kNoiseGain * m_faCur);
 	}
 	else if (phase < 5)
