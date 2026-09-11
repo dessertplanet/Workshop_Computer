@@ -72,6 +72,7 @@ public:
 	// Each voice is a glottal phase accumulator at a fundamental frequency.
 	// The shared phoneme program supplies everything else.
 	void SetVoicePitch(int i, double hz);       // hz <= 0 deactivates
+	void SetVoicePhaseIncrement(int i, uint32_t increment);
 	void SetVoiceActive(int i, bool on);
 	int  ActiveVoiceCount() const;
 
@@ -195,4 +196,5 @@ private:
 		double   hz = 0.0;
 	};
 	Voice    m_voices[kMaxVoices];
+	int      m_activeVoiceCount = 0;
 };

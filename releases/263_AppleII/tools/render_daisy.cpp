@@ -9,6 +9,7 @@
 #include "daisy_demo.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
 #include <vector>
 #include <cmath>
@@ -39,6 +40,8 @@ void WriteWav(const char *path, const std::vector<int16_t> &pcm, uint32_t rate)
 int main(int argc, char **argv)
 {
 	const char *out = (argc > 1) ? argv[1] : "/tmp/daisy.wav";
+	int voiceCount = (argc > 2) ? std::atoi(argv[2]) : kDemoVoiceCount;
+	voiceCount = std::clamp(voiceCount, 0, kDemoVoiceCount);
 
 	SsiVoice eng(kDaisyXckHz);
 	eng.SetSampleRate(kSampleRate);
@@ -52,14 +55,22 @@ int main(int argc, char **argv)
 	int segIndex = 0, segLeft = 0;
 	uint8_t curReg0 = 0;
 	double peak = 0, sumSq = 0;
+	uint32_t clippedSamples = 0;
+	double segmentPeak[kDaisyLen] = {};
+	double segmentMaxStep[kDaisyLen] = {};
+	uint32_t segmentClipped[kDaisyLen] = {};
+	float previousSample = 0.0f;
 
 	for (int loop = 0; loop < 2; loop++)          // two passes through the score
 	{
 		for (int i = 0; i < kDaisyLen; i++)
 		{
+			int currentSegment = segIndex;
 			const DaisySeg &seg = kDaisy[segIndex];
 			segIndex = (segIndex + 1) % kDaisyLen;
-			eng.SetVoicePitch(0, MidiToHz(seg.note));
+			for (int voice = 0; voice < voiceCount; voice++)
+				eng.SetVoicePitch(voice, MidiToHz(static_cast<uint8_t>(
+					seg.note + kDemoChordSemitones[voice])));
 			curReg0 = seg.phoneme;
 			eng.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0);
 			segLeft = int(seg.units) * kDaisyUnitSamples;
@@ -73,6 +84,15 @@ int main(int argc, char **argv)
 				eng.Tick(1);
 				double v = s;
 				if (std::fabs(v) > peak) peak = std::fabs(v);
+				segmentPeak[currentSegment] = std::max(segmentPeak[currentSegment], std::fabs(v));
+				segmentMaxStep[currentSegment] = std::max(
+					segmentMaxStep[currentSegment], std::fabs(v - previousSample));
+				previousSample = s;
+				if (std::fabs(v) >= 1.0f)
+				{
+					clippedSamples++;
+					segmentClipped[currentSegment]++;
+				}
 				sumSq += v * v;
 				int iv = std::lround(std::clamp(s * 2000.0f, -2047.0f, 2047.0f));
 				pcm.push_back(static_cast<int16_t>(iv * 8)); // *8 -> ~full-scale WAV
@@ -82,7 +102,12 @@ int main(int argc, char **argv)
 
 	WriteWav(out, pcm, kSampleRate);
 	double rms = pcm.empty() ? 0 : std::sqrt(sumSq / pcm.size());
-	std::printf("wrote %s : %zu samples (%.2fs), engine peak=%.3f rms=%.4f\n",
-	            out, pcm.size(), pcm.size() / double(kSampleRate), peak, rms);
+	std::printf("wrote %s : voices=%d, %zu samples (%.2fs), engine peak=%.3f rms=%.4f clipped=%u (%.4f%%)\n",
+	            out, voiceCount, pcm.size(), pcm.size() / double(kSampleRate), peak, rms,
+	            clippedSamples, 100.0 * clippedSamples / pcm.size());
+	for (int i = 0; i < kDaisyLen; i++)
+		std::printf("  %2d ph=%02X note=%u units=%u peak=%.3f step=%.4f clipped=%u\n",
+		            i, kDaisy[i].phoneme, kDaisy[i].note, kDaisy[i].units,
+		            segmentPeak[i], segmentMaxStep[i], segmentClipped[i]);
 	return 0;
 }

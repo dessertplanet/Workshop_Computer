@@ -197,30 +197,38 @@ void SsiVoice::SetVoicePitch(int i, double hz)
 		return;
 	if (hz <= 0.0)
 	{
-		m_voices[i].active = false;
+		SetVoicePhaseIncrement(i, 0);
 		return;
 	}
-	m_voices[i].active = true;
 	m_voices[i].hz = hz;
 	if (m_sampleRate > 0)
-		m_voices[i].inc = static_cast<uint32_t>(hz * 4294967296.0 /
-		                                      static_cast<double>(m_sampleRate));
+		SetVoicePhaseIncrement(i, static_cast<uint32_t>(
+			hz * 4294967296.0 / static_cast<double>(m_sampleRate)));
+}
+
+void SsiVoice::SetVoicePhaseIncrement(int i, uint32_t increment)
+{
+	if (i < 0 || i >= kMaxVoices)
+		return;
+	bool active = increment != 0;
+	if (m_voices[i].active != active)
+		m_activeVoiceCount += active ? 1 : -1;
+	m_voices[i].active = active;
+	m_voices[i].inc = increment;
 }
 
 void SsiVoice::SetVoiceActive(int i, bool on)
 {
 	if (i < 0 || i >= kMaxVoices)
 		return;
+	if (m_voices[i].active != on)
+		m_activeVoiceCount += on ? 1 : -1;
 	m_voices[i].active = on;
 }
 
 int SsiVoice::ActiveVoiceCount() const
 {
-	int n = 0;
-	for (const auto &v : m_voices)
-		if (v.active)
-			n++;
-	return n;
+	return m_activeVoiceCount;
 }
 
 // ---- Register / timing (mirrors Ssi263) ------------------------------------
@@ -287,6 +295,7 @@ void SsiVoice::Reset()
 	m_fricY1 = m_fricY2 = 0;
 	m_lfsr = 0xACE1u;
 	m_controlCounter = 0;
+	m_activeVoiceCount = 0;
 }
 
 void SsiVoice::Tick(uint32_t cycles)
@@ -415,6 +424,9 @@ void SsiVoice::UpdateControlState(uint8_t phase)
 	{
 		float voicedGain = kVoicedGain * m_vaCur;
 		voicedGain *= 731.0f / std::max(m_fCur[0], 170.0f);
+		voicedGain /= static_cast<float>(std::max(m_activeVoiceCount, 1));
+		if (m_activeVoiceCount > 1)
+			voicedGain *= 0.7071f;
 		m_voicedGainQ16 = static_cast<int32_t>(std::lrintf(voicedGain * 65536.0f));
 		m_fricGainQ = FxFromF(kNoiseGain * m_faCur);
 	}

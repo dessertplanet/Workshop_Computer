@@ -159,6 +159,14 @@ Even the excitation smoothing one-poles and voiced gain are linear/shared and
 hoist out of the voice loop (sum the raw impulse trains, smooth once). Voice
 *count* stops being the constraint; the single shared synthesizer is the cost.
 
+Hardware validation on 2026-09-11 proved all eight configured voices with the
+Daisy demo playing a fixed spread chord. The summed voiced excitation is
+normalized by active voice count before entering the shared tract. At 192 MHz
+and a 24 kHz sample rate, the measured worst-case `ProcessSample()` time was
+29 us with zero overruns against the 41.67 us callback budget. The host render
+reached the final model clamp on 0.0282% of samples, with no additional DAC
+clipping.
+
 ## Target structure (restructure `GenerateSample` into 3 phases)
 
 1. **Shared per-sample update** (once): advance phoneme timeline, glides,

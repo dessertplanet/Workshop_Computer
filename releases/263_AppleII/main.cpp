@@ -51,6 +51,11 @@ static inline float MidiToHz(uint8_t note)
 	return 440.0f * std::pow(2.0f, (static_cast<int>(note) - 69) / 12.0f);
 }
 
+static inline uint32_t MidiToPhaseIncrement(uint8_t note)
+{
+	return static_cast<uint32_t>(MidiToHz(note) * (4294967296.0 / 24000.0));
+}
+
 class VoiceCard : public ComputerCard
 {
 public:
@@ -63,8 +68,10 @@ public:
 		segIndex_ = 0;
 		segSamplesLeft_ = 0;
 		curReg0_ = 0;
-		for (int i = 0; i < kDaisyLen; i++)
-			daisyPitchHz_[i] = MidiToHz(kDaisy[i].note);
+		for (int segment = 0; segment < kDaisyLen; segment++)
+			for (int voice = 0; voice < kDemoVoiceCount; voice++)
+				daisyPhaseIncrement_[segment][voice] = MidiToPhaseIncrement(
+					static_cast<uint8_t>(kDaisy[segment].note + kDemoChordSemitones[voice]));
 
 		// The ComputerCard callback is configured for 24 kHz in ComputerCard.h.
 		engine_.SetXckClock(kDaisyXckHz);
@@ -171,7 +178,8 @@ private:
 		const DaisySeg &seg = kDaisy[currentSegment];
 		segIndex_ = (segIndex_ + 1) % kDaisyLen;
 
-		engine_.SetVoicePitch(0, daisyPitchHz_[currentSegment]);
+		for (int voice = 0; voice < kDemoVoiceCount; voice++)
+			engine_.SetVoicePhaseIncrement(voice, daisyPhaseIncrement_[currentSegment][voice]);
 		curReg0_ = seg.phoneme;
 		engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0_);
 		segSamplesLeft_ = static_cast<int32_t>(seg.units) * kDaisyUnitSamples;
@@ -187,7 +195,7 @@ private:
 	int      segIndex_;
 	int32_t  segSamplesLeft_;
 	uint8_t  curReg0_;
-	float    daisyPitchHz_[kDaisyLen];
+	uint32_t daisyPhaseIncrement_[kDaisyLen][kDemoVoiceCount];
 
 	volatile USBPowerState_t powerState_;
 	bool isUSBMIDIHost_;

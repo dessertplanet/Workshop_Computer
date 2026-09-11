@@ -20,6 +20,10 @@ static constexpr uint8_t kDaisyFilter = 0xE6;
 static constexpr uint8_t kDaisyArticulation = 5;
 static constexpr uint8_t kDaisyAmplitude = 0x0C;
 static constexpr int32_t kDaisyUnitSamples = 991; // 1280 cycles * 33 at 1.022727 MHz
+static constexpr int kDemoVoiceCount = 8;
+static constexpr int8_t kDemoChordSemitones[kDemoVoiceCount] = {
+	0, 4, 7, 12, 16, 19, 24, 28
+};
 
 // Phoneme codes used: PA .00  E .01  Y .03  AY .05  I .07  AE .0C  U .16
 //   U1 .17  ER .1C  W .23  D .25  KV(g) .26  Z .2F  S .30  V .33  M .37  N .38
