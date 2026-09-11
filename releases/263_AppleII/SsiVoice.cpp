@@ -32,10 +32,17 @@ constexpr double kFricBandwidthHz = 450.0;
 constexpr double kLevelTauSec   = 0.0025;
 constexpr double kAttackTauSec  = 0.002;
 constexpr double kReleaseTauSec = 0.004;
+constexpr double kCassoTuningRate = 44100.0;
 
 float OnePoleCoef(double tauSec, double fs)
 {
 	return static_cast<float>(1.0 - std::exp(-1.0 / (tauSec * fs)));
+}
+
+float RetargetOnePole(float coefficient, double fs)
+{
+	return static_cast<float>(1.0 - std::pow(1.0 - coefficient,
+	                                        kCassoTuningRate / fs));
 }
 
 // Q8.24 fixed-point: +-128 range, 24 fractional bits. The recursive resonators
@@ -129,14 +136,15 @@ void SsiVoice::BuildTables()
 
 	m_radScale = static_cast<float>(fs / 44100.0);
 	m_cosIndexScale = static_cast<float>(2.0 * kCosLutSize / fs);
+	m_noiseRateComp = static_cast<float>(std::sqrt(fs / kCassoTuningRate));
 	for (int s = 0; s < 3; s++)
 		m_resCQ[s] = FxFromF(m_rr[s]);
 	m_fricCQ = FxFromF(m_fricRR);
 
 	// Fixed-point (Q8.24) copies of the audio-rate one-pole coefficients.
 	m_sourcePoleQ = FxFromF(m_sourcePole);
-	m_noiseLpQ    = FxFromF(kNoiseLpCoef);
-	m_fricLpQ     = FxFromF(kFricLpCoef);
+	m_noiseLpQ    = FxFromF(RetargetOnePole(kNoiseLpCoef, fs));
+	m_fricLpQ     = FxFromF(RetargetOnePole(kFricLpCoef, fs));
 	m_outLpQ      = FxFromF(kOutputLpCoef);
 	m_attackQ     = FxFromF(m_attackCoef);
 	m_releaseQ    = FxFromF(m_releaseCoef);
@@ -459,7 +467,7 @@ void SsiVoice::UpdateControlState(uint8_t phase)
 		int32_t baseGainQ16 = static_cast<int32_t>(std::lrintf(voicedGain * 65536.0f));
 		m_voicedGainQ16 = static_cast<int32_t>(
 			(static_cast<int64_t>(baseGainQ16) * m_voiceNormQ16) >> 16);
-		m_fricGainQ = FxFromF(kNoiseGain * m_faCur);
+		m_fricGainQ = FxFromF(kNoiseGain * m_noiseRateComp * m_faCur);
 	}
 	else if (phase < 5)
 	{

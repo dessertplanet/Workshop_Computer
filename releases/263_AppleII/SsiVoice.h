@@ -153,6 +153,7 @@ private:
 	float    m_cosLut[kCosLutSize + 1] = {};
 	float    m_cosIndexScale = 0.0f; // hz -> LUT index: 2*kCosLutSize/fs
 	float    m_scale = 1.0f;        // filter-freq voice-type scale, from reg4
+	float    m_noiseRateComp = 1.0f;
 	static constexpr uint8_t kControlDivider = 6; // 24 kHz / 6 = 4 kHz
 	uint8_t  m_controlCounter = 0;
 	int32_t  m_resA0Q[3] = {};
