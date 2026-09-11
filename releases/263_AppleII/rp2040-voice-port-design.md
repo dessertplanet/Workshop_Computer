@@ -328,13 +328,18 @@ bare RP2040 reset — so the role is fixed for the session at power-on.
 
 Current device-mode bring-up accepts note-on and note-off messages on all MIDI
 channels through a 16-entry single-producer/single-consumer queue. The first
-note switches from the built-in eight-voice demo to DAW-controlled STEP mode.
-The embedded Daisy phrase is represented as ten onset/nucleus/coda steps: a
-fresh onset advances one step, legato notes join its held nucleus, and
-all-notes-up (including MIDI CC 120/123) plays its coda before releasing. Up to
-eight held notes are allocated, with oldest-voice stealing when full. This
-bring-up always loops the fixed Daisy phrase; pitch bend, selectable ONCE mode,
-SysEx phrase loading, and host-mode note parsing are not implemented yet.
+note switches from the built-in source to DAW-controlled pitch. The panel
+switch selects timing live: Up is FLOW and Middle is STEP (Down currently
+leaves the selected mode unchanged). FLOW free-runs the phrase at a neutral
+112 Hz speech fundamental until MIDI arrives; the Daisy melody notes are not
+used. Knob X controls FLOW rate continuously from 0.25x through 1x at center to
+4x at full right. Middle is silent until a note arrives. The embedded Daisy
+phrase is represented as ten onset/nucleus/coda steps: a fresh onset advances
+one step, legato notes join its held nucleus, and all-notes-up (including MIDI
+CC 120/123) plays its coda before releasing. Up to eight held notes are
+allocated, with oldest-voice stealing when full. This bring-up always loops the
+fixed Daisy phrase; pitch bend, selectable ONCE mode, SysEx phrase loading, and
+host-mode note parsing are not implemented yet.
 
 So: **Keystep session = host mode**, **website session = device mode**, decided
 by what is connected when the card powers up (a distinct boot LED animation for

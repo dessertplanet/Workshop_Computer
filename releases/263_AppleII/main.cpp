@@ -34,6 +34,8 @@ volatile uint32_t midiActiveVoices = 0;
 volatile uint32_t midiModeActive = 0;
 volatile int32_t midiStepIndex = -1;
 volatile uint32_t midiStepState = 0;
+volatile uint32_t currentPlaybackMode = 0;
+volatile uint32_t currentFlowRateQ16 = 65536;
 
 static inline void RecordProcessSampleTiming(uint32_t startUs)
 {
@@ -51,6 +53,7 @@ static constexpr int32_t kBootMute = 12000; // 0.5 s at 24 kHz
 // Mode 3 is staged while powered down and latched when CTL falls. Casso's song
 // then writes raw phoneme bytes (DR=0, the longest phoneme duration).
 static constexpr uint8_t kModeBits = SsiVoice::kModePhonemeTransitioned;
+static constexpr float kDefaultSpeechHz = 112.0f;
 
 static inline float MidiToHz(uint8_t note)
 {
@@ -72,9 +75,13 @@ public:
 		isUSBMIDIHost_ = false;
 
 		segIndex_ = 0;
-		segSamplesLeft_ = 0;
+		flowSamplesLeftQ16_ = 0;
+		flowRateQ16_ = 65536;
+		flowControlDivider_ = 0;
 		curReg0_ = 0;
 		midiMode_ = false;
+		playbackModeInitialized_ = false;
+		playbackMode_ = PlaybackMode::Flow;
 		midiWrite_ = 0;
 		midiRead_ = 0;
 		voiceAgeCounter_ = 0;
@@ -92,10 +99,8 @@ public:
 			voiceChannel_[voice] = 0;
 			voiceAge_[voice] = 0;
 		}
-		for (int segment = 0; segment < kDaisyLen; segment++)
-			for (int voice = 0; voice < kDemoVoiceCount; voice++)
-				daisyPhaseIncrement_[segment][voice] = MidiToPhaseIncrement(
-					static_cast<uint8_t>(kDaisy[segment].note + kDemoChordSemitones[voice]));
+		defaultPhaseIncrement_ = static_cast<uint32_t>(
+			kDefaultSpeechHz * (4294967296.0 / 24000.0));
 
 		// The ComputerCard callback is configured for 24 kHz in ComputerCard.h.
 		engine_.SetXckClock(kDaisyXckHz);
@@ -162,7 +167,6 @@ public:
 	virtual void ProcessSample() override
 	{
 		uint32_t startUs = timer_hw->timerawl;
-		ProcessMidiEvents();
 
 		// Half a second of silence at power-up while the DAC settles.
 		if (bootCounter_ < kBootMute)
@@ -174,18 +178,18 @@ public:
 			return;
 		}
 
-		if (midiMode_)
+		UpdatePlaybackMode();
+		ProcessMidiEvents();
+
+		if (playbackMode_ == PlaybackMode::Step)
 			ProcessStep();
 		else
-		{
-			if (segSamplesLeft_ == 0)
-				AdvanceSegment();
-			segSamplesLeft_--;
-		}
+			ProcessFlow();
 
 		// A phoneme whose own duration has expired is re-triggered so the
 		// syllable sustains for the whole score segment.
-		if (engine_.IsRequesting() && (!midiMode_ || stepState_ != StepState::Idle))
+		if (engine_.IsRequesting() &&
+		    (playbackMode_ == PlaybackMode::Flow || stepState_ != StepState::Idle))
 			engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0_);
 
 		int32_t sQ = engine_.GenerateSample();
@@ -210,23 +214,106 @@ private:
 	{
 		int currentSegment = segIndex_;
 		const DaisySeg &seg = kDaisy[currentSegment];
-		segIndex_ = (segIndex_ + 1) % kDaisyLen;
+		segIndex_++;
+		if (segIndex_ >= kDaisyLen)
+			segIndex_ = 0;
 
-		if (!midiMode_)
-			for (int voice = 0; voice < kDemoVoiceCount; voice++)
-				engine_.SetVoicePhaseIncrement(voice, daisyPhaseIncrement_[currentSegment][voice]);
 		curReg0_ = seg.phoneme;
 		engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0_);
-		segSamplesLeft_ = static_cast<int32_t>(seg.units) * kDaisyUnitSamples;
+		uint32_t samples = static_cast<uint32_t>(seg.units) * kDaisyUnitSamples;
+		flowSamplesLeftQ16_ = samples << 16;
 
+		int ledIndex = segIndex_;
+		while (ledIndex >= kNumSlots)
+			ledIndex -= kNumSlots;
 		for (int i = 0; i < kNumSlots; i++)
-			LedOn(i, i == (segIndex_ % kNumSlots));
+			LedOn(i, i == ledIndex);
+	}
+
+	void UpdateFlowRate()
+	{
+		uint32_t knob = static_cast<uint32_t>(KnobVal(Knob::X));
+		if (knob <= 2048)
+			flowRateQ16_ = 16384 + ((knob * 49152) >> 11); // 0.25x .. 1x
+		else
+			flowRateQ16_ = 65536 + (((knob - 2048) * 196608) >> 11); // 1x .. ~4x
+		if (knob == 4095)
+			flowRateQ16_ = 262144;
+		currentFlowRateQ16 = flowRateQ16_;
+	}
+
+	void ProcessFlow()
+	{
+		flowControlDivider_++;
+		if (flowControlDivider_ >= 16)
+		{
+			flowControlDivider_ = 0;
+			UpdateFlowRate();
+		}
+
+		if (flowSamplesLeftQ16_ <= flowRateQ16_)
+			AdvanceSegment();
+		else
+			flowSamplesLeftQ16_ -= flowRateQ16_;
 	}
 
 	static constexpr uint8_t kMidiQueueSize = 16;
 	static constexpr uint8_t kMidiQueueMask = kMidiQueueSize - 1;
 	static constexpr uint8_t kNoNote = 0xFF;
+	enum class PlaybackMode : uint8_t { Flow, Step };
 	enum class StepState : uint8_t { Demo, Idle, Onset, Nucleus, Coda };
+
+	void UpdatePlaybackMode()
+	{
+		Switch position = SwitchVal();
+		if (position == Switch::Down)
+			return;
+		PlaybackMode requested = (position == Switch::Middle)
+		                             ? PlaybackMode::Step
+		                             : PlaybackMode::Flow;
+		if (playbackModeInitialized_ && requested == playbackMode_)
+			return;
+
+		playbackMode_ = requested;
+		playbackModeInitialized_ = true;
+		currentPlaybackMode = static_cast<uint32_t>(playbackMode_);
+		ResetMidiVoices();
+		midiMode_ = false;
+		midiModeActive = 0;
+		stepIndex_ = -1;
+		midiStepIndex = -1;
+		releaseVoice_ = -1;
+		releasePending_ = false;
+
+		if (playbackMode_ == PlaybackMode::Step)
+		{
+			engine_.SetOutputGate(false);
+			stepState_ = StepState::Idle;
+			midiStepState = static_cast<uint32_t>(stepState_);
+		}
+		else
+		{
+			engine_.SetOutputGate(true);
+			engine_.SetVoicePhaseIncrement(0, defaultPhaseIncrement_);
+			segIndex_ = 0;
+			flowSamplesLeftQ16_ = 0;
+			UpdateFlowRate();
+			stepState_ = StepState::Demo;
+			midiStepState = static_cast<uint32_t>(stepState_);
+		}
+	}
+
+	void ResetMidiVoices()
+	{
+		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
+		{
+			engine_.SetVoiceActive(voice, false);
+			voiceNote_[voice] = kNoNote;
+			voiceChannel_[voice] = 0;
+		}
+		heldNoteCount_ = 0;
+		midiActiveVoices = 0;
+	}
 
 	void QueueMidiEvent(uint8_t status, uint8_t data1, uint8_t data2)
 	{
@@ -281,14 +368,13 @@ private:
 			return;
 		midiMode_ = true;
 		midiModeActive = 1;
-		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
+		ResetMidiVoices();
+		if (playbackMode_ == PlaybackMode::Step)
 		{
-			engine_.SetVoiceActive(voice, false);
-			voiceNote_[voice] = kNoNote;
+			engine_.SetOutputGate(false);
+			stepState_ = StepState::Idle;
+			midiStepState = static_cast<uint32_t>(stepState_);
 		}
-		engine_.SetOutputGate(false);
-		stepState_ = StepState::Idle;
-		midiStepState = static_cast<uint32_t>(stepState_);
 	}
 
 	void NoteOn(uint8_t channel, uint8_t note)
@@ -328,7 +414,9 @@ private:
 		if (!existing && heldNoteCount_ < SsiVoice::kMaxVoices)
 			heldNoteCount_++;
 		midiActiveVoices = heldNoteCount_;
-		if (freshOnset)
+		if (playbackMode_ == PlaybackMode::Flow)
+			engine_.SetOutputGate(true);
+		else if (freshOnset)
 			StartNextStep();
 	}
 
@@ -350,8 +438,12 @@ private:
 		}
 		if (releasedVoice < 0)
 			return;
-		if (heldNoteCount_ > 0)
+		if (heldNoteCount_ > 0 || playbackMode_ == PlaybackMode::Flow)
+		{
 			engine_.SetVoiceActive(releasedVoice, false);
+			if (heldNoteCount_ == 0)
+				engine_.SetOutputGate(false);
+		}
 		else
 		{
 			releaseVoice_ = releasedVoice;
@@ -364,6 +456,18 @@ private:
 	{
 		if (!midiMode_ || heldNoteCount_ == 0)
 			return;
+		if (playbackMode_ == PlaybackMode::Flow)
+		{
+			for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
+			{
+				engine_.SetVoiceActive(voice, false);
+				voiceNote_[voice] = kNoNote;
+			}
+			heldNoteCount_ = 0;
+			midiActiveVoices = 0;
+			engine_.SetOutputGate(false);
+			return;
+		}
 		releaseVoice_ = -1;
 		for (int voice = 0; voice < SsiVoice::kMaxVoices; voice++)
 		{
@@ -476,9 +580,11 @@ private:
 	int32_t bootCounter_;
 
 	int      segIndex_;
-	int32_t  segSamplesLeft_;
+	uint32_t flowSamplesLeftQ16_;
+	uint32_t flowRateQ16_;
+	uint8_t  flowControlDivider_;
 	uint8_t  curReg0_;
-	uint32_t daisyPhaseIncrement_[kDaisyLen][kDemoVoiceCount];
+	uint32_t defaultPhaseIncrement_;
 	uint32_t midiPhaseIncrement_[128];
 	uint8_t  voiceNote_[SsiVoice::kMaxVoices];
 	uint8_t  voiceChannel_[SsiVoice::kMaxVoices];
@@ -487,6 +593,8 @@ private:
 	uint32_t heldNoteCount_;
 	int      releaseVoice_;
 	bool     midiMode_;
+	bool     playbackModeInitialized_;
+	PlaybackMode playbackMode_;
 	int      stepIndex_;
 	StepState stepState_;
 	int32_t  stepSamplesLeft_;
