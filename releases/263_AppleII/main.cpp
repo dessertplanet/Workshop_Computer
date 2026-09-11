@@ -42,9 +42,9 @@ static inline void RecordProcessSampleTiming(uint32_t startUs)
 // up, so the card does not click on power-up.
 static constexpr int32_t kBootMute = 12000; // 0.5 s at 24 kHz
 
-// Duration/mode bits written into the phoneme register: mode 2 keeps A/R
-// active so a phoneme that expires can be re-triggered to sustain the syllable.
-static constexpr uint8_t kDurBits = SsiVoice::kModePhonemeImmediate;
+// Mode 3 is staged while powered down and latched when CTL falls. Casso's song
+// then writes raw phoneme bytes (DR=0, the longest phoneme duration).
+static constexpr uint8_t kModeBits = SsiVoice::kModePhonemeTransitioned;
 
 static inline float MidiToHz(uint8_t note)
 {
@@ -67,6 +67,7 @@ public:
 			daisyPitchHz_[i] = MidiToHz(kDaisy[i].note);
 
 		// The ComputerCard callback is configured for 24 kHz in ComputerCard.h.
+		engine_.SetXckClock(kDaisyXckHz);
 		engine_.SetSampleRate(24000);
 		engine_.SetTickClock(24000);
 
@@ -74,8 +75,10 @@ public:
 		// CTL low (bit 7 = 0) with mid articulation and full amplitude, which
 		// latches the mode and starts playback. The sequencer takes over on
 		// the first ProcessSample.
-		engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, (kDurBits << 6) | 0x00);
-		engine_.WriteRegister(SsiVoice::kRegCtlArtAmp, (4 << 4) | 0x0F);
+		engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, (kModeBits << 6) | 0x00);
+		engine_.WriteRegister(SsiVoice::kRegCtlArtAmp,
+		                      (kDaisyArticulation << 4) | kDaisyAmplitude);
+		engine_.WriteRegister(SsiVoice::kRegFilterFreq, kDaisyFilter);
 
 		// Core 1 owns the USB stack; core 0 runs the audio ISR via Run().
 		multicore_launch_core1(Core1Entry);
@@ -148,8 +151,8 @@ public:
 		int32_t sQ = engine_.GenerateSample();
 		engine_.Tick(1);
 
-		// Single-voice peaks reach ~0.5; 3200 uses the range with headroom.
-		int32_t out = ((sQ >> 8) * 3200) >> 16;
+		// Preserve the model's full-scale waveform without a second DAC clamp.
+		int32_t out = ((sQ >> 8) * 2000) >> 16;
 		if (out > 2047) out = 2047;
 		if (out < -2047) out = -2047;
 
@@ -169,9 +172,9 @@ private:
 		segIndex_ = (segIndex_ + 1) % kDaisyLen;
 
 		engine_.SetVoicePitch(0, daisyPitchHz_[currentSegment]);
-		curReg0_ = static_cast<uint8_t>((kDurBits << 6) | seg.phoneme);
+		curReg0_ = seg.phoneme;
 		engine_.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0_);
-		segSamplesLeft_ = static_cast<int32_t>(seg.durMs) * 24; // ms -> 24 kHz samples
+		segSamplesLeft_ = static_cast<int32_t>(seg.units) * kDaisyUnitSamples;
 
 		for (int i = 0; i < kNumSlots; i++)
 			LedOn(i, i == (segIndex_ % kNumSlots));

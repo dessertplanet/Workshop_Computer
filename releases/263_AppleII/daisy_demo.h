@@ -12,34 +12,33 @@ struct DaisySeg
 {
 	uint8_t  phoneme;  // SSI-263 phoneme code (see phoneme_rom.h)
 	uint8_t  note;     // MIDI note number for this syllable
-	uint16_t durMs;    // duration in milliseconds
+	uint8_t  units;    // Casso song units, approximately 41.3 ms each
 };
+
+static constexpr double kDaisyXckHz = 1022727.0;
+static constexpr uint8_t kDaisyFilter = 0xE6;
+static constexpr uint8_t kDaisyArticulation = 5;
+static constexpr uint8_t kDaisyAmplitude = 0x0C;
+static constexpr int32_t kDaisyUnitSamples = 991; // 1280 cycles * 33 at 1.022727 MHz
 
 // Phoneme codes used: PA .00  E .01  Y .03  AY .05  I .07  AE .0C  U .16
 //   U1 .17  ER .1C  W .23  D .25  KV(g) .26  Z .2F  S .30  V .33  M .37  N .38
 // Melody sits in a natural voice range (C3-A3, ~131-220 Hz); higher octaves
 // make the formant vowels thin and quiet.
 static constexpr DaisySeg kDaisy[] = {
-	// "Dai-sy"  (C4, A3)
-	{ 0x25, 60,  70 }, { 0x05, 60, 330 },   // D  AY
-	{ 0x2F, 57,  90 }, { 0x01, 57, 330 },   // Z  E
-	// "Dai-sy"  (F3, A3)
-	{ 0x25, 53,  70 }, { 0x05, 53, 330 },   // D  AY
-	{ 0x2F, 57,  90 }, { 0x01, 57, 330 },   // Z  E
-	// "give"    (A3)
-	{ 0x26, 57,  70 }, { 0x07, 57, 120 }, { 0x33, 57, 90 },  // KV I V
-	// "me"      (G3)
-	{ 0x37, 55,  90 }, { 0x01, 55, 280 },   // M  E
-	// "your"    (F3)
-	{ 0x03, 53,  70 }, { 0x17, 53, 300 },   // Y  U1
-	// "an-"     (G3)
-	{ 0x0C, 55,  70 }, { 0x38, 55, 260 },   // AE N
-	// "swer"    (A3)
-	{ 0x30, 57, 140 }, { 0x23, 57, 70 }, { 0x1C, 57, 280 },  // S W ER
-	// "do"      (F3)
-	{ 0x25, 53,  70 }, { 0x16, 53, 460 },   // D  U
-	// breath before the loop
-	{ 0x00, 53, 300 },                       // PA
+	// Casso's Daisy Bell score: consonants take fixed short slices and each
+	// vowel nucleus receives the remainder of its syllable.
+	{ 0x25, 55,  1 }, { 0x08, 55, 23 }, { 0x01, 55,  6 }, // Dai  G3: D A E
+	{ 0x2F, 52,  3 }, { 0x01, 52, 27 },                   // sy   E3: Z E
+	{ 0x25, 48,  1 }, { 0x08, 48, 23 }, { 0x01, 48,  6 }, // Dai  C3: D A E
+	{ 0x2F, 43,  3 }, { 0x01, 43, 27 },                   // sy   G2: Z E
+	{ 0x26, 45,  1 }, { 0x07, 45,  7 }, { 0x33, 45,  2 }, // give A2: KV I V
+	{ 0x37, 47,  2 }, { 0x01, 47,  8 },                   // me   B2: M E
+	{ 0x03, 48,  2 }, { 0x11, 48,  8 },                   // your C3: Y O
+	{ 0x0C, 45, 17 }, { 0x38, 45,  3 },                   // an   A2: AE N
+	{ 0x30, 48,  3 }, { 0x1C, 48,  7 },                   // swer C3: S ER
+	{ 0x25, 43,  1 }, { 0x16, 43, 49 },                   // do   G2: D U
+	{ 0x00, 43, 10 },                                     // rest G2: PA
 };
 
 static constexpr int kDaisyLen = static_cast<int>(sizeof(kDaisy) / sizeof(kDaisy[0]));

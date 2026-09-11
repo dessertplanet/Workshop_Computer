@@ -129,7 +129,6 @@ void SsiVoice::BuildTables()
 
 	m_radScale = static_cast<float>(fs / 44100.0);
 	m_cosIndexScale = static_cast<float>(2.0 * kCosLutSize / fs);
-	m_excRateComp = static_cast<float>(fs / 48000.0);
 	for (int s = 0; s < 3; s++)
 		m_resCQ[s] = FxFromF(m_rr[s]);
 	m_fricCQ = FxFromF(m_fricRR);
@@ -414,7 +413,7 @@ void SsiVoice::UpdateControlState(uint8_t phase)
 	}
 	else if (phase == 1)
 	{
-		float voicedGain = kVoicedGain * m_excRateComp * m_vaCur;
+		float voicedGain = kVoicedGain * m_vaCur;
 		voicedGain *= 731.0f / std::max(m_fCur[0], 170.0f);
 		m_voicedGainQ16 = static_cast<int32_t>(std::lrintf(voicedGain * 65536.0f));
 		m_fricGainQ = FxFromF(kNoiseGain * m_faCur);

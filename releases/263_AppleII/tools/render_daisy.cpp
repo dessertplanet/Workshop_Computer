@@ -16,7 +16,7 @@
 
 namespace {
 constexpr uint32_t kSampleRate = 24000; // matches the card's 24 kHz synthesis
-constexpr uint8_t kDurBits = SsiVoice::kModePhonemeImmediate;
+constexpr uint8_t kModeBits = SsiVoice::kModePhonemeTransitioned;
 
 float MidiToHz(uint8_t note) { return 440.0f * std::pow(2.0f, (int(note) - 69) / 12.0f); }
 
@@ -40,11 +40,13 @@ int main(int argc, char **argv)
 {
 	const char *out = (argc > 1) ? argv[1] : "/tmp/daisy.wav";
 
-	SsiVoice eng;
+	SsiVoice eng(kDaisyXckHz);
 	eng.SetSampleRate(kSampleRate);
 	eng.SetTickClock(kSampleRate);
-	eng.WriteRegister(SsiVoice::kRegDurationPhoneme, (kDurBits << 6) | 0x00);
-	eng.WriteRegister(SsiVoice::kRegCtlArtAmp, (4 << 4) | 0x0F);
+	eng.WriteRegister(SsiVoice::kRegDurationPhoneme, (kModeBits << 6) | 0x00);
+	eng.WriteRegister(SsiVoice::kRegCtlArtAmp,
+	                  (kDaisyArticulation << 4) | kDaisyAmplitude);
+	eng.WriteRegister(SsiVoice::kRegFilterFreq, kDaisyFilter);
 
 	std::vector<int16_t> pcm;
 	int segIndex = 0, segLeft = 0;
@@ -58,9 +60,9 @@ int main(int argc, char **argv)
 			const DaisySeg &seg = kDaisy[segIndex];
 			segIndex = (segIndex + 1) % kDaisyLen;
 			eng.SetVoicePitch(0, MidiToHz(seg.note));
-			curReg0 = static_cast<uint8_t>((kDurBits << 6) | seg.phoneme);
+			curReg0 = seg.phoneme;
 			eng.WriteRegister(SsiVoice::kRegDurationPhoneme, curReg0);
-			segLeft = int(seg.durMs) * 24;
+			segLeft = int(seg.units) * kDaisyUnitSamples;
 
 			while (segLeft-- > 0)
 			{
@@ -72,7 +74,7 @@ int main(int argc, char **argv)
 				double v = s;
 				if (std::fabs(v) > peak) peak = std::fabs(v);
 				sumSq += v * v;
-				int iv = std::lround(std::clamp(s * 3200.0f, -2047.0f, 2047.0f));
+				int iv = std::lround(std::clamp(s * 2000.0f, -2047.0f, 2047.0f));
 				pcm.push_back(static_cast<int16_t>(iv * 8)); // *8 -> ~full-scale WAV
 			}
 		}

@@ -20,7 +20,9 @@
 
 namespace {
 
-constexpr uint32_t kSampleRate = 48000;
+constexpr uint32_t kSampleRate = 24000;
+constexpr double kXckHz = 1022727.0;
+constexpr uint8_t kFilter = 0xE6;
 
 uint16_t InflectionForHz(double hz, double xck)
 {
@@ -49,15 +51,16 @@ constexpr int kNSeg = static_cast<int>(sizeof(kScript));
 
 int main()
 {
-	const double xck = Ssi263::kDefaultXckHz;
-	const uint8_t rate = 0, artic = 4;
-	const uint8_t durBits = Ssi263::kModePhonemeImmediate;
+	const double xck = kXckHz;
+	const uint8_t rate = 0, artic = 5;
+	const uint8_t amplitude = 0x0C;
+	const uint8_t modeBits = Ssi263::kModePhonemeTransitioned;
 
-	Ssi263 ref;
+	Ssi263 ref(xck);
 	ref.SetSampleRate(kSampleRate);
 	ref.SetTickClock(kSampleRate);
 
-	SsiVoice port;
+	SsiVoice port(xck);
 	port.SetSampleRate(kSampleRate);
 	port.SetTickClock(kSampleRate);
 
@@ -69,8 +72,9 @@ int main()
 	port.SetVoicePitch(0, pitch);
 
 	auto start = [&](auto &chip) {
-		chip.WriteRegister(0, static_cast<uint8_t>((durBits << 6) | kScript[0]));
-		chip.WriteRegister(3, static_cast<uint8_t>((artic << 4) | 0x0F));
+		chip.WriteRegister(0, static_cast<uint8_t>((modeBits << 6) | kScript[0]));
+		chip.WriteRegister(3, static_cast<uint8_t>((artic << 4) | amplitude));
+		chip.WriteRegister(4, kFilter);
 	};
 	start(ref);
 	start(port);
@@ -100,14 +104,14 @@ int main()
 		if (rq)
 		{
 			if (segR < kNSeg)
-				ref.WriteRegister(0, static_cast<uint8_t>((durBits << 6) | kScript[segR++]));
+				ref.WriteRegister(0, kScript[segR++]);
 			else
 				break;
 		}
 		if (port.IsRequesting())
 		{
 			if (segP < kNSeg)
-				port.WriteRegister(0, static_cast<uint8_t>((durBits << 6) | kScript[segP++]));
+				port.WriteRegister(0, kScript[segP++]);
 		}
 	}
 

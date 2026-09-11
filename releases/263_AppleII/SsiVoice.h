@@ -167,10 +167,6 @@ private:
 	int32_t  m_attackQ = 0;
 	int32_t  m_releaseQ = 0;
 	int32_t  m_radScaleQ = 0;
-	// Excitation level scales with 1/fs; this normalizes it to the 48 kHz the
-	// chip model was voiced at, so lower sample rates keep the same loudness.
-	float    m_excRateComp = 1.0f;
-
 	// ---- Glide state (shared) --------------------------------------------
 	float    m_fCur[3] = { 0.0f, 0.0f, 0.0f };
 	float    m_vaCur = 0.0f;
