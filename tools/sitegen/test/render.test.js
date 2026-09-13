@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderCardArticle, renderPanelArtwork, renderReadmeAndDocs } from '../src/render/cardPage.js';
 import { orderFlairShelfCards, renderArchive, renderShelf, renderTile } from '../src/render/discovery.js';
+import { curation } from '../src/curation/index.js';
 import { renderLayout } from '../src/render/layout.js';
 import { renderAuthorPage } from '../src/render/authorPage.js';
 import { cardFeedbackUrl, websiteFeedbackUrl } from '../src/render/githubIssue.js';
@@ -256,16 +257,19 @@ test('discovery renderers escape searchable attributes and ignore absent shelf c
 });
 
 test('flair-driven shelves sort by recency then apply the limit', () => {
+  // Uses fake card ids (rather than real ones) with flair assignments injected
+  // directly, so this test doesn't depend on the moderator-curated, bot-synced
+  // contents of src/curation/flairs.yml.
   const olderNumberNewerDate = card({
-    id: '26_clockwork', slug: '26-clockwork', title: 'Clockwork',
+    id: 'test_clockwork', slug: 'test-clockwork', title: 'Clockwork',
     metadata: { created: '2024-01-01', updated: '2026-08-01' },
   });
   const newerNumberOlderDate = card({
-    id: '85_plant_holder', slug: '85-plant-holder', title: 'Plant Holder',
+    id: 'test_plant_holder', slug: 'test-plant-holder', title: 'Plant Holder',
     metadata: { created: '2026-05-17', updated: '2026-05-17' },
   });
   const newestNumberOldestDate = card({
-    id: '90_Pantograph', slug: '90-pantograph', title: 'Pantograph',
+    id: 'test_pantograph', slug: 'test-pantograph', title: 'Pantograph',
     metadata: { created: '2023-01-01', updated: '2023-06-01' },
   });
   const cardsById = new Map([
@@ -273,14 +277,21 @@ test('flair-driven shelves sort by recency then apply the limit', () => {
     [newerNumberOlderDate.id, newerNumberOlderDate],
     [newestNumberOldestDate.id, newestNumberOldestDate],
   ]);
-  const html = renderShelf({
-    title: 'New',
-    cards_from_flairs: ['new'],
-    limit: 2,
-  }, cardsById);
-  const names = [...html.matchAll(/program-card-tile__name">([^<]+)/g)].map(match => match[1]);
-  assert.deepEqual(names, ['Clockwork', 'Plant Holder']);
-  assert.doesNotMatch(html, /Pantograph/);
+  curation.assignments[olderNumberNewerDate.id] = ['new'];
+  curation.assignments[newerNumberOlderDate.id] = ['new'];
+  try {
+    const html = renderShelf({
+      title: 'New',
+      cards_from_flairs: ['new'],
+      limit: 2,
+    }, cardsById);
+    const names = [...html.matchAll(/program-card-tile__name">([^<]+)/g)].map(match => match[1]);
+    assert.deepEqual(names, ['Clockwork', 'Plant Holder']);
+    assert.doesNotMatch(html, /Pantograph/);
+  } finally {
+    delete curation.assignments[olderNumberNewerDate.id];
+    delete curation.assignments[newerNumberOlderDate.id];
+  }
 });
 
 test('explicit card shelves keep YAML list order', () => {
