@@ -52,7 +52,7 @@ shelves:
     title: Essentials 
     layout: video-lead
     cards:
-      - 66_stretchcore
+      - 22_sheep
       - 44_Birds
       - 21_resonator
       - 42_backyard_rain
@@ -67,14 +67,14 @@ shelves:
     limit: 8
 
 
-  - id: vos-collection
-    title: The Vos collection
+  - id: dune-collection
+    title: The Dune collection
     layout: video-strip
     cards:
-      - 101_Gnarly_C1ZZL3
-      - 54_Tapegrade
-      - 433_sense_of_space
-      - 87_fr330hfr33
+      - 15_MLRws
+      - 41_blackbird
+      - 11_goldfish
+      - 04_BYO_Benjolin
 
 
 
@@ -82,21 +82,21 @@ shelves:
     title: Generative sequencers
     layout: video-lead
     cards:
-      - 16_the_bells
       - 36_GradualProcess
+      - 16_the_bells
       - 79_Slag
       - 82_Computer_Grids
 
 
 
-  - id: vincent-collection
-    title: The Vincent collection
+  - id: vos-collection
+    title: The Vos collection
     layout: video-strip
     cards:
-      - 26_clockwork
-      - 45_bends
-      - 50_flux
-      - 51_grains
+      - 54_Tapegrade
+      - 433_sense_of_space
+      - 87_fr330hfr33
+      - 101_Gnarly_C1ZZL3
 
       
   - id: properly-useful
@@ -117,22 +117,22 @@ shelves:
       - magic
     limit: 6
 
-  - id: dune-collection
-    title: The Dune collection
+  - id: vincent-collection
+    title: The Vincent collection
     layout: video-strip
     cards:
-      - 04_BYO_Benjolin
-      - 15_MLRws
-      - 41_blackbird
-      - 11_goldfish
+      - 45_bends
+      - 50_flux
+      - 51_grains
+      - 26_clockwork
 
 
   - id: samples-and-found-sound
     title: Samples and found sound
     layout: video-lead
     cards:
-      - 67_Fragments
       - 66_stretchcore
+      - 67_Fragments
       - 53_glitter
       - 73_VSS
 

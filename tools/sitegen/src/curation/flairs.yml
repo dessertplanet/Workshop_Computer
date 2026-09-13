@@ -123,7 +123,6 @@ assignments:
     - start-here
     - useful
   "26_clockwork":
-    - new
     - deep
   "27_Siren":
     - start-here
@@ -155,11 +154,9 @@ assignments:
     - wild
   "44_Birds":
     - instant-win
-  "45_bends":
-    - new
+  "45_bends": []
   "47_NZT": []
-  "48_two_tracks":
-    - new
+  "48_two_tracks": []
   "49_Tape_Bias": []
   "50_flux":
     - classic
@@ -180,7 +177,6 @@ assignments:
     - magic
     - deep
   "62_BioMimicry":
-    - new
     - toms-pick
   "63_Nibble": []
   "64_voices_of_sid": []
@@ -198,28 +194,25 @@ assignments:
   "74_Wild_Pebble": []
   "75_Turing_Clouds": []
   "76_hot_fuzz": []
-  "77_PunkConfusion":
-    - new
+  "77_PunkConfusion": []
   "78_Talker": []
-  "79_Slag":
-    - new
+  "79_Slag": []
   "81_West_Coast_LPG": []
   "82_Computer_Grids": []
   "83_Origami": []
   "84_CosmikC1zzl3":
     - deep
   "85_plant_holder":
-    - new
     - useful
   "86_tesserae": []
   "87_fr330hfr33": []
   "88_Blank":
     - included
   "89_Lockstep": []
-  "90_Pantograph":
-    - new
+  "90_Pantograph": []
   "91_chorgan":
     - instant-win
+  "92_usb_midi_host_synth": []
   "93_Turing_Matrix": []
   "94_Ouroboros": []
   "95_offair2":
@@ -231,41 +224,41 @@ assignments:
   "99_toolbox": []
   "101_Gnarly_C1ZZL3":
     - wild
-  "102_Nibble-KO":
+  "102_Nibble-KO": []
+  "103_spectral":
     - new
-  "303_acid":
+  "104_barbers_pole":
     - new
+  "105_voder":
+    - new
+  "106_uncertainty":
+    - new
+    - useful
+  "107_scintillator":
+    - new
+  "108_GBA":
+    - new
+    - toms-pick
+    - magic
+  "174_Skipping_Stones":
+    - new
+  "303_acid": []
   "355_RYK_Pitch-Vocoder": []
   "433_sense_of_space": []
+  "580_Vortex_Runner":
+    - new
   "666_ws_doom":
     - toms-pick
-    - new
     - magic
+  "818_Bibesque":
+    - new
+    - useful
+  "833_BuzzyBee":
+    - new
   "877_RYK_Tape-Sampler":
     - magic
   "910_RYK_Pitched-Delay":
     - classic
-  # Dub Warning
-  999_Dub_Warning: []
-  # SPECTRAL
-  103_spectral: []
-  # Barber's Pole
-  104_barbers_pole: []
-  # Vortex Runner
-  580_Vortex_Runner: []
-  # Skipping Stones
-  174_Skipping_Stones: []
-  # Voder
-  105_voder: []
-  # USB MIDI Host
-  92_usb_midi_host_synth: []
-  # Uncertainty
-  106_uncertainty: []
-  # Scintillator
-  107_scintillator: []
-  # GBA PSG Voice
-  108_GBA: []
-  # BuzzyBee
-  833_BuzzyBee: []
-  # Bibesque
-  818_Bibesque: []
+  "999_Dub_Warning":
+    - new
+    - toms-pick
