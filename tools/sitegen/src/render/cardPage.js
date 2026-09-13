@@ -9,6 +9,7 @@
 import { panelPositions } from './panelPositions.js';
 import { renderMarkdownBlock, renderMarkdownInline, sanitizeAuthoredHtml } from '../utils/markdown.js';
 import { instagramEmbedHtml } from '../utils/instagram.js';
+import { cardFeedbackHostLabel, cardFeedbackUrl } from './githubIssue.js';
 import { externalLinkArrow } from './icons.js';
 
 const DEFAULT_DISCUSSION = 'https://discord.com/channels/1210238368898879569/1484219323039092938';
@@ -199,8 +200,8 @@ function renderGeneratedPanelCopy(snapshot, positionControl = null) {
     </div>`;
   }).join('');
   const switchMarkup = renderSwitchSection(snapshot, positionControl);
-  const inputsMarkup = renderSocketList('Inputs', panel.inputs, panelPositions.inputs);
-  const outputsMarkup = renderSocketList('Outputs', panel.outputs, panelPositions.outputs);
+  const inputsMarkup = renderSocketList('Inputs', panel.inputs, panelPositions.inputs, { showEmpty: true });
+  const outputsMarkup = renderSocketList('Outputs', panel.outputs, panelPositions.outputs, { showEmpty: true });
   const ledsMarkup = renderLedList(snapshot.leds);
 
   return `<div class="program-card-use__reference">
@@ -290,8 +291,9 @@ function renderPanelRail(card, panelImg) {
   return `<aside class="program-card-panel-rail" aria-label="Panel visualization">${panels}</aside>`;
 }
 
-function renderSocketList(title, sockets, positions) {
-  if (!sockets) return '';
+function renderSocketList(title, sockets, positions, { showEmpty = false } = {}) {
+  if (!sockets && !showEmpty) return '';
+  sockets ||= {};
   const items = (positions || []).map(pos => {
     const socket = sockets[pos.key];
     if (!socket || (!socket.description && !socket.label)) {
@@ -302,7 +304,7 @@ function renderSocketList(title, sockets, positions) {
       ${socket.label || socket.description ? `<p>${socket.label ? `<span class="program-card-component-role">${esc(inline(socket.label))}</span>` : ''}${socket.label && socket.description ? '<br>' : ''}${socket.description ? esc(truncate(socket.description, PANEL_DESCRIPTION_THRESHOLD)) : ''}</p>` : ''}
     </div>`;
   }).join('');
-  if (!Object.values(sockets).some(socket => socket && (socket.description || socket.label))) return '';
+  if (!showEmpty && !Object.values(sockets).some(socket => socket && (socket.description || socket.label))) return '';
   return `<section class="program-card-socket-section program-card-socket-section--${esc(title.toLowerCase())}"><h4 class="program-card-socket-section__heading">${esc(title)}</h4><div class="program-card-socket-list">${items}</div></section>`;
 }
 
@@ -417,6 +419,8 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
   const hasPanel = !basic && hasPanelDefinition(card);
   const panelRail = hasPanel ? renderPanelRail(card, panelImg) : '';
   const discussionUrl = metadata.discussion_url || DEFAULT_DISCUSSION;
+  const feedbackUrl = cardFeedbackUrl(card);
+  const feedbackHost = cardFeedbackHostLabel(card);
   const firstVideo = Array.isArray(card.videos) && card.videos[0];
   const sourceLinkUrl = metadata.repository || sourceUrl;
   const sourceLinkLabel = metadata.repository ? 'Upstream repository' : 'Release folder in the Workshop Computer repo';
@@ -468,7 +472,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
       ${basic || !memoryMarkup ? '' : `<div class="program-card-hero__meta">${memoryMarkup}</div>`}
       <div class="program-card-actions" aria-label="Card actions">${downloadActions}${editorAction}</div>
       <div class="program-card-sha" data-sha-display role="status" aria-live="polite" hidden>SHA256: <code class="program-card-sha__value" data-sha-value></code> <button type="button" class="program-card-sha__verify" data-verify-open>How to verify</button></div>
-      <div class="program-card-hero__links" aria-label="Further card links">${documentation ? `<a href="#card-documentation">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a><button id="connectToggle" class="connect-toggle" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting"><span class="c-status" aria-hidden="true"></span><span class="c-label">Connect workshop computer</span></button></div>
+      <div class="program-card-hero__links" aria-label="Further card links">${documentation ? `<a href="#card-documentation">Read more</a>` : ''}<a href="${esc(discussionUrl)}">Support &amp; questions</a><a href="${esc(feedbackUrl)}">Send feedback</a><button id="connectToggle" class="connect-toggle" type="button" role="switch" aria-checked="false" aria-label="Connect to RP2040 via WebUSB" title="Reboot computer into programming mode before connecting"><span class="c-status" aria-hidden="true"></span><span class="c-label">Connect workshop computer</span></button></div>
     </div>
   </header>`;
 
@@ -502,6 +506,7 @@ export function renderCardArticle({ card, panelImg, yamlUrl, uf2Url, extraDocs =
       ${readmeUrl ? `<div><dt>Read more</dt><dd><a href="${esc(readmeUrl)}">README in the Workshop Computer repo</a></dd></div>` : ''}
       ${sourceLinkUrl ? `<div><dt>Source</dt><dd><a href="${esc(sourceLinkUrl)}">${sourceLinkLabel}</a></dd></div>` : ''}
       <div><dt>Support</dt><dd><a href="${esc(discussionUrl)}">Ask questions, contact the designer, or share feedback</a></dd></div>
+      <div><dt>Feedback</dt><dd><a href="${esc(feedbackUrl)}">Report an issue on ${esc(feedbackHost)}</a></dd></div>
     </dl></details>
     ${notesMarkup}
     ${dataSources}
