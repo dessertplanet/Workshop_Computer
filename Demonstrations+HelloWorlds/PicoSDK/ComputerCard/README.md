@@ -89,7 +89,8 @@ For beginners just starting with ComputerCard, the first example to look at is `
 - Make sure execution of `ComputerCard::ProcessSample` always runs quickly enough that it has returned before the next execution begins (1/48kHz = ~20μs). (See the [guidance below](#programming) on achieving this)
 - While multiple ComputerCard objects can be created and used sequentially, only one instance of a ComputerCard can be active (using `Run()`) at any one time.
 
-### [8mu support](#eightmu)
+<a id="eightmu"></a>
+### 8mu support
 `EightMU.h` provides an `EightMU` class, for cards that want to use a [Music Thing Modular 8mu](https://www.musicthing.co.uk/8mu/) USB MIDI controller as an input. It is independent of ComputerCard, and is intended to be added as a member of a card:
 
 ```c++
@@ -114,7 +115,7 @@ public:
 };
 ```
 
-`EightMU` gives access to the 8mu's eight faders (`Fader`, 0 to 4064, matching the range of `KnobVal`), its motion sensing (`Pitch`, `Roll`, `Yaw`, `Flip`, -2032 to 2032, matching the range of the audio and CV jacks) and its four buttons (`Button`), and sets the brightness of the 8mu's eight LEDs (`SetLed`, `LedOn`, `LedOff`, `ReleaseLeds`). `Connected()` reports whether an 8mu is attached. All of these are listed in the [EightMU reference](#eightmu-reference) below.
+`EightMU` gives access to the 8mu's eight faders (`Fader`, outputs 0 to 4064, similar to range of `KnobVal`), its motion sensing (`Pitch`, `Roll`, `Yaw`, `Flip`, -2032 to 2032, similar to range of the audio and CV jacks) and its four buttons (`Button`), and sets the brightness of the 8mu's eight LEDs (`SetLed`, `LedOn`, `LedOff`, `ReleaseLeds`). `Connected()` reports whether an 8mu is attached. All of these are listed in the [EightMU reference](#eightmu-reference) below.
 
 All of the USB MIDI host handling is done inside the class, on the second RP2040 core. This means:
 - The 8mu is a USB device, so the Computer must be acting as a USB host. That requires Computer 1.1.0 Hardware, with nothing plugged into the Computer's own USB socket.
@@ -133,7 +134,8 @@ Note that when an 8mu connects, `EightMU` sends it a SysEx message that makes it
 - There is no way to change the sample rate
 - There is no built-in way to process blocks of samples, rather than individual samples.
 
-## [Using the RPi Pico SDK (Linux command line)](#pico-sdk)
+<a id="pico-sdk"></a>
+## Using the RPi Pico SDK (Linux command line)
 - Clone and install the [RPi Pico SDK](https://github.com/raspberrypi/pico-sdk)
 - Set the `PICO_SDK_PATH` environment variable to the location at with the Pico SDK is installed
 - Clone this repository
@@ -147,7 +149,8 @@ You can create your own projects using ComputerCard by
 - creating a new directory and source file in `examples/` and adding the appropriate `add_example` line to `CMakeLists.txt`.
 - or, this being a single-header library, by just copying `ComputerCard.h` into your own Pico SDK project.
 
-## [Using Visual Studio Code (with RPi Pico plugin)](#vscode)
+<a id="vscode"></a>
+## Using Visual Studio Code (with RPi Pico plugin)
 Disclaimer: the instructions below appear to work but are likely far from optimal (I am not a VSCode user myself)
 - Install [Visual Studio Code](https://code.visualstudio.com/) 
 - Install the [RPi Pico VSCode plugin](https://marketplace.visualstudio.com/items?itemName=raspberry-pi.raspberry-pi-pico)
@@ -158,7 +161,8 @@ Disclaimer: the instructions below appear to work but are likely far from optima
 - Build all of these by hovering over 'PROJECT OUTLINE' again and clicking the Build All button (looks like an arrow pointing into a container of dots)
 
 
-## [Using the Arduino IDE](#arduino-ide)
+<a id="arduino-ide"></a>
+## Using the Arduino IDE
 
 ### Installation
 
@@ -247,9 +251,9 @@ Lots of fixes found during Utility Pair development:
 
 #### 0.2.6
 - Moved to precise 19-bit sigma-delta PWM for CV outputs
--- New `CVOutPrecise` functions
--- Precise values used by `CVOutMIDINote` functions
--- May have _very_ minor differences in CV output latency, and on precise code timings, due to new interrupt that is not synchronised with audio sample.
+  - New `CVOutPrecise` functions
+  - Precise values used by `CVOutMIDINote` functions
+  - May have _very_ minor differences in CV output latency, and on precise code timings, due to new interrupt that is not synchronised with audio sample.
 - Bug fixes to USB MIDI example to handle multiple MIDI messages sent in a short time frame
 - Bug fix in `CVOutMIDINote` where calibration was always that of CV out 1
 - New `usb_serial` example
@@ -273,11 +277,11 @@ Lots of fixes found during Utility Pair development:
 
 #### 0.4.0
 - Calibrated audio inputs, using calibration data held in the EEPROM
--- New `AudioIn1Millivolts`, `AudioIn2Millivolts` and `AudioInMillivolts` methods
--- New `InputsCalibrated` method to detect whether input calibration data is present
--- New `calibrated_input` example
+  - New `AudioIn1Millivolts`, `AudioIn2Millivolts` and `AudioInMillivolts` methods
+  - New `InputsCalibrated` method to detect whether input calibration data is present
+  - New `calibrated_input` example
 - New `EightMU.h`, a standalone single-header class for using a Music Thing Modular 8mu as an input to a card. It carries the USB MIDI host driver and the host-mode TinyUSB configuration itself, so a card using it needs no other source files.
--- New `eightmu` example
+  - New `eightmu` example
 - New `FlashSizeBytes` method, reporting the size of the flash chip on the program card as read from the chip at startup.
 - New `card_info` example, displaying the unique card ID and flash size on the LEDs
 - Bug fix where audio and CV inputs could return +2048, one count outside their documented -2048 to 2047 range
@@ -289,7 +293,8 @@ Lots of fixes found during Utility Pair development:
 - `KnobVal` now scales the knob readings so that the ends of the knob's travel give 0 and 4095. Defining `COMPUTERCARD_UNSCALED_KNOBS` before including `ComputerCard.h` restores the unscaled behaviour of v0.3.0 and earlier.
 - MIT licence text added to `ComputerCard.h`
 
-# [Reference](#reference)
+<a id="reference"></a>
+# Reference
 
 
 The following is a list of public and protected methods of the `ComputerCard` class. 
@@ -538,7 +543,8 @@ Returns `true` if CV Output calibration data has been loaded, or false if no cal
    
 
 
-# [EightMU reference](#eightmu-reference)
+<a id="eightmu-reference"></a>
+# EightMU reference
 
 The following is a list of the public methods of the `EightMU` class, provided by `EightMU.h` for cards using a [Music Thing Modular 8mu](https://www.musicthing.co.uk/8mu/) as an input. See the [8mu support](#eightmu) section above for how to add one to a card, and the `eightmu` example.
 
@@ -564,7 +570,7 @@ All of these may be called at any time, including from `ProcessSample`. Values r
 
 - `int32_t Fader(int i)`
 
-   Returns the position of fader `i` (0–7), from 0 to 4064, matching the range of `ComputerCard::KnobVal`. The 8mu sends fader positions as 7-bit MIDI CCs, so this has 128 distinct values, spaced 32 apart.
+   Returns the position of fader `i` (0–7), from 0 to 4064. The 8mu sends fader positions as 7-bit MIDI CCs, so this has 128 distinct values, spaced 32 apart.
 
    Returns 0 for an `i` outside 0–7, and before an 8mu has first connected. Fader positions are deliberately kept when an 8mu is unplugged, so that outputs derived from them hold their last position rather than jumping to zero.
 
@@ -574,7 +580,7 @@ All of these may be called at any time, including from `ProcessSample`. Values r
 
 ## Motion sensing
 
-All four of these return values from −2032 to 2032, matching the range of the audio and CV jacks. The 8mu sends each as a pair of one-sided CCs, which are subtracted to give a signed value. All are heavily smoothed by the 8mu itself, so they respond over tens of milliseconds rather than instantly.
+All four of these return values from −2032 to 2032. The 8mu sends each as a pair of one-sided CCs, which are subtracted to give a signed value. All are heavily smoothed by the 8mu itself, so they respond over tens of milliseconds rather than instantly.
 
 `Pitch`, `Roll` and `Flip` are the three axes of the accelerometer, so for a stationary 8mu they are the three components of a single gravity vector, and are not independent of each other: knowing two fixes the magnitude of the third. The 8mu clips them at 1g, which is the whole range that gravity can produce, so an 8mu lying flat gives `Pitch` and `Roll` of 0 and `Flip` at full scale, and tilting it through 90 degrees takes `Pitch` or `Roll` to full scale and `Flip` to 0. Moving the 8mu faster than gravity does not read any higher.
 
@@ -592,11 +598,11 @@ All four of these return values from −2032 to 2032, matching the range of the 
 
 - `int32_t Flip()`
 
-   Which way up the 8mu is: −2032 lying flat, 2032 upside down. This is the vertical accelerometer axis. Its magnitude says little that `Pitch` and `Roll` do not, but its sign distinguishes right way up from upside down, which they cannot: both read 0 either way up.
+   This is the vertical accelerometer axis, indicating which way up the 8mu is when at rest: −2032 lying flat, 2032 upside down.
 
 ## LEDs
 
-The 8mu flashes its own LEDs on MIDI activity. The first call to any of the functions below takes the LEDs over from the 8mu, so an 8mu used only as a controller, that never has its LEDs set, is left alone.
+The 8mu flashes its own LEDs on MIDI activity. The first call to any of the functions below except `ReleaseLeds` takes the LEDs over from the 8mu, so an 8mu used only as a controller, that never has its LEDs set, is left alone.
 
 - `void SetLed(int i, int32_t brightness)`
 
@@ -630,7 +636,8 @@ The 8mu flashes its own LEDs on MIDI activity. The first call to any of the func
 
 The `OnMount`, `OnUnmount` and `OnMIDIBytes` methods are also public, but are called by the USB MIDI host driver's callbacks and are not intended to be called by cards.
 
-# [Programming for ComputerCard](#programming)
+<a id="programming"></a>
+# Programming for ComputerCard
 
 This section introduces some ways in which ComputerCard programming differs from desktop audio programming. Many more details are provided in a longer [programming tips](./NOTES.md) document.
 
