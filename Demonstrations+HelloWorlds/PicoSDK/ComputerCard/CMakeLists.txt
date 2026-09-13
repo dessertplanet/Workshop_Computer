@@ -24,9 +24,20 @@ macro (add_example _name)
 	pico_enable_stdio_usb(${_name} 0)
   endif()
 endmacro()
-  
 
 add_example(calibrated_cv_out)
+
+# EightMU.h carries both the usb_midi_host driver and the host-mode TinyUSB
+# configuration, so an 8mu card needs no extra sources - just the TinyUSB host
+# libraries, and CFG_TUSB_CONFIG_FILE to point TinyUSB at EightMU.h for its
+# configuration.
+add_example(eightmu)
+target_compile_definitions(eightmu PRIVATE CFG_TUSB_CONFIG_FILE="EightMU.h")
+target_link_libraries(eightmu pico_multicore tinyusb_host tinyusb_board)
+
+add_example(calibrated_input)
+
+add_example(card_info)
 
 add_example(midi_device)
 target_link_libraries(midi_device pico_multicore tinyusb_device tinyusb_board )
