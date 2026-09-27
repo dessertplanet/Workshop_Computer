@@ -224,9 +224,9 @@ assignments:
   "99_toolbox": []
   "101_Gnarly_C1ZZL3":
     - wild
-  "102_Nibble-KO": []
-  "103_spectral":
-    - new
+  "102_Nibble-KO":
+    - toms-pick
+  "103_spectral": []
   "104_barbers_pole":
     - new
   "105_voder":
@@ -237,13 +237,20 @@ assignments:
   "107_scintillator":
     - new
   "108_GBA":
-    - new
     - toms-pick
     - magic
+    - deep
+  "109_LightPen":
+    - new
+    - wild
   "174_Skipping_Stones":
+    - new
+  "202_ScaryLingo":
     - new
   "303_acid": []
   "355_RYK_Pitch-Vocoder": []
+  "369_Asterisk":
+    - new
   "433_sense_of_space": []
   "580_Vortex_Runner":
     - new
@@ -253,6 +260,7 @@ assignments:
   "818_Bibesque":
     - new
     - useful
+    - classic
   "833_BuzzyBee":
     - new
   "877_RYK_Tape-Sampler":
@@ -260,11 +268,4 @@ assignments:
   "910_RYK_Pitched-Delay":
     - classic
   "999_Dub_Warning":
-    - new
     - toms-pick
-  # ScaryLingo
-  202_ScaryLingo: []
-  # Asterisk
-  369_Asterisk: []
-  # LIGHTPEN
-  109_LightPen: []
