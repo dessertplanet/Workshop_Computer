@@ -34,7 +34,17 @@ toolchain.
 The Dev Container automatically installs the site-generator dependencies and
 enables this repository's pre-commit hook for the clone. The hook runs only
 when staged changes touch `releases/` and validates the exact staged snapshot,
-so other unstaged edits do not affect its result.
+so other unstaged edits do not affect its result. It also checks the same cards
+as of `HEAD` and itemizes only issues the staged changes introduce; problems
+that were already committed do not block the commit. Pull request validation is
+stricter: it fails on any error in a changed card, so the hook warns when a card
+you touched already has errors that CI will reject. To see every issue in a
+card, run `npm run validate-info -- releases/<card>`.
+
+Committing from a terminal shows live progress and the full report. GUI clients
+such as VS Code's Source Control view show only the hook's first line (the
+verdict) in their error dialog; use its "Show Command Output" button for the
+full report.
 
 To install the same hook manually outside the Dev Container:
 
@@ -49,9 +59,9 @@ Run the staged checks manually at any time with:
 npm run validate-staged
 ```
 
-The hook reports advisory warnings and blocks a commit only for malformed YAML,
-missing or invalid required core metadata, or an internal validation-rule
-crash. Installation changes only this clone's `core.hooksPath`. If another hook
+The hook reports advisory warnings and blocks a commit only for newly introduced
+malformed YAML, missing or invalid required core metadata, or an internal
+validation-rule crash. Installation changes only this clone's `core.hooksPath`. If another hook
 manager is already configured, invoke `npm run validate-staged` from that
 manager instead. `git commit --no-verify` bypasses the local hook, but pull
 request validation still runs in CI.

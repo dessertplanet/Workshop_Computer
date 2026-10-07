@@ -1,11 +1,14 @@
-// Materialize the exact Git index state for affected releases, then run the
-// staged copy of the card validator. Unstaged working-tree edits are excluded.
+// Materialize the exact Git index state for affected releases, plus the HEAD
+// state as a baseline, then run the staged copy of the card validator.
+// Unstaged working-tree edits are excluded, and issues already present in HEAD
+// are hidden so authors only see what their commit introduces.
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { color, interactive, step } from './stagedOutput.js';
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -66,6 +69,7 @@ function archive(tree, paths, destination) {
 }
 
 let temporary;
+let snapshotStep;
 try {
   const dependencyDir = path.join(sourceRoot, 'tools', 'sitegen', 'node_modules');
   if (!fs.existsSync(dependencyDir)) {
@@ -86,29 +90,43 @@ try {
     process.exit(0);
   }
 
+  if (interactive) console.log(color.bold('Checking staged program cards'));
+  snapshotStep = step(`Snapshotting ${releases.length} release${releases.length === 1 ? '' : 's'}`);
   const tree = git(['write-tree']).trim();
+  const head = spawnSync('git', ['rev-parse', '--verify', '-q', 'HEAD^{tree}'], {
+    cwd: sourceRoot, encoding: 'utf8',
+  });
+  const headTree = head.status === 0 ? head.stdout.trim() : null;
   temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'workshop-card-staged-'));
   const snapshot = path.join(temporary, 'snapshot');
   fs.mkdirSync(snapshot);
-  const paths = ['tools/sitegen/src', 'tools/sitegen/package.json'];
-  for (const release of releases) {
-    const relative = `releases/${release}`;
-    if (treeContains(tree, relative)) paths.push(relative);
-  }
-  await archive(tree, paths, snapshot);
+  const releasePaths = treeish => releases
+    .map(release => `releases/${release}`)
+    .filter(relative => treeContains(treeish, relative));
+  await archive(tree, ['tools/sitegen/src', 'tools/sitegen/package.json', ...releasePaths(tree)], snapshot);
   fs.symlinkSync(dependencyDir, path.join(snapshot, 'tools', 'sitegen', 'node_modules'), 'dir');
+  let baseline = null;
+  if (headTree) {
+    baseline = path.join(temporary, 'baseline');
+    fs.mkdirSync(baseline);
+    const paths = releasePaths(headTree);
+    if (paths.length) await archive(headTree, paths, baseline);
+  }
   const changesFile = path.join(temporary, 'changes.bin');
   fs.writeFileSync(changesFile, changes.stdout);
+  snapshotStep.done(headTree ? 'staged + HEAD' : 'staged; no HEAD to compare');
 
   const runner = spawnSync(process.execPath, [
     path.join(snapshot, 'tools', 'sitegen', 'src', 'validate', 'stagedChangeSetCli.js'),
     changesFile,
     // The snapshot only holds the changed cards; index the rest from the repo.
-    path.join(sourceRoot, 'releases'),
+    '--releases', path.join(sourceRoot, 'releases'),
+    ...(baseline ? ['--baseline', baseline] : []),
   ], { cwd: snapshot, stdio: 'inherit' });
   process.exitCode = runner.status ?? 2;
 } catch (error) {
-  console.error(`Pre-commit validation could not run: ${error.message}`);
+  snapshotStep?.fail();
+  console.error(`${color.red('Pre-commit validation could not run:')} ${error.message}`);
   process.exitCode = 2;
 } finally {
   if (temporary) fs.rmSync(temporary, { recursive: true, force: true });
