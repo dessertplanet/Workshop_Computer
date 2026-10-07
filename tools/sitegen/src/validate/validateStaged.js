@@ -1,7 +1,9 @@
-// Materialize the exact Git index state for affected releases, plus the HEAD
-// state as a baseline, then run the staged copy of the card validator.
-// Unstaged working-tree edits are excluded, and issues already present in HEAD
-// are hidden so authors only see what their commit introduces. If the
+// Materialize the exact Git index state for affected releases, plus the
+// branch point on main as a baseline, then run the staged copy of the card
+// validator. Like PR validation in CI, the whole branch is evaluated (staged
+// tree against the branch point), so the hook reports what the PR will; issues
+// already present on main are hidden. Unstaged working-tree edits are
+// excluded. If the
 // installed validator dependencies no longer match package-lock.json (e.g.
 // after pulling a Dependabot update), they are reinstalled with `npm ci` first.
 
@@ -89,6 +91,45 @@ function installDependencies(reason) {
   progress.done();
 }
 
+// Candidate refs for the main branch a PR will target, most authoritative
+// first. `git config workshop.baseRef <ref>` overrides them.
+const BASE_REF_CANDIDATES = ['upstream/main', 'origin/main', 'main'];
+
+function revParse(ref) {
+  const result = spawnSync('git', ['rev-parse', '--verify', '-q', ref], { cwd: sourceRoot, encoding: 'utf8' });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+/**
+ * The commit a PR from this branch will be compared against: the merge base
+ * with the most up-to-date available main. Falls back to HEAD, or null for an
+ * initial commit.
+ */
+function findBase() {
+  const head = revParse('HEAD^{commit}');
+  if (!head) return null;
+  const configured = spawnSync('git', ['config', '--get', 'workshop.baseRef'], { cwd: sourceRoot, encoding: 'utf8' });
+  const refs = configured.status === 0 && configured.stdout.trim() ? [configured.stdout.trim()] : BASE_REF_CANDIDATES;
+  let best = null;
+  for (const ref of refs) {
+    if (!revParse(`${ref}^{commit}`)) continue;
+    const mergeBase = spawnSync('git', ['merge-base', 'HEAD', ref], { cwd: sourceRoot, encoding: 'utf8' });
+    if (mergeBase.status !== 0) continue;
+    const commit = mergeBase.stdout.trim();
+    const distance = Number(git(['rev-list', '--count', `${commit}..HEAD`]).trim());
+    if (!best || distance < best.distance) best = { ref, commit, distance };
+  }
+  return best || { ref: 'HEAD', commit: head, distance: 0 };
+}
+
+function nameStatus(args) {
+  const result = spawnSync('git', ['diff', '--cached', '--name-status', '--find-renames=50%', '-z', ...args], {
+    cwd: sourceRoot, encoding: null, maxBuffer: 64 * 1024 * 1024,
+  });
+  if (result.status !== 0) throw new Error(result.stderr?.toString().trim() || 'Could not inspect staged changes.');
+  return result.stdout;
+}
+
 function treeContains(tree, relative) {
   return spawnSync('git', ['cat-file', '-e', `${tree}:${relative}`], {
     cwd: sourceRoot, stdio: 'ignore',
@@ -120,29 +161,27 @@ function archive(tree, paths, destination) {
 let temporary;
 let snapshotStep;
 try {
-  const changes = spawnSync('git', ['diff', '--cached', '--name-status', '--find-renames=50%', '-z'], {
-    cwd: sourceRoot, encoding: null, maxBuffer: 64 * 1024 * 1024,
-  });
-  if (changes.status !== 0) throw new Error(changes.stderr?.toString().trim() || 'Could not inspect staged changes.');
-  if (!changes.stdout.length) {
+  // Only commits touching cards are validated...
+  const staged = nameStatus([]);
+  if (!staged.length) {
     console.log('No staged changes to validate.');
     process.exit(0);
   }
-  const releases = affectedReleases(changes.stdout);
-  if (!releases.length) {
+  if (!affectedReleases(staged).length) {
     console.log('No staged program card changes; validation skipped.');
     process.exit(0);
   }
+  // ...but against everything the branch changes, as CI will see it.
+  const base = findBase();
+  const changes = base ? nameStatus([base.commit]) : staged;
+  const releases = affectedReleases(changes);
 
   if (interactive) console.log(color.bold('Checking staged program cards'));
   const drift = dependencyDrift();
   if (drift) installDependencies(drift);
   snapshotStep = step(`Snapshotting ${releases.length} release${releases.length === 1 ? '' : 's'}`);
   const tree = git(['write-tree']).trim();
-  const head = spawnSync('git', ['rev-parse', '--verify', '-q', 'HEAD^{tree}'], {
-    cwd: sourceRoot, encoding: 'utf8',
-  });
-  const headTree = head.status === 0 ? head.stdout.trim() : null;
+  const baseTree = base ? revParse(`${base.commit}^{tree}`) : null;
   temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'workshop-card-staged-'));
   const snapshot = path.join(temporary, 'snapshot');
   fs.mkdirSync(snapshot);
@@ -152,22 +191,28 @@ try {
   await archive(tree, ['tools/sitegen/src', 'tools/sitegen/package.json', ...releasePaths(tree)], snapshot);
   fs.symlinkSync(dependencyDir, path.join(snapshot, 'tools', 'sitegen', 'node_modules'), 'dir');
   let baseline = null;
-  if (headTree) {
+  if (baseTree) {
     baseline = path.join(temporary, 'baseline');
     fs.mkdirSync(baseline);
-    const paths = releasePaths(headTree);
-    if (paths.length) await archive(headTree, paths, baseline);
+    const paths = releasePaths(baseTree);
+    if (paths.length) await archive(baseTree, paths, baseline);
   }
   const changesFile = path.join(temporary, 'changes.bin');
-  fs.writeFileSync(changesFile, changes.stdout);
-  snapshotStep.done(headTree ? 'staged + HEAD' : 'staged; no HEAD to compare');
+  fs.writeFileSync(changesFile, changes);
+  // A configured base may be a raw commit id; keep labels readable.
+  const baseLabel = base && (/^[0-9a-f]{40}$/i.test(base.ref) ? base.ref.slice(0, 8) : base.ref);
+  snapshotStep.done(!base
+    ? 'staged; nothing to compare against'
+    : base.ref === 'HEAD' || baseLabel === base.commit.slice(0, 8)
+      ? `staged vs ${baseLabel}`
+      : `staged vs ${baseLabel} branch point (${base.commit.slice(0, 8)})`);
 
   const runner = spawnSync(process.execPath, [
     path.join(snapshot, 'tools', 'sitegen', 'src', 'validate', 'stagedChangeSetCli.js'),
     changesFile,
     // The snapshot only holds the changed cards; index the rest from the repo.
     '--releases', path.join(sourceRoot, 'releases'),
-    ...(baseline ? ['--baseline', baseline] : []),
+    ...(baseline ? ['--baseline', baseline, '--base-label', baseLabel] : []),
   ], { cwd: snapshot, stdio: 'inherit' });
   process.exitCode = runner.status ?? 2;
 } catch (error) {

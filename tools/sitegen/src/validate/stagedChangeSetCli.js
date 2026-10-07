@@ -1,28 +1,27 @@
-// Validate a NUL-delimited staged change list against a materialized Git-index
+// Validate a NUL-delimited change list against a materialized Git-index
 // snapshot. This file is executed from inside that snapshot.
 //
-// When a HEAD baseline directory is given, the same checks run against it and
-// diagnostics already present there are not itemized and never block the
-// commit. Existing errors are still counted, because PR validation in CI fails
-// on any error in a changed card, so the author learns that before pushing.
+// The change list covers the whole branch as CI will see it (the staged tree
+// against the branch point on main), and the baseline directory holds that
+// branch point. Only diagnostics the branch introduces are itemized and block
+// the commit. Existing errors are still counted, because PR validation in CI
+// fails on any error in a changed card, so the author learns that before
+// pushing.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseSourceFile } from './readSource.js';
-import { validateInfoYaml } from './validateInfoYaml.js';
-import { readCustomPanelManifest } from '../discover/customPanels.js';
-import { loadKnownValues } from './knownValues.js';
-import { evaluatePrRules, parseNameStatusZ } from './prRules.js';
+import { evaluateChangeSet } from './changeSet.js';
+import { parseNameStatusZ } from './prRules.js';
 import { color, printReport, step } from './stagedOutput.js';
 
-const usage = 'Usage: stagedChangeSetCli.js CHANGES_FILE [--releases RELEASES_DIR] [--baseline BASELINE_DIR]';
+const usage = 'Usage: stagedChangeSetCli.js CHANGES_FILE [--releases RELEASES_DIR] [--baseline BASELINE_DIR] [--base-label LABEL]';
 const args = process.argv.slice(2);
 const options = {};
 let changesFile;
 while (args.length) {
   const arg = args.shift();
-  if (arg === '--releases' || arg === '--baseline') {
+  if (arg === '--releases' || arg === '--baseline' || arg === '--base-label') {
     if (!args.length) {
       console.error(usage);
       process.exit(2);
@@ -39,68 +38,10 @@ if (!changesFile) {
   console.error(usage);
   process.exit(2);
 }
-const baselineRoot = options.baseline;
-
-// Rules describing the state of a release directory, which may predate this
-// commit. The remaining rules describe the change set itself and always apply.
-const RELEASE_STATE_RULES = new Set([
-  'draft-card-changed',
-  'release-readme-recommended',
-  'custom-panels',
-  'uf2-required',
-  'pico-xosc64-recommended',
-]);
+const baseLabel = options['base-label'] || 'the base commit';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const changes = parseNameStatusZ(fs.readFileSync(changesFile));
-const infoChanges = [...new Map(changes
-  .filter(change => !change.status.startsWith('D') && /(?:^|\/)info\.yaml$/i.test(change.path))
-  .map(change => [change.path, change])).values()];
-
-// Staged and baseline runs share one index so the comparison is like-for-like.
-const knownValues = loadKnownValues(options.releases || path.join(root, 'releases'));
-
-async function validateInfo(base, relative, displayPath = relative) {
-  const file = path.join(base, relative);
-  if (!fs.existsSync(file)) return null;
-  const source = await parseSourceFile(file);
-  source.file = displayPath;
-  const customPanels = await readCustomPanelManifest(path.dirname(file));
-  return validateInfoYaml(source, {
-    customPanelsPresent: customPanels.present,
-    panelIds: customPanels.items.map(item => item.id),
-    knownValues,
-    externalDiagnostics: customPanels.diagnostics.map(diagnostic => ({
-      ...diagnostic,
-      ruleId: 'custom-panel-manifest',
-      key: 'panels',
-    })),
-  });
-}
-
-// Line numbers shift with unrelated edits, so identity ignores position.
-const identity = diagnostic => [diagnostic.severity, diagnostic.ruleId, diagnostic.file ?? '', diagnostic.path ?? '', diagnostic.message].join('\0');
-
-/** Split diagnostics into those absent from the baseline and those already in it. */
-function subtractBaseline(diagnostics, baselineDiagnostics) {
-  const remaining = new Map();
-  for (const diagnostic of baselineDiagnostics) {
-    const key = identity(diagnostic);
-    remaining.set(key, (remaining.get(key) || 0) + 1);
-  }
-  const introduced = [];
-  const existing = [];
-  for (const diagnostic of diagnostics) {
-    const key = identity(diagnostic);
-    if (remaining.get(key) > 0) {
-      remaining.set(key, remaining.get(key) - 1);
-      existing.push(diagnostic);
-    } else {
-      introduced.push(diagnostic);
-    }
-  }
-  return { introduced, existing };
-}
 
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 const countBy = (diagnostics, severity) => diagnostics.filter(item => item.severity === severity).length;
@@ -119,37 +60,35 @@ function summarize(introduced, existing) {
   return parts.join(', ');
 }
 
+async function track(label, work) {
+  const progress = step(label);
+  const outcome = await work();
+  if (!outcome) progress.done('not in snapshot');
+  else (countBy(outcome.introduced, 'error') ? progress.fail : progress.done)(summarize(outcome.introduced, outcome.existing));
+  return outcome;
+}
+
+const report = await evaluateChangeSet(changes, {
+  root,
+  baselineRoot: options.baseline,
+  // The snapshot only holds the changed cards; index the rest from the repo.
+  releasesDir: options.releases,
+  track,
+});
+
 const sections = [];
 const existingIn = [];
 let introducedAll = [];
 let existingAll = [];
-
-for (const change of infoChanges) {
-  const progress = step(change.path);
-  const result = await validateInfo(root, change.path);
-  if (!result) {
-    progress.done('not in snapshot');
-    continue;
-  }
-  const baselineResult = baselineRoot ? await validateInfo(baselineRoot, change.oldPath || change.path, change.path) : null;
-  const { introduced, existing } = subtractBaseline(result.diagnostics, baselineResult?.diagnostics || []);
-  (countBy(introduced, 'error') ? progress.fail : progress.done)(summarize(introduced, existing));
-  if (existing.length) existingIn.push(path.posix.dirname(change.path));
-  existingAll = existingAll.concat(existing.map(item => ({ ...item, file: change.path })));
-  if (introduced.length) sections.push({ title: change.path, diagnostics: introduced });
-  introducedAll = introducedAll.concat(introduced.map(item => ({ ...item, file: change.path })));
+for (const entry of report.info) {
+  if (entry.existing.length) existingIn.push(path.posix.dirname(entry.file));
+  existingAll = existingAll.concat(entry.existing.map(item => ({ ...item, file: entry.file })));
+  if (entry.introduced.length) sections.push({ title: entry.file, diagnostics: entry.introduced });
+  introducedAll = introducedAll.concat(entry.introduced.map(item => ({ ...item, file: entry.file })));
 }
-
-const rulesProgress = step('Submission rules');
-const ruleDiagnostics = await evaluatePrRules(changes, { root });
-const baselineRuleDiagnostics = baselineRoot
-  ? (await evaluatePrRules(changes, { root: baselineRoot })).filter(item => RELEASE_STATE_RULES.has(item.ruleId))
-  : [];
-const rules = subtractBaseline(ruleDiagnostics, baselineRuleDiagnostics);
-(countBy(rules.introduced, 'error') ? rulesProgress.fail : rulesProgress.done)(summarize(rules.introduced, rules.existing));
-if (rules.introduced.length) sections.push({ title: 'Submission rules', diagnostics: rules.introduced });
-introducedAll = introducedAll.concat(rules.introduced);
-existingAll = existingAll.concat(rules.existing);
+if (report.rules.introduced.length) sections.push({ title: 'Submission rules', diagnostics: report.rules.introduced });
+introducedAll = introducedAll.concat(report.rules.introduced);
+existingAll = existingAll.concat(report.rules.existing);
 
 function formatDiagnostic(diagnostic, showFile) {
   const tag = diagnostic.severity === 'error' ? color.red('error') : color.yellow('warning');
@@ -194,7 +133,7 @@ const footer = [];
 if (errors && ciWarning) footer.push(color.yellow(ciWarning));
 if (existingAll.length) {
   const targets = [...new Set(existingIn)];
-  footer.push(color.dim(`Issues that already existed in HEAD are not listed${targets.length ? `; see them with: npm run validate-info -- ${targets.join(' ')}` : '.'}`));
+  footer.push(color.dim(`Issues that already existed on ${baseLabel} are not listed${targets.length ? `; see them with: npm run validate-info -- ${targets.join(' ')}` : '.'}`));
 }
 if (errors) {
   footer.push('Fix the errors above, or bypass with git commit --no-verify (CI still validates the PR).');
