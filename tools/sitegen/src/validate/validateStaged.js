@@ -1,7 +1,9 @@
 // Materialize the exact Git index state for affected releases, plus the HEAD
 // state as a baseline, then run the staged copy of the card validator.
 // Unstaged working-tree edits are excluded, and issues already present in HEAD
-// are hidden so authors only see what their commit introduces.
+// are hidden so authors only see what their commit introduces. If the
+// installed validator dependencies no longer match package-lock.json (e.g.
+// after pulling a Dependabot update), they are reinstalled with `npm ci` first.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 import { color, interactive, step } from './stagedOutput.js';
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+const sitegenDir = path.join(sourceRoot, 'tools', 'sitegen');
+const dependencyDir = path.join(sitegenDir, 'node_modules');
 
 function git(args, options = {}) {
   const result = spawnSync('git', args, { cwd: sourceRoot, encoding: 'utf8', ...options });
@@ -38,6 +42,51 @@ function affectedReleases(changeBuffer) {
     }
   }
   return [...releases].sort();
+}
+
+/**
+ * Why node_modules does not match package-lock.json, or null when it does.
+ * npm records what it installed in node_modules/.package-lock.json; optional
+ * packages for other platforms appear only in the lockfile and are ignored.
+ */
+function dependencyDrift() {
+  if (!fs.existsSync(dependencyDir)) return 'not installed';
+  let locked;
+  let installed;
+  try {
+    locked = JSON.parse(fs.readFileSync(path.join(sitegenDir, 'package-lock.json'), 'utf8')).packages || {};
+  } catch {
+    return null; // Nothing to compare against; let npm report problems itself.
+  }
+  try {
+    installed = JSON.parse(fs.readFileSync(path.join(dependencyDir, '.package-lock.json'), 'utf8')).packages || {};
+  } catch {
+    return 'install record missing';
+  }
+  for (const name of new Set([...Object.keys(locked), ...Object.keys(installed)])) {
+    if (!name) continue;
+    if (!installed[name] && locked[name]?.optional) continue;
+    if (locked[name]?.version !== installed[name]?.version) {
+      return 'package-lock.json changed since the last install';
+    }
+  }
+  return null;
+}
+
+function installDependencies(reason) {
+  const progress = step(`Installing validator dependencies (${reason})`);
+  const result = spawnSync('npm', ['ci', '--no-audit', '--no-fund'], {
+    cwd: sitegenDir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  });
+  // npm can crash ("Exit handler never called!") yet exit 0 with a partial
+  // install, so trust the install record rather than the exit status.
+  if (result.status !== 0 || dependencyDrift()) {
+    progress.fail();
+    const output = `${result.stdout || ''}${result.stderr || ''}`.trim().split('\n')
+      .filter(line => !line.startsWith('npm warn')).slice(-15).join('\n');
+    throw new Error(`npm ci failed${result.error ? ` (${result.error.message})` : ''}. Run it manually: npm ci --prefix tools/sitegen${output ? `\n${output}` : ''}`);
+  }
+  progress.done();
 }
 
 function treeContains(tree, relative) {
@@ -71,11 +120,6 @@ function archive(tree, paths, destination) {
 let temporary;
 let snapshotStep;
 try {
-  const dependencyDir = path.join(sourceRoot, 'tools', 'sitegen', 'node_modules');
-  if (!fs.existsSync(dependencyDir)) {
-    throw new Error('Validator dependencies are missing. Run: npm ci --prefix tools/sitegen');
-  }
-
   const changes = spawnSync('git', ['diff', '--cached', '--name-status', '--find-renames=50%', '-z'], {
     cwd: sourceRoot, encoding: null, maxBuffer: 64 * 1024 * 1024,
   });
@@ -91,6 +135,8 @@ try {
   }
 
   if (interactive) console.log(color.bold('Checking staged program cards'));
+  const drift = dependencyDrift();
+  if (drift) installDependencies(drift);
   snapshotStep = step(`Snapshotting ${releases.length} release${releases.length === 1 ? '' : 's'}`);
   const tree = git(['write-tree']).trim();
   const head = spawnSync('git', ['rev-parse', '--verify', '-q', 'HEAD^{tree}'], {
