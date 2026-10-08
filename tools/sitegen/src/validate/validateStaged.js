@@ -3,9 +3,9 @@
 // validator. Like PR validation in CI, the whole branch is evaluated (staged
 // tree against the branch point), so the hook reports what the PR will; issues
 // already present on main are hidden. Unstaged working-tree edits are
-// excluded. If the
-// installed validator dependencies no longer match package-lock.json (e.g.
-// after pulling a Dependabot update), they are reinstalled with `npm ci` first.
+// excluded. If the installed validator dependencies no longer match
+// package-lock.json (e.g. after pulling a Dependabot update), they are
+// reinstalled with `npm ci` first.
 
 import fs from 'node:fs';
 import os from 'node:os';
