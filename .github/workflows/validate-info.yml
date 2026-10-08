@@ -1,13 +1,15 @@
 name: Validate info.yaml
 
+# Runs on every PR (no path filter) so it can be a required status check: a
+# required check that never runs blocks the merge. PRs that touch no program
+# card succeed immediately without a report.
 on:
   pull_request:
+    # ready_for_review refreshes the eligibility report when a draft is published.
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
       - workshop-ops
-    paths:
-      - 'releases/**'
-      - 'tools/sitegen/src/curation/flairs.yml'
 
 permissions:
   contents: read
@@ -43,6 +45,10 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # The same change-set validation (src/validate/changeSet.js) backs the
           # pre-commit hook, so local commits and this check agree.

@@ -178,3 +178,16 @@ export function reportOtherRulesGithub(report) {
 }
 
 export const reporters = { text: reportText, json: reportJson, github: reportGithub, markdown: reportMarkdown };
+
+/** Markdown section describing whether a PR would merge without review. */
+export function reportEligibilityMarkdown(eligibility) {
+  const lines = ['## Auto-merge eligibility', ''];
+  if (eligibility.eligible) {
+    lines.push(`✅ **Eligible.** ${escapeMarkdown(eligibility.basis)}`);
+  } else {
+    lines.push('➖ **Not eligible** — a maintainer will review this PR:', '');
+    for (const reason of eligibility.reasons) lines.push(`- ${escapeMarkdown(reason)}`);
+  }
+  lines.push('', '_Report only: nothing is merged automatically yet._', '');
+  return lines.join('\n');
+}
