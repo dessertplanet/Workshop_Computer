@@ -90,7 +90,6 @@ async function validateInfo(base, relative, displayPath, knownValues) {
  *                 diagnostic as introduced
  *   releasesDir   full releases/ directory indexing other cards' values for
  *                 the similar-values rule (defaults to root/releases)
- *   baseFlairs    parsed base flairs.yml, for the synchronized-flairs exception
  *   track         optional async (label, work) => result wrapper around each
  *                 unit of work, for progress reporting
  *
@@ -102,7 +101,6 @@ export async function evaluateChangeSet(changes, {
   root,
   baselineRoot = null,
   releasesDir = path.join(root, 'releases'),
-  baseFlairs = null,
   track = (label, work) => work(),
 } = {}) {
   // Proposed and baseline runs share one index so the comparison is like-for-like.
@@ -122,7 +120,7 @@ export async function evaluateChangeSet(changes, {
   }
 
   const rules = await track('Submission rules', async () => {
-    const diagnostics = await evaluatePrRules(changes, { root, baseFlairs });
+    const diagnostics = await evaluatePrRules(changes, { root });
     const baseline = baselineRoot
       ? (await evaluatePrRules(changes, { root: baselineRoot })).filter(item => RELEASE_STATE_RULES.has(item.ruleId))
       : [];

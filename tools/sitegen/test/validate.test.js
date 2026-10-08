@@ -86,7 +86,7 @@ test('PR Markdown report groups diagnostics by changed info.yaml', () => {
     ],
   });
   assert.match(markdown, /## ❌ Program card PR validation failed/);
-  assert.match(markdown, /PR validation is intended for maintainers, not card authors/);
+  assert.match(markdown, /Errors must be fixed before this PR can merge\. Warnings are suggestions/);
   assert.equal((markdown.match(/\| Severity \|/g) || []).length, 2);
   assert.match(markdown, /### `42_test\/info\.yaml`/);
   assert.match(markdown, /### `43_clean\/info\.yaml`/);

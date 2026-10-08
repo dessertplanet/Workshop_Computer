@@ -7,20 +7,21 @@
 // writes no report.
 //
 // Environment:
-//   BASE_SHA               base commit; enables the synchronized-flairs
-//                          exception and the auto-merge eligibility report
+//   BASE_SHA               base commit; separates issues the PR introduces
+//                          from existing ones, and enables the auto-merge
+//                          eligibility report
 //   PR_AUTHOR              PR author login            (eligibility report)
 //   PR_AUTHOR_ASSOCIATION  PR author_association      (eligibility report)
 //   PR_DRAFT               "true" for draft PRs       (eligibility report)
 //   GITHUB_REPOSITORY, GITHUB_TOKEN                   (card committer lookup)
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import YAML from 'yaml';
 import { evaluateChangeSet } from './changeSet.js';
 import { fetchCardCommitters } from './cardCommitters.js';
+import { archiveTree, treeContains } from './gitTree.js';
 import { cardScope, evaluateMergeEligibility, touchesNoCards } from './mergeEligibility.js';
 import { parseNameStatusZ } from './prRules.js';
 import {
@@ -29,22 +30,25 @@ import {
 
 const summaryFile = process.argv[2];
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
-const flairsPath = 'tools/sitegen/src/curation/flairs.yml';
 
 const changes = parseNameStatusZ(fs.readFileSync(0));
 if (touchesNoCards(changes)) {
   console.log('No program card changes; card validation skipped.');
   process.exit(0);
 }
-let baseFlairs = null;
-if (process.env.BASE_SHA && changes.some(change => change.path === flairsPath || change.oldPath === flairsPath)) {
-  try {
-    const source = execFileSync('git', ['show', `${process.env.BASE_SHA}:${flairsPath}`], { cwd: root, encoding: 'utf8' });
-    baseFlairs = YAML.parse(source) || {};
-  } catch {}
+// Extract the touched cards as they are on the base branch, so the report can
+// tell which issues this PR introduces. Blocking still counts every error.
+const base = process.env.BASE_SHA;
+const { cards } = cardScope(changes);
+let baselineRoot = null;
+if (base) {
+  baselineRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workshop-pr-base-'));
+  process.on('exit', () => fs.rmSync(baselineRoot, { recursive: true, force: true }));
+  const paths = cards.map(card => `releases/${card}`).filter(relative => treeContains(root, base, relative));
+  if (paths.length) await archiveTree(root, base, paths, baselineRoot);
 }
 
-const report = await evaluateChangeSet(changes, { root, baseFlairs });
+const report = await evaluateChangeSet(changes, { root, baselineRoot });
 const results = report.info.map(entry => entry.result);
 const ruleDiagnostics = report.rules.diagnostics;
 const otherRules = {
@@ -63,19 +67,9 @@ const errorCount = results.reduce((count, result) => count + result.errorCount, 
 
 // Report-only: show whether this PR would be merged without review.
 let eligibility = null;
-const base = process.env.BASE_SHA;
 if (base && process.env.PR_AUTHOR) {
-  const { cards } = cardScope(changes);
   const card = cards.length === 1 ? cards[0] : null;
-  const treeHas = (ref, relative) => {
-    try {
-      execFileSync('git', ['cat-file', '-e', `${ref}:${relative}`], { cwd: root, stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  const cardOnBase = card ? treeHas(base, `releases/${card}`) : false;
+  const cardOnBase = card ? treeContains(root, base, `releases/${card}`) : false;
   const committers = card && cardOnBase && process.env.GITHUB_REPOSITORY
     ? await fetchCardCommitters({ repo: process.env.GITHUB_REPOSITORY, card, ref: base, token: process.env.GITHUB_TOKEN })
     : null;
@@ -85,6 +79,7 @@ if (base && process.env.PR_AUTHOR) {
     association: process.env.PR_AUTHOR_ASSOCIATION || 'NONE',
     draft: process.env.PR_DRAFT === 'true',
     errorCount,
+    introduced: [...report.info.flatMap(entry => entry.introduced), ...report.rules.introduced],
     cardOnBase,
     cardInHead: card ? fs.existsSync(path.join(root, 'releases', card)) : false,
     committers,

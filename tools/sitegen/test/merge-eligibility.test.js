@@ -120,3 +120,14 @@ test('eligibility markdown explains the outcome', () => {
   assert.match(markdown, /- The pull request is a draft\./);
   assert.match(markdown, /Report only/);
 });
+
+test('introduced near-duplicate values and missing firmware need a maintainer, other warnings do not', () => {
+  const finding = (ruleId, message) => ({ severity: 'warning', ruleId, message });
+  assert.match(check({ introduced: [finding('similar-values', 'Tag "phaser" looks like existing "phase" (2 cards).')] }).reasons.join('\n'),
+    /Needs a maintainer's look: Tag "phaser"/);
+  assert.match(check({ cardOnBase: false, introduced: [finding('uf2-required', 'No UF2 firmware file exists anywhere under releases/42_card/.')] }).reasons.join('\n'),
+    /Needs a maintainer's look: No UF2/);
+  for (const ruleId of ['metadata-completeness', 'pico-xosc64-recommended', 'ajv-schema', 'draft-card-changed']) {
+    assert.equal(check({ introduced: [finding(ruleId, 'advice')] }).eligible, true, ruleId);
+  }
+});

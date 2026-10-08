@@ -122,4 +122,6 @@ test('staged validator checks the whole branch against its branch point on main'
   const result = run(process.execPath, ['tools/sitegen/src/validate/validateStaged.js'], root);
   assert.equal(result.status, 1, result.stderr || result.stdout);
   assert.match(result.stdout.split('\n')[0], /Commit blocked: 1 new error.*releases\/42_test\/info\.yaml \[Creator\]/);
+  assert.match(result.stdout, /Won't merge automatically: Changes 2 cards \(42_test, 43_other\)/);
+  assert.doesNotMatch(result.stdout, /must not/);
 });

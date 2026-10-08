@@ -10,8 +10,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { archiveTree, treeContains } from './gitTree.js';
 import { color, interactive, step } from './stagedOutput.js';
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -130,34 +131,6 @@ function nameStatus(args) {
   return result.stdout;
 }
 
-function treeContains(tree, relative) {
-  return spawnSync('git', ['cat-file', '-e', `${tree}:${relative}`], {
-    cwd: sourceRoot, stdio: 'ignore',
-  }).status === 0;
-}
-
-function archive(tree, paths, destination) {
-  return new Promise((resolve, reject) => {
-    const gitArchive = spawn('git', ['archive', '--format=tar', tree, '--', ...paths], {
-      cwd: sourceRoot, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const tar = spawn('tar', ['-xf', '-', '-C', destination], { stdio: ['pipe', 'ignore', 'pipe'] });
-    gitArchive.stdout.pipe(tar.stdin);
-    let errors = '';
-    gitArchive.stderr.on('data', chunk => { errors += chunk; });
-    tar.stderr.on('data', chunk => { errors += chunk; });
-    let gitStatus;
-    let tarStatus;
-    const finish = () => {
-      if (gitStatus === undefined || tarStatus === undefined) return;
-      if (gitStatus === 0 && tarStatus === 0) resolve();
-      else reject(new Error(errors.trim() || 'Could not materialize the staged snapshot.'));
-    };
-    gitArchive.on('close', code => { gitStatus = code; finish(); });
-    tar.on('close', code => { tarStatus = code; finish(); });
-  });
-}
-
 let temporary;
 let snapshotStep;
 try {
@@ -187,15 +160,15 @@ try {
   fs.mkdirSync(snapshot);
   const releasePaths = treeish => releases
     .map(release => `releases/${release}`)
-    .filter(relative => treeContains(treeish, relative));
-  await archive(tree, ['tools/sitegen/src', 'tools/sitegen/package.json', ...releasePaths(tree)], snapshot);
+    .filter(relative => treeContains(sourceRoot, treeish, relative));
+  await archiveTree(sourceRoot, tree, ['tools/sitegen/src', 'tools/sitegen/package.json', ...releasePaths(tree)], snapshot);
   fs.symlinkSync(dependencyDir, path.join(snapshot, 'tools', 'sitegen', 'node_modules'), 'dir');
   let baseline = null;
   if (baseTree) {
     baseline = path.join(temporary, 'baseline');
     fs.mkdirSync(baseline);
     const paths = releasePaths(baseTree);
-    if (paths.length) await archive(baseTree, paths, baseline);
+    if (paths.length) await archiveTree(sourceRoot, baseTree, paths, baseline);
   }
   const changesFile = path.join(temporary, 'changes.bin');
   fs.writeFileSync(changesFile, changes);

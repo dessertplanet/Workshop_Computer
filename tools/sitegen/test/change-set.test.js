@@ -66,8 +66,27 @@ test('baseline diagnostics are existing, including across renames', async t => {
   assert.ok(!entry.introduced.some(item => item.path === 'Creator'));
   // The full result still carries every diagnostic for consumers that block on all errors.
   assert.ok(entry.result.diagnostics.some(item => item.path === 'Creator'));
-  // A change-scoped rule is never subtracted, even if the baseline would also report it.
-  assert.ok(report.rules.introduced.some(item => item.ruleId === 'multiple-release-directories'));
+});
+
+test('release-state rules already true on the base are existing, not introduced', async t => {
+  const root = await fixture(t);
+  const baselineRoot = await fixture(t);
+  await write(baselineRoot, 'releases/42_card/info.yaml', validInfo);
+  await write(root, 'releases/42_card/info.yaml', `${validInfo}# comment\n`);
+  await write(root, 'releases/42_card/README.md', '# Card');
+  const updated = await evaluateChangeSet([
+    { status: 'M', path: 'releases/42_card/info.yaml' },
+    { status: 'A', path: 'releases/42_card/README.md' },
+  ], { root, baselineRoot });
+  assert.ok(updated.rules.existing.some(item => item.ruleId === 'uf2-required'));
+  assert.ok(!updated.rules.introduced.some(item => item.ruleId === 'uf2-required'));
+
+  // The same card is new when the base does not have it.
+  const added = await evaluateChangeSet([
+    { status: 'A', path: 'releases/42_card/info.yaml' },
+    { status: 'A', path: 'releases/42_card/README.md' },
+  ], { root, baselineRoot: await fixture(t) });
+  assert.ok(added.rules.introduced.some(item => item.ruleId === 'uf2-required'));
 });
 
 test('PR validation CLI fails on any error in a changed card, including pre-existing ones', async t => {
@@ -94,4 +113,48 @@ test('PR validation CLI fails on any error in a changed card, including pre-exis
   assert.match(result.stdout, /::error file=releases\/42_test\/info\.yaml/);
   const summary = await fs.readFile(path.join(root, 'summary.md'), 'utf8');
   assert.match(summary, /Program card PR validation failed/);
+});
+
+test('PR validation CLI reports eligibility against the PR base', async t => {
+  const root = await fixture(t);
+  const run = (args, options = {}) => spawnSync(args[0], args.slice(1), { cwd: root, encoding: 'utf8', ...options });
+  await fs.mkdir(path.join(root, 'tools', 'sitegen'), { recursive: true });
+  await fs.cp(path.join(repositoryRoot, 'tools', 'sitegen', 'src'), path.join(root, 'tools', 'sitegen', 'src'), { recursive: true });
+  await fs.symlink(path.join(repositoryRoot, 'tools', 'sitegen', 'node_modules'), path.join(root, 'tools', 'sitegen', 'node_modules'), 'dir');
+  assert.equal(run(['git', 'init', '-q']).status, 0);
+  run(['git', 'config', 'user.email', 'test@example.com']);
+  run(['git', 'config', 'user.name', 'Test']);
+  for (const card of ['01_a', '02_b']) {
+    await write(root, `releases/${card}/info.yaml`, `${validInfo}tags: [phase]\n`);
+    await write(root, `releases/${card}/card.uf2`, card);
+  }
+  run(['git', 'add', '.']);
+  assert.equal(run(['git', 'commit', '-qm', 'base']).status, 0);
+  const base = run(['git', 'rev-parse', 'HEAD']).stdout.trim();
+
+  async function propose(card, tags, { firmware = true } = {}) {
+    run(['git', 'checkout', '-q', '--detach', base]);
+    await write(root, `releases/${card}/info.yaml`, `${validInfo}tags: [${tags}]\n`);
+    if (firmware) await write(root, `releases/${card}/card.uf2`, card);
+    run(['git', 'add', '.']);
+    run(['git', 'commit', '-qm', card]);
+    const diff = spawnSync('git', ['diff', '--name-status', '-z', `${base}...HEAD`], { cwd: root });
+    const result = spawnSync(process.execPath, ['tools/sitegen/src/validate/prValidationCli.js', 'summary.md'], {
+      cwd: root, input: diff.stdout, encoding: 'utf8',
+      env: { ...process.env, BASE_SHA: base, PR_AUTHOR: 'maker', PR_AUTHOR_ASSOCIATION: 'CONTRIBUTOR', GITHUB_REPOSITORY: '' },
+    });
+    return { result, summary: await fs.readFile(path.join(root, 'summary.md'), 'utf8') };
+  }
+
+  const clean = await propose('03_clean', 'phase');
+  assert.equal(clean.result.status, 0, clean.result.stdout);
+  assert.match(clean.summary, /✅ \*\*Eligible\.\*\* New card from maker/);
+
+  const nearDuplicate = await propose('04_typo', 'phaser');
+  assert.equal(nearDuplicate.result.status, 0, 'a review warning does not fail the check');
+  assert.match(nearDuplicate.summary, /Not eligible/);
+  assert.match(nearDuplicate.summary, /Needs a maintainer's look: Tag "phaser" looks like existing "phase"/);
+
+  const noFirmware = await propose('05_bare', 'phase', { firmware: false });
+  assert.match(noFirmware.summary, /Needs a maintainer's look: No UF2 firmware file exists/);
 });

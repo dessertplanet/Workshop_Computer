@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { evaluateChangeSet } from './changeSet.js';
+import { reviewReasons, scopeReasons } from './mergeEligibility.js';
 import { parseNameStatusZ } from './prRules.js';
 import { color, printReport, step } from './stagedOutput.js';
 
@@ -131,6 +132,9 @@ if (errors) {
 
 const footer = [];
 if (errors && ciWarning) footer.push(color.yellow(ciWarning));
+// The author is unknown locally, so only the branch's own content is assessed.
+const manualReview = [...scopeReasons(changes), ...reviewReasons(introducedAll)];
+if (manualReview.length) footer.push(color.dim(`Won't merge automatically: ${manualReview.join(' ')}`));
 if (existingAll.length) {
   const targets = [...new Set(existingIn)];
   footer.push(color.dim(`Issues that already existed on ${baseLabel} are not listed${targets.length ? `; see them with: npm run validate-info -- ${targets.join(' ')}` : '.'}`));
