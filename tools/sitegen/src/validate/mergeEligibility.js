@@ -70,15 +70,15 @@ export function reviewReasons(introduced) {
  *   introduced       diagnostics the PR introduces relative to its base
  *   cardOnBase       the card's directory exists on the base branch
  *   cardInHead       the card's directory exists in the PR
- *   committers       logins that have committed to the card on the base
- *                    branch, or null when they could not be determined
+ *   authorCommitted  the author has committed to the card on the base
+ *                    branch, or null when that could not be determined
  *
  * Returns { eligible, card, reasons, basis }: `reasons` explain an ineligible
  * result, `basis` explains an eligible one.
  */
 export function evaluateMergeEligibility({
   changes, author, association, draft = false, errorCount = 0, introduced = [],
-  cardOnBase = false, cardInHead = true, committers = null,
+  cardOnBase = false, cardInHead = true, authorCommitted = null,
 }) {
   const reasons = [...scopeReasons(changes), ...reviewReasons(introduced)];
   const { cards } = cardScope(changes);
@@ -96,9 +96,9 @@ export function evaluateMergeEligibility({
       } else {
         reasons.push(`New card from ${author}, whose first contribution needs a maintainer's review.`);
       }
-    } else if (committers === null) {
+    } else if (authorCommitted === null) {
       reasons.push(`Could not determine who has committed to ${card}.`);
-    } else if (committers.includes(author)) {
+    } else if (authorCommitted) {
       basis = `${author} has committed to ${card} before.`;
     } else {
       reasons.push(`${author} has not committed to ${card} before; updates from new authors need a maintainer's review.`);

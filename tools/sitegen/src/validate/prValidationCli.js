@@ -20,7 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { evaluateChangeSet } from './changeSet.js';
-import { fetchCardCommitters } from './cardCommitters.js';
+import { hasCommittedToCard } from './cardCommitters.js';
 import { archiveTree, treeContains } from './gitTree.js';
 import { cardScope, evaluateMergeEligibility, touchesNoCards } from './mergeEligibility.js';
 import { parseNameStatusZ } from './prRules.js';
@@ -70,8 +70,10 @@ let eligibility = null;
 if (base && process.env.PR_AUTHOR) {
   const card = cards.length === 1 ? cards[0] : null;
   const cardOnBase = card ? treeContains(root, base, `releases/${card}`) : false;
-  const committers = card && cardOnBase && process.env.GITHUB_REPOSITORY
-    ? await fetchCardCommitters({ repo: process.env.GITHUB_REPOSITORY, card, ref: base, token: process.env.GITHUB_TOKEN })
+  const authorCommitted = card && cardOnBase && process.env.GITHUB_REPOSITORY
+    ? await hasCommittedToCard({
+      repo: process.env.GITHUB_REPOSITORY, card, ref: base, author: process.env.PR_AUTHOR, token: process.env.GITHUB_TOKEN,
+    })
     : null;
   eligibility = evaluateMergeEligibility({
     changes,
@@ -82,7 +84,7 @@ if (base && process.env.PR_AUTHOR) {
     introduced: [...report.info.flatMap(entry => entry.introduced), ...report.rules.introduced],
     cardOnBase,
     cardInHead: card ? fs.existsSync(path.join(root, 'releases', card)) : false,
-    committers,
+    authorCommitted,
   });
   console.log(`Auto-merge eligibility (report only): ${eligibility.eligible ? 'eligible' : 'not eligible'}`);
   for (const line of eligibility.eligible ? [eligibility.basis] : eligibility.reasons) console.log(`  ${line}`);

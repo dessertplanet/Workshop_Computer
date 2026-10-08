@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluateMergeEligibility, touchesNoCards } from '../src/validate/mergeEligibility.js';
-import { fetchCardCommitters } from '../src/validate/cardCommitters.js';
+import { hasCommittedToCard } from '../src/validate/cardCommitters.js';
 import { reportEligibilityMarkdown } from '../src/validate/reporters/index.js';
 
 const update = { status: 'M', path: 'releases/42_card/info.yaml' };
@@ -14,7 +14,7 @@ function check(overrides) {
     association: 'CONTRIBUTOR',
     cardOnBase: true,
     cardInHead: true,
-    committers: ['maker'],
+    authorCommitted: true,
     ...overrides,
   });
 }
@@ -27,23 +27,23 @@ test('an update from a past committer to the card is eligible', () => {
 });
 
 test('an update from someone who has not committed to the card is not eligible', () => {
-  const result = check({ author: 'stranger', association: 'COLLABORATOR' });
+  const result = check({ author: 'stranger', association: 'COLLABORATOR', authorCommitted: false });
   assert.equal(result.eligible, false);
   assert.match(result.reasons.join('\n'), /stranger has not committed to 42_card/);
 });
 
-test('an unknown committer list fails closed', () => {
-  const result = check({ committers: null });
+test('an unknown commit history fails closed', () => {
+  const result = check({ authorCommitted: null });
   assert.equal(result.eligible, false);
   assert.match(result.reasons.join('\n'), /Could not determine/);
 });
 
 test('a new card is eligible only once the author has contributed before', () => {
   for (const association of ['CONTRIBUTOR', 'COLLABORATOR', 'MEMBER', 'OWNER']) {
-    assert.equal(check({ cardOnBase: false, committers: null, association }).eligible, true, association);
+    assert.equal(check({ cardOnBase: false, authorCommitted: null, association }).eligible, true, association);
   }
   for (const association of ['FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE']) {
-    const result = check({ cardOnBase: false, committers: null, association });
+    const result = check({ cardOnBase: false, authorCommitted: null, association });
     assert.equal(result.eligible, false, association);
     assert.match(result.reasons.join('\n'), /first contribution needs a maintainer/);
   }
@@ -73,7 +73,7 @@ test('website and curation updates are never eligible, whoever opens them', () =
   ];
   for (const changes of websiteOnly) {
     for (const association of ['OWNER', 'COLLABORATOR', 'CONTRIBUTOR']) {
-      const result = check({ changes, association, committers: ['maker'] });
+      const result = check({ changes, association, authorCommitted: true });
       assert.equal(result.eligible, false, `${changes[0].path} by ${association}`);
       assert.match(result.reasons.join('\n'), /Changes no program card/);
     }
@@ -94,23 +94,24 @@ test('curation-only and tooling-only PRs touch no cards', () => {
   assert.equal(touchesNoCards([update]), false);
 });
 
-test('card committers are collected across pages and fail closed on API errors', async () => {
-  const pages = {
-    first: { body: [{ author: { login: 'maker' } }, { author: null }], link: '<https://api.github.com/next>; rel="next"' },
-    'https://api.github.com/next': { body: [{ author: { login: 'helper' } }, { author: { login: 'maker' } }], link: null },
-  };
+test('the committer lookup asks GitHub about the author and fails closed', async () => {
   const requested = [];
-  const fetchImpl = async url => {
+  const respond = body => async url => {
     requested.push(url);
-    const page = url.startsWith('https://api.github.com/repos/') ? pages.first : pages[url];
-    return { ok: true, json: async () => page.body, headers: { get: () => page.link } };
+    return { ok: true, json: async () => body };
   };
-  const logins = await fetchCardCommitters({ repo: 'owner/repo', card: '42_card', ref: 'abc', fetchImpl });
-  assert.deepEqual(logins, ['helper', 'maker']);
-  assert.match(requested[0], /repos\/owner\/repo\/commits\?sha=abc&path=releases%2F42_card&per_page=100/);
+  const lookup = overrides => hasCommittedToCard({ repo: 'owner/repo', card: '42_card', ref: 'abc', author: 'maker', ...overrides });
 
-  const failing = async () => ({ ok: false, json: async () => ({}), headers: { get: () => null } });
-  assert.equal(await fetchCardCommitters({ repo: 'owner/repo', card: '42_card', ref: 'abc', fetchImpl: failing }), null);
+  assert.equal(await lookup({ fetchImpl: respond([{ sha: '1' }]) }), true);
+  assert.match(requested[0], /repos\/owner\/repo\/commits\?sha=abc&path=releases%2F42_card&author=maker&per_page=1$/);
+  assert.equal(await lookup({ fetchImpl: respond([]) }), false);
+
+  const failing = async () => ({ ok: false, json: async () => ({}) });
+  assert.equal(await lookup({ fetchImpl: failing }), null);
+  const throwing = async () => { throw new Error('offline'); };
+  assert.equal(await lookup({ fetchImpl: throwing }), null);
+  // An email would match the commit's self-reported address, so it is refused.
+  assert.equal(await lookup({ author: 'maker@example.com', fetchImpl: respond([{ sha: '1' }]) }), null);
 });
 
 test('eligibility markdown explains the outcome', () => {
