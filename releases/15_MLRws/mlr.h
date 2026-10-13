@@ -64,6 +64,11 @@ extern "C" {
 #define MLR_SEEK_PRIME_SAMPLES (MLR_KEYFRAME_INTERVAL * 2)  /* post-seek refill to cover direction changes */
 #define MLR_PERF_UI_SECTIONS   8
 
+/* CV rotation: the seam (recording end -> start) a rotation can put inside a
+ * cycle is faded out and back in over this many source samples each side. */
+#define MLR_SEAM_XFADE_SAMPLES 128u
+#define MLR_ROT_HIST_LEN       8u     /* power of two */
+
 #define MLR_TRANS_HANDOFF 0x01u
 #define MLR_TRANS_FADE    0x02u
 #define MLR_TRANS_XFADE   0x04u
@@ -228,6 +233,12 @@ typedef struct {
 	uint32_t fill;         /* bytes in current page */
 } mlr_page_ring_t;
 
+/* Rotation used for one core-1 fill wrap (core 1 only). */
+typedef struct {
+	uint32_t ring_idx;  /* PCM ring index of the first sample after the wrap */
+	uint32_t rot;
+} mlr_rot_event_t;
+
 /* Per-track state */
 typedef struct {
 	/* metadata (from flash header) */
@@ -277,6 +288,20 @@ typedef struct {
 	 * heavy check while the playhead is still far from the wrap boundary. */
 	volatile uint32_t wrap_preview_arm_playhead;
 	volatile uint8_t  transition_flags;
+
+	/* CV rotation. splice_q16 (written by core 0) is how far the whole
+	 * recording is rotated, as a Q16 fraction of the track length: grid
+	 * position v plays audio (v + rot) mod length, and a loop is a fixed grid
+	 * window over the rotated material. Core 1 latches it into fill_rot at each
+	 * fill wrap and each seek; the playhead, cuts and LEDs stay in grid
+	 * positions. */
+	volatile uint16_t splice_q16;
+	uint32_t          fill_rot;               /* samples, for the cycle being filled */
+	mlr_rot_event_t   rot_hist[MLR_ROT_HIST_LEN];  /* recent fill wraps (core 1 only) */
+	uint8_t           rot_hist_w;
+	uint8_t           rot_hist_n;
+	volatile uint32_t wrap_preview_ring_idx;  /* fill wrap the preview was rendered for */
+	uint32_t          wrap_preview_rot;
 
 	/* loop-a-section: sub-loop boundaries (set by core 0) */
 	bool           loop_active;
@@ -407,6 +432,13 @@ extern volatile uint32_t mlr_perf_flash_erase_max_us;
 extern volatile uint32_t mlr_perf_flash_program_max_us;
 extern volatile uint32_t mlr_perf_adc_mux_resets;
 extern volatile uint32_t mlr_perf_adc_fifo_level_max;
+/* CV rotation diagnostics. */
+extern volatile uint32_t mlr_perf_rot_seam_fades;    /* seams faded out and back in */
+extern volatile uint32_t mlr_perf_rot_seam_hard;     /* seams too close to the cycle edge to smooth */
+extern volatile uint32_t mlr_perf_rot_preview_waits; /* wrap preview skipped: next wrap's rotation unknown */
+extern volatile uint32_t mlr_perf_rot_xfade_skips;   /* wrap crossfade skipped: preview for another wrap */
+extern volatile uint32_t mlr_perf_rot_map_errors;    /* decoder not at the rotated audio position */
+extern volatile uint32_t mlr_perf_rot_samples;       /* samples checked */
 void mlr_perf_reset(void);
 void mlr_perf_count_grid_frame_drop(void);
 void mlr_perf_count_monome_ws_event_drop(void);

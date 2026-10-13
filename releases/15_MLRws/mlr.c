@@ -19,6 +19,11 @@
 #define XIP_BASE 0x10000000
 #endif
 
+/* Cold code kept in flash instead of copied to RAM (copy_to_ram binary).
+ * Only for functions core 0 never runs while core 1 may be erasing flash:
+ * boot-time init, or core-1-only work such as the sample-manager rescan. */
+#define MLR_COLD_FUNC __attribute__((section(".flashdata.mlr_cold")))
+
 /* ------------------------------------------------------------------ */
 /* Globals                                                            */
 /* ------------------------------------------------------------------ */
@@ -90,6 +95,12 @@ volatile uint32_t mlr_perf_flash_erase_max_us;
 volatile uint32_t mlr_perf_flash_program_max_us;
 volatile uint32_t mlr_perf_adc_mux_resets;
 volatile uint32_t mlr_perf_adc_fifo_level_max;
+volatile uint32_t mlr_perf_rot_seam_fades;
+volatile uint32_t mlr_perf_rot_seam_hard;
+volatile uint32_t mlr_perf_rot_preview_waits;
+volatile uint32_t mlr_perf_rot_xfade_skips;
+volatile uint32_t mlr_perf_rot_map_errors;
+volatile uint32_t mlr_perf_rot_samples;
 
 static inline void perf_update_max(volatile uint32_t *dst, uint32_t value)
 {
@@ -376,6 +387,32 @@ static inline uint32_t track_hdr_flash_off(int t)
 	return MLR_TRACK_OFFSET(t);
 }
 
+#ifdef MLR_PERF_PROFILING
+#define PERF_ROT(counter) (mlr_perf_rot_##counter++)
+#else
+#define PERF_ROT(counter) ((void)0)
+#endif
+#ifdef MLR_PERF_PROFILING
+/* Self-check: the fill decoder's raw audio position must equal the rotated
+ * position for grid position v. */
+#define PERF_ROT_CHECK(tr, v, ws, we) do { \
+	uint32_t raw_ = (tr)->fill_byte_pos * 2u + ((tr)->fill_high_nyb ? 1u : 0u); \
+	mlr_perf_rot_samples++; \
+	if (raw_ != fill_audio_pos((tr), (v), (ws), (we))) mlr_perf_rot_map_errors++; \
+} while (0)
+#else
+#define PERF_ROT_CHECK(tr, v, ws, we) ((void)0)
+#endif
+
+
+/* Where pcm.w/r reset or the fill restarts from scratch. */
+static inline void fill_rot_reset(mlr_track_t *tr)
+{
+	tr->fill_rot = 0;
+	tr->rot_hist_w = 0;
+	tr->rot_hist_n = 0;
+}
+
 static inline uint32_t pcm_ring_avail(mlr_pcm_ring_t *r)
 {
 	return r->w - r->r;
@@ -580,6 +617,12 @@ static inline void maybe_start_wrap_preview_xfade(mlr_track_t *tr, uint32_t wrap
 
 	uint32_t needed = source_span * 2u;
 	if (tr->pcm.w - tr->pcm.r < needed) return;
+	/* The preview must be for this wrap (its rotation is per wrap). */
+	int32_t ahead = (int32_t)(tr->wrap_preview_ring_idx - tr->pcm.r);
+	if (ahead <= 0 || (uint32_t)ahead > needed) {
+		PERF_ROT(xfade_skips);
+		return;
+	}
 
 	tr->seek_preview_count = MLR_SEEK_PREVIEW_SAMPLES;
 	tr->seek_xfade_pos = 0;
@@ -785,7 +828,7 @@ void mlr_choke_group_set_loop(int t, int a, int b)
 /* Init — load track metadata from flash, pre-fill rings              */
 /* ------------------------------------------------------------------ */
 
-void mlr_init(void)
+void MLR_COLD_FUNC mlr_init(void)
 {
 	memset(mlr_tracks, 0, sizeof(mlr_tracks));
 	memset(&mlr_page_ring, 0, sizeof(mlr_page_ring));
@@ -810,6 +853,7 @@ void mlr_init(void)
 		mlr_track_t *tr = &mlr_tracks[t];
 		tr->pcm.w = 0;
 		tr->pcm.r = 0;
+		fill_rot_reset(tr);
 
 		/* default speed/reverse for all tracks (including empty tracks) */
 		tr->speed_shift = 0;
@@ -873,7 +917,7 @@ void mlr_init(void)
  *  Call only when the track is stopped (not playing, not recording).
  *  Keeps the track's scene settings (speed, reverse, volume, loop) so a
  *  sample-manager session doesn't reset them. */
-void mlr_rescan_track(int track)
+void MLR_COLD_FUNC mlr_rescan_track(int track)
 {
 	if (track < 0 || track >= MLR_NUM_TRACKS) return;
 
@@ -893,6 +937,7 @@ void mlr_rescan_track(int track)
 	tr->has_content = false;
 	tr->pcm.w = 0;
 	tr->pcm.r = 0;
+	fill_rot_reset(tr);
 	tr->speed_shift = 0;
 	tr->record_speed_shift = 0;
 	tr->speed_frac  = 256;
@@ -982,6 +1027,7 @@ void __not_in_flash_func(mlr_start_record)(int track)
 
 	tr->pcm.w = 0;
 	tr->pcm.r = 0;
+	fill_rot_reset(tr);
 	/* Recording follows slower speed slots but is capped at 1x. Preserve the
 	 * selected playback speed while storing the actual recording speed. */
 	tr->record_speed_shift = tr->speed_shift > 0 ? 0 : tr->speed_shift;
@@ -1796,6 +1842,7 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	tr->channel_user_chosen = false;
 	tr->pcm.w = 0;
 	tr->pcm.r = 0;
+	fill_rot_reset(tr);
 
 	/* schedule flash erase of header sector */
 	clear_track   = track;
@@ -2708,7 +2755,7 @@ static uint32_t scene_serialize(void)
 	return pos;
 }
 
-void mlr_scene_load(void)
+void MLR_COLD_FUNC mlr_scene_load(void)
 {
 	const uint8_t *flash = (const uint8_t *)(XIP_BASE + MLR_SCENE_OFFSET);
 
@@ -2889,6 +2936,7 @@ void __not_in_flash_func(mlr_scene_reset_params_to_defaults)(void)
 		mlr_set_reverse(t, false);
 		mlr_clear_loop(t);
 		mlr_set_volume(t, 1);
+		mlr_tracks[t].splice_q16 = 0;  /* CV rotation: back to normal at the next wrap */
 	}
 
 	for (int p = 0; p < MLR_NUM_PATTERNS; p++) {
@@ -2905,7 +2953,122 @@ void __not_in_flash_func(mlr_scene_reset_params_to_defaults)(void)
 /* ------------------------------------------------------------------ */
 
 /** Seek fill state to an arbitrary sample position using keyframes. */
+/* ------------------------------------------------------------------ */
+/* CV rotation (core 1)                                               */
+/* ------------------------------------------------------------------ */
+
+static inline void fill_region(const mlr_track_t *tr, uint32_t *ws, uint32_t *we)
+{
+	*we = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
+	*ws = tr->loop_active ? tr->loop_start_sample : 0;
+}
+
+/* The rotation turns the whole recording; a loop is a fixed window on the
+ * grid over the rotated material, so turning the CV scrubs what it plays.
+ * The CV rotation right now, in samples (always < the track length). */
+static inline uint32_t fill_latch_rot(const mlr_track_t *tr)
+{
+	return (uint32_t)(((uint64_t)tr->length_samples * tr->splice_q16) >> 16);
+}
+
+/* Grid position of the seam (where the rotated audio reaches the end of the
+ * recording and continues from its start) if it falls strictly inside the
+ * loop/track window [ws, we); 0 = no seam to cross in this window. */
+static inline uint32_t fill_seam_pos(const mlr_track_t *tr, uint32_t ws, uint32_t we)
+{
+	uint32_t rot = tr->fill_rot, len = tr->length_samples;
+	if (rot == 0 || rot >= len) return 0;
+	uint32_t seam = len - rot;
+	return (seam > ws && seam < we) ? seam : 0u;
+}
+
+/* Audio position played at grid position v. */
+static inline uint32_t fill_audio_pos(const mlr_track_t *tr, uint32_t v, uint32_t ws, uint32_t we)
+{
+	(void)ws; (void)we;
+	uint32_t rot = tr->fill_rot, len = tr->length_samples;
+	if (rot == 0 || rot >= len) return v;
+	uint32_t a = v + rot;
+	return a >= len ? a - len : a;
+}
+
+/* Fill wrap: latch the rotation for the new cycle and remember it so the wrap
+ * preview for that wrap can be rendered with the same rotation. */
+static void fill_rot_new_cycle(mlr_track_t *tr)
+{
+	tr->fill_rot = fill_latch_rot(tr);
+	mlr_rot_event_t *ev = &tr->rot_hist[tr->rot_hist_w & (MLR_ROT_HIST_LEN - 1u)];
+	ev->ring_idx = tr->pcm.w;
+	ev->rot = tr->fill_rot;
+	tr->rot_hist_w++;
+	if (tr->rot_hist_n < MLR_ROT_HIST_LEN) tr->rot_hist_n++;
+}
+
+/* The next wrap playback will reach: the oldest recorded fill wrap still ahead
+ * of pcm.r. False if the fill hasn't wrapped yet, or if more wraps are buffered
+ * than recorded (tiny loops), so the rotation for that wrap isn't known. */
+static bool fill_rot_next_wrap(const mlr_track_t *tr, uint32_t *ring_idx, uint32_t *rot)
+{
+	uint32_t r = tr->pcm.r;
+	for (uint8_t i = tr->rot_hist_n; i > 0; i--) {
+		const mlr_rot_event_t *ev = &tr->rot_hist[(uint8_t)(tr->rot_hist_w - i) & (MLR_ROT_HIST_LEN - 1u)];
+		if ((int32_t)(ev->ring_idx - r) > 0) {
+			if (i == MLR_ROT_HIST_LEN) return false;  /* older ones may be ahead too */
+			*ring_idx = ev->ring_idx;
+			*rot = ev->rot;
+			return true;
+		}
+	}
+	return false;
+}
+
+/* Seam fade window: up to MLR_SEAM_XFADE_SAMPLES, kept inside the window on
+ * both sides of the seam. 0 = too tight, hard seam. */
+static inline uint32_t seam_window(uint32_t seam, uint32_t ws, uint32_t we)
+{
+	uint32_t n = MLR_SEAM_XFADE_SAMPLES;
+	if (n > seam - ws) n = seam - ws;
+	if (n > we - seam) n = we - seam;
+	return n >= 8u ? n : 0u;
+}
+
+/* The seam joins the recording's end to its start, so there is no audio past
+ * either end to crossfade into: fade out into the seam and back in after it. */
+static inline int16_t seam_fade(int16_t s, uint32_t dist, uint32_t n)
+{
+	return (int16_t)((int32_t)s * (int32_t)dist / (int32_t)n);
+}
+
+static void seek_fill_raw(mlr_track_t *tr, int t, uint32_t target);
+
+/* Position the fill decoder for grid position target (rotated audio). */
 static void seek_fill_to(mlr_track_t *tr, int t, uint32_t target)
+{
+	uint32_t ws, we;
+	fill_region(tr, &ws, &we);
+	seek_fill_raw(tr, t, fill_audio_pos(tr, target, ws, we));
+	tr->fill_sample_pos = target;
+}
+
+/* Forward decode reached the seam: continue from the start of the recording. */
+static inline void fill_cross_seam_forward(mlr_track_t *tr, int t)
+{
+	uint32_t v = tr->fill_sample_pos;
+	seek_fill_raw(tr, t, 0);
+	tr->fill_sample_pos = v;
+}
+
+/* Reverse decode: largest chunk below fill_sample_pos that doesn't span the seam. */
+static inline uint32_t fill_reverse_avail(const mlr_track_t *tr, uint32_t ws, uint32_t we)
+{
+	uint32_t pos = tr->fill_sample_pos;
+	uint32_t seam = fill_seam_pos(tr, ws, we);
+	if (seam && pos > seam) return pos - seam;
+	return pos - ws;
+}
+
+/* Decoder positioning by raw audio position (fill_sample_pos = audio). */
+static void seek_fill_raw(mlr_track_t *tr, int t, uint32_t target)
 {
 	uint32_t kf_idx = target / MLR_KEYFRAME_INTERVAL;
 	if (kf_idx >= tr->num_keyframes && tr->num_keyframes > 0)
@@ -2961,17 +3124,31 @@ static void fill_pcm_ring_forward(int t, uint32_t max_fill)
 	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
 
+	uint32_t seam = fill_seam_pos(tr, wrap_start, wrap_end);
+	uint32_t win = seam ? seam_window(seam, wrap_start, wrap_end) : 0;
+
 	for (uint32_t i = 0; i < to_fill; i++) {
 		if (tr->fill_seek_pending) break;
 
 		if (tr->fill_sample_pos >= wrap_end) {
-			/* wrap: seek back to loop/track start */
+			/* wrap: back to the loop/track start, with this cycle's rotation */
+			fill_rot_new_cycle(tr);
 			seek_fill_to(tr, t, wrap_start);
+			seam = fill_seam_pos(tr, wrap_start, wrap_end);
+			win = seam ? seam_window(seam, wrap_start, wrap_end) : 0;
+		}
+		uint32_t v = tr->fill_sample_pos;
+		if (v == seam && seam) {
+			fill_cross_seam_forward(tr, t);
+			if (win) PERF_ROT(seam_fades); else PERF_ROT(seam_hard);
 		}
 
+		PERF_ROT_CHECK(tr, v, wrap_start, wrap_end);
 		uint8_t byte   = flash_data[tr->fill_byte_pos];
 		uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
 		int16_t sample = adpcm_decode(nybble, &tr->fill_decode[0]);
+		if (win && v + win >= seam && v < seam + win)
+			sample = seam_fade(sample, v < seam ? seam - v : v - seam + 1u, win);
 
 		tr->pcm.buf[(tr->pcm.w % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS] = sample;
 
@@ -3010,13 +3187,16 @@ static void fill_pcm_ring_reverse(int t, uint32_t max_fill)
 	while (to_fill > 0) {
 		if (tr->fill_seek_pending) break;
 
-		/* wrap: if fill_sample_pos is at or below wrap_start, jump to end */
+		/* wrap: if fill_sample_pos is at or below wrap_start, jump to end
+		 * with this cycle's rotation */
 		if (tr->fill_sample_pos <= wrap_start) {
+			fill_rot_new_cycle(tr);
 			tr->fill_sample_pos = wrap_end;
 		}
 
-		/* how many samples backwards from fill_sample_pos in this batch */
-		uint32_t avail = tr->fill_sample_pos - wrap_start;
+		/* how many samples backwards from fill_sample_pos in this batch
+		 * (never across the rotation seam) */
+		uint32_t avail = fill_reverse_avail(tr, wrap_start, wrap_end);
 		uint32_t chunk = to_fill < avail ? to_fill : avail;
 		if (chunk > MLR_KEYFRAME_INTERVAL) chunk = MLR_KEYFRAME_INTERVAL;
 		if (chunk == 0) break;
@@ -3037,11 +3217,30 @@ static void fill_pcm_ring_reverse(int t, uint32_t max_fill)
 			}
 		}
 
-		/* write into ring in reverse order */
+#ifdef MLR_PERF_PROFILING
+		{
+			/* chunk [decode_start, +chunk) must be one contiguous run of audio */
+			uint32_t a0 = fill_audio_pos(tr, decode_start, wrap_start, wrap_end);
+			uint32_t a1 = fill_audio_pos(tr, decode_start + chunk - 1u, wrap_start, wrap_end);
+			mlr_perf_rot_samples++;
+			if (a1 != a0 + chunk - 1u) mlr_perf_rot_map_errors++;
+		}
+#endif
+		/* write into ring in reverse order, smoothing the rotation seam */
+		uint32_t seam = fill_seam_pos(tr, wrap_start, wrap_end);
+		uint32_t win = seam ? seam_window(seam, wrap_start, wrap_end) : 0;
+		uint32_t top = decode_start + chunk;
 		for (uint32_t i = 0; i < chunk; i++) {
-			tr->pcm.buf[(tr->pcm.w % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS] = rev_decode_tmp[chunk - 1 - i];
+			int16_t sample = rev_decode_tmp[chunk - 1 - i];
+			uint32_t u = top - 1u - i;
+			if (win && u + win >= seam && u < seam + win)
+				sample = seam_fade(sample, u >= seam ? u - seam + 1u : seam - u, win);
+			tr->pcm.buf[(tr->pcm.w % MLR_RING_SAMPLES) * MLR_NUM_CHANNELS] = sample;
 			__dmb();
 			tr->pcm.w++;
+		}
+		if (seam && decode_start == seam) {
+			if (win) PERF_ROT(seam_fades); else PERF_ROT(seam_hard);
 		}
 
 		tr->fill_sample_pos = decode_start;
@@ -3090,6 +3289,8 @@ static uint16_t fill_seek_preview_forward(int t)
 		if (tr->fill_sample_pos >= wrap_end) {
 			seek_fill_to(tr, t, wrap_start);
 		}
+		if (tr->fill_rot && tr->fill_sample_pos == fill_seam_pos(tr, wrap_start, wrap_end))
+			fill_cross_seam_forward(tr, t);
 
 		uint8_t byte   = flash_data[tr->fill_byte_pos];
 		uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
@@ -3120,7 +3321,7 @@ static uint16_t fill_seek_preview_reverse(int t)
 			tr->fill_sample_pos = wrap_end;
 		}
 
-		uint32_t avail = tr->fill_sample_pos - wrap_start;
+		uint32_t avail = fill_reverse_avail(tr, wrap_start, wrap_end);
 		uint32_t remaining = (uint32_t)MLR_SEEK_PREVIEW_SAMPLES - written;
 		uint32_t chunk = remaining < avail ? remaining : avail;
 		if (chunk > MLR_KEYFRAME_INTERVAL) chunk = MLR_KEYFRAME_INTERVAL;
@@ -3164,6 +3365,8 @@ static uint16_t fill_wrap_preview_forward(int t, uint32_t steps)
 			if (tr->fill_sample_pos >= wrap_end) {
 				seek_fill_to(tr, t, wrap_start);
 			}
+			if (tr->fill_rot && tr->fill_sample_pos == fill_seam_pos(tr, wrap_start, wrap_end))
+				fill_cross_seam_forward(tr, t);
 
 			uint8_t byte   = flash_data[tr->fill_byte_pos];
 			uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
@@ -3196,7 +3399,7 @@ static uint16_t fill_wrap_preview_reverse(int t, uint32_t steps)
 			tr->fill_sample_pos = wrap_end;
 		}
 
-		uint32_t avail = tr->fill_sample_pos - wrap_start;
+		uint32_t avail = fill_reverse_avail(tr, wrap_start, wrap_end);
 		uint32_t chunk_outputs = (uint32_t)MLR_SEEK_PREVIEW_SAMPLES - written;
 		uint32_t max_outputs = avail / steps;
 		if (chunk_outputs > max_outputs) chunk_outputs = max_outputs;
@@ -3247,6 +3450,8 @@ static uint16_t render_wrap_preview_forward(int t, uint16_t start_accum)
 		if (tr->fill_sample_pos >= wrap_end) {
 			seek_fill_to(tr, t, wrap_start);
 		}
+		if (tr->fill_rot && tr->fill_sample_pos == fill_seam_pos(tr, wrap_start, wrap_end))
+			fill_cross_seam_forward(tr, t);
 		uint8_t byte   = flash_data[tr->fill_byte_pos];
 		uint8_t nybble = tr->fill_high_nyb ? (byte >> 4) : (byte & 0x0F);
 		rev_decode_tmp[i] = adpcm_decode(nybble, &tr->fill_decode[0]);
@@ -3294,7 +3499,7 @@ static uint16_t render_wrap_preview_reverse(int t, uint16_t start_accum)
 		if (tr->fill_sample_pos <= wrap_start) {
 			tr->fill_sample_pos = wrap_end;
 		}
-		uint32_t avail = tr->fill_sample_pos - wrap_start;
+		uint32_t avail = fill_reverse_avail(tr, wrap_start, wrap_end);
 		uint32_t chunk = source_needed - written;
 		if (chunk > avail) chunk = avail;
 		if (chunk > MLR_KEYFRAME_INTERVAL) chunk = MLR_KEYFRAME_INTERVAL;
@@ -3351,16 +3556,30 @@ static void prepare_wrap_preview(int t)
 	uint32_t source_span = steps ? MLR_SEEK_PREVIEW_SAMPLES * steps :
 		wrap_preview_source_span(tr->speed_frac, tr->speed_accum);
 	if (wrap_end <= wrap_start || wrap_end - wrap_start <= source_span) return;
+
+	/* The preview is for the next wrap playback reaches, rendered with the
+	 * rotation the fill used there (the fill is ahead, so it already wrapped). */
+	uint32_t next_ring_idx, next_rot;
+	if (!fill_rot_next_wrap(tr, &next_ring_idx, &next_rot)) return;
+
 	if (tr->wrap_preview_ready &&
+	    tr->wrap_preview_ring_idx == next_ring_idx &&
+	    tr->wrap_preview_rot == next_rot &&
 	    tr->wrap_preview_reverse == tr->reverse &&
 	    tr->wrap_preview_start == wrap_start &&
 	    tr->wrap_preview_end == wrap_end &&
 	    tr->wrap_preview_speed_frac == tr->speed_frac)
 		return;
 
+	/* Core 0 must not start a crossfade from a half-rewritten preview. */
+	tr->wrap_preview_ready = false;
+	__dmb();
+
 	uint32_t saved_byte_pos = tr->fill_byte_pos;
 	bool saved_high_nyb = tr->fill_high_nyb;
 	uint32_t saved_sample_pos = tr->fill_sample_pos;
+	uint32_t saved_rot = tr->fill_rot;
+	tr->fill_rot = next_rot;
 	adpcm_state_t saved_decode[MLR_NUM_CHANNELS];
 	memcpy(saved_decode, tr->fill_decode, sizeof(saved_decode));
 
@@ -3386,9 +3605,12 @@ static void prepare_wrap_preview(int t)
 	tr->fill_byte_pos = saved_byte_pos;
 	tr->fill_high_nyb = saved_high_nyb;
 	tr->fill_sample_pos = saved_sample_pos;
+	tr->fill_rot = saved_rot;
 	memcpy(tr->fill_decode, saved_decode, sizeof(saved_decode));
 
 	tr->seek_preview_count = preview_count;
+	tr->wrap_preview_ring_idx = next_ring_idx;
+	tr->wrap_preview_rot = next_rot;
 	tr->wrap_preview_reverse = tr->reverse;
 	tr->wrap_preview_start = wrap_start;
 	tr->wrap_preview_end = wrap_end;
@@ -3429,6 +3651,9 @@ static void handle_seek(int t)
 	mlr_perf.seek_count[t]++;
 	mlr_perf_seek_count[t]++;
 #endif
+	/* A cut or loop/direction change starts a new cycle at the current CV. */
+	tr->fill_rot = fill_latch_rot(tr);
+	tr->rot_hist_n = 0;
 	if (target_reverse) tr->fill_sample_pos = target;
 	else                seek_fill_to(tr, t, target);
 
@@ -3559,6 +3784,7 @@ static void write_track_header(int t, bool start_playback)
 		}
 		tr->pcm.w = 0;
 		tr->pcm.r = 0;
+		fill_rot_reset(tr);
 		tr->speed_frac = speed_shift_to_frac(tr->speed_shift);
 		tr->speed_accum = 0;
 		reset_track_audio_state(tr);
@@ -3601,6 +3827,7 @@ static void copy_prepare_destination_ram(int dst)
 	tr->channel_user_chosen = false;
 	tr->pcm.w = 0;
 	tr->pcm.r = 0;
+	fill_rot_reset(tr);
 	reset_track_audio_state(tr);
 	mlr_gate_mode[dst] = false;
 }

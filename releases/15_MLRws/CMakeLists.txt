@@ -79,6 +79,10 @@ mark_as_advanced(CARD_STEREO)
 pico_set_binary_type(${CARD_NAME} copy_to_ram)
 target_compile_definitions(${CARD_NAME} PRIVATE
 	PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64
+	# Nothing prints floats; dropping float/exponent printf support frees ~2.4 KB
+	# of RAM (copy_to_ram puts the printf code in RAM).
+	PICO_PRINTF_SUPPORT_FLOAT=0
+	PICO_PRINTF_SUPPORT_EXPONENTIAL=0
 	MLR_FIRMWARE_VERSION="${MLR_FIRMWARE_VERSION}"
 	MLR_FIRMWARE_RESERVE=${MLR_FIRMWARE_RESERVE_BYTES}
 	MLR_TRACK_FLASH_SIZE=${MLR_TRACK_FLASH_SIZE_BYTES}

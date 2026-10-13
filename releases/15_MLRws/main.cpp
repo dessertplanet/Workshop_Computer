@@ -84,6 +84,26 @@ extern "C" {
 /* Save the scene at most every 4 s, and only if the user changed something:
  * at worst 900 saves an hour (~111 h of nonstop changes to 100k erases). */
 #define SETTINGS_AUTOSAVE_PERIOD_SAMPLES (MLR_SAMPLE_RATE_HZ * 4u)
+#define CV_SPLICE_FULL_SCALE   1707     /* CV In counts at +5 V (+/-2048 ~ +/-6 V) */
+
+#ifdef MLR_PERF_PROFILING
+/* Debugger test commands (profiling builds only). Written over OpenOCD while
+ * the card runs: (op << 24) | (track << 16) | (arg << 8); core 0 runs it on a
+ * control tick, clears it and bumps mlr_perf_cmd_ack. */
+enum {
+	PERF_CMD_PLAY      = 1,  /* track, arg = speed_shift + 3 (0..6), bit 7 = reverse */
+	PERF_CMD_STOP      = 2,  /* track */
+	PERF_CMD_REC_START = 3,  /* track: same path as a Pulse In 2 rising edge */
+	PERF_CMD_REC_STOP  = 4,  /* same path as a Pulse In 2 falling edge */
+	PERF_CMD_TOUCH     = 5,  /* mark a setting changed -> autosave within 4 s */
+	PERF_CMD_SPLICE    = 6,  /* track = last-touched, arg = splice (0..255, Q8); 255 track = off */
+	PERF_CMD_LOOP      = 7,  /* track, arg = (start col << 4) | end col; arg 0 = clear loop */
+	PERF_CMD_COPY      = 8,  /* track = source, arg = destination mask (empty tracks only) */
+};
+static int perf_splice_override = -1;  /* Q16 splice standing in for CV In 2, -1 = use CV */
+volatile uint32_t mlr_perf_cmd = 0;
+volatile uint32_t mlr_perf_cmd_ack = 0;
+#endif
 #define DELETE_RESET_FLASH_PERIOD_SAMPLES (MLR_SAMPLE_RATE_HZ / 10u) /* 100 ms half-period */
 #define DELETE_RESET_FLASH_SAMPLES (DELETE_RESET_FLASH_PERIOD_SAMPLES * 6u)  /* three quick flashes */
 #define EXTRA_GUIDE_ENABLED 0x80u
@@ -505,6 +525,10 @@ public:
 				process_extra_rows();
 			}
 			service_settings_autosave();
+			service_cv_splice();
+#ifdef MLR_PERF_PROFILING
+			service_perf_cmd();
+#endif
 		}
 		PERF_UI_SECTION_END(0);
 
@@ -762,6 +786,8 @@ public:
 		/* ---- page interaction (always active) ---- */
 		PERF_UI_SECTION_START(4);
 		if (run_ui_control && !mlr_flushing && !page_switched) {
+			if (grid.keyDown() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS)
+				last_touched_track_ = grid.lastY() - 1;  /* CV splice target */
 			if (play_page == PAGE_REC) {
 				process_gate_hold();  /* REC play/stop/gate/group-dissolve */
 				process_copy_gesture();  /* REC arm/channel copy/paste gesture */
@@ -1121,6 +1147,7 @@ private:
 	uint8_t    replay_gate_mask_ = 0;
 	uint32_t   delete_reset_hold_samples_ = 0;    /* continuous DELETE hold duration */
 	uint32_t   settings_autosave_elapsed_ = 0;    /* samples since the last autosave check */
+	int        last_touched_track_ = -1;          /* last track row pressed on CUT/REC (-1 = none) */
 	bool       settings_dirty_ = false;           /* user changed a saved setting */
 	uint16_t   autosave_master_ref_ = 0;          /* master level at the last user move */
 	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
@@ -2728,6 +2755,91 @@ private:
 			autosave_master_ref_ = mlr_master_level_raw;
 			note_settings_changed();
 		}
+	}
+
+#ifdef MLR_PERF_PROFILING
+	void service_perf_cmd()
+	{
+		uint32_t cmd = mlr_perf_cmd;
+		if (cmd == 0) return;
+		int op = (int)(cmd >> 24), t = (int)((cmd >> 16) & 0xFF), arg = (int)((cmd >> 8) & 0xFF);
+		if (t < MLR_NUM_TRACKS) {
+			switch (op) {
+			case PERF_CMD_PLAY:
+				mlr_set_speed(t, (arg & 0x7F) - 3);
+				mlr_set_reverse(t, (arg & 0x80) != 0);
+				/* like a Pulse In 1 reset: stay inside an active loop */
+				mlr_cut(t, mlr_tracks[t].loop_active ? mlr_tracks[t].loop_col_start : 0);
+				break;
+			case PERF_CMD_STOP:
+				mlr_stop_track(t);
+				break;
+			case PERF_CMD_REC_START:
+				if (mlr_rec_track < 0 && !mlr_flushing && !rec_limit_latched && rec_start_lockout_samples_ == 0) {
+					rec_armed_track = t;
+					if (mlr_tracks[t].playing) {
+						resume_after_arm_track_ = t;
+						mlr_stop_track(t);
+					}
+					mlr_start_record(t);
+					rec_speed_accum = 0;
+					rec_pulse_gated_ = true;
+				}
+				break;
+			case PERF_CMD_REC_STOP:
+				if (rec_pulse_gated_ && mlr_rec_track >= 0) {
+					mlr_stop_record();
+					rec_speed_accum = 0;
+					rec_pulse_gated_ = false;
+				}
+				rec_armed_track = -1;
+				break;
+			case PERF_CMD_TOUCH:
+				note_settings_changed();
+				break;
+			case PERF_CMD_COPY:
+				mlr_copy_track_mask(t, (uint8_t)arg);
+				break;
+			case PERF_CMD_LOOP:
+				if (arg) mlr_set_loop(t, arg >> 4, arg & 0x0F);
+				else     mlr_clear_loop(t);
+				break;
+			case PERF_CMD_SPLICE:
+				last_touched_track_ = t;
+				perf_splice_override = arg ? (arg << 8) | arg : 0;
+				break;
+			}
+		} else if (op == PERF_CMD_SPLICE) {
+			perf_splice_override = -1;
+		}
+		mlr_perf_cmd = 0;
+		mlr_perf_cmd_ack = mlr_perf_cmd_ack + 1;
+	}
+#endif
+
+	/* CV In 2 rotates the last-touched track's whole recording: the playhead
+	 * still wraps to the first column (or loop start), but "the start" of the
+	 * audio has moved by this fraction of the track length, so a loop scrubs
+	 * through the material. 0 V = normal, +5 V = almost a full turn. Core 1
+	 * picks it up at the next fill wrap or cut. */
+	void __not_in_flash("service_cv_splice") service_cv_splice()
+	{
+		/* Only the target follows the CV. Other tracks, and the target once
+		 * the CV is unplugged, keep their last rotation (delete-hold reset
+		 * clears them). */
+		if (last_touched_track_ < 0) return;
+#ifdef MLR_PERF_PROFILING
+		if (perf_splice_override >= 0) {
+			mlr_tracks[last_touched_track_].splice_q16 = (uint16_t)perf_splice_override;
+			return;
+		}
+#endif
+		if (!Connected(Input::CV2)) return;
+		int cv = CVIn2();
+		uint16_t q = 0;
+		if (cv >= CV_SPLICE_FULL_SCALE) q = 65535u;
+		else if (cv > 0) q = (uint16_t)(((uint32_t)cv * 65535u) / CV_SPLICE_FULL_SCALE);
+		mlr_tracks[last_touched_track_].splice_q16 = q;
 	}
 
 	void __not_in_flash("service_settings_autosave") service_settings_autosave()
