@@ -42,6 +42,7 @@ mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
 volatile bool   mlr_scene_saving = false;
 volatile uint8_t mlr_rot_range_pct = MLR_ROT_RANGE_DEFAULT;
 volatile bool   mlr_settings_save_pending = false;
+volatile bool   mlr_pan_enabled = false;
 volatile int    mlr_recall_active = -1;
 static uint32_t mlr_clock_ms = 0;
 
@@ -792,6 +793,47 @@ void mlr_choke_group_resume(int t, int col)
 	stop_other_group_members(t);
 }
 
+/* Equal-power pan gains, Q15: index = pan + MLR_PAN_STEPS, from hard Out 1
+ * (32768, 0) through centre (23170, 23170) to hard Out 2 (0, 32768). Hard
+ * pans are exactly unity, matching the old per-channel routing. */
+static const uint16_t pan_gain_out1[2 * MLR_PAN_STEPS + 1] = {
+	32768, 32488, 31651, 30274, 28378, 25997, 23170, 19948, 16384, 12540, 8481, 4277, 0,
+};  /* round(32768 * cos(i / 12 * pi / 2)); Out 2 gain is the mirror entry */
+#if MLR_PAN_STEPS != 6
+#error pan_gain tables assume MLR_PAN_STEPS == 6
+#endif
+
+void __not_in_flash_func(mlr_pan_gains)(int pan, uint16_t *gl, uint16_t *gr)
+{
+	if (pan < -MLR_PAN_STEPS) pan = -MLR_PAN_STEPS;
+	if (pan >  MLR_PAN_STEPS) pan =  MLR_PAN_STEPS;
+	*gl = pan_gain_out1[pan + MLR_PAN_STEPS];
+	*gr = pan_gain_out1[MLR_PAN_STEPS - pan];
+}
+
+int __not_in_flash_func(mlr_pan_default)(int track)
+{
+	if (track < 0 || track >= MLR_NUM_TRACKS) return -MLR_PAN_STEPS;
+	return (mlr_tracks[track].recorded_channel & 0x01) ? MLR_PAN_STEPS : -MLR_PAN_STEPS;
+}
+
+void __not_in_flash_func(mlr_set_pan)(int track, int pan)
+{
+	if (track < 0 || track >= MLR_NUM_TRACKS) return;
+	if (pan < -MLR_PAN_STEPS) pan = -MLR_PAN_STEPS;
+	if (pan >  MLR_PAN_STEPS) pan =  MLR_PAN_STEPS;
+	mlr_track_t *tr = &mlr_tracks[track];
+	uint16_t gl, gr;
+	mlr_pan_gains(pan, &gl, &gr);
+	tr->pan = (int8_t)pan;
+	tr->pan_gl = gl;
+	tr->pan_gr = gr;
+	if (!tr->playing) {  /* nothing audible to slew */
+		tr->pan_gl_cur = gl;
+		tr->pan_gr_cur = gr;
+	}
+}
+
 /* Smoothly swap a track's output channel. If the track is currently
  * playing, queues a fade-out → swap → fade-in around the change to
  * avoid the click that would otherwise occur from re-routing the active
@@ -802,7 +844,9 @@ void __not_in_flash_func(mlr_set_recorded_channel)(int track, uint8_t channel)
 	channel &= 0x01;
 	mlr_track_t *tr = &mlr_tracks[track];
 
-	if (!tr->has_content || !tr->playing || tr->stop_pending) {
+	/* Grid modes: the channel only picks the record input; pan sets the
+	 * output, so there's nothing audible to fade. */
+	if (mlr_pan_enabled || !tr->has_content || !tr->playing || tr->stop_pending) {
 		tr->recorded_channel = channel;
 		tr->channel_swap_pending = false;
 		return;
@@ -913,6 +957,8 @@ void MLR_COLD_FUNC mlr_init(void)
 
 	/* load saved scene (track state + patterns + recalls + settings) */
 	mlr_rot_range_pct = MLR_ROT_RANGE_DEFAULT;
+	for (int t = 0; t < MLR_NUM_TRACKS; t++)
+		mlr_set_pan(t, mlr_pan_default(t));  /* until the scene says otherwise */
 	mlr_scene_load();
 }
 
@@ -932,6 +978,10 @@ void MLR_COLD_FUNC mlr_rescan_track(int track)
 	const bool    keep_reverse     = tr->reverse;
 	const uint8_t keep_volume_slot = tr->volume_slot;
 	const bool    keep_loop        = tr->loop_active;
+	const int8_t  keep_pan         = tr->pan;
+	const bool    had_content      = tr->has_content;
+	const uint32_t old_samples     = tr->length_samples;
+	const uint32_t old_bytes       = tr->length_bytes;
 	const int     keep_loop_start  = tr->loop_col_start;
 	const int     keep_loop_end    = tr->loop_col_end;
 
@@ -996,6 +1046,10 @@ void MLR_COLD_FUNC mlr_rescan_track(int track)
 	mlr_set_volume(track, keep_volume_slot);
 	if (keep_loop && keep_loop_start >= 0 && keep_loop_end >= 0)
 		mlr_set_loop(track, keep_loop_start, keep_loop_end);
+	/* New audio (uploaded or erased) starts hard to its channel side. */
+	bool same_audio = had_content == tr->has_content &&
+	                  old_samples == tr->length_samples && old_bytes == tr->length_bytes;
+	mlr_set_pan(track, same_audio ? keep_pan : mlr_pan_default(track));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1034,6 +1088,7 @@ void __not_in_flash_func(mlr_start_record)(int track)
 	/* Recording follows slower speed slots but is capped at 1x. Preserve the
 	 * selected playback speed while storing the actual recording speed. */
 	tr->record_speed_shift = tr->speed_shift > 0 ? 0 : tr->speed_shift;
+	mlr_set_pan(track, mlr_pan_default(track));  /* new audio: hard to its channel side */
 	tr->rate_mark = MLR_RATE_MARK_24K;
 	tr->speed_frac  = speed_shift_to_frac(tr->speed_shift);
 	tr->speed_accum = 0;
@@ -1326,6 +1381,31 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
  * Multiple tracks on the same channel sum on that bus; the other bus stays
  * silent for those tracks. This keeps gridless mode untouched (which still
  * uses the single-output mlr_play_mix). */
+/* Route one track's sample to the two outputs. Grid modes: equal-power pan,
+ * slewed ~20 ms end to end so pan moves don't click. Gridless: hard to the
+ * track's channel, as before. */
+#define MLR_PAN_SLEW_STEP 64u
+static inline uint16_t pan_slew(uint16_t cur, uint16_t target)
+{
+	if (cur < target) return (uint16_t)((uint32_t)(target - cur) > MLR_PAN_SLEW_STEP ? cur + MLR_PAN_SLEW_STEP : target);
+	return (uint16_t)((uint32_t)(cur - target) > MLR_PAN_SLEW_STEP ? cur - MLR_PAN_SLEW_STEP : target);
+}
+
+static inline void __not_in_flash_func(mix_track_route)(mlr_track_t *tr, int32_t s,
+	int32_t *mixL, int32_t *mixR)
+{
+	if (!mlr_pan_enabled) {
+		if (tr->recorded_channel == 1) *mixR += s;
+		else                           *mixL += s;
+		return;
+	}
+	uint16_t gl = tr->pan_gl_cur, gr = tr->pan_gr_cur;
+	if (gl != tr->pan_gl) tr->pan_gl_cur = gl = pan_slew(gl, tr->pan_gl);
+	if (gr != tr->pan_gr) tr->pan_gr_cur = gr = pan_slew(gr, tr->pan_gr);
+	if (gl) *mixL += (gl == 32768u) ? s : (s * (int32_t)gl) >> 15;
+	if (gr) *mixR += (gr == 32768u) ? s : (s * (int32_t)gr) >> 15;
+}
+
 static inline bool mix_track_steady_integer_dual(int t, mlr_track_t *tr,
 	uint8_t transition_flags, uint32_t wrap_start, uint32_t wrap_end,
 	int32_t *mixL, int32_t *mixR)
@@ -1367,8 +1447,7 @@ static inline bool mix_track_steady_integer_dual(int t, mlr_track_t *tr,
 		int32_t sample_out = tr->last_pcm[0];
 		if (tr->volume_frac != 256)
 			sample_out = (sample_out * (int32_t)tr->volume_frac) >> 8;
-		if (tr->recorded_channel == 1) *mixR += sample_out;
-		else                           *mixL += sample_out;
+		mix_track_route(tr, sample_out, mixL, mixR);
 	}
 	return true;
 }
@@ -1563,10 +1642,8 @@ static int32_t __not_in_flash_func(mlr_play_mix_dual_sum)(int32_t *out_right)
 			}
 		}
 
-		if (!tr->muted) {
-			if (tr->recorded_channel == 1) mixR += sample_out;
-			else                            mixL += sample_out;
-		}
+		if (!tr->muted)
+			mix_track_route(tr, sample_out, &mixL, &mixR);
 	}
 
 	*out_right = mixR;
@@ -1840,6 +1917,7 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	tr->volume_frac = 256;
 	tr->volume_target = 256;
 	tr->recorded_channel    = 0;
+	tr->pan = -MLR_PAN_STEPS; tr->pan_gl = tr->pan_gl_cur = 32768u; tr->pan_gr = tr->pan_gr_cur = 0;
 	tr->rate_mark           = MLR_RATE_MARK_24K;
 	tr->cv1_pitch_enabled   = true;
 	tr->channel_user_chosen = false;
@@ -1973,6 +2051,9 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 	case MLR_EVT_GROUP_VOLUME:
 		/* legacy event — group-broadcast removed; apply to single track. */
 		mlr_set_volume(e->track, e->param_a);
+		break;
+	case MLR_EVT_PAN:
+		mlr_set_pan(e->track, e->param_a);
 		break;
 	case MLR_EVT_CHANNEL:
 		if (e->track < MLR_NUM_TRACKS) {
@@ -2470,18 +2551,23 @@ void __not_in_flash_func(mlr_recall_task)(void)
 					recall_snapshot_track_step = 3;
 					break;
 				case 3:
-					emitted = recall_snapshot_add(MLR_EVT_VOLUME, recall_snapshot_track,
-						(int8_t)tr->volume_slot, 0);
+					emitted = recall_snapshot_add(MLR_EVT_PAN, recall_snapshot_track,
+						tr->pan, 0);
 					recall_snapshot_track_step = 4;
 					break;
 				case 4:
+					emitted = recall_snapshot_add(MLR_EVT_VOLUME, recall_snapshot_track,
+						(int8_t)tr->volume_slot, 0);
+					recall_snapshot_track_step = 5;
+					break;
+				case 5:
 					if (tr->loop_active) {
 						emitted = recall_snapshot_add(MLR_EVT_LOOP, recall_snapshot_track,
 							(int8_t)tr->loop_col_start, (int8_t)tr->loop_col_end);
 					} else {
 						emitted = recall_snapshot_add(MLR_EVT_LOOP_CLR, recall_snapshot_track, 0, 0);
 					}
-					recall_snapshot_track_step = 5;
+					recall_snapshot_track_step = 6;
 					break;
 				default:
 					if (tr->has_content) {
@@ -2599,6 +2685,7 @@ void mlr_recall_clear(int slot)
  *   [...]  groups_version (uint8_t) + mlr_track_groups[MLR_NUM_TRACKS] (7 bytes)
  *   [...]  gate_version  (uint8_t) + mlr_gate_mode[MLR_NUM_TRACKS]    (7 bytes)
  *   [...]  settings_version (uint8_t) + mlr_rot_range_pct (uint8_t)    (2 bytes)
+ *   [...]  pan_version (uint8_t) + int8_t pan[MLR_NUM_TRACKS]          (7 bytes)
  *   [end]  uint32_t CRC32 (over everything from offset 0 to here)
  *
  * Loaders gate the trailing groups / gate_mode blocks on data_len, so
@@ -2631,6 +2718,7 @@ enum {
 	MLR_SCENE_GROUP_BYTES = 1 + MLR_NUM_TRACKS,
 	MLR_SCENE_GATE_BYTES = 1 + MLR_NUM_TRACKS,
 	MLR_SCENE_SETTINGS_BYTES = 2,
+	MLR_SCENE_PAN_BYTES = 1 + MLR_NUM_TRACKS,
 	MLR_SCENE_CRC_BYTES = 4,
 	MLR_SCENE_MAX_SERIALIZED_BYTES =
 		MLR_SCENE_HEADER_BYTES +
@@ -2642,6 +2730,7 @@ enum {
 		MLR_SCENE_GROUP_BYTES +
 		MLR_SCENE_GATE_BYTES +
 		MLR_SCENE_SETTINGS_BYTES +
+		MLR_SCENE_PAN_BYTES +
 		MLR_SCENE_CRC_BYTES,
 	MLR_SCENE_STAGING_BYTES =
 		((MLR_SCENE_MAX_SERIALIZED_BYTES + MLR_PAGE_SIZE - 1) / MLR_PAGE_SIZE) * MLR_PAGE_SIZE
@@ -2750,6 +2839,11 @@ static uint32_t scene_serialize(void)
 	/* card-wide settings (appended at v1; follows gate_mode) */
 	scene_blob[pos++] = 1;  /* settings version */
 	scene_blob[pos++] = mlr_rot_range_pct;
+
+	/* per-track pan (appended at v1; follows settings) */
+	scene_blob[pos++] = 1;  /* pan version */
+	for (int t = 0; t < MLR_NUM_TRACKS; t++)
+		scene_blob[pos++] = (uint8_t)mlr_tracks[t].pan;
 
 	/* write data_len */
 	uint32_t data_len = pos - 8;
@@ -2908,6 +3002,15 @@ void MLR_COLD_FUNC mlr_scene_load(void)
 				(void)settings_version;
 				uint8_t pct = flash[pos++];
 				mlr_rot_range_pct = (pct >= 1 && pct <= 100) ? pct : MLR_ROT_RANGE_DEFAULT;
+
+				/* per-track pan (follows settings); older scenes keep the
+				 * channel-side defaults set in mlr_init() */
+				if (pos + 1 + MLR_NUM_TRACKS <= end) {
+					uint8_t pan_version = flash[pos++];
+					(void)pan_version;
+					for (int t = 0; t < MLR_NUM_TRACKS; t++)
+						mlr_set_pan(t, (int8_t)flash[pos++]);
+				}
 			}
 		}
 	}
@@ -2954,6 +3057,7 @@ void __not_in_flash_func(mlr_scene_reset_params_to_defaults)(void)
 		mlr_set_reverse(t, false);
 		mlr_clear_loop(t);
 		mlr_set_volume(t, 1);
+		mlr_set_pan(t, mlr_pan_default(t));
 		mlr_tracks[t].splice_q16 = 0;  /* CV rotation: back to normal at the next wrap */
 	}
 
@@ -3894,6 +3998,7 @@ static void copy_finish_track(void)
 	dst->num_keyframes      = src->num_keyframes;
 	dst->record_speed_shift = src->record_speed_shift;
 	dst->recorded_channel   = src->recorded_channel & 0x01;
+	mlr_set_pan(copy_dst_track, src->pan);
 	dst->rate_mark          = src->rate_mark;
 	dst->cv1_pitch_enabled  = src->cv1_pitch_enabled;
 	memcpy(dst->keyframes, src->keyframes,

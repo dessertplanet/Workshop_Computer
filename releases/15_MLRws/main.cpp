@@ -99,6 +99,7 @@ enum {
 	PERF_CMD_SPLICE    = 6,  /* track = last-touched, arg = splice (0..255, Q8); 255 track = off */
 	PERF_CMD_LOOP      = 7,  /* track, arg = (start col << 4) | end col; arg 0 = clear loop */
 	PERF_CMD_COPY      = 8,  /* track = source, arg = destination mask (empty tracks only) */
+	PERF_CMD_PAN       = 9,  /* track, arg = pan + MLR_PAN_STEPS (0..12) */
 };
 static int perf_splice_override = -1;  /* Q16 splice standing in for CV In 2, -1 = use CV */
 volatile uint32_t mlr_perf_cmd = 0;
@@ -247,9 +248,11 @@ public:
 		/* ---- Mode-specific subsystem init ---- */
 		switch (mode_) {
 		case Mode::HostMLR:
+			mlr_pan_enabled = true;  /* grid modes: outputs follow per-track pan */
 			monome_ws_init(MONOME_WS_TRANSPORT_HOST, 0);
 			break;
 		case Mode::DeviceMLR:
+			mlr_pan_enabled = true;
 			monome_ws_init(MONOME_WS_TRANSPORT_DEVICE, 0);
 			monome_ws_connect(0);  /* CDC already connected during detection */
 			if (detect_result.has_pending_byte) {
@@ -550,6 +553,10 @@ public:
 			}
 		}
 
+		/* Pan mode needs nothing armed/recording and the switch in the middle. */
+		if (pan_mode_track_ >= 0 && (rec_modifier || rec_armed_track >= 0 || mlr_rec_track >= 0))
+			pan_mode_track_ = -1;
+
 		if (mlr_flushing) {
 			if (resume_after_arm_track_ == rec_armed_track)
 				resume_after_arm_track_ = -1;
@@ -793,8 +800,12 @@ public:
 				service_cv_splice();
 			}
 			if (play_page == PAGE_REC) {
+				process_pan_gesture();   /* both arm keys held: pan mode on that row */
 				process_gate_hold();  /* REC play/stop/gate/group-dissolve */
-				process_copy_gesture();  /* REC arm/channel copy/paste gesture */
+				if (!pan_gesture_consumed_)
+					process_copy_gesture();  /* REC arm/channel copy/paste gesture */
+			} else if (pan_mode_track_ >= 0) {
+				pan_mode_track_ = -1;
 			}
 			if (mlr_flushing) {
 				/* A copy gesture just committed; suppress any same-event
@@ -902,6 +913,8 @@ public:
 			if (mon_track >= 0) {
 				mon_vol_last_ = mlr_tracks[mon_track].volume_frac;
 				mon_ch_last_  = mlr_tracks[mon_track].recorded_channel;
+				mon_gl_last_  = mlr_tracks[mon_track].pan_gl;
+				mon_gr_last_  = mlr_tracks[mon_track].pan_gr;
 			}
 			uint16_t next = (uint16_t)(mon_fade_frac_ + MLR_MON_FADE_STEP);
 			mon_fade_frac_ = (next > 256u) ? 256u : next;
@@ -915,8 +928,15 @@ public:
 			int32_t in_scaled = ((int32_t)dry_in * (int32_t)dry_level) >> 8;
 			in_scaled = (in_scaled * (int32_t)mon_vol_last_) >> 8;
 			in_scaled = (in_scaled * (int32_t)mon_fade_frac_) >> 8;
-			if (mon_ch_last_ == 1) outR += in_scaled;
-			else                   outL += in_scaled;
+			if (mlr_pan_enabled) {
+				/* same pan as the track's playback, so monitoring matches */
+				outL += (in_scaled * (int32_t)mon_gl_last_) >> 15;
+				outR += (in_scaled * (int32_t)mon_gr_last_) >> 15;
+			} else if (mon_ch_last_ == 1) {
+				outR += in_scaled;
+			} else {
+				outL += in_scaled;
+			}
 		}
 		outL = (outL * (int32_t)master_level) >> 8;
 		outR = (outR * (int32_t)master_level) >> 8;
@@ -1159,6 +1179,8 @@ private:
 	uint16_t   mon_fade_frac_ = 0;   /* monitor fade-in envelope, 0..256 */
 	uint16_t   mon_vol_last_  = 256; /* last-known armed/rec track volume_frac */
 	uint8_t    mon_ch_last_   = 0;   /* last-known armed/rec track recorded_channel */
+	uint16_t   mon_gl_last_   = 32768u, mon_gr_last_ = 0;  /* ...and its pan gains */
+	volatile int8_t pan_mode_track_ = -1; /* REC page pan mode (both arm keys held), -1 = off */
 	inline static Mode s_mode_ = Mode::HostMLR;
 
 	/* Cross-core volatile state for DeviceGridless ↔ DeviceSampleMgr transitions.
@@ -2424,8 +2446,24 @@ private:
 			return;
 		}
 
+		int sw_now = SwitchVal();
+		bool rec_pos = (sw_now == Switch::Up || sw_now == Switch::Down);
+
 		/* 16-wide grid: col 0 = ch1, col 1 = ch2. */
 		if (!small_grid_) {
+			/* Hard-panned track, nothing armed/recording, switch in the middle:
+			 * the other side's arm key hops it across instead of arming, so
+			 * playback carries on. The same side's key still arms. */
+			int pan = mlr_tracks[track].pan;
+			bool hop_ok = mlr_pan_enabled && !rec_pos && rec_armed_track < 0 && mlr_rec_track < 0;
+			if (hop_ok && pan == -MLR_PAN_STEPS && column == 1) {
+				group_set_pan(track, MLR_PAN_STEPS);
+				return;
+			}
+			if (hop_ok && pan == MLR_PAN_STEPS && column == 0) {
+				group_set_pan(track, -MLR_PAN_STEPS);
+				return;
+			}
 			if (rec_armed_track == track &&
 			    mlr_tracks[track].recorded_channel != (uint8_t)column) {
 				set_track_recorded_channel(track, (uint8_t)column, true);
@@ -2436,8 +2474,6 @@ private:
 			}
 		}
 
-		int sw_now = SwitchVal();
-		bool rec_pos = (sw_now == Switch::Up || sw_now == Switch::Down);
 		if (rec_pos && rec_armed_track < 0 && mlr_rec_track < 0 && !mlr_flushing && !rec_limit_latched && rec_start_lockout_samples_ == 0) {
 			mlr_start_record(track);
 			rec_speed_accum = 0;
@@ -2740,6 +2776,58 @@ private:
 		note_settings_changed();
 	}
 
+	void __not_in_flash("group_set_pan") group_set_pan(int t, int pan)
+	{
+		if (mlr_tracks[t].pan == pan) return;
+		mlr_set_pan(t, pan);
+		dispatch_event(MLR_EVT_PAN, (uint8_t)t, (int8_t)pan, 0);
+		note_settings_changed();
+	}
+
+	/* Pan keys are cols 2..15: 2..7 = 6 steps left, 8 and 9 = centre,
+	 * 10..15 = 6 steps right. */
+	static int pan_col_to_value(int col)
+	{
+		if (col <= 7) return col - 8;
+		if (col <= 9) return 0;
+		return col - 9;
+	}
+
+	/* REC page, 16-wide, nothing armed/recording, switch in the middle: holding
+	 * both arm keys on a row enters pan mode for it; releasing either leaves.
+	 * Swallows those arm-key events so they never arm or copy. */
+	bool pan_gesture_consumed_ = false;
+	int  pan_exit_track_ = -1;  /* row whose arm keys are still swallowed after pan mode */
+	void __not_in_flash("process_pan_gesture") process_pan_gesture()
+	{
+		pan_gesture_consumed_ = false;
+		if (small_grid_ || !(grid.keyDown() || grid.keyUp())) return;
+		int column = grid.lastX(), row = grid.lastY();
+		if (column > 1 || row < 1 || row > MLR_NUM_TRACKS) return;
+		int track = row - 1;
+
+		if (grid.keyUp()) {
+			if (track == pan_mode_track_) {
+				pan_mode_track_ = -1;  /* either arm key up ends pan mode */
+				pan_gesture_consumed_ = true;
+			} else if (pan_exit_track_ == track) {
+				pan_gesture_consumed_ = true;  /* the other arm key's later release */
+				if ((grid.heldRowMask((uint8_t)row) & 0x3u) == 0) pan_exit_track_ = -1;
+			}
+			copy_arm_suppress_event_ = pan_gesture_consumed_;
+			return;
+		}
+
+		bool rec_pos = (SwitchVal() == Switch::Up || SwitchVal() == Switch::Down);
+		if (rec_pos || rec_armed_track >= 0 || mlr_rec_track >= 0 || delete_action_held()) return;
+		if ((grid.heldRowMask((uint8_t)row) & 0x3u) != 0x3u) return;
+		pan_mode_track_ = (int8_t)track;
+		pan_exit_track_ = track;
+		reset_copy_gesture();  /* the first arm key started a copy/arm; cancel it */
+		pan_gesture_consumed_ = true;
+		copy_arm_suppress_event_ = true;
+	}
+
 	/* Persist speed/reverse/volume/loop/master changes the user makes. Pattern
 	 * playback calls the mlr_set_* setters directly, so automation never lands
 	 * here and never wears the scene flash. */
@@ -2800,6 +2888,9 @@ private:
 				break;
 			case PERF_CMD_TOUCH:
 				note_settings_changed();
+				break;
+			case PERF_CMD_PAN:
+				mlr_set_pan(t, arg - MLR_PAN_STEPS);
 				break;
 			case PERF_CMD_COPY:
 				mlr_copy_track_mask(t, (uint8_t)arg);
@@ -3044,7 +3135,8 @@ private:
 		}
 
 		/* Arm on key-down of play col on any track row (single-hold path). */
-		if (grid.keyDown() && grid.lastX() == pc && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
+		if (grid.keyDown() && grid.lastX() == pc && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS &&
+		    grid.lastY() - 1 != pan_mode_track_) {
 			int track = grid.lastY() - 1;
 			if (group_gesture_mask_ == 0) {
 				play_col_armed[track] = true;
@@ -3155,6 +3247,12 @@ private:
 
 		int track  = grid.lastY() - 1;
 		int column = grid.lastX();
+		if (track == pan_mode_track_) {
+			/* keys 3..16 set pan; keys 9 and 10 are both centre */
+			if (column >= 2 && column <= 15)
+				group_set_pan(track, pan_col_to_value(column));
+			return;
+		}
 		if (dissolve_group_if_delete_touch(track)) return;
 
 		/* Cols 0 / 1 (16-wide only): combined channel-select + record-arm.
@@ -3493,6 +3591,12 @@ private:
 				if (!has && !armed && !actively_rec) {
 					col0_bright = state_bright;
 					col1_bright = state_bright;
+				} else if (mlr_pan_enabled && !armed && !actively_rec) {
+					/* Output pan across the two keys: hard left = key 1 only
+					 * (like dual-mono channel 1), centre = both at half. */
+					int pan = mlr_tracks[t].pan;
+					col0_bright = (uint8_t)((state_bright * (MLR_PAN_STEPS - pan) + MLR_PAN_STEPS) / (2 * MLR_PAN_STEPS));
+					col1_bright = (uint8_t)((state_bright * (MLR_PAN_STEPS + pan) + MLR_PAN_STEPS) / (2 * MLR_PAN_STEPS));
 				} else {
 					uint8_t selected = state_bright;
 					uint8_t other    = 0;
@@ -3586,8 +3690,29 @@ private:
 					grid.frameLedUnchecked(speed_col, row, 14);
 				if (speed_col != 11)
 					grid.frameLedUnchecked(11, row, 3);  /* dim 1x indicator when not selected */
+
+				if (t == pan_mode_track_)
+					draw_pan_row(row, mlr_tracks[t].pan);
 			}
 		}
+	}
+
+	/* Pan mode: keys 3..16 show the pan, bright at the selected step (keys 9
+	 * and 10 together for centre), with a long, gentle fade across the row so
+	 * it reads differently from the short level gradient on other tracks. */
+	void __not_in_flash("draw_pan_row") draw_pan_row(int row, int pan)
+	{
+		static const uint8_t fade[] = { 15, 9, 7, 6, 5, 4, 3, 2 };
+		int lo, hi;  /* selected column span */
+		if (pan < 0)      lo = hi = pan + 8;
+		else if (pan > 0) lo = hi = pan + 9;
+		else              { lo = 8; hi = 9; }
+		for (int c = 2; c <= 15; c++) {
+			int d = c < lo ? lo - c : (c > hi ? c - hi : 0);
+			grid.frameLedUnchecked(c, row, d < (int)sizeof(fade) ? fade[d] : 1);
+		}
+		grid.frameLedUnchecked(0, row, 15);
+		grid.frameLedUnchecked(1, row, 15);
 	}
 
 	/* ================================================================ */

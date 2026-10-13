@@ -124,6 +124,11 @@ extern "C" {
 #define MLR_EVT_GROUP_VOLUME 18   /* volume change broadcast to every member of track's group */
 #define MLR_EVT_CHANNEL      19   /* per-track input/output channel: param_a=0/1 */
 #define MLR_EVT_CUT_RELEASE  20   /* CUT key release for CV/pulse gate playback only */
+#define MLR_EVT_PAN          21   /* per-track pan: param_a = -MLR_PAN_STEPS..+MLR_PAN_STEPS */
+
+/* Per-track pan (grid modes): -MLR_PAN_STEPS = hard Out 1, 0 = centre,
+ * +MLR_PAN_STEPS = hard Out 2, equal-power law. */
+#define MLR_PAN_STEPS          6
 
 /* Volume slots: 5 levels (cols 2–6 on REC page). Slot 1 = unity. */
 #define MLR_NUM_VOL_SLOTS      5
@@ -342,6 +347,9 @@ typedef struct {
 	 * 0 = Audio1/Out1, 1 = Audio2/Out2. Persisted in the track header. */
 	uint8_t        recorded_channel;
 	uint8_t        rate_mark;            /* Header rate_mark, persisted as-is. */
+	int8_t         pan;                  /* -MLR_PAN_STEPS..+MLR_PAN_STEPS (grid modes; scene) */
+	uint16_t       pan_gl, pan_gr;       /* target gains, Q15 (32768 = unity) */
+	uint16_t       pan_gl_cur, pan_gr_cur; /* slewed gains used by the mixer */
 	bool           cv1_pitch_enabled;    /* true = cut keys on this row update CV1 pitch. */
 	bool           channel_user_chosen;  /* RAM-only: true once the user has explicitly picked
 	                                      * a channel on the grid; suppresses auto-detect override */
@@ -370,6 +378,7 @@ extern mlr_pattern_t   mlr_patterns[MLR_NUM_PATTERNS];
 extern mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
 extern volatile bool   mlr_scene_saving;  /* true during flash scene write */
 extern volatile uint8_t mlr_rot_range_pct; /* CV rotation range, 1..100 %, card-wide; saved in the scene */
+extern volatile bool   mlr_pan_enabled;  /* grid modes: outputs follow pan; gridless: route by channel */
 extern volatile bool   mlr_settings_save_pending; /* set by the sample manager; core 1 saves the scene afterwards */
 extern volatile int    mlr_recall_active;  /* currently selected recall (-1=none) */
 
@@ -484,6 +493,9 @@ void     mlr_set_speed_frac(int track, uint16_t speed_frac); /* fixed 8.8, clamp
 void     mlr_set_speed_frac_nondeclick(int track, uint16_t speed_frac); /* fixed 8.8, clamped to 64..1024 */
 void     mlr_set_reverse(int track, bool reverse);
 void     mlr_set_volume(int track, int slot);
+void     mlr_set_pan(int track, int pan);
+int      mlr_pan_default(int track);       /* hard to the track's channel side */
+void     mlr_pan_gains(int pan, uint16_t *gl, uint16_t *gr);
 int      mlr_get_column(int track);
 void     mlr_get_loop_cols(int track, int *col_start, int *col_end);
 uint8_t  mlr_consume_wrap_events(void);

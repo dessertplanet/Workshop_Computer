@@ -175,16 +175,44 @@ static void __attribute__((section(".flashdata.devmode"))) sample_mgr_reset_sess
     g_sample_mgr.op = SAMPLE_OP_NONE;
 }
 
+/* Tiny text builder for the info frame. Replaces snprintf so printf's
+ * formatting code (~3 KB, copied to RAM) isn't linked at all. */
+typedef struct { char *p, *end; bool ok; } info_text_t;
+
+static void __attribute__((section(".flashdata.devmode"))) info_str(info_text_t *o, const char *s)
+{
+    while (*s) {
+        if (o->p >= o->end) { o->ok = false; return; }
+        *o->p++ = *s++;
+    }
+}
+
+static void __attribute__((section(".flashdata.devmode"))) info_uint(info_text_t *o, uint32_t v)
+{
+    char tmp[10];
+    int n = 0;
+    do { tmp[n++] = (char)('0' + v % 10u); v /= 10u; } while (v);
+    while (n) {
+        if (o->p >= o->end) { o->ok = false; return; }
+        *o->p++ = tmp[--n];
+    }
+}
+
+static void __attribute__((section(".flashdata.devmode"))) info_int(info_text_t *o, int32_t v)
+{
+    if (v < 0) { info_str(o, "-"); info_uint(o, (uint32_t)(-(v + 1)) + 1u); }
+    else       info_uint(o, (uint32_t)v);
+}
+
 static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(void)
 {
     char info[512];
-    uint32_t used = 0;
+    info_text_t o = { info, info + sizeof(info), true };
 
-    int n = snprintf(info + used, sizeof(info) - used, "MLR1 %d FW %s ROT %u\n",
-                     MLR_NUM_CHANNELS, MLR_FIRMWARE_VERSION, (unsigned)mlr_rot_range_pct);
-    if (n < 0 || (uint32_t)n >= sizeof(info) - used)
-        return false;
-    used += (uint32_t)n;
+    info_str(&o, "MLR1 "); info_uint(&o, MLR_NUM_CHANNELS);
+    info_str(&o, " FW "); info_str(&o, MLR_FIRMWARE_VERSION);
+    info_str(&o, " ROT "); info_uint(&o, mlr_rot_range_pct);
+    info_str(&o, "\n");
 
     for (int t = 0; t < MLR_NUM_TRACKS; t++) {
         uint32_t flash_off = MLR_TRACK_OFFSET(t);
@@ -192,30 +220,27 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
             (const mlr_track_header_t *)(XIP_BASE + flash_off);
         unsigned cv1_pitch_enabled = mlr_tracks[t].has_content && mlr_tracks[t].cv1_pitch_enabled ? 1u : 0u;
 
+        /* "T<t> <samples> <bytes> <keyframes> <rec shift> <channel> <cv1> <rate mark>" */
+        info_str(&o, "T"); info_uint(&o, (uint32_t)t);
         if (hdr->magic == MLR_MAGIC) {
-            n = snprintf(info + used, sizeof(info) - used, "T%d %lu %lu %lu %d %u %u %u\n",
-                 t,
-                 (unsigned long)hdr->sample_count,
-                 (unsigned long)hdr->adpcm_bytes,
-                 (unsigned long)hdr->num_keyframes,
-                 (int)hdr->record_speed_shift,
-                 (unsigned)(hdr->recorded_channel & 0x01),
-                 cv1_pitch_enabled,
-                 (unsigned)hdr->rate_mark);
+            info_str(&o, " "); info_uint(&o, hdr->sample_count);
+            info_str(&o, " "); info_uint(&o, hdr->adpcm_bytes);
+            info_str(&o, " "); info_uint(&o, hdr->num_keyframes);
+            info_str(&o, " "); info_int(&o, hdr->record_speed_shift);
+            info_str(&o, " "); info_uint(&o, hdr->recorded_channel & 0x01u);
+            info_str(&o, " "); info_uint(&o, cv1_pitch_enabled);
+            info_str(&o, " "); info_uint(&o, hdr->rate_mark);
         } else {
-            n = snprintf(info + used, sizeof(info) - used, "T%d 0 0 0 0 0 %u %u\n", t, cv1_pitch_enabled, MLR_RATE_MARK_24K);
+            info_str(&o, " 0 0 0 0 0 "); info_uint(&o, cv1_pitch_enabled);
+            info_str(&o, " "); info_uint(&o, MLR_RATE_MARK_24K);
         }
-
-        if (n < 0 || (uint32_t)n >= sizeof(info) - used)
-            return false;
-        used += (uint32_t)n;
+        info_str(&o, "\n");
     }
-
-    n = snprintf(info + used, sizeof(info) - used, "END\n");
-    if (n < 0 || (uint32_t)n >= sizeof(info) - used)
+    info_str(&o, "END\n");
+    if (!o.ok)
         return false;
-    used += (uint32_t)n;
 
+    uint32_t used = (uint32_t)(o.p - info);
     if (!cdc_write_all(&used, sizeof(used)))
         return false;
     return cdc_write_all(info, used);
