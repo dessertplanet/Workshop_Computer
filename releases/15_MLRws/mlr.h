@@ -83,6 +83,12 @@ extern "C" {
 #define MLR_CV1_PITCH_ENABLED_MODE   0u
 #define MLR_CV1_PITCH_DISABLED_MODE  1u
 
+/* Header rate_mark byte. Before 1.2.0 this byte was pan_class and only ever
+ * held 0..2, so any other value is free. Tracks without MLR_RATE_MARK_24K hold
+ * 48 kHz audio from earlier firmware and are converted at boot. */
+#define MLR_RATE_MARK_24K            0x80u  /* audio stored at MLR_SAMPLE_RATE_HZ */
+#define MLR_RATE_MARK_CONVERTING     0x81u  /* 48 -> 24 kHz conversion interrupted */
+
 /* ------------------------------------------------------------------ */
 /* Pattern / recall / scene constants                                 */
 /* ------------------------------------------------------------------ */
@@ -155,7 +161,7 @@ typedef struct {
 	uint32_t              num_keyframes;
 	int8_t                record_speed_shift;  /* speed at time of recording */
 	uint8_t               recorded_channel;    /* 0 = Audio1/Out1, 1 = Audio2/Out2 in dual-mono grid mode. */
-	uint8_t               pan_class;           /* Reserved; kept for flash header compatibility. */
+	uint8_t               rate_mark;           /* MLR_RATE_MARK_*; 0..2 (old pan_class) = 48 kHz audio. */
 	uint8_t               cv1_pitch_mode;      /* 0/0xFF = update CV1 pitch on cuts, 1 = leave CV1 pitch unchanged. */
 	mlr_keyframe_channels_t keyframes[MLR_MAX_KEYFRAMES];
 } mlr_track_header_t;
@@ -309,7 +315,7 @@ typedef struct {
 	/* per-track input/output channel routing (set by core 0).
 	 * 0 = Audio1/Out1, 1 = Audio2/Out2. Persisted in the track header. */
 	uint8_t        recorded_channel;
-	uint8_t        pan_class;            /* Reserved; kept for flash header compatibility. */
+	uint8_t        rate_mark;            /* Header rate_mark, persisted as-is. */
 	bool           cv1_pitch_enabled;    /* true = cut keys on this row update CV1 pitch. */
 	bool           channel_user_chosen;  /* RAM-only: true once the user has explicitly picked
 	                                      * a channel on the grid; suppresses auto-detect override */
@@ -415,6 +421,13 @@ void mlr_perf_note_adc_fifo_level(uint32_t level);
 /* ------------------------------------------------------------------ */
 /* Core 0 API                                                         */
 /* ------------------------------------------------------------------ */
+
+/* Convert 48 kHz tracks from firmware before 1.2.0 to 24 kHz in place, and
+ * clear any track whose conversion was interrupted. Call once at boot before
+ * mlr_init(), with core 1 and audio not yet running. progress (may be NULL)
+ * is called with done/total output sectors for each track converted. */
+typedef void (*mlr_convert_progress_fn)(int track, uint32_t done, uint32_t total);
+void     mlr_convert_legacy_tracks(mlr_convert_progress_fn progress);
 
 void     mlr_init(void);
 void     mlr_rescan_track(int track);  /* re-read header from flash (call only when track is stopped) */

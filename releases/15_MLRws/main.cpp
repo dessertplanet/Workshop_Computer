@@ -210,6 +210,14 @@ public:
 		master_knob_takeover_armed_ = false;
 
 		s_mode_ = mode_;
+
+		/* Upgrade samples left by firmware before 1.2.0 (48 kHz) to 24 kHz.
+		 * Only does work on the first boot after upgrading. */
+		s_convert_card_ = this;
+		mlr_convert_legacy_tracks(convert_progress);
+		for (int i = 0; i < 6; i++) LedOn(i, false);
+		s_convert_card_ = nullptr;
+
 		mlr_init();
 
 		/* ---- Mode-specific subsystem init ---- */
@@ -243,6 +251,18 @@ public:
 
 		s_card_ = this;
 		multicore_launch_core1(core1_entry);
+	}
+
+	/* LED n = track n: finished tracks lit, the track being converted blinks. */
+	static void __attribute__((section(".flashdata.convert_text"))) convert_progress(int track, uint32_t done, uint32_t total)
+	{
+		(void)total;
+		MLRCard *card = s_convert_card_;
+		if (!card) return;
+		for (int i = 0; i < 6; i++)
+			card->LedOn(i, i < track || (i == track && ((done >> 2) & 1u) == 0));
+		if (s_mode_ != Mode::HostMLR)
+			tud_task();  /* keep the USB device responsive in device modes */
 	}
 
 	static void service_grid_redraw_core1()
@@ -1104,6 +1124,7 @@ private:
 	inline static volatile bool s_rescan_needed_ = false;
 public:
 	inline static MLRCard *s_card_ = nullptr;
+	inline static MLRCard *s_convert_card_ = nullptr;
 private:
 
 	/* ---- Gridless mode state ---- */

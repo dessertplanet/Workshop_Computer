@@ -192,16 +192,17 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
         unsigned cv1_pitch_enabled = mlr_tracks[t].has_content && mlr_tracks[t].cv1_pitch_enabled ? 1u : 0u;
 
         if (hdr->magic == MLR_MAGIC) {
-            n = snprintf(info + used, sizeof(info) - used, "T%d %lu %lu %lu %d %u %u\n",
+            n = snprintf(info + used, sizeof(info) - used, "T%d %lu %lu %lu %d %u %u %u\n",
                  t,
                  (unsigned long)hdr->sample_count,
                  (unsigned long)hdr->adpcm_bytes,
                  (unsigned long)hdr->num_keyframes,
                  (int)hdr->record_speed_shift,
                  (unsigned)(hdr->recorded_channel & 0x01),
-                 cv1_pitch_enabled);
+                 cv1_pitch_enabled,
+                 (unsigned)hdr->rate_mark);
         } else {
-            n = snprintf(info + used, sizeof(info) - used, "T%d 0 0 0 0 0 %u\n", t, cv1_pitch_enabled);
+            n = snprintf(info + used, sizeof(info) - used, "T%d 0 0 0 0 0 %u %u\n", t, cv1_pitch_enabled, MLR_RATE_MARK_24K);
         }
 
         if (n < 0 || (uint32_t)n >= sizeof(info) - used)

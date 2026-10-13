@@ -823,7 +823,7 @@ void mlr_init(void)
 		tr->volume_frac = 256;
 		tr->volume_target = 256;
 		tr->recorded_channel  = 0;
-		tr->pan_class         = 0;
+		tr->rate_mark         = MLR_RATE_MARK_24K;
 		tr->cv1_pitch_enabled = true;
 		tr->channel_user_chosen = false;
 
@@ -838,7 +838,7 @@ void mlr_init(void)
 			tr->num_keyframes  = hdr->num_keyframes;
 			tr->record_speed_shift = hdr->record_speed_shift;
 			tr->recorded_channel   = hdr->recorded_channel & 0x01;
-			tr->pan_class          = (hdr->pan_class <= 2) ? hdr->pan_class : 0;
+			tr->rate_mark          = hdr->rate_mark;
 			tr->cv1_pitch_enabled  = (hdr->cv1_pitch_mode == MLR_CV1_PITCH_ENABLED_MODE);
 			tr->playing        = false;
 			tr->playhead       = 0;
@@ -897,7 +897,7 @@ void mlr_rescan_track(int track)
 	tr->volume_frac = 256;
 	tr->volume_target = 256;
 	tr->recorded_channel  = 0;
-	tr->pan_class         = 0;
+	tr->rate_mark         = MLR_RATE_MARK_24K;
 	tr->cv1_pitch_enabled = true;
 	tr->channel_user_chosen = false;
 	tr->fill_seek_pending = false;
@@ -913,7 +913,7 @@ void mlr_rescan_track(int track)
 		tr->num_keyframes  = hdr->num_keyframes;
 		tr->record_speed_shift = hdr->record_speed_shift;
 		tr->recorded_channel   = hdr->recorded_channel & 0x01;
-		tr->pan_class          = (hdr->pan_class <= 2) ? hdr->pan_class : 0;
+		tr->rate_mark          = hdr->rate_mark;
 		tr->cv1_pitch_enabled  = (hdr->cv1_pitch_mode == MLR_CV1_PITCH_ENABLED_MODE);
 		tr->playhead       = 0;
 
@@ -969,6 +969,7 @@ void __not_in_flash_func(mlr_start_record)(int track)
 	/* Recording follows slower speed slots but is capped at 1x. Preserve the
 	 * selected playback speed while storing the actual recording speed. */
 	tr->record_speed_shift = tr->speed_shift > 0 ? 0 : tr->speed_shift;
+	tr->rate_mark = MLR_RATE_MARK_24K;
 	tr->speed_frac  = speed_shift_to_frac(tr->speed_shift);
 	tr->speed_accum = 0;
 	reset_track_audio_state(tr);
@@ -1774,7 +1775,7 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	tr->volume_frac = 256;
 	tr->volume_target = 256;
 	tr->recorded_channel    = 0;
-	tr->pan_class           = 0;
+	tr->rate_mark           = MLR_RATE_MARK_24K;
 	tr->cv1_pitch_enabled   = true;
 	tr->channel_user_chosen = false;
 	tr->pcm.w = 0;
@@ -3515,7 +3516,7 @@ static void write_track_header(int t, bool start_playback)
 	hdr->num_keyframes       = tr->num_keyframes;
 	hdr->record_speed_shift  = tr->record_speed_shift;
 	hdr->recorded_channel    = (uint8_t)(tr->recorded_channel & 0x01);
-	hdr->pan_class           = (uint8_t)((tr->pan_class <= 2) ? tr->pan_class : 0);
+	hdr->rate_mark           = tr->rate_mark;
 	hdr->cv1_pitch_mode      = tr->cv1_pitch_enabled ? MLR_CV1_PITCH_ENABLED_MODE : MLR_CV1_PITCH_DISABLED_MODE;
 	memcpy(hdr->keyframes, tr->keyframes,
 	       tr->num_keyframes * sizeof(mlr_keyframe_channels_t));
@@ -3617,7 +3618,7 @@ static void copy_finish_track(void)
 	hdr->num_keyframes       = src->num_keyframes;
 	hdr->record_speed_shift  = src->record_speed_shift;
 	hdr->recorded_channel    = (uint8_t)(src->recorded_channel & 0x01);
-	hdr->pan_class           = (uint8_t)((src->pan_class <= 2) ? src->pan_class : 0);
+	hdr->rate_mark           = src->rate_mark;
 	hdr->cv1_pitch_mode      = src->cv1_pitch_enabled ? MLR_CV1_PITCH_ENABLED_MODE : MLR_CV1_PITCH_DISABLED_MODE;
 	memcpy(hdr->keyframes, src->keyframes,
 	       src->num_keyframes * sizeof(mlr_keyframe_channels_t));
@@ -3632,7 +3633,7 @@ static void copy_finish_track(void)
 	dst->num_keyframes      = src->num_keyframes;
 	dst->record_speed_shift = src->record_speed_shift;
 	dst->recorded_channel   = src->recorded_channel & 0x01;
-	dst->pan_class          = (src->pan_class <= 2) ? src->pan_class : 0;
+	dst->rate_mark          = src->rate_mark;
 	dst->cv1_pitch_enabled  = src->cv1_pitch_enabled;
 	memcpy(dst->keyframes, src->keyframes,
 	       src->num_keyframes * sizeof(mlr_keyframe_channels_t));
@@ -3839,5 +3840,168 @@ void mlr_io_task(void)
 				}
 			}
 		}
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* 48 kHz -> 24 kHz conversion of tracks from firmware before 1.2.0   */
+/* ------------------------------------------------------------------ */
+
+/* Odd taps h[±1], h[±3], ... h[±29] of a 63-tap Blackman-windowed half-band
+ * low-pass (Q15). The centre tap is 0.5 and the other even taps are zero.
+ * Flat to 10 kHz, -6 dB at 12 kHz, below -60 dB from 14 kHz (at 48 kHz). */
+#define CONV_HB_TAPS 15
+#define CONV_HB_SPAN (2 * CONV_HB_TAPS - 1)  /* input samples each side of centre */
+#define CONV_HIST    64                      /* power of two > 2 * CONV_HB_SPAN */
+
+/* Runs once at boot, so keep it in flash rather than copied to RAM. */
+#define CONV_FLASH_FUNC __attribute__((section(".flashdata.convert_text")))
+static const int32_t __attribute__((section(".flashdata.convert_rodata"))) conv_hb_odd[CONV_HB_TAPS] = {
+	10387, -3347, 1876, -1209, 818, -561, 381, -254,
+	  164,  -102,   60,   -32,  16,  -6,   1,
+};
+
+static void CONV_FLASH_FUNC conv_flash_erase(uint32_t off)
+{
+	uint32_t irq = save_and_disable_interrupts();
+	flash_range_erase(off, MLR_SECTOR_SIZE);
+	restore_interrupts(irq);
+}
+
+static void CONV_FLASH_FUNC conv_flash_write_sector(uint32_t off, const uint8_t *data)
+{
+	uint32_t irq = save_and_disable_interrupts();
+	flash_range_erase(off, MLR_SECTOR_SIZE);
+	flash_range_program(off, data, MLR_SECTOR_SIZE);
+	restore_interrupts(irq);
+}
+
+/* Same test mlr_init() uses to load a track, so every track that would play
+ * gets converted. sample_count <= MLR_MAX_SAMPLES keeps reads in the track. */
+static bool CONV_FLASH_FUNC conv_header_valid(const mlr_track_header_t *hdr)
+{
+	return hdr->magic == MLR_MAGIC &&
+	       hdr->sample_count > 0 &&
+	       hdr->sample_count <= MLR_MAX_SAMPLES &&
+	       hdr->num_keyframes <= MLR_MAX_KEYFRAMES;
+}
+
+/* Decimate one track 2:1 in place. Output is half the size of the input, so
+ * output sector j is only written once input decoding has moved well past
+ * the end of it (input byte ~8192 * (j + 1) vs. sector end 4096 * (j + 1)). */
+static void CONV_FLASH_FUNC convert_track_to_24k(int t, mlr_convert_progress_fn progress)
+{
+	const mlr_track_header_t *hdr =
+		(const mlr_track_header_t *)(XIP_BASE + track_hdr_flash_off(t));
+	const uint32_t in_count = hdr->sample_count;
+	const uint32_t out_count = (in_count + 1) / 2;
+	const uint32_t out_bytes = (out_count + 1) / 2;
+	const uint32_t total_sectors = (out_bytes + MLR_SECTOR_SIZE - 1) / MLR_SECTOR_SIZE;
+	const int8_t record_speed_shift = hdr->record_speed_shift;
+	const uint8_t recorded_channel = hdr->recorded_channel;
+	const uint8_t cv1_pitch_mode = hdr->cv1_pitch_mode;
+	adpcm_state_t dec = {0, 0};
+	if (hdr->num_keyframes > 0) {
+		dec.predictor  = hdr->keyframes[0].ch[0].predictor;
+		dec.step_index = (int8_t)adpcm_clamp_index(hdr->keyframes[0].ch[0].step_index);
+	}
+
+	/* Mark the track first, so a power cut mid-conversion clears it at the
+	 * next boot instead of leaving half-converted audio. */
+	memcpy(hdr_staging, hdr, MLR_SECTOR_SIZE);
+	((mlr_track_header_t *)hdr_staging)->rate_mark = MLR_RATE_MARK_CONVERTING;
+	conv_flash_write_sector(track_hdr_flash_off(t), hdr_staging);
+
+	/* Boot-time scratch: the page ring and rec_keyframes are idle until
+	 * recording starts, and mlr_init() clears the page ring afterwards. */
+	uint8_t *out_sector = &mlr_page_ring.pages[0][0];
+	_Static_assert(sizeof(mlr_page_ring.pages) >= MLR_SECTOR_SIZE,
+		"page ring too small for conversion sector buffer");
+	const uint8_t *in = track_audio_xip(t);
+	const uint32_t audio_off = track_audio_flash_off(t);
+
+	int16_t hist[CONV_HIST] = {0};
+	adpcm_state_t enc = {0, 0};
+	uint32_t num_kf = 1;
+	rec_keyframes[0].ch[0].predictor  = 0;
+	rec_keyframes[0].ch[0].step_index = 0;
+	rec_keyframes[0].ch[0]._pad       = 0;
+
+	uint32_t out_n = 0, out_fill = 0, sectors_done = 0;
+	memset(out_sector, 0xFF, MLR_SECTOR_SIZE);
+	if (progress) progress(t, 0, total_sectors);
+
+	for (uint32_t i = 0; out_n < out_count; i++) {
+		int16_t x = 0;
+		if (i < in_count) {
+			uint8_t b = in[i >> 1];
+			x = adpcm_decode((i & 1) ? (b >> 4) : (b & 0x0F), &dec);
+		}
+		hist[i & (CONV_HIST - 1)] = x;
+
+		/* Output m is centred on input 2m and needs CONV_HB_SPAN samples
+		 * after it; inputs before 0 are zero. */
+		if (i < CONV_HB_SPAN || ((i - CONV_HB_SPAN) & 1)) continue;
+		uint32_t c = i - CONV_HB_SPAN;
+		int32_t acc = (int32_t)hist[c & (CONV_HIST - 1)] * 16384;  /* centre tap 0.5 */
+		for (uint32_t k = 0; k < CONV_HB_TAPS; k++) {
+			uint32_t d = 2 * k + 1;
+			int32_t before = (c >= d) ? hist[(c - d) & (CONV_HIST - 1)] : 0;
+			int32_t after  = hist[(c + d) & (CONV_HIST - 1)];
+			acc += conv_hb_odd[k] * (before + after);
+		}
+		int16_t y = adpcm_clamp16((acc + (1 << 14)) >> 15);
+
+		uint8_t nyb = adpcm_encode(y, &enc);
+		if (out_n & 1) out_sector[out_fill++] |= (uint8_t)(nyb << 4);
+		else           out_sector[out_fill] = nyb;
+		out_n++;
+
+		/* Same keyframe rule as recording: state after every 1024 samples. */
+		if ((out_n % MLR_KEYFRAME_INTERVAL) == 0 && num_kf < MLR_MAX_KEYFRAMES) {
+			rec_keyframes[num_kf].ch[0].predictor  = enc.predictor;
+			rec_keyframes[num_kf].ch[0].step_index = enc.step_index;
+			rec_keyframes[num_kf].ch[0]._pad       = 0;
+			num_kf++;
+		}
+
+		bool last = (out_n == out_count);
+		if (last && (out_n & 1)) out_fill++;  /* keep the trailing low nybble */
+		if (out_fill == MLR_SECTOR_SIZE || (last && out_fill > 0)) {
+			conv_flash_write_sector(audio_off + sectors_done * MLR_SECTOR_SIZE, out_sector);
+			sectors_done++;
+			out_fill = 0;
+			memset(out_sector, 0xFF, MLR_SECTOR_SIZE);
+			if (progress) progress(t, sectors_done, total_sectors);
+		}
+	}
+
+	memset(hdr_staging, 0xFF, MLR_SECTOR_SIZE);
+	mlr_track_header_t *out_hdr = (mlr_track_header_t *)hdr_staging;
+	out_hdr->magic              = MLR_MAGIC;
+	out_hdr->sample_count       = out_count;
+	out_hdr->adpcm_bytes        = out_bytes;
+	out_hdr->num_keyframes      = num_kf;
+	out_hdr->record_speed_shift = record_speed_shift;
+	out_hdr->recorded_channel   = recorded_channel;
+	out_hdr->rate_mark          = MLR_RATE_MARK_24K;
+	out_hdr->cv1_pitch_mode     = cv1_pitch_mode;
+	memcpy(out_hdr->keyframes, rec_keyframes, num_kf * sizeof(mlr_keyframe_channels_t));
+	conv_flash_write_sector(track_hdr_flash_off(t), hdr_staging);
+}
+
+void CONV_FLASH_FUNC mlr_convert_legacy_tracks(mlr_convert_progress_fn progress)
+{
+	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+		const mlr_track_header_t *hdr =
+			(const mlr_track_header_t *)(XIP_BASE + track_hdr_flash_off(t));
+		if (hdr->magic != MLR_MAGIC || hdr->rate_mark == MLR_RATE_MARK_24K)
+			continue;
+		if (hdr->rate_mark == MLR_RATE_MARK_CONVERTING) {
+			conv_flash_erase(track_hdr_flash_off(t));  /* interrupted: clear the track */
+			continue;
+		}
+		if (conv_header_valid(hdr))
+			convert_track_to_24k(t, progress);
 	}
 }
