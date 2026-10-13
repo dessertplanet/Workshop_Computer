@@ -81,6 +81,9 @@ extern "C" {
 #define CV_X_OFFSET_SEMITONES  24       /* ±24 semitones (~±2 V) at X knob extremes */
 #define X_KNOB_LPF_SHIFT       9        /* one-pole IIR on Knob::X (sample-rate). tau≈21 ms */
 #define DELETE_RESET_HOLD_SAMPLES (MLR_SAMPLE_RATE_HZ * 5u) /* 5 seconds */
+/* Save the scene at most every 4 s, and only if the user changed something:
+ * at worst 900 saves an hour (~111 h of nonstop changes to 100k erases). */
+#define SETTINGS_AUTOSAVE_PERIOD_SAMPLES (MLR_SAMPLE_RATE_HZ * 4u)
 #define DELETE_RESET_FLASH_PERIOD_SAMPLES (MLR_SAMPLE_RATE_HZ / 10u) /* 100 ms half-period */
 #define DELETE_RESET_FLASH_SAMPLES (DELETE_RESET_FLASH_PERIOD_SAMPLES * 6u)  /* three quick flashes */
 #define EXTRA_GUIDE_ENABLED 0x80u
@@ -219,6 +222,7 @@ public:
 		s_convert_card_ = nullptr;
 
 		mlr_init();
+		autosave_master_ref_ = mlr_master_level_raw;
 
 		/* ---- Mode-specific subsystem init ---- */
 		switch (mode_) {
@@ -500,6 +504,7 @@ public:
 				process_bottom_master_control();
 				process_extra_rows();
 			}
+			service_settings_autosave();
 		}
 		PERF_UI_SECTION_END(0);
 
@@ -737,11 +742,13 @@ public:
 					} else if (mlr_recall_active == r) {
 						/* pressing active scene: undo to pre-recall state */
 						mlr_recall_undo_and_record();
+						note_settings_changed();
 					} else if (!mlr_recalls[r].has_data) {
 						mlr_recall_arm(r);
 					} else {
 						/* has data: recall it */
 						mlr_recall_exec_and_record(r);
+						note_settings_changed();
 					}
 				}
 			}
@@ -837,6 +844,7 @@ public:
 				mlr_master_level_raw = (uint16_t)knob_main_raw;
 				master_knob_arm_raw_ = knob_main_raw;
 				mlr_master_override = true;  /* knob moved, suppress pattern master */
+				note_master_level_changed();
 			}
 		} else {
 			int diff = knob_main_raw - master_knob_arm_raw_;
@@ -846,6 +854,7 @@ public:
 				mlr_master_level_raw = (uint16_t)knob_main_raw;
 				master_knob_arm_raw_ = knob_main_raw;
 				mlr_master_override = true;  /* knob takeover, suppress pattern master */
+				note_master_level_changed();
 			}
 		}
 		master_knob_last_raw_ = knob_main_raw;
@@ -1111,6 +1120,9 @@ private:
 	bool       live_gate_high_ = false;
 	uint8_t    replay_gate_mask_ = 0;
 	uint32_t   delete_reset_hold_samples_ = 0;    /* continuous DELETE hold duration */
+	uint32_t   settings_autosave_elapsed_ = 0;    /* samples since the last autosave check */
+	bool       settings_dirty_ = false;           /* user changed a saved setting */
+	uint16_t   autosave_master_ref_ = 0;          /* master level at the last user move */
 	uint32_t   delete_reset_flash_samples_remaining_ = 0;  /* confirmation flash countdown */
 	bool       delete_reset_fired_ = false;       /* require DELETE release before another reset */
 	uint16_t   mon_fade_frac_ = 0;   /* monitor fade-in envelope, 0..256 */
@@ -1711,6 +1723,8 @@ private:
 		}
 
 		if (run_control) {
+			service_settings_autosave();
+
 			/* Maintenance doesn't need control-rate updates. */
 			gl_start_maint_div_++;
 			if (gl_start_maint_div_ >= 8) {  /* ~1.5 kHz effective */
@@ -1805,6 +1819,8 @@ private:
 				int idx = (mod_x * MLR_NUM_VOL_SLOTS) >> 12;  /* 0..5 */
 			if (idx >= MLR_NUM_VOL_SLOTS) idx = MLR_NUM_VOL_SLOTS - 1;
 			int slot = (MLR_NUM_VOL_SLOTS - 1) - idx;
+			if (!cv1_connected && mlr_tracks[gl_active_track_].volume_slot != slot)
+				note_settings_changed();
 			mlr_set_volume(gl_active_track_, slot);
 			} else if (!gl_recording_active_ && switch_middle && (x_accept || cv1_connected)) {
 			/* Global mode: playback-layer level, unity at center. */
@@ -1864,8 +1880,10 @@ private:
 				if (speed_delta < 0) speed_delta = -speed_delta;
 
 				bool reverse_changed = effective_reverse != target_reverse;
-				if (reverse_changed)
+				if (reverse_changed) {
 					mlr_set_reverse(gl_active_track_, target_reverse);
+					note_settings_changed();
+				}
 
 				/* Main-knob ADC dither can constantly perturb continuous speed,
 				 * which is especially audible in reverse because it invalidates
@@ -2297,6 +2315,7 @@ private:
 		uint16_t raw = (uint16_t)(((uint32_t)inv * 4095u + (uint32_t)(max_col / 2)) / (uint32_t)max_col);
 		if (raw > 4095u) raw = 4095u;
 		mlr_master_level_raw = raw;
+		note_master_level_changed();
 		master_knob_arm_raw_ = KnobVal(Knob::Main);
 		master_knob_last_raw_ = master_knob_arm_raw_;
 		master_knob_takeover_armed_ = true;
@@ -2648,7 +2667,10 @@ private:
 			mlr_cut(t, col);
 			pause_other_group_members_for_gate(t);
 		} else {
+			bool had_loop = mlr_tracks[t].loop_active;
 			mlr_choke_group_cut(t, col);
+			if (had_loop && !mlr_tracks[t].loop_active)
+				note_settings_changed();  /* cutting out of a loop clears it */
 		}
 		dispatch_event(MLR_EVT_CUT, (uint8_t)t, (int8_t)col, 0);
 	}
@@ -2663,24 +2685,61 @@ private:
 			mlr_choke_group_set_loop(t, a, b);
 		}
 		dispatch_event(MLR_EVT_LOOP, (uint8_t)t, (int8_t)a, (int8_t)b);
+		note_settings_changed();
 	}
 
 	void __not_in_flash("group_set_speed") group_set_speed(int t, int speed)
 	{
 		mlr_set_speed(t, speed);
 		dispatch_event(MLR_EVT_SPEED, (uint8_t)t, (int8_t)speed, 0);
+		note_settings_changed();
 	}
 
 	void __not_in_flash("group_set_reverse") group_set_reverse(int t, bool reverse)
 	{
 		mlr_set_reverse(t, reverse);
 		dispatch_event(MLR_EVT_REVERSE, (uint8_t)t, reverse ? 1 : 0, 0);
+		note_settings_changed();
 	}
 
 	void __not_in_flash("group_set_volume") group_set_volume(int t, int slot)
 	{
 		mlr_set_volume(t, slot);
 		dispatch_event(MLR_EVT_VOLUME, (uint8_t)t, (int8_t)slot, 0);
+		note_settings_changed();
+	}
+
+	/* Persist speed/reverse/volume/loop/master changes the user makes. Pattern
+	 * playback calls the mlr_set_* setters directly, so automation never lands
+	 * here and never wears the scene flash. */
+	void __not_in_flash("note_settings_changed") note_settings_changed()
+	{
+		settings_dirty_ = true;
+	}
+
+	/* Master is read straight from the knob and this runs on every jittery
+	 * ADC change, so only count a move past the threshold, then re-centre on
+	 * the new level so jitter around a resting knob never marks a change. */
+	void __not_in_flash("note_master_level_changed") note_master_level_changed()
+	{
+		int diff = (int)mlr_master_level_raw - (int)autosave_master_ref_;
+		if (diff < 0) diff = -diff;
+		if (diff > KNOB_HARD_TAKEOVER_THRESHOLD) {
+			autosave_master_ref_ = mlr_master_level_raw;
+			note_settings_changed();
+		}
+	}
+
+	void __not_in_flash("service_settings_autosave") service_settings_autosave()
+	{
+		settings_autosave_elapsed_ += MAIN_CTRL_DIV;
+		if (settings_autosave_elapsed_ < SETTINGS_AUTOSAVE_PERIOD_SAMPLES) return;
+		settings_autosave_elapsed_ = 0;
+		if (!settings_dirty_) return;
+		settings_dirty_ = false;
+		/* autosave_master_ref_ is left alone: it tracks user moves only, so a
+		 * pattern-automated master level can't leak in and trigger saves. */
+		mlr_scene_save_start();  /* queued behind any recording/flush by core 1 */
 	}
 
 	void __not_in_flash("group_stop_track") group_stop_track(int t)
@@ -3086,6 +3145,7 @@ private:
 				} else if (mlr_tracks[track].loop_active) {
 					mlr_clear_loop(track);
 					dispatch_event(MLR_EVT_LOOP_CLR, (uint8_t)track, 0, 0);
+					note_settings_changed();
 				}
 				return;
 			}

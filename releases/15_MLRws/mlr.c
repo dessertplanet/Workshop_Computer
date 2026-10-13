@@ -870,7 +870,9 @@ void mlr_init(void)
 }
 
 /** Re-read a single track's header from flash.
- *  Call only when the track is stopped (not playing, not recording). */
+ *  Call only when the track is stopped (not playing, not recording).
+ *  Keeps the track's scene settings (speed, reverse, volume, loop) so a
+ *  sample-manager session doesn't reset them. */
 void mlr_rescan_track(int track)
 {
 	if (track < 0 || track >= MLR_NUM_TRACKS) return;
@@ -878,6 +880,13 @@ void mlr_rescan_track(int track)
 	mlr_track_t *tr = &mlr_tracks[track];
 	const mlr_track_header_t *hdr = (const mlr_track_header_t *)
 		(XIP_BASE + MLR_TRACK_OFFSET(track));
+
+	const int8_t  keep_speed_shift = tr->speed_shift;
+	const bool    keep_reverse     = tr->reverse;
+	const uint8_t keep_volume_slot = tr->volume_slot;
+	const bool    keep_loop        = tr->loop_active;
+	const int     keep_loop_start  = tr->loop_col_start;
+	const int     keep_loop_end    = tr->loop_col_end;
 
 	/* Reset playback state */
 	tr->playing = false;
@@ -932,6 +941,13 @@ void mlr_rescan_track(int track)
 			}
 		}
 	}
+
+	/* Same setters mlr_scene_load() uses; loops need content to map columns. */
+	mlr_set_speed(track, keep_speed_shift);
+	mlr_set_reverse(track, keep_reverse);
+	mlr_set_volume(track, keep_volume_slot);
+	if (keep_loop && keep_loop_start >= 0 && keep_loop_end >= 0)
+		mlr_set_loop(track, keep_loop_start, keep_loop_end);
 }
 
 /* ------------------------------------------------------------------ */
