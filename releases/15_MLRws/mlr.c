@@ -104,6 +104,7 @@ volatile uint32_t mlr_perf_rot_preview_waits;
 volatile uint32_t mlr_perf_rot_xfade_skips;
 volatile uint32_t mlr_perf_rot_map_errors;
 volatile uint32_t mlr_perf_rot_samples;
+volatile uint32_t mlr_perf_fill_resyncs;
 
 static inline void perf_update_max(volatile uint32_t *dst, uint32_t value)
 {
@@ -811,6 +812,49 @@ void __not_in_flash_func(mlr_pan_gains)(int pan, uint16_t *gl, uint16_t *gr)
 	*gr = pan_gain_out1[MLR_PAN_STEPS - pan];
 }
 
+/* Out 1 gain at a fractional pan position, x = (pan + MLR_PAN_STEPS) * 256.
+ * Linear between table steps keeps power within ~0.5% of equal-power. */
+static inline uint16_t pan_gain_interp(int x)
+{
+	if (x <= 0) return pan_gain_out1[0];
+	if (x >= 2 * MLR_PAN_STEPS * 256) return pan_gain_out1[2 * MLR_PAN_STEPS];
+	int i = x >> 8, f = x & 255;
+	int a = pan_gain_out1[i], b = pan_gain_out1[i + 1];
+	return (uint16_t)(a + (((b - a) * f) >> 8));
+}
+
+int __not_in_flash_func(mlr_pan_effective_q8)(int track)
+{
+	const mlr_track_t *tr = &mlr_tracks[track];
+	int e = tr->pan * 256 + tr->pan_cv_q8;
+	if (e < -MLR_PAN_STEPS * 256) e = -MLR_PAN_STEPS * 256;
+	if (e >  MLR_PAN_STEPS * 256) e =  MLR_PAN_STEPS * 256;
+	return e;
+}
+
+/* Recompute target gains from base pan + CV offset. */
+static void __not_in_flash_func(pan_update_gains)(mlr_track_t *tr, int track)
+{
+	int e = mlr_pan_effective_q8(track);
+	tr->pan_gl = pan_gain_interp(e + MLR_PAN_STEPS * 256);
+	tr->pan_gr = pan_gain_interp(MLR_PAN_STEPS * 256 - e);
+	if (!tr->playing) {  /* nothing audible to slew */
+		tr->pan_gl_cur = tr->pan_gl;
+		tr->pan_gr_cur = tr->pan_gr;
+	}
+}
+
+void __not_in_flash_func(mlr_set_pan_cv)(int track, int offset_q8)
+{
+	if (track < 0 || track >= MLR_NUM_TRACKS) return;
+	if (offset_q8 < -2 * MLR_PAN_STEPS * 256) offset_q8 = -2 * MLR_PAN_STEPS * 256;
+	if (offset_q8 >  2 * MLR_PAN_STEPS * 256) offset_q8 =  2 * MLR_PAN_STEPS * 256;
+	mlr_track_t *tr = &mlr_tracks[track];
+	if (tr->pan_cv_q8 == offset_q8) return;
+	tr->pan_cv_q8 = (int16_t)offset_q8;
+	pan_update_gains(tr, track);
+}
+
 int __not_in_flash_func(mlr_pan_default)(int track)
 {
 	if (track < 0 || track >= MLR_NUM_TRACKS) return -MLR_PAN_STEPS;
@@ -823,15 +867,8 @@ void __not_in_flash_func(mlr_set_pan)(int track, int pan)
 	if (pan < -MLR_PAN_STEPS) pan = -MLR_PAN_STEPS;
 	if (pan >  MLR_PAN_STEPS) pan =  MLR_PAN_STEPS;
 	mlr_track_t *tr = &mlr_tracks[track];
-	uint16_t gl, gr;
-	mlr_pan_gains(pan, &gl, &gr);
 	tr->pan = (int8_t)pan;
-	tr->pan_gl = gl;
-	tr->pan_gr = gr;
-	if (!tr->playing) {  /* nothing audible to slew */
-		tr->pan_gl_cur = gl;
-		tr->pan_gr_cur = gr;
-	}
+	pan_update_gains(tr, track);
 }
 
 /* Smoothly swap a track's output channel. If the track is currently
@@ -1049,6 +1086,7 @@ void MLR_COLD_FUNC mlr_rescan_track(int track)
 	/* New audio (uploaded or erased) starts hard to its channel side. */
 	bool same_audio = had_content == tr->has_content &&
 	                  old_samples == tr->length_samples && old_bytes == tr->length_bytes;
+	if (!same_audio) tr->pan_cv_q8 = 0;
 	mlr_set_pan(track, same_audio ? keep_pan : mlr_pan_default(track));
 }
 
@@ -1088,6 +1126,7 @@ void __not_in_flash_func(mlr_start_record)(int track)
 	/* Recording follows slower speed slots but is capped at 1x. Preserve the
 	 * selected playback speed while storing the actual recording speed. */
 	tr->record_speed_shift = tr->speed_shift > 0 ? 0 : tr->speed_shift;
+	mlr_tracks[track].pan_cv_q8 = 0;
 	mlr_set_pan(track, mlr_pan_default(track));  /* new audio: hard to its channel side */
 	tr->rate_mark = MLR_RATE_MARK_24K;
 	tr->speed_frac  = speed_shift_to_frac(tr->speed_shift);
@@ -1917,7 +1956,8 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	tr->volume_frac = 256;
 	tr->volume_target = 256;
 	tr->recorded_channel    = 0;
-	tr->pan = -MLR_PAN_STEPS; tr->pan_gl = tr->pan_gl_cur = 32768u; tr->pan_gr = tr->pan_gr_cur = 0;
+	tr->pan = -MLR_PAN_STEPS; tr->pan_cv_q8 = 0;
+	tr->pan_gl = tr->pan_gl_cur = 32768u; tr->pan_gr = tr->pan_gr_cur = 0;
 	tr->rate_mark           = MLR_RATE_MARK_24K;
 	tr->cv1_pitch_enabled   = true;
 	tr->channel_user_chosen = false;
@@ -3057,6 +3097,7 @@ void __not_in_flash_func(mlr_scene_reset_params_to_defaults)(void)
 		mlr_set_reverse(t, false);
 		mlr_clear_loop(t);
 		mlr_set_volume(t, 1);
+		mlr_tracks[t].pan_cv_q8 = 0;  /* CV pan offset: back to the grid pan */
 		mlr_set_pan(t, mlr_pan_default(t));
 		mlr_tracks[t].splice_q16 = 0;  /* CV rotation: back to normal at the next wrap */
 	}
@@ -3170,6 +3211,7 @@ static void seek_fill_to(mlr_track_t *tr, int t, uint32_t target)
 	fill_region(tr, &ws, &we);
 	seek_fill_raw(tr, t, fill_audio_pos(tr, target, ws, we));
 	tr->fill_sample_pos = target;
+	tr->fill_dec_synced = true;
 }
 
 /* Forward decode reached the seam: continue from the start of the recording. */
@@ -3245,6 +3287,15 @@ static void fill_pcm_ring_forward(int t, uint32_t max_fill)
 	/* determine wrap boundaries (loop-a-section or full track) */
 	uint32_t wrap_end   = tr->loop_active ? tr->loop_end_sample   : tr->length_samples;
 	uint32_t wrap_start = tr->loop_active ? tr->loop_start_sample : 0;
+
+	/* Reverse chunks leave the decoder at the chunk's end; if the direction
+	 * flipped without a seek, put it back where the fill head is. */
+	if (!tr->fill_dec_synced && tr->fill_sample_pos < wrap_end) {
+		seek_fill_to(tr, t, tr->fill_sample_pos);
+#ifdef MLR_PERF_PROFILING
+		mlr_perf_fill_resyncs++;
+#endif
+	}
 
 	uint32_t seam = fill_seam_pos(tr, wrap_start, wrap_end);
 	uint32_t win = seam ? seam_window(seam, wrap_start, wrap_end) : 0;
@@ -3366,6 +3417,7 @@ static void fill_pcm_ring_reverse(int t, uint32_t max_fill)
 		}
 
 		tr->fill_sample_pos = decode_start;
+		tr->fill_dec_synced = false;
 		to_fill -= chunk;
 	}
 }
@@ -3469,6 +3521,7 @@ static uint16_t fill_seek_preview_reverse(int t)
 		}
 
 		tr->fill_sample_pos = decode_start;
+		tr->fill_dec_synced = false;
 	}
 
 	return written;

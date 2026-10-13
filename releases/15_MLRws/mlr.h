@@ -264,6 +264,8 @@ typedef struct {
 	bool           fill_high_nyb;
 	adpcm_state_t  fill_decode[MLR_NUM_CHANNELS];
 	uint32_t       fill_sample_pos;    /* frame position of fill head */
+	bool           fill_dec_synced;    /* core 1: decoder is at fill_sample_pos (false after a
+	                                    * reverse chunk, which leaves it at the chunk's end) */
 	volatile bool  fill_seek_pending;  /* set by cut, core 1 refills */
 
 	/* seek target (set by core 0, consumed by core 1) */
@@ -348,6 +350,7 @@ typedef struct {
 	uint8_t        recorded_channel;
 	uint8_t        rate_mark;            /* Header rate_mark, persisted as-is. */
 	int8_t         pan;                  /* -MLR_PAN_STEPS..+MLR_PAN_STEPS (grid modes; scene) */
+	int16_t        pan_cv_q8;            /* CV In 1 offset, 1/256 steps; held, not saved */
 	uint16_t       pan_gl, pan_gr;       /* target gains, Q15 (32768 = unity) */
 	uint16_t       pan_gl_cur, pan_gr_cur; /* slewed gains used by the mixer */
 	bool           cv1_pitch_enabled;    /* true = cut keys on this row update CV1 pitch. */
@@ -451,6 +454,7 @@ extern volatile uint32_t mlr_perf_rot_preview_waits; /* wrap preview skipped: ne
 extern volatile uint32_t mlr_perf_rot_xfade_skips;   /* wrap crossfade skipped: preview for another wrap */
 extern volatile uint32_t mlr_perf_rot_map_errors;    /* decoder not at the rotated audio position */
 extern volatile uint32_t mlr_perf_rot_samples;       /* samples checked */
+extern volatile uint32_t mlr_perf_fill_resyncs;   /* forward fill re-seeked after reverse chunks */
 void mlr_perf_reset(void);
 void mlr_perf_count_grid_frame_drop(void);
 void mlr_perf_count_monome_ws_event_drop(void);
@@ -494,6 +498,8 @@ void     mlr_set_speed_frac_nondeclick(int track, uint16_t speed_frac); /* fixed
 void     mlr_set_reverse(int track, bool reverse);
 void     mlr_set_volume(int track, int slot);
 void     mlr_set_pan(int track, int pan);
+void     mlr_set_pan_cv(int track, int offset_q8);  /* CV offset on top of the base pan */
+int      mlr_pan_effective_q8(int track);  /* base + CV, clamped, in 1/256 steps */
 int      mlr_pan_default(int track);       /* hard to the track's channel side */
 void     mlr_pan_gains(int pan, uint16_t *gl, uint16_t *gr);
 int      mlr_get_column(int track);

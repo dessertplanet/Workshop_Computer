@@ -85,6 +85,7 @@ extern "C" {
  * at worst 900 saves an hour (~111 h of nonstop changes to 100k erases). */
 #define SETTINGS_AUTOSAVE_PERIOD_SAMPLES (MLR_SAMPLE_RATE_HZ * 4u)
 #define CV_SPLICE_FULL_SCALE   1707     /* CV In counts at +5 V (+/-2048 ~ +/-6 V) */
+#define CV_PAN_FULL_SCALE      1707     /* +/-5 V on CV In 1 = the full L-R width of pan */
 
 #ifdef MLR_PERF_PROFILING
 /* Debugger test commands (profiling builds only). Written over OpenOCD while
@@ -100,6 +101,7 @@ enum {
 	PERF_CMD_LOOP      = 7,  /* track, arg = (start col << 4) | end col; arg 0 = clear loop */
 	PERF_CMD_COPY      = 8,  /* track = source, arg = destination mask (empty tracks only) */
 	PERF_CMD_PAN       = 9,  /* track, arg = pan + MLR_PAN_STEPS (0..12) */
+	PERF_CMD_PAN_CV    = 10, /* track, arg = 128 + offset in 1/10 steps (stands in for CV In 1) */
 };
 static int perf_splice_override = -1;  /* Q16 splice standing in for CV In 2, -1 = use CV */
 volatile uint32_t mlr_perf_cmd = 0;
@@ -530,6 +532,7 @@ public:
 			}
 			service_settings_autosave();
 			service_cv_splice();
+			service_cv_pan();
 #ifdef MLR_PERF_PROFILING
 			service_perf_cmd();
 #endif
@@ -795,9 +798,10 @@ public:
 		PERF_UI_SECTION_START(4);
 		if (run_ui_control && !mlr_flushing && !page_switched) {
 			if (grid.keyDown() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
-				last_touched_track_ = grid.lastY() - 1;  /* CV rotation target */
+				last_touched_track_ = grid.lastY() - 1;  /* CV rotation/pan target */
 				/* Before this key's cut seeks, so the cut lands on the CV. */
 				service_cv_splice();
+				service_cv_pan();
 			}
 			if (play_page == PAGE_REC) {
 				process_pan_gesture();   /* both arm keys held: pan mode on that row */
@@ -2892,6 +2896,9 @@ private:
 			case PERF_CMD_PAN:
 				mlr_set_pan(t, arg - MLR_PAN_STEPS);
 				break;
+			case PERF_CMD_PAN_CV:
+				mlr_set_pan_cv(t, ((arg - 128) * 256) / 10);
+				break;
 			case PERF_CMD_COPY:
 				mlr_copy_track_mask(t, (uint8_t)arg);
 				break;
@@ -2937,6 +2944,20 @@ private:
 		else if (cv > 0) q = ((uint32_t)cv * 65535u) / CV_SPLICE_FULL_SCALE;
 		/* +5 V reaches the configured share of the track (sample manager). */
 		mlr_tracks[last_touched_track_].splice_q16 = (uint16_t)((q * mlr_rot_range_pct) / 100u);
+	}
+
+	/* CV In 1 offsets the last-touched track's pan: 5 V = the full L-R width
+	 * (12 steps), so 0..+5 V sweeps a hard-left track all the way right and
+	 * -5..0 V a hard-right one all the way left; continuous, clamped at the
+	 * edges. Other tracks, and the target once the
+	 * CV is unplugged, keep their last offset (delete-hold reset clears it).
+	 * Live only: not saved or recorded into patterns. */
+	void __not_in_flash("service_cv_pan") service_cv_pan()
+	{
+		if (last_touched_track_ < 0 || !Connected(Input::CV1)) return;
+		int cv = CVIn1();
+		int offset = (cv * (2 * MLR_PAN_STEPS * 256)) / CV_PAN_FULL_SCALE;
+		mlr_set_pan_cv(last_touched_track_, offset);
 	}
 
 	void __not_in_flash("service_settings_autosave") service_settings_autosave()
@@ -3594,9 +3615,10 @@ private:
 				} else if (mlr_pan_enabled && !armed && !actively_rec) {
 					/* Output pan across the two keys: hard left = key 1 only
 					 * (like dual-mono channel 1), centre = both at half. */
-					int pan = mlr_tracks[t].pan;
-					col0_bright = (uint8_t)((state_bright * (MLR_PAN_STEPS - pan) + MLR_PAN_STEPS) / (2 * MLR_PAN_STEPS));
-					col1_bright = (uint8_t)((state_bright * (MLR_PAN_STEPS + pan) + MLR_PAN_STEPS) / (2 * MLR_PAN_STEPS));
+					int e = mlr_pan_effective_q8(t) + MLR_PAN_STEPS * 256;  /* 0..3072, includes CV */
+					int span = 2 * MLR_PAN_STEPS * 256;
+					col0_bright = (uint8_t)((state_bright * (span - e) + span / 2) / span);
+					col1_bright = (uint8_t)((state_bright * e + span / 2) / span);
 				} else {
 					uint8_t selected = state_bright;
 					uint8_t other    = 0;
@@ -3691,8 +3713,10 @@ private:
 				if (speed_col != 11)
 					grid.frameLedUnchecked(11, row, 3);  /* dim 1x indicator when not selected */
 
-				if (t == pan_mode_track_)
-					draw_pan_row(row, mlr_tracks[t].pan);
+				if (t == pan_mode_track_) {
+					int e = mlr_pan_effective_q8(t);  /* includes CV In 1 */
+					draw_pan_row(row, (e >= 0 ? e + 128 : e - 128) / 256);
+				}
 			}
 		}
 	}
