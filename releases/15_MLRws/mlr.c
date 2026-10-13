@@ -24,6 +24,8 @@
  * boot-time init, or core-1-only work such as the sample-manager rescan. */
 #define MLR_COLD_FUNC __attribute__((section(".flashdata.mlr_cold")))
 
+static void MLR_COLD_FUNC restore_loop_stopped(int track, int col_start, int col_end);
+
 /* ------------------------------------------------------------------ */
 /* Globals                                                            */
 /* ------------------------------------------------------------------ */
@@ -105,6 +107,9 @@ volatile uint32_t mlr_perf_rot_xfade_skips;
 volatile uint32_t mlr_perf_rot_map_errors;
 volatile uint32_t mlr_perf_rot_samples;
 volatile uint32_t mlr_perf_fill_resyncs;
+volatile uint32_t mlr_perf_erase_holds;
+volatile uint32_t mlr_perf_erase_hold_max_us;
+volatile uint32_t mlr_perf_erase_forced;
 
 static inline void perf_update_max(volatile uint32_t *dst, uint32_t value)
 {
@@ -1082,7 +1087,7 @@ void MLR_COLD_FUNC mlr_rescan_track(int track)
 	mlr_set_reverse(track, keep_reverse);
 	mlr_set_volume(track, keep_volume_slot);
 	if (keep_loop && keep_loop_start >= 0 && keep_loop_end >= 0)
-		mlr_set_loop(track, keep_loop_start, keep_loop_end);
+		restore_loop_stopped(track, keep_loop_start, keep_loop_end);  /* don't start it */
 	/* New audio (uploaded or erased) starts hard to its channel side. */
 	bool same_audio = had_content == tr->has_content &&
 	                  old_samples == tr->length_samples && old_bytes == tr->length_bytes;
@@ -1782,6 +1787,29 @@ void __not_in_flash_func(mlr_stop_track)(int track)
 /* ------------------------------------------------------------------ */
 /* Loop-a-section                                                     */
 /* ------------------------------------------------------------------ */
+
+/* Restore a saved loop on a stopped track without starting it (mlr_set_loop
+ * starts a stopped track, which is right for a grid press but not for boot or
+ * a sample-manager rescan). The next cut/play seeks inside the loop. */
+static void MLR_COLD_FUNC restore_loop_stopped(int track, int col_start, int col_end)
+{
+	mlr_track_t *tr = &mlr_tracks[track];
+	if (!tr->has_content || tr->length_samples == 0 || tr->playing) {
+		if (tr->playing) mlr_set_loop(track, col_start, col_end);
+		return;
+	}
+	if (col_start > col_end) { int tmp = col_start; col_start = col_end; col_end = tmp; }
+	if (col_start == col_end) return;
+	uint32_t start_s = (uint32_t)col_start * tr->length_samples / MLR_GRID_COLS;
+	uint32_t end_s   = (uint32_t)(col_end + 1) * tr->length_samples / MLR_GRID_COLS;
+	if (end_s > tr->length_samples) end_s = tr->length_samples;
+	if (start_s >= end_s) return;
+	tr->loop_start_sample = start_s;
+	tr->loop_end_sample   = end_s;
+	tr->loop_col_start    = col_start;
+	tr->loop_col_end      = col_end;
+	tr->loop_active       = true;
+}
 
 void __not_in_flash_func(mlr_set_loop)(int track, int col_start, int col_end)
 {
@@ -2945,7 +2973,7 @@ void MLR_COLD_FUNC mlr_scene_load(void)
 		/* restore loop boundaries */
 		if (ts.loop_col_start >= 0 && ts.loop_col_end >= 0 &&
 		    mlr_tracks[t].has_content) {
-			mlr_set_loop(t, ts.loop_col_start, ts.loop_col_end);
+			restore_loop_stopped(t, ts.loop_col_start, ts.loop_col_end);  /* don't start it */
 		}
 	}
 
@@ -3891,6 +3919,55 @@ static void handle_seek(int t)
 #endif
 }
 
+/* ---- Erase hold-off (core 1) ------------------------------------------
+ * A sector erase blocks core 1 for up to ~34 ms, so no playback ring is
+ * refilled meanwhile. A track that was just cut has an almost empty ring and
+ * would run dry. Before any erase, require every playing track to hold enough
+ * for ERASE_GUARD_MS at its speed; otherwise skip the erase this pass and keep
+ * refilling. Capped so recording and header writes are never held for long. */
+#define ERASE_GUARD_MS      36u
+#define ERASE_HOLD_MAX_US   100000u
+
+static bool     erase_holding = false;
+static uint32_t erase_hold_since_us;
+
+/* True if the erase should wait. urgent = the data behind it can't wait. */
+static bool erase_hold_off(bool urgent)
+{
+	bool low = false;
+	for (int t = 0; t < MLR_NUM_TRACKS && !low; t++) {
+		const mlr_track_t *tr = &mlr_tracks[t];
+		if (!tr->has_content || !tr->playing || tr->stop_pending) continue;
+		/* Mid-cut the read index still points at the old audio until the
+		 * handoff/crossfade jumps it to seek_handoff_r; count from there. */
+		uint32_t r = (tr->seek_handoff_pending || tr->seek_xfade_active) ? tr->seek_handoff_r : tr->pcm.r;
+		uint32_t avail = tr->pcm.w - r;
+		uint32_t need = (ERASE_GUARD_MS * (MLR_SAMPLE_RATE_HZ / 1000u) * tr->speed_frac) >> 8;
+		if (avail < need) low = true;
+	}
+	uint32_t now = time_us_32();
+	if (low && !urgent) {
+		if (!erase_holding) {
+			erase_holding = true;
+			erase_hold_since_us = now;
+#ifdef MLR_PERF_PROFILING
+			mlr_perf_erase_holds++;
+#endif
+		}
+		if (now - erase_hold_since_us < ERASE_HOLD_MAX_US)
+			return true;
+#ifdef MLR_PERF_PROFILING
+		mlr_perf_erase_forced++;
+#endif
+	}
+#ifdef MLR_PERF_PROFILING
+	if (erase_holding && now - erase_hold_since_us > mlr_perf_erase_hold_max_us)
+		mlr_perf_erase_hold_max_us = now - erase_hold_since_us;
+#endif
+	erase_holding = false;
+	return false;
+}
+
 /** Drain one page from the recording page ring to flash. */
 static void flush_rec_page(void)
 {
@@ -3898,8 +3975,11 @@ static void flush_rec_page(void)
 
 	uint8_t slot = mlr_page_ring.r % MLR_PAGE_RING_COUNT;
 
-	/* erase-ahead: if we've reached the next sector boundary, erase it */
+	/* erase-ahead: if we've reached the next sector boundary, erase it
+	 * (held off while a playback ring is low, unless pages are piling up) */
 	if (rec_flash_offset >= rec_next_erase) {
+		if (erase_hold_off(page_ring_used_pages() >= MLR_PAGE_RING_COUNT / 2u))
+			return;
 		PERF_FLASH_ERASE(rec_next_erase, MLR_SECTOR_SIZE);
 		rec_next_erase += MLR_SECTOR_SIZE;
 	}
@@ -4081,6 +4161,7 @@ static void copy_track_task(void)
 	if (copy_bytes_done < copy_bytes_total) {
 		uint32_t dst_off = track_audio_flash_off(copy_dst_track) + copy_bytes_done;
 		if (dst_off >= copy_next_erase) {
+			if (erase_hold_off(false)) return;
 			PERF_FLASH_ERASE(copy_next_erase, MLR_SECTOR_SIZE);
 			copy_next_erase += MLR_SECTOR_SIZE;
 			return;
@@ -4095,6 +4176,7 @@ static void copy_track_task(void)
 		return;
 	}
 
+	if (erase_hold_off(false)) return;  /* the header write erases a sector */
 	copy_finish_track();
 	copy_dst_track = -1;
 	copy_bytes_done = 0;
@@ -4144,16 +4226,31 @@ void mlr_io_task(void)
 		}
 	}
 
-	/* 3. Refill ONE playing track's ring (round-robin).
-	 *    Spreading work across calls keeps USB/mext responsive,
-	 *    especially with reverse playback's seek_fill_to overhead. */
-	for (int i = 0; i < MLR_NUM_TRACKS; i++) {
-		int t = (fill_rr + i) % MLR_NUM_TRACKS;
-		if (mlr_tracks[t].has_content && mlr_tracks[t].playing &&
-		    !mlr_tracks[t].seek_handoff_pending && !mlr_tracks[t].seek_xfade_active) {
-			fill_pcm_ring(t);
-			fill_rr = (t + 1) % MLR_NUM_TRACKS;
-			break;
+	/* 3. Refill ONE playing track's ring per call (keeps USB/mext
+	 *    responsive), choosing the one that would run dry soonest: least
+	 *    buffered time at its playback speed. A freshly cut track (only its
+	 *    seek prime buffered) gets filled first instead of waiting its turn
+	 *    behind the others. Ties go round-robin. */
+	{
+		int best = -1;
+		uint32_t best_avail = 0, best_speed = 1;
+		for (int i = 0; i < MLR_NUM_TRACKS; i++) {
+			int t = (fill_rr + i) % MLR_NUM_TRACKS;
+			mlr_track_t *tr = &mlr_tracks[t];
+			if (!tr->has_content || !tr->playing ||
+			    tr->seek_handoff_pending || tr->seek_xfade_active) continue;
+			uint32_t avail = tr->pcm.w - tr->pcm.r;
+			uint32_t speed = tr->speed_frac ? tr->speed_frac : 1u;
+			/* avail / speed < best_avail / best_speed, without dividing */
+			if (best < 0 || (uint64_t)avail * best_speed < (uint64_t)best_avail * speed) {
+				best = t;
+				best_avail = avail;
+				best_speed = speed;
+			}
+		}
+		if (best >= 0) {
+			fill_pcm_ring(best);
+			fill_rr = (best + 1) % MLR_NUM_TRACKS;
 		}
 	}
 
@@ -4168,7 +4265,7 @@ void mlr_io_task(void)
 	}
 
 	/* 5. Handle pending clear (quick — one sector erase) */
-	if (clear_pending) {
+	if (clear_pending && !erase_hold_off(false)) {
 		PERF_FLASH_ERASE(track_hdr_flash_off(clear_track), MLR_SECTOR_SIZE);
 		hdr_rewrite_pending_mask &= (uint8_t)~(1u << clear_track);
 		clear_pending = false;
@@ -4194,7 +4291,7 @@ void mlr_io_task(void)
 	}
 
 	/* 6. Write header after recording stops or metadata changes */
-	if (hdr_write_pending && mlr_page_ring.r == mlr_page_ring.w) {
+	if (hdr_write_pending && mlr_page_ring.r == mlr_page_ring.w && !erase_hold_off(false)) {
 		write_track_header(hdr_write_track, hdr_write_start_playback);
 		hdr_write_pending = false;
 		hdr_write_start_playback = false;
@@ -4241,7 +4338,8 @@ void mlr_io_task(void)
 		uint32_t sector_off = MLR_SCENE_OFFSET + (uint32_t)scene_save_sector * MLR_SECTOR_SIZE;
 
 		if (!scene_sector_erased) {
-			/* phase 1: erase the sector (~45ms) */
+			/* phase 1: erase the sector (~30 ms), once the rings can ride it out */
+			if (erase_hold_off(false)) return;
 			PERF_FLASH_ERASE(sector_off, MLR_SECTOR_SIZE);
 			scene_sector_erased = true;
 			scene_page_idx = 0;

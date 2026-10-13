@@ -455,6 +455,9 @@ extern volatile uint32_t mlr_perf_rot_xfade_skips;   /* wrap crossfade skipped: 
 extern volatile uint32_t mlr_perf_rot_map_errors;    /* decoder not at the rotated audio position */
 extern volatile uint32_t mlr_perf_rot_samples;       /* samples checked */
 extern volatile uint32_t mlr_perf_fill_resyncs;   /* forward fill re-seeked after reverse chunks */
+extern volatile uint32_t mlr_perf_erase_holds;     /* erases held back for a low playback buffer */
+extern volatile uint32_t mlr_perf_erase_hold_max_us; /* longest hold */
+extern volatile uint32_t mlr_perf_erase_forced;    /* erases that went ahead at the cap */
 void mlr_perf_reset(void);
 void mlr_perf_count_grid_frame_drop(void);
 void mlr_perf_count_monome_ws_event_drop(void);
