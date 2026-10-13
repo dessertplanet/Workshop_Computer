@@ -35,6 +35,7 @@ typedef enum {
     SAMPLE_RX_WAIT_CMD = 0,
     SAMPLE_RX_WAIT_TRACK,
     SAMPLE_RX_WAIT_CV1_PITCH,
+    SAMPLE_RX_WAIT_ROT_RANGE,
     SAMPLE_RX_WAIT_WRITE_LEN,
     SAMPLE_RX_WAIT_WRITE_DATA,
     SAMPLE_RX_DRAIN_DATA,
@@ -179,8 +180,8 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
     char info[512];
     uint32_t used = 0;
 
-    int n = snprintf(info + used, sizeof(info) - used, "MLR1 %d FW %s\n",
-                     MLR_NUM_CHANNELS, MLR_FIRMWARE_VERSION);
+    int n = snprintf(info + used, sizeof(info) - used, "MLR1 %d FW %s ROT %u\n",
+                     MLR_NUM_CHANNELS, MLR_FIRMWARE_VERSION, (unsigned)mlr_rot_range_pct);
     if (n < 0 || (uint32_t)n >= sizeof(info) - used)
         return false;
     used += (uint32_t)n;
@@ -557,6 +558,10 @@ void __attribute__((section(".flashdata.devmode"))) device_mode_task(void)
                 g_sample_mgr.pending_cmd = byte;
                 g_sample_mgr.rx_state = SAMPLE_RX_WAIT_TRACK;
                 break;
+            case 'G':
+                /* 'G' + (0x80 | percent): CV In 2 rotation range, card-wide */
+                g_sample_mgr.rx_state = SAMPLE_RX_WAIT_ROT_RANGE;
+                break;
             default:
                 /* Unknown byte — ignore (sample-manager mode only) */
                 continue;
@@ -588,6 +593,23 @@ void __attribute__((section(".flashdata.devmode"))) device_mode_task(void)
             g_sample_mgr.rx_state = SAMPLE_RX_WAIT_WRITE_LEN;
             g_sample_mgr.len_got = 0;
             break;
+
+        case SAMPLE_RX_WAIT_ROT_RANGE:
+            if (byte == 'X') {
+                sample_mgr_reset_session();
+                cdc_write_str("SYNC\n");
+                return;
+            }
+            /* High bit set so a value can't be mistaken for the 'X' resync. */
+            if ((byte & 0x80u) && (byte & 0x7Fu) >= 1 && (byte & 0x7Fu) <= 100) {
+                mlr_rot_range_pct = (uint8_t)(byte & 0x7Fu);
+                mlr_settings_save_pending = true;  /* saved once the session ends */
+                cdc_write_str("OK\n");
+            } else {
+                cdc_write_str("ERR\n");
+            }
+            sample_mgr_reset_session();
+            return;
 
         case SAMPLE_RX_WAIT_CV1_PITCH:
             if (byte == 'X') {

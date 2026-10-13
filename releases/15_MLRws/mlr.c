@@ -40,6 +40,8 @@ static volatile uint8_t mlr_wrap_event_mask;
 mlr_pattern_t   mlr_patterns[MLR_NUM_PATTERNS];
 mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
 volatile bool   mlr_scene_saving = false;
+volatile uint8_t mlr_rot_range_pct = MLR_ROT_RANGE_DEFAULT;
+volatile bool   mlr_settings_save_pending = false;
 volatile int    mlr_recall_active = -1;
 static uint32_t mlr_clock_ms = 0;
 
@@ -909,7 +911,8 @@ void MLR_COLD_FUNC mlr_init(void)
 		}
 	}
 
-	/* load saved scene (track state + patterns + recalls) */
+	/* load saved scene (track state + patterns + recalls + settings) */
+	mlr_rot_range_pct = MLR_ROT_RANGE_DEFAULT;
 	mlr_scene_load();
 }
 
@@ -2595,6 +2598,7 @@ void mlr_recall_clear(int slot)
  *   [...]  recall events (count * sizeof(mlr_event_t) per recall, concatenated)
  *   [...]  groups_version (uint8_t) + mlr_track_groups[MLR_NUM_TRACKS] (7 bytes)
  *   [...]  gate_version  (uint8_t) + mlr_gate_mode[MLR_NUM_TRACKS]    (7 bytes)
+ *   [...]  settings_version (uint8_t) + mlr_rot_range_pct (uint8_t)    (2 bytes)
  *   [end]  uint32_t CRC32 (over everything from offset 0 to here)
  *
  * Loaders gate the trailing groups / gate_mode blocks on data_len, so
@@ -2626,6 +2630,7 @@ enum {
 	MLR_SCENE_RECALL_EVENT_BYTES = MLR_NUM_RECALLS * MLR_PATTERN_MAX_EVENTS * sizeof(mlr_event_t),
 	MLR_SCENE_GROUP_BYTES = 1 + MLR_NUM_TRACKS,
 	MLR_SCENE_GATE_BYTES = 1 + MLR_NUM_TRACKS,
+	MLR_SCENE_SETTINGS_BYTES = 2,
 	MLR_SCENE_CRC_BYTES = 4,
 	MLR_SCENE_MAX_SERIALIZED_BYTES =
 		MLR_SCENE_HEADER_BYTES +
@@ -2636,6 +2641,7 @@ enum {
 		MLR_SCENE_RECALL_EVENT_BYTES +
 		MLR_SCENE_GROUP_BYTES +
 		MLR_SCENE_GATE_BYTES +
+		MLR_SCENE_SETTINGS_BYTES +
 		MLR_SCENE_CRC_BYTES,
 	MLR_SCENE_STAGING_BYTES =
 		((MLR_SCENE_MAX_SERIALIZED_BYTES + MLR_PAGE_SIZE - 1) / MLR_PAGE_SIZE) * MLR_PAGE_SIZE
@@ -2740,6 +2746,10 @@ static uint32_t scene_serialize(void)
 	scene_blob[pos++] = 1;  /* gate_mode version */
 	for (int t = 0; t < MLR_NUM_TRACKS; t++)
 		scene_blob[pos++] = mlr_gate_mode[t] ? 1 : 0;
+
+	/* card-wide settings (appended at v1; follows gate_mode) */
+	scene_blob[pos++] = 1;  /* settings version */
+	scene_blob[pos++] = mlr_rot_range_pct;
 
 	/* write data_len */
 	uint32_t data_len = pos - 8;
@@ -2891,6 +2901,14 @@ void MLR_COLD_FUNC mlr_scene_load(void)
 			(void)gate_version;
 			for (int t = 0; t < MLR_NUM_TRACKS; t++)
 				mlr_gate_mode[t] = flash[pos++] != 0;
+
+			/* card-wide settings (follow gate_mode) */
+			if (pos + 2 <= end) {
+				uint8_t settings_version = flash[pos++];
+				(void)settings_version;
+				uint8_t pct = flash[pos++];
+				mlr_rot_range_pct = (pct >= 1 && pct <= 100) ? pct : MLR_ROT_RANGE_DEFAULT;
+			}
 		}
 	}
 }
@@ -3936,6 +3954,13 @@ static int wrap_preview_rr = 0;
 void mlr_io_task(void)
 {
 	PERF_SERVICE_RESET_REQUEST();
+
+	/* Settings changed from the sample manager: save now that it's done
+	 * with flash (this task doesn't run during a sample-manager session). */
+	if (mlr_settings_save_pending) {
+		mlr_settings_save_pending = false;
+		mlr_scene_save_start();
+	}
 
 	/* 1. Handle pending seeks (always scan all — seeks are rare + cheap) */
 	for (int t = 0; t < MLR_NUM_TRACKS; t++) {

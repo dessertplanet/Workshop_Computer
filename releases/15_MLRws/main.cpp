@@ -304,7 +304,8 @@ public:
 	static bool sample_mgr_wake_byte(uint8_t byte)
 	{
 		return byte == 'I' || byte == 'S' || byte == 'R' ||
-		       byte == 'E' || byte == 'W' || byte == 'P' || byte == 'X';
+		       byte == 'E' || byte == 'W' || byte == 'P' || byte == 'X' ||
+		       byte == 'G';
 	}
 
 	static void run_sample_manager_until_disconnect(uint8_t first_byte, bool resume_gridless)
@@ -786,8 +787,11 @@ public:
 		/* ---- page interaction (always active) ---- */
 		PERF_UI_SECTION_START(4);
 		if (run_ui_control && !mlr_flushing && !page_switched) {
-			if (grid.keyDown() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS)
-				last_touched_track_ = grid.lastY() - 1;  /* CV splice target */
+			if (grid.keyDown() && grid.lastY() >= 1 && grid.lastY() <= MLR_NUM_TRACKS) {
+				last_touched_track_ = grid.lastY() - 1;  /* CV rotation target */
+				/* Before this key's cut seeks, so the cut lands on the CV. */
+				service_cv_splice();
+			}
 			if (play_page == PAGE_REC) {
 				process_gate_hold();  /* REC play/stop/gate/group-dissolve */
 				process_copy_gesture();  /* REC arm/channel copy/paste gesture */
@@ -2820,8 +2824,9 @@ private:
 	/* CV In 2 rotates the last-touched track's whole recording: the playhead
 	 * still wraps to the first column (or loop start), but "the start" of the
 	 * audio has moved by this fraction of the track length, so a loop scrubs
-	 * through the material. 0 V = normal, +5 V = almost a full turn. Core 1
-	 * picks it up at the next fill wrap or cut. */
+	 * through the material. 0 V = normal, +5 V = mlr_rot_range_pct of the
+	 * track (100% = almost a full turn). Core 1 picks it up at the next fill
+	 * wrap or cut. */
 	void __not_in_flash("service_cv_splice") service_cv_splice()
 	{
 		/* Only the target follows the CV. Other tracks, and the target once
@@ -2836,10 +2841,11 @@ private:
 #endif
 		if (!Connected(Input::CV2)) return;
 		int cv = CVIn2();
-		uint16_t q = 0;
+		uint32_t q = 0;
 		if (cv >= CV_SPLICE_FULL_SCALE) q = 65535u;
-		else if (cv > 0) q = (uint16_t)(((uint32_t)cv * 65535u) / CV_SPLICE_FULL_SCALE);
-		mlr_tracks[last_touched_track_].splice_q16 = q;
+		else if (cv > 0) q = ((uint32_t)cv * 65535u) / CV_SPLICE_FULL_SCALE;
+		/* +5 V reaches the configured share of the track (sample manager). */
+		mlr_tracks[last_touched_track_].splice_q16 = (uint16_t)((q * mlr_rot_range_pct) / 100u);
 	}
 
 	void __not_in_flash("service_settings_autosave") service_settings_autosave()

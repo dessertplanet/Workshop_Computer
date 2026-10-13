@@ -68,6 +68,7 @@ extern "C" {
  * cycle is faded out and back in over this many source samples each side. */
 #define MLR_SEAM_XFADE_SAMPLES 128u
 #define MLR_ROT_HIST_LEN       8u     /* power of two */
+#define MLR_ROT_RANGE_DEFAULT  100u   /* % of the track that +5 V on CV In 2 rotates by */
 
 #define MLR_TRANS_HANDOFF 0x01u
 #define MLR_TRANS_FADE    0x02u
@@ -368,6 +369,8 @@ extern volatile bool     mlr_master_override;   /* true = suppress pattern maste
 extern mlr_pattern_t   mlr_patterns[MLR_NUM_PATTERNS];
 extern mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
 extern volatile bool   mlr_scene_saving;  /* true during flash scene write */
+extern volatile uint8_t mlr_rot_range_pct; /* CV rotation range, 1..100 %, card-wide; saved in the scene */
+extern volatile bool   mlr_settings_save_pending; /* set by the sample manager; core 1 saves the scene afterwards */
 extern volatile int    mlr_recall_active;  /* currently selected recall (-1=none) */
 
 /* Per-track group-membership bitmask (see mlr.c for invariant). */
