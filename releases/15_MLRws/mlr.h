@@ -125,6 +125,14 @@ extern "C" {
 #define MLR_EVT_CHANNEL      19   /* per-track input/output channel: param_a=0/1 */
 #define MLR_EVT_CUT_RELEASE  20   /* CUT key release for CV/pulse gate playback only */
 #define MLR_EVT_PAN          21   /* per-track pan: param_a = -MLR_PAN_STEPS..+MLR_PAN_STEPS */
+#define MLR_EVT_LPF          22   /* per-track low-pass: param_a = 0..MLR_LPF_SLOTS-1 */
+
+/* Per-track 4-pole ladder low-pass, Moog style with resonance 0 (grid modes):
+ * 5 slots on the REC mixer keys, 0 = darkest (-3 dB at 250 Hz) ..
+ * MLR_LPF_OPEN = fully open (bypassed). */
+#define MLR_LPF_SLOTS          5
+#define MLR_LPF_OPEN           (MLR_LPF_SLOTS - 1)
+#define MLR_LPF_GLIDE_SAMPLES  (MLR_SAMPLE_RATE_HZ / 2u)  /* cutoff glides one key per 500 ms */
 
 /* Per-track pan (grid modes): -MLR_PAN_STEPS = hard Out 1, 0 = centre,
  * +MLR_PAN_STEPS = hard Out 2, equal-power law. */
@@ -351,6 +359,12 @@ typedef struct {
 	uint8_t        rate_mark;            /* Header rate_mark, persisted as-is. */
 	int8_t         pan;                  /* -MLR_PAN_STEPS..+MLR_PAN_STEPS (grid modes; scene) */
 	int16_t        pan_cv_q8;            /* CV In 1 offset, 1/256 steps; held, not saved */
+	uint8_t        lpf_slot;             /* 0..MLR_LPF_OPEN (scene) */
+	volatile uint32_t lpf_pos;           /* cutoff position, slot << 20 (0 = darkest .. 4 << 20 = open);
+	                                      * glides to lpf_target at one key per 500 ms; read by the grid display */
+	uint32_t       lpf_target, lpf_step; /* destination (slot << 20) and per-sample step */
+	uint16_t       lpf_g;                /* per-stage TPT coefficient at lpf_pos, Q15 (32768 = open) */
+	int32_t        lpf_s[4];             /* ladder stage states, Q4 (1/16-sample precision) */
 	uint16_t       pan_gl, pan_gr;       /* target gains, Q15 (32768 = unity) */
 	uint16_t       pan_gl_cur, pan_gr_cur; /* slewed gains used by the mixer */
 	bool           cv1_pitch_enabled;    /* true = cut keys on this row update CV1 pitch. */
@@ -360,9 +374,10 @@ typedef struct {
 	bool           channel_swap_pending; /* RAM-only: when true, fade-out completion applies
 	                                      * pending_channel before starting fade-in. */
 
-	/* keyframes (copied to RAM at boot) */
+	/* keyframes: read from the track header in flash (core 1 only; saves
+	 * ~2.5 KB of RAM per track). Recording keeps its own list until the
+	 * header is written. */
 	uint32_t          num_keyframes;
-	mlr_keyframe_channels_t keyframes[MLR_MAX_KEYFRAMES];
 } mlr_track_t;
 
 /* ------------------------------------------------------------------ */
@@ -502,6 +517,7 @@ void     mlr_set_reverse(int track, bool reverse);
 void     mlr_set_volume(int track, int slot);
 void     mlr_set_pan(int track, int pan);
 void     mlr_set_pan_cv(int track, int offset_q8);  /* CV offset on top of the base pan */
+void     mlr_set_lpf(int track, int slot);
 int      mlr_pan_effective_q8(int track);  /* base + CV, clamped, in 1/256 steps */
 int      mlr_pan_default(int track);       /* hard to the track's channel side */
 void     mlr_pan_gains(int pan, uint16_t *gl, uint16_t *gr);

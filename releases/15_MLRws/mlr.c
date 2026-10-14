@@ -396,6 +396,14 @@ static inline uint32_t track_hdr_flash_off(int t)
 	return MLR_TRACK_OFFSET(t);
 }
 
+/* A track's keyframes, straight from its header in flash. Core 1 only (it
+ * never reads them mid-erase); valid once the header is written, which is
+ * always before the track can play. */
+static inline const mlr_keyframe_channels_t *track_keyframes(int t)
+{
+	return ((const mlr_track_header_t *)(XIP_BASE + MLR_TRACK_OFFSET(t)))->keyframes;
+}
+
 #ifdef MLR_PERF_PROFILING
 #define PERF_ROT(counter) (mlr_perf_rot_##counter++)
 #else
@@ -876,6 +884,57 @@ void __not_in_flash_func(mlr_set_pan)(int track, int pan)
 	pan_update_gains(tr, track);
 }
 
+/* Ladder stage coefficients, Q15: G = g / (1 + g), g = tan(pi * fc / 24000),
+ * with each stage's fc chosen so the whole 4-pole cascade is -3 dB at
+ * 250 Hz, 600 Hz, 1.5 kHz and 4 kHz; then open (32768 = passthrough). */
+static const uint16_t lpf_coef[MLR_LPF_SLOTS] = { 2294, 5020, 10282, 18688, 32768 };
+
+/* Ladder input stage: tanh over 0..2x full scale in steps of 1/64, Q15.
+ * Unity gain for small signals; rounds full-scale peaks by ~2.4 dB. */
+static const int16_t lpf_tanh[129] = {
+	0, 512, 1024, 1535, 2045, 2555, 3063, 3570, 4075, 4578, 5079, 5577,
+	6073, 6566, 7056, 7542, 8025, 8505, 8980, 9452, 9919, 10382, 10840, 11294,
+	11742, 12186, 12625, 13058, 13486, 13908, 14325, 14737, 15142, 15542, 15936, 16324,
+	16706, 17081, 17451, 17815, 18173, 18524, 18869, 19208, 19541, 19868, 20189, 20503,
+	20812, 21114, 21411, 21701, 21986, 22264, 22537, 22804, 23065, 23320, 23570, 23815,
+	24053, 24287, 24515, 24738, 24955, 25168, 25375, 25578, 25775, 25968, 26156, 26339,
+	26518, 26693, 26863, 27029, 27190, 27348, 27501, 27650, 27796, 27937, 28075, 28210,
+	28340, 28468, 28592, 28712, 28829, 28943, 29054, 29162, 29267, 29369, 29469, 29565,
+	29659, 29750, 29839, 29925, 30009, 30090, 30169, 30246, 30321, 30393, 30464, 30532,
+	30599, 30663, 30726, 30787, 30846, 30903, 30959, 31013, 31066, 31117, 31166, 31215,
+	31261, 31306, 31350, 31393, 31435, 31475, 31514, 31552, 31588
+};
+
+void __not_in_flash_func(mlr_set_lpf)(int track, int slot)
+{
+	if (track < 0 || track >= MLR_NUM_TRACKS) return;
+	if (slot < 0) slot = 0;
+	if (slot > MLR_LPF_OPEN) slot = MLR_LPF_OPEN;
+	mlr_track_t *tr = &mlr_tracks[track];
+	tr->lpf_slot = (uint8_t)slot;
+	uint32_t target = (uint32_t)slot << 20;
+	tr->lpf_target = target;
+	if (!tr->playing) {  /* nothing audible to glide */
+		tr->lpf_pos = target;
+		tr->lpf_g = lpf_coef[slot];
+		return;
+	}
+	/* constant speed: one key per MLR_LPF_GLIDE_SAMPLES (500 ms per step) */
+	tr->lpf_step = (1u << 20) / MLR_LPF_GLIDE_SAMPLES;
+}
+
+/* Coefficient at a fractional cutoff position (slot << 20): linear between
+ * the two neighbouring slots, which are roughly an octave apart. The fine
+ * scale keeps every 500 ms glide within ~0.5% of its length. */
+static inline uint16_t __not_in_flash_func(lpf_coef_at)(uint32_t pos)
+{
+	uint32_t i = pos >> 20;
+	if (i >= MLR_LPF_OPEN) return lpf_coef[MLR_LPF_OPEN];
+	uint32_t f = (pos >> 12) & 255u;
+	int32_t a = lpf_coef[i], b = lpf_coef[i + 1];
+	return (uint16_t)(a + (((b - a) * (int32_t)f) >> 8));
+}
+
 /* Smoothly swap a track's output channel. If the track is currently
  * playing, queues a fade-out → swap → fade-in around the change to
  * avoid the click that would otherwise occur from re-routing the active
@@ -975,8 +1034,6 @@ void MLR_COLD_FUNC mlr_init(void)
 			tr->playing        = false;
 			tr->playhead       = 0;
 
-			memcpy(tr->keyframes, hdr->keyframes,
-			       hdr->num_keyframes * sizeof(mlr_keyframe_channels_t));
 
 			/* init fill state at beginning */
 			tr->fill_byte_pos   = 0;
@@ -986,8 +1043,8 @@ void MLR_COLD_FUNC mlr_init(void)
 				tr->fill_decode[ch].predictor  = 0;
 				tr->fill_decode[ch].step_index = 0;
 				if (tr->num_keyframes > 0) {
-					tr->fill_decode[ch].predictor  = tr->keyframes[0].ch[ch].predictor;
-					tr->fill_decode[ch].step_index = tr->keyframes[0].ch[ch].step_index;
+					tr->fill_decode[ch].predictor  = hdr->keyframes[0].ch[ch].predictor;
+					tr->fill_decode[ch].step_index = hdr->keyframes[0].ch[ch].step_index;
 				}
 			}
 			tr->fill_seek_pending = false;
@@ -999,8 +1056,10 @@ void MLR_COLD_FUNC mlr_init(void)
 
 	/* load saved scene (track state + patterns + recalls + settings) */
 	mlr_rot_range_pct = MLR_ROT_RANGE_DEFAULT;
-	for (int t = 0; t < MLR_NUM_TRACKS; t++)
+	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 		mlr_set_pan(t, mlr_pan_default(t));  /* until the scene says otherwise */
+		mlr_set_lpf(t, MLR_LPF_OPEN);
+	}
 	mlr_scene_load();
 }
 
@@ -1066,8 +1125,6 @@ void MLR_COLD_FUNC mlr_rescan_track(int track)
 		tr->cv1_pitch_enabled  = (hdr->cv1_pitch_mode == MLR_CV1_PITCH_ENABLED_MODE);
 		tr->playhead       = 0;
 
-		memcpy(tr->keyframes, hdr->keyframes,
-		       hdr->num_keyframes * sizeof(mlr_keyframe_channels_t));
 
 		tr->fill_byte_pos   = 0;
 		tr->fill_high_nyb   = false;
@@ -1076,8 +1133,8 @@ void MLR_COLD_FUNC mlr_rescan_track(int track)
 			tr->fill_decode[ch].predictor  = 0;
 			tr->fill_decode[ch].step_index = 0;
 			if (tr->num_keyframes > 0) {
-				tr->fill_decode[ch].predictor  = tr->keyframes[0].ch[ch].predictor;
-				tr->fill_decode[ch].step_index = tr->keyframes[0].ch[ch].step_index;
+				tr->fill_decode[ch].predictor  = hdr->keyframes[0].ch[ch].predictor;
+				tr->fill_decode[ch].step_index = hdr->keyframes[0].ch[ch].step_index;
 			}
 		}
 	}
@@ -1240,9 +1297,7 @@ void __not_in_flash_func(mlr_stop_record)(void)
 	/* update track metadata — track becomes playable once header is written */
 	tr->length_samples = rec_samples;
 	tr->length_bytes   = actual_bytes;
-	tr->num_keyframes  = rec_num_keyframes;
-	memcpy(tr->keyframes, rec_keyframes,
-	       rec_num_keyframes * sizeof(mlr_keyframe_channels_t));
+	tr->num_keyframes  = rec_num_keyframes;  /* keyframes stay in rec_keyframes until the header write */
 
 	hdr_write_track   = rec_track_idx;
 	hdr_write_start_playback = true;
@@ -1443,6 +1498,45 @@ static inline void __not_in_flash_func(mix_track_route)(mlr_track_t *tr, int32_t
 		else                           *mixL += s;
 		return;
 	}
+
+	/* 4-pole ladder low-pass (Moog style, resonance 0): tanh input stage, then
+	 * four TPT one-pole stages. The cutoff position glides to its target at one
+	 * key per 500 ms, in key positions so the sweep is even by ear; open = exact
+	 * passthrough, no saturation. */
+	if (tr->lpf_pos != tr->lpf_target) {
+		uint32_t pos = tr->lpf_pos, target = tr->lpf_target, step = tr->lpf_step;
+		if (pos < target) pos = (target - pos > step) ? pos + step : target;
+		else              pos = (pos - target > step) ? pos - step : target;
+		tr->lpf_pos = pos;
+		tr->lpf_g = lpf_coef_at(pos);
+	}
+	uint16_t G = tr->lpf_g;
+	if (G >= 32768u) {
+		int32_t q = s * 16;  /* keep the states on the signal for a click-free close */
+		tr->lpf_s[0] = tr->lpf_s[1] = tr->lpf_s[2] = tr->lpf_s[3] = q;
+	} else {
+		/* input stage: tanh, unity small-signal gain (|s| < 2^16 after +3 dB volume) */
+		uint32_t m = (uint32_t)(s < 0 ? -s : s);
+		int32_t x;
+		if (m >= 65536u) {
+			x = lpf_tanh[128];
+		} else {
+			uint32_t i = m >> 9, f = m & 511u;
+			x = lpf_tanh[i] + (((lpf_tanh[i + 1] - lpf_tanh[i]) * (int32_t)f) >> 9);
+		}
+		int32_t in = (s < 0 ? -x : x) * 16;  /* Q4 */
+		/* TPT one-pole: v = G*(in - s); y = v + s; s = y + v. States are Q4,
+		 * so |in - s| < 2^21; the split multiply keeps products < 2^31. */
+		for (int k = 0; k < 4; k++) {
+			int32_t d = in - tr->lpf_s[k];
+			int32_t v = (((d >> 8) * (int32_t)G) >> 7) + (((d & 255) * (int32_t)G) >> 15);
+			int32_t y = v + tr->lpf_s[k];
+			tr->lpf_s[k] = y + v;
+			in = y;
+		}
+		s = in >> 4;
+	}
+
 	uint16_t gl = tr->pan_gl_cur, gr = tr->pan_gr_cur;
 	if (gl != tr->pan_gl) tr->pan_gl_cur = gl = pan_slew(gl, tr->pan_gl);
 	if (gr != tr->pan_gr) tr->pan_gr_cur = gr = pan_slew(gr, tr->pan_gr);
@@ -1985,6 +2079,8 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	tr->volume_target = 256;
 	tr->recorded_channel    = 0;
 	tr->pan = -MLR_PAN_STEPS; tr->pan_cv_q8 = 0;
+	tr->lpf_slot = MLR_LPF_OPEN; tr->lpf_g = 32768u;
+	tr->lpf_pos = tr->lpf_target = (uint32_t)MLR_LPF_OPEN << 20;
 	tr->pan_gl = tr->pan_gl_cur = 32768u; tr->pan_gr = tr->pan_gr_cur = 0;
 	tr->rate_mark           = MLR_RATE_MARK_24K;
 	tr->cv1_pitch_enabled   = true;
@@ -2122,6 +2218,9 @@ static void __not_in_flash_func(event_exec)(const mlr_event_t *e)
 		break;
 	case MLR_EVT_PAN:
 		mlr_set_pan(e->track, e->param_a);
+		break;
+	case MLR_EVT_LPF:
+		mlr_set_lpf(e->track, e->param_a);
 		break;
 	case MLR_EVT_CHANNEL:
 		if (e->track < MLR_NUM_TRACKS) {
@@ -2621,6 +2720,11 @@ void __not_in_flash_func(mlr_recall_task)(void)
 				case 3:
 					emitted = recall_snapshot_add(MLR_EVT_PAN, recall_snapshot_track,
 						tr->pan, 0);
+					recall_snapshot_track_step = 33;
+					break;
+				case 33:
+					emitted = recall_snapshot_add(MLR_EVT_LPF, recall_snapshot_track,
+						(int8_t)tr->lpf_slot, 0);
 					recall_snapshot_track_step = 4;
 					break;
 				case 4:
@@ -2754,6 +2858,7 @@ void mlr_recall_clear(int slot)
  *   [...]  gate_version  (uint8_t) + mlr_gate_mode[MLR_NUM_TRACKS]    (7 bytes)
  *   [...]  settings_version (uint8_t) + mlr_rot_range_pct (uint8_t)    (2 bytes)
  *   [...]  pan_version (uint8_t) + int8_t pan[MLR_NUM_TRACKS]          (7 bytes)
+ *   [...]  lpf_version (uint8_t) + uint8_t lpf_slot[MLR_NUM_TRACKS]    (7 bytes)
  *   [end]  uint32_t CRC32 (over everything from offset 0 to here)
  *
  * Loaders gate the trailing groups / gate_mode blocks on data_len, so
@@ -2787,6 +2892,7 @@ enum {
 	MLR_SCENE_GATE_BYTES = 1 + MLR_NUM_TRACKS,
 	MLR_SCENE_SETTINGS_BYTES = 2,
 	MLR_SCENE_PAN_BYTES = 1 + MLR_NUM_TRACKS,
+	MLR_SCENE_LPF_BYTES = 1 + MLR_NUM_TRACKS,
 	MLR_SCENE_CRC_BYTES = 4,
 	MLR_SCENE_MAX_SERIALIZED_BYTES =
 		MLR_SCENE_HEADER_BYTES +
@@ -2799,6 +2905,7 @@ enum {
 		MLR_SCENE_GATE_BYTES +
 		MLR_SCENE_SETTINGS_BYTES +
 		MLR_SCENE_PAN_BYTES +
+		MLR_SCENE_LPF_BYTES +
 		MLR_SCENE_CRC_BYTES,
 	MLR_SCENE_STAGING_BYTES =
 		((MLR_SCENE_MAX_SERIALIZED_BYTES + MLR_PAGE_SIZE - 1) / MLR_PAGE_SIZE) * MLR_PAGE_SIZE
@@ -2912,6 +3019,11 @@ static uint32_t scene_serialize(void)
 	scene_blob[pos++] = 1;  /* pan version */
 	for (int t = 0; t < MLR_NUM_TRACKS; t++)
 		scene_blob[pos++] = (uint8_t)mlr_tracks[t].pan;
+
+	/* per-track low-pass slot (appended at v1; follows pan) */
+	scene_blob[pos++] = 1;  /* lpf version */
+	for (int t = 0; t < MLR_NUM_TRACKS; t++)
+		scene_blob[pos++] = mlr_tracks[t].lpf_slot;
 
 	/* write data_len */
 	uint32_t data_len = pos - 8;
@@ -3078,6 +3190,14 @@ void MLR_COLD_FUNC mlr_scene_load(void)
 					(void)pan_version;
 					for (int t = 0; t < MLR_NUM_TRACKS; t++)
 						mlr_set_pan(t, (int8_t)flash[pos++]);
+
+					/* per-track low-pass (follows pan); older scenes stay open */
+					if (pos + 1 + MLR_NUM_TRACKS <= end) {
+						uint8_t lpf_version = flash[pos++];
+						(void)lpf_version;
+						for (int t = 0; t < MLR_NUM_TRACKS; t++)
+							mlr_set_lpf(t, flash[pos++]);
+					}
 				}
 			}
 		}
@@ -3127,6 +3247,7 @@ void __not_in_flash_func(mlr_scene_reset_params_to_defaults)(void)
 		mlr_set_volume(t, 1);
 		mlr_tracks[t].pan_cv_q8 = 0;  /* CV pan offset: back to the grid pan */
 		mlr_set_pan(t, mlr_pan_default(t));
+		mlr_set_lpf(t, MLR_LPF_OPEN);
 		mlr_tracks[t].splice_q16 = 0;  /* CV rotation: back to normal at the next wrap */
 	}
 
@@ -3269,8 +3390,8 @@ static void seek_fill_raw(mlr_track_t *tr, int t, uint32_t target)
 	uint32_t kf_sample = kf_idx * MLR_KEYFRAME_INTERVAL;
 	if (tr->num_keyframes > 0) {
 		for (int ch = 0; ch < MLR_NUM_CHANNELS; ch++) {
-			tr->fill_decode[ch].predictor  = tr->keyframes[kf_idx].ch[ch].predictor;
-			tr->fill_decode[ch].step_index = tr->keyframes[kf_idx].ch[ch].step_index;
+			tr->fill_decode[ch].predictor  = track_keyframes(t)[kf_idx].ch[ch].predictor;
+			tr->fill_decode[ch].step_index = track_keyframes(t)[kf_idx].ch[ch].step_index;
 		}
 	} else {
 		for (int ch = 0; ch < MLR_NUM_CHANNELS; ch++) {
@@ -4002,8 +4123,16 @@ static void write_track_header(int t, bool start_playback)
 {
 	mlr_track_t *tr = &mlr_tracks[t];
 
-	/* build header in static buffer (too large for core 1 stack) */
-	memset(hdr_staging, 0xFF, MLR_SECTOR_SIZE);
+	/* build header in static buffer (too large for core 1 stack). Keyframes
+	 * come from the recording that just finished (start_playback), else they
+	 * are the ones already in flash (metadata rewrite). */
+	if (start_playback) {
+		memset(hdr_staging, 0xFF, MLR_SECTOR_SIZE);
+		memcpy(((mlr_track_header_t *)hdr_staging)->keyframes, rec_keyframes,
+		       tr->num_keyframes * sizeof(mlr_keyframe_channels_t));
+	} else {
+		memcpy(hdr_staging, (const void *)(XIP_BASE + track_hdr_flash_off(t)), MLR_SECTOR_SIZE);
+	}
 
 	mlr_track_header_t *hdr = (mlr_track_header_t *)hdr_staging;
 	hdr->magic               = MLR_MAGIC;
@@ -4014,8 +4143,6 @@ static void write_track_header(int t, bool start_playback)
 	hdr->recorded_channel    = (uint8_t)(tr->recorded_channel & 0x01);
 	hdr->rate_mark           = tr->rate_mark;
 	hdr->cv1_pitch_mode      = tr->cv1_pitch_enabled ? MLR_CV1_PITCH_ENABLED_MODE : MLR_CV1_PITCH_DISABLED_MODE;
-	memcpy(hdr->keyframes, tr->keyframes,
-	       tr->num_keyframes * sizeof(mlr_keyframe_channels_t));
 
 	uint32_t hdr_off = track_hdr_flash_off(t);
 	PERF_FLASH_ERASE(hdr_off, MLR_SECTOR_SIZE);
@@ -4033,8 +4160,8 @@ static void write_track_header(int t, bool start_playback)
 			tr->fill_decode[ch].predictor  = 0;
 			tr->fill_decode[ch].step_index = 0;
 			if (tr->num_keyframes > 0) {
-				tr->fill_decode[ch].predictor  = tr->keyframes[0].ch[ch].predictor;
-				tr->fill_decode[ch].step_index = tr->keyframes[0].ch[ch].step_index;
+				tr->fill_decode[ch].predictor  = rec_keyframes[0].ch[ch].predictor;
+				tr->fill_decode[ch].step_index = rec_keyframes[0].ch[ch].step_index;
 			}
 		}
 		tr->pcm.w = 0;
@@ -4118,7 +4245,7 @@ static void copy_finish_track(void)
 	hdr->recorded_channel    = (uint8_t)(src->recorded_channel & 0x01);
 	hdr->rate_mark           = src->rate_mark;
 	hdr->cv1_pitch_mode      = src->cv1_pitch_enabled ? MLR_CV1_PITCH_ENABLED_MODE : MLR_CV1_PITCH_DISABLED_MODE;
-	memcpy(hdr->keyframes, src->keyframes,
+	memcpy(hdr->keyframes, track_keyframes(copy_src_track),
 	       src->num_keyframes * sizeof(mlr_keyframe_channels_t));
 
 	uint32_t hdr_off = track_hdr_flash_off(copy_dst_track);
@@ -4132,16 +4259,15 @@ static void copy_finish_track(void)
 	dst->record_speed_shift = src->record_speed_shift;
 	dst->recorded_channel   = src->recorded_channel & 0x01;
 	mlr_set_pan(copy_dst_track, src->pan);
+	mlr_set_lpf(copy_dst_track, src->lpf_slot);
 	dst->rate_mark          = src->rate_mark;
 	dst->cv1_pitch_enabled  = src->cv1_pitch_enabled;
-	memcpy(dst->keyframes, src->keyframes,
-	       src->num_keyframes * sizeof(mlr_keyframe_channels_t));
 	for (int ch = 0; ch < MLR_NUM_CHANNELS; ch++) {
 		dst->fill_decode[ch].predictor  = 0;
 		dst->fill_decode[ch].step_index = 0;
 		if (dst->num_keyframes > 0) {
-			dst->fill_decode[ch].predictor  = dst->keyframes[0].ch[ch].predictor;
-			dst->fill_decode[ch].step_index = dst->keyframes[0].ch[ch].step_index;
+			dst->fill_decode[ch].predictor  = track_keyframes(copy_src_track)[0].ch[ch].predictor;
+			dst->fill_decode[ch].step_index = track_keyframes(copy_src_track)[0].ch[ch].step_index;
 		}
 	}
 }

@@ -86,6 +86,7 @@ extern "C" {
 #define SETTINGS_AUTOSAVE_PERIOD_SAMPLES (MLR_SAMPLE_RATE_HZ * 4u)
 #define CV_SPLICE_FULL_SCALE   1707     /* CV In counts at +5 V (+/-2048 ~ +/-6 V) */
 #define CV_PAN_FULL_SCALE      1707     /* +/-5 V on CV In 1 = the full L-R width of pan */
+#define LPF_TAP_SAMPLES        (MLR_SAMPLE_RATE_HZ * 3u / 10u)  /* reverse key: shorter = tap (toggle reverse) */
 
 #ifdef MLR_PERF_PROFILING
 /* Debugger test commands (profiling builds only). Written over OpenOCD while
@@ -102,6 +103,7 @@ enum {
 	PERF_CMD_COPY      = 8,  /* track = source, arg = destination mask (empty tracks only) */
 	PERF_CMD_PAN       = 9,  /* track, arg = pan + MLR_PAN_STEPS (0..12) */
 	PERF_CMD_PAN_CV    = 10, /* track, arg = 128 + offset in 1/10 steps (stands in for CV In 1) */
+	PERF_CMD_LPF       = 11, /* track, arg = low-pass slot 0..4 */
 };
 static int perf_splice_override = -1;  /* Q16 splice standing in for CV In 2, -1 = use CV */
 volatile uint32_t mlr_perf_cmd = 0;
@@ -805,11 +807,13 @@ public:
 			}
 			if (play_page == PAGE_REC) {
 				process_pan_gesture();   /* both arm keys held: pan mode on that row */
+				process_lpf_hold();      /* reverse key: tap = reverse, hold = filter */
 				process_gate_hold();  /* REC play/stop/gate/group-dissolve */
 				if (!pan_gesture_consumed_)
 					process_copy_gesture();  /* REC arm/channel copy/paste gesture */
-			} else if (pan_mode_track_ >= 0) {
+			} else {
 				pan_mode_track_ = -1;
+				lpf_hold_track_ = -1;  /* left the REC page mid-hold: no toggle */
 			}
 			if (mlr_flushing) {
 				/* A copy gesture just committed; suppress any same-event
@@ -1185,6 +1189,9 @@ private:
 	uint8_t    mon_ch_last_   = 0;   /* last-known armed/rec track recorded_channel */
 	uint16_t   mon_gl_last_   = 32768u, mon_gr_last_ = 0;  /* ...and its pan gains */
 	volatile int8_t pan_mode_track_ = -1; /* REC page pan mode (both arm keys held), -1 = off */
+	volatile int8_t lpf_hold_track_ = -1; /* REC page: reverse key held -> mixer keys set the low-pass */
+	bool       lpf_edited_ = false;        /* a cutoff key was pressed during this hold */
+	uint32_t   lpf_hold_samples_ = 0;      /* how long the reverse key has been held */
 	inline static Mode s_mode_ = Mode::HostMLR;
 
 	/* Cross-core volatile state for DeviceGridless ↔ DeviceSampleMgr transitions.
@@ -2788,6 +2795,29 @@ private:
 		note_settings_changed();
 	}
 
+	void __not_in_flash("group_set_lpf") group_set_lpf(int t, int slot)
+	{
+		if (mlr_tracks[t].lpf_slot == slot) return;
+		mlr_set_lpf(t, slot);
+		dispatch_event(MLR_EVT_LPF, (uint8_t)t, (int8_t)slot, 0);
+		note_settings_changed();
+	}
+
+	/* REC page reverse key (16-wide): a short tap with no cutoff change
+	 * toggles reverse on release; holding just shows the filter. */
+	void __not_in_flash("process_lpf_hold") process_lpf_hold()
+	{
+		if (lpf_hold_track_ < 0) return;
+		if (lpf_hold_samples_ < LPF_TAP_SAMPLES)
+			lpf_hold_samples_ += MAIN_CTRL_DIV;
+		if (grid.keyUp() && grid.lastX() == 7 && grid.lastY() - 1 == lpf_hold_track_) {
+			int t = lpf_hold_track_;
+			lpf_hold_track_ = -1;
+			if (!lpf_edited_ && lpf_hold_samples_ < LPF_TAP_SAMPLES)
+				group_set_reverse(t, !mlr_tracks[t].reverse);
+		}
+	}
+
 	/* Pan keys are cols 2..15: 2..7 = 6 steps left, 8 and 9 = centre,
 	 * 10..15 = 6 steps right. */
 	static int pan_col_to_value(int col)
@@ -2895,6 +2925,9 @@ private:
 				break;
 			case PERF_CMD_PAN:
 				mlr_set_pan(t, arg - MLR_PAN_STEPS);
+				break;
+			case PERF_CMD_LPF:
+				mlr_set_lpf(t, arg);
 				break;
 			case PERF_CMD_PAN_CV:
 				mlr_set_pan_cv(t, ((arg - 128) * 256) / 10);
@@ -3300,12 +3333,18 @@ private:
 		} else {
 			/* 16x8 REC: cols 0-1=channel+arm (above), cols 2-6=mixer (5 slots),
 			 * col 7=reverse, cols 8-14=speed, col 15=play. */
-			if (column >= 2 && column <= 6) {
+			if (column >= 2 && column <= 6 && track == lpf_hold_track_) {
+				/* reverse key held: mixer keys set the low-pass, dark left -> open right */
+				group_set_lpf(track, column - 2);
+				lpf_edited_ = true;
+			} else if (column >= 2 && column <= 6) {
 				int slot = column - 2;
 				group_set_volume(track, slot);
 			} else if (column == 7) {
-				bool new_rev = !mlr_tracks[track].reverse;
-				group_set_reverse(track, new_rev);
+				/* tap toggles reverse on release; hold shows/sets the filter */
+				lpf_hold_track_ = (int8_t)track;
+				lpf_edited_ = false;
+				lpf_hold_samples_ = 0;
 			} else if (column >= 8 && column <= 14) {
 				int speed = column - 11;  /* -3 .. +3 */
 				group_set_speed(track, speed);
@@ -3713,6 +3752,27 @@ private:
 				if (speed_col != 11)
 					grid.frameLedUnchecked(11, row, 3);  /* dim 1x indicator when not selected */
 
+				if (t == lpf_hold_track_) {
+					/* low-pass at its current (possibly gliding) position: bright
+					 * spot crossfading between keys, fading to the left (darker),
+					 * off to the right; fully open lights the whole mixer row */
+					static const uint8_t fade[] = { 14, 9, 6, 4, 2, 2 };
+					int32_t p = (int32_t)(mlr_tracks[t].lpf_pos >> 12);  /* key position, Q8 */
+					for (int c = 0; c < MLR_LPF_SLOTS; c++) {
+						int32_t d = p - c * 256;  /* how far the cutoff is right of this key */
+						uint8_t lvl;
+						if (d >= 0) {
+							int i = d >> 8, f = d & 255;  /* interpolate the fade by distance */
+							lvl = (uint8_t)(fade[i] + (((fade[i + 1] - fade[i]) * f) >> 8));
+						} else if (d > -256) {
+							lvl = (uint8_t)((14 * (256 + d)) >> 8);  /* next key brightening */
+						} else {
+							lvl = 0;
+						}
+						grid.frameLedUnchecked(c + 2, row, lvl);
+					}
+					grid.frameLedUnchecked(7, row, 15);
+				}
 				if (t == pan_mode_track_) {
 					int e = mlr_pan_effective_q8(t);  /* includes CV In 1 */
 					draw_pan_row(row, (e >= 0 ? e + 128 : e - 128) / 256);
