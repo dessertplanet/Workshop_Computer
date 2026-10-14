@@ -3,14 +3,14 @@
 Gridless mode is what MLRws falls back to when the Computer powers up as a USB
 device and nothing on the other end is talking to it (no grid, no
 sample manager). The whole six-track instrument is driven from the Computer's
-own panel — switch, three knobs, CV/Audio/Pulse jacks, and the six LEDs.
+own panel: switch, three knobs, CV/Audio/Pulse jacks, and the six LEDs.
 
 ![gridless ws](images/MLR_gridless_ws.jpg)
 
 ## At a glance
 
 - Every track that already has audio on it **plays and loops continuously**.
-  There is no start/stop — the panel only changes which track is "active" and
+  There is no start/stop. The panel only changes which track is "active" and
   how everything sounds.
 - One track is always the **active track**. The panel's knobs and switch shape
   that track's playback (or, in global mode, shape the mix around it).
@@ -29,7 +29,7 @@ own panel — switch, three knobs, CV/Audio/Pulse jacks, and the six LEDs.
 
 The three-position switch picks the role of the knobs. 
 
-### Switch Middle — Global mode
+### Switch Middle: Global mode
 
 - **Main knob:** active-track select. The knob travels through tracks 1–6 left
   to right. Selecting a different active track is a mix action only; it does
@@ -43,7 +43,7 @@ The three-position switch picks the role of the knobs.
   sweeping the active track, this gives a soft cross-fade between tracks and
   a kind of swept ensemble.
 
-### Switch Up — Track mode
+### Switch Up: Track mode
 
 Flipping the switch up **locks** the active track (it will no longer follow
 Main), and re-tasks every knob to operate on that track:
@@ -54,7 +54,7 @@ Main), and re-tasks every knob to operate on that track:
   (¼× ↔ 4×) at the extremes. A small region near center mutes the track to
   give you a clean "stop".
 - **X knob:** per-track volume 
-- **Y knob:** **reset start position** for this track — picks the position
+- **Y knob:** **reset start position** for this track. It picks the position
   the playhead will jump to when you trigger a reset (see
   [Switch Down](#switch-down) below). Setting Y while the track is playing
   doesn't move the playhead by itself; it stores the start position for the
@@ -80,6 +80,11 @@ are doing. CV ranges are the standard Workshop Computer ±6 V.
 
 ### Outputs
 
+- **Audio Out 1 / Audio Out 2** carry the stereo mix. Gridless mode has no
+  pan or filter controls, but each track plays at the pan and low-pass filter
+  last set for it in [grid mode](Gridful.md#pan) or in the
+  [sample manager](SampleMgr.md). A track you never panned sits hard on its
+  recorded input's side, with the filter open, as in earlier versions.
 - **CV Out 1** is a clocked Turing-style pitch output. Pulse In 1 or Pulse In
   2 rising edges clock it. Main sets the probability/variation amount and X
   sets the range, so the output can move from a narrow pitch set to a wider
@@ -100,7 +105,7 @@ are doing. CV ranges are the standard Workshop Computer ±6 V.
   track mode it modulates the active track's volume slot. While a CV is
   patched, hard-takeover is bypassed on that knob so the CV can take over
   smoothly.
-- **CV In 2** adds to the **Y knob** the same way — radiate in global mode,
+- **CV In 2** adds to the **Y knob** the same way: radiate in global mode,
   start-column in track mode.
 - **Audio In 1**, when patched, offsets the active-track selection by an
   audio-driven amount (0..6 tracks, full-scale). This wraps around the six
@@ -141,7 +146,7 @@ mid-recording does not switch inputs.
 1. Hold the switch **Down** for two seconds. The card LEDs fill from one to
    six as you hold. At six LEDs you are armed: the active track's LED flashes
    slowly.
-2. While armed, flip the switch **Up** to cancel — you return to normal
+2. While armed, flip the switch **Up** to cancel and you return to normal
    playback with no recording made.
 3. While armed, push the switch **Down again** to start recording into the
    active track. The active track's LED flashes fast.
@@ -150,7 +155,7 @@ mid-recording does not switch inputs.
    output (Audio Out 1 or Audio Out 2) the track will play back on, so what
    you hear while recording matches the post-recording mix.
 5. Release the switch from **Down** to stop the recording, or let the track
-   fill to its maximum length — it will auto-stop. After a brief settling
+   fill to its maximum length, at which point it auto-stops. After a brief settling
    delay (~½ second while the new audio is written to flash) the new
    recording begins looping from the start.
 

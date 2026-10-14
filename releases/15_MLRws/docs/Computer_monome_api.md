@@ -12,7 +12,7 @@ serial protocols over CDC/FTDI should work too.
 
 | File | What it does |
 |---|---|
-| `MonomeGrid.h` | Friendly C++ wrapper — the recommended API |
+| `MonomeGrid.h` | Friendly C++ wrapper (the recommended API) |
 | `monome_ws.h` | Low-level reusable C API (grid/arc types, events, capability queries) |
 | `monome_ws.c` | Protocol engine for mext, series, and 40h; TinyUSB host/device transport; CDC callbacks |
 | `tusb_config.h` | TinyUSB configuration (CDC + FTDI host, DTR/RTS, 115200 8N1; also enables CDC device for USB serial) |
@@ -30,7 +30,7 @@ make monobright
 make flash-monobright
 ```
 
-## API reference — MonomeGrid.h (C++)
+## API reference: MonomeGrid.h (C++)
 
 MLRws uses the `MonomeGrid` wrapper in host mode, but it does not use the
 `grid.begin()` convenience path. Instead, the firmware performs explicit
@@ -96,7 +96,7 @@ redraws are built with frame-buffer helpers and submitted with
 | `grid.ledBuffer()` | Raw `uint8_t*` to the 16×16 LED buffer |
 | `grid.markDirty()` | Mark all quadrants for refresh (after writing buffer directly) |
 
-## Low-level C API — monome_ws.h
+## Low-level C API: monome_ws.h
 
 For developers who want full control. This is the path MLRws follows in its
 USB/mode setup:
@@ -185,12 +185,12 @@ ComputerCard::Run()                   board_init() + tusb_init()/tud_init()
 
 | Grid type | USB chip | TinyUSB driver | Status |
 |---|---|---|---|
-| Grid (2024+) | RP2040 native | `CFG_TUH_CDC` | ✓ |
-| Grid (2021–2023) | FTDI FT232R | `CFG_TUH_CDC_FTDI` | ✓ |
-| Grid (older) | FTDI FT230X | `CFG_TUH_CDC_FTDI` | ✓ |
+| Grid (2024+) | RP2040 native | `CFG_TUH_CDC` | Yes |
+| Grid (2021–2023) | FTDI FT232R | `CFG_TUH_CDC_FTDI` | Yes |
+| Grid (older) | FTDI FT230X | `CFG_TUH_CDC_FTDI` | Yes |
 | Series (`m64`/`m128`/`m256`/`mk`) | FTDI | `CFG_TUH_CDC_FTDI` | Binary-grid backend |
 | 40h / arduinome | FTDI | `CFG_TUH_CDC_FTDI` | Binary-grid backend |
-| Neotrellis DIY | FTDI | `CFG_TUH_CDC_FTDI` | ✓ |
+| Neotrellis DIY | FTDI | `CFG_TUH_CDC_FTDI` | Yes |
 | Arc | Same as above | Same as above | Event API reserved; LED-ring output is not used by MLRws |
 
 ## Protocol notes
@@ -207,10 +207,10 @@ protocols behind the same API. Key implementation details (learned from
   receive binary maps derived from `level > 7`.
 - The monobright test build also uses the binary `level > 7` path, but sends
   mext binary LED maps so modern grids can be used to validate 8x8 binary UI.
-- **Discovery queries are sent unpadded** — FTDI grid firmware doesn't handle
+- **Discovery queries are sent unpadded**: FTDI grid firmware doesn't handle
   63 bytes of `0xFF` padding after a system query well.
 - **DTR + RTS must be asserted** during USB enumeration. FTDI chips gate serial
-  data through DTR — without it, the chip enumerates but won't pass bytes.
+  data through DTR. Without it, the chip enumerates but won't pass bytes.
 - **Line coding is set to 115200 8N1** automatically via
   `CFG_TUH_CDC_LINE_CODING_ON_ENUM`.
 - The RX parser skips `0xFF` bytes between messages.

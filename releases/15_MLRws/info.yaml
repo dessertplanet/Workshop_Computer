@@ -1,13 +1,13 @@
 draft: false
 Name: MLRws
-short-description: "A remix of monome's classic MLR sample cutting platform (grid controller encouraged but optional). Diagrams here are for Gridless mode."
+short-description: "A remix of monome's classic MLR sample cutting platform (grid controller encouraged but optional). The panel diagrams here show gridless mode."
 Language: C++ (Pico SDK + ComputerCard)
 Creator: Dune Desormeaux
 Version: 1.2.1
 Status: Released
 License: GPL-3.0
 date-created: 2026-05-26
-date-updated: 2026-07-02
+date-updated: 2026-10-14
 Editor: https://dessertplanet.github.io/MLRws-web/
 demo-link: https://youtu.be/fhHJykM1GWk
 
@@ -17,12 +17,21 @@ tags:
   - performance
   - usb-host
   - grid-controller
+  - stereo
+  - filter
+
+uf2:
+  - path: UF2/MLRws.1.2.1.uf2
+    name: MLRws 1.2.1
 
 summary: |
-  MLRws is a six-track sample-cutting instrument with grid and gridless workflows. It supports on-card
-  sample storage, recording/playback, and USB grid interaction. In gridless mode, Main/X/Y plus switch
-  manage track selection, level/speed/start-position/radiate behavior, while pulse/CV I/O provides
-  reset/clocking and CV envelope/pitch triggers.
+  MLRws is a six-track sample-cutting instrument with grid and gridless workflows. Samples live on the
+  card, either recorded through the audio inputs or uploaded with the
+  [sample manager](https://dessertplanet.github.io/MLRws-web/). With a grid, every track gets cutting,
+  loops, speed, reverse, pan and a low-pass filter, plus patterns and recalls, and CV In 1 and 2 can
+  modulate pan and filter cutoff (or rotation) on any tracks you choose. Without one, Main, X, Y and the
+  switch handle track selection, level, speed, start position and radiate, while the pulse and CV jacks
+  add reset, clocking, a Turing-style pitch output and an envelope.
 
 panel:
   inputs:
@@ -51,7 +60,7 @@ panel:
     - id: AudioOut2
       name: Stereo Right Mix
       description: Main mixed output bus R
-    # certainty: low — CV/pulse output role details inferred from main.cpp
+    # certainty: low (CV/pulse output role details inferred from main.cpp)
     - id: CVOut1
       name: Cut/Turing Pitch CV
       description: Emits quantized note CV tied to cut or turing events
@@ -72,7 +81,7 @@ controls:
       description: Locks the active track; knobs set that track's speed/direction, level slot, and start position
     middle:
       name: Global Mode
-      description: Knobs set global params — track select / turing probability, playback gain, and radiate amount
+      description: Knobs set global params (track select / turing probability, playback gain, and radiate amount)
     down:
       name: Reset / Record Arm
       description: Tap resets the active track to its start position; hold two seconds to arm recording; Y sets CV2 envelope attack
