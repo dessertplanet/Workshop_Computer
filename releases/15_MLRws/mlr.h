@@ -127,7 +127,8 @@ extern "C" {
 #define MLR_EVT_PAN          21   /* per-track pan: param_a = -MLR_PAN_STEPS..+MLR_PAN_STEPS */
 #define MLR_EVT_LPF          22   /* per-track low-pass: param_a = 0..MLR_LPF_SLOTS-1 */
 
-/* Per-track 4-pole ladder low-pass, Moog style with resonance 0 (grid modes):
+/* Per-track 4-pole ladder low-pass, Moog style with a little fixed resonance
+ * (feedback k = 1, ~+2.3 dB peak at every setting) (grid modes):
  * 5 slots on the REC mixer keys, 0 = darkest (-3 dB at 250 Hz) ..
  * MLR_LPF_OPEN = fully open (bypassed). */
 #define MLR_LPF_SLOTS          5
@@ -359,11 +360,13 @@ typedef struct {
 	uint8_t        rate_mark;            /* Header rate_mark, persisted as-is. */
 	int8_t         pan;                  /* -MLR_PAN_STEPS..+MLR_PAN_STEPS (grid modes; scene) */
 	int16_t        pan_cv_q8;            /* CV In 1 offset, 1/256 steps; held, not saved */
+	bool           pan_keep;             /* pan set by the sample manager: survives the rescan */
 	uint8_t        lpf_slot;             /* 0..MLR_LPF_OPEN (scene) */
 	volatile uint32_t lpf_pos;           /* cutoff position, slot << 20 (0 = darkest .. 4 << 20 = open);
 	                                      * glides to lpf_target at one key per 500 ms; read by the grid display */
 	uint32_t       lpf_target, lpf_step; /* destination (slot << 20) and per-sample step */
 	uint16_t       lpf_g;                /* per-stage TPT coefficient at lpf_pos, Q15 (32768 = open) */
+	uint16_t       lpf_g4, lpf_r;        /* G^4 and 1 / (1 + G^4), Q15: zero-delay feedback solve */
 	int32_t        lpf_s[4];             /* ladder stage states, Q4 (1/16-sample precision) */
 	uint16_t       pan_gl, pan_gr;       /* target gains, Q15 (32768 = unity) */
 	uint16_t       pan_gl_cur, pan_gr_cur; /* slewed gains used by the mixer */
@@ -396,8 +399,15 @@ extern mlr_pattern_t   mlr_patterns[MLR_NUM_PATTERNS];
 extern mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
 extern volatile bool   mlr_scene_saving;  /* true during flash scene write */
 extern volatile uint8_t mlr_rot_range_pct; /* CV rotation range, 1..100 %, card-wide; saved in the scene */
-extern volatile bool   mlr_pan_enabled;  /* grid modes: outputs follow pan; gridless: route by channel */
+extern volatile bool   mlr_pan_enabled;  /* playing modes: outputs follow pan + filter; off: route by channel */
 extern volatile bool   mlr_settings_save_pending; /* set by the sample manager; core 1 saves the scene afterwards */
+#define MLR_CV2_MODE_ROTATION  0u
+#define MLR_CV2_MODE_FILTER    1u
+extern volatile uint8_t mlr_cv2_mode;    /* what CV In 2 drives on its target track (scene; default filter) */
+/* Which track each CV input acts on: 0 = last touched, 1..6 = that track (scene). */
+#define MLR_CV_TARGET_LAST     0u
+extern volatile uint8_t mlr_cv1_target;  /* CV In 1: pan offset */
+extern volatile uint8_t mlr_cv2_target;  /* CV In 2: filter cutoff / rotation */
 extern volatile int    mlr_recall_active;  /* currently selected recall (-1=none) */
 
 /* Per-track group-membership bitmask (see mlr.c for invariant). */
@@ -518,6 +528,7 @@ void     mlr_set_volume(int track, int slot);
 void     mlr_set_pan(int track, int pan);
 void     mlr_set_pan_cv(int track, int offset_q8);  /* CV offset on top of the base pan */
 void     mlr_set_lpf(int track, int slot);
+void     mlr_set_lpf_pos(int track, uint32_t pos);  /* direct, no glide (CV): slot << 20 */
 int      mlr_pan_effective_q8(int track);  /* base + CV, clamped, in 1/256 steps */
 int      mlr_pan_default(int track);       /* hard to the track's channel side */
 void     mlr_pan_gains(int pan, uint16_t *gl, uint16_t *gr);

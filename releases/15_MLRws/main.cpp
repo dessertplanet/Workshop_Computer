@@ -264,6 +264,8 @@ public:
 			}
 			break;
 		case Mode::DeviceGridless:
+			/* No pan/filter controls here, but play the grid-set values back. */
+			mlr_pan_enabled = true;
 			gridless_scan_tracks();
 			gl_active_track_ = 0;
 			gridless_restart_all_tracks_from_zero();
@@ -312,7 +314,7 @@ public:
 	{
 		return byte == 'I' || byte == 'S' || byte == 'R' ||
 		       byte == 'E' || byte == 'W' || byte == 'P' || byte == 'X' ||
-		       byte == 'G';
+		       byte == 'G' || byte == 'M' || byte == 'C' || byte == 'N' || byte == 'L';
 	}
 
 	static void run_sample_manager_until_disconnect(uint8_t first_byte, bool resume_gridless)
@@ -351,6 +353,7 @@ public:
 			mlr_rescan_track(t);
 
 		s_rescan_needed_ = true;
+		mlr_pan_enabled = true;  /* as at a gridless boot */
 		if (s_card_)
 			s_card_->mode_ = Mode::DeviceGridless;
 		s_mode_ = Mode::DeviceGridless;
@@ -2013,8 +2016,8 @@ private:
 		/* ---- Mix and output ----
 		 * Use the same dual-bus soft-clipped mixer as gridful so the
 		 * audio character (per-channel soft-knee limiting) matches across
-		 * modes. Per-track `recorded_channel` selects which output bus
-		 * a track lands on, just like in gridful. Master volume is
+		 * modes. Each track's grid-set pan and filter apply here too (a
+		 * track never panned sits hard on its recorded channel). Master volume is
 		 * intentionally not applied here — gridless has no UI to set it,
 		 * and honoring a stale `mlr_master_level_raw` from a previous
 		 * session would be confusing. */
@@ -2952,7 +2955,14 @@ private:
 	}
 #endif
 
-	/* CV In 2 rotates the last-touched track's whole recording: the playhead
+	/* Track a CV input acts on: a fixed track, or the last-touched one
+	 * (-1 if none yet). Set from the sample manager. */
+	int cv_target_track(uint8_t target) const
+	{
+		return (target >= 1 && target <= MLR_NUM_TRACKS) ? (int)target - 1 : last_touched_track_;
+	}
+
+	/* CV In 2 rotates its target track's whole recording: the playhead
 	 * still wraps to the first column (or loop start), but "the start" of the
 	 * audio has moved by this fraction of the track length, so a loop scrubs
 	 * through the material. 0 V = normal, +5 V = mlr_rot_range_pct of the
@@ -2963,23 +2973,33 @@ private:
 		/* Only the target follows the CV. Other tracks, and the target once
 		 * the CV is unplugged, keep their last rotation (delete-hold reset
 		 * clears them). */
-		if (last_touched_track_ < 0) return;
+		int target = cv_target_track(mlr_cv2_target);
+		if (target < 0) return;
 #ifdef MLR_PERF_PROFILING
 		if (perf_splice_override >= 0) {
-			mlr_tracks[last_touched_track_].splice_q16 = (uint16_t)perf_splice_override;
+			mlr_tracks[target].splice_q16 = (uint16_t)perf_splice_override;
 			return;
 		}
 #endif
 		if (!Connected(Input::CV2)) return;
 		int cv = CVIn2();
+		if (mlr_cv2_mode == MLR_CV2_MODE_FILTER) {
+			/* CV In 2 sets the cutoff directly: 0 V darkest .. +5 V open,
+			 * continuous, no glide; the track keeps it when the CV lets go */
+			uint32_t pos = cv <= 0 ? 0u
+			             : cv >= CV_SPLICE_FULL_SCALE ? ((uint32_t)MLR_LPF_OPEN << 20)
+			             : (((uint32_t)cv * ((uint32_t)MLR_LPF_OPEN << 12)) / CV_SPLICE_FULL_SCALE) << 8;
+			mlr_set_lpf_pos(target, pos);
+			return;
+		}
 		uint32_t q = 0;
 		if (cv >= CV_SPLICE_FULL_SCALE) q = 65535u;
 		else if (cv > 0) q = ((uint32_t)cv * 65535u) / CV_SPLICE_FULL_SCALE;
 		/* +5 V reaches the configured share of the track (sample manager). */
-		mlr_tracks[last_touched_track_].splice_q16 = (uint16_t)((q * mlr_rot_range_pct) / 100u);
+		mlr_tracks[target].splice_q16 = (uint16_t)((q * mlr_rot_range_pct) / 100u);
 	}
 
-	/* CV In 1 offsets the last-touched track's pan: 5 V = the full L-R width
+	/* CV In 1 offsets its target track's pan: 5 V = the full L-R width
 	 * (12 steps), so 0..+5 V sweeps a hard-left track all the way right and
 	 * -5..0 V a hard-right one all the way left; continuous, clamped at the
 	 * edges. Other tracks, and the target once the
@@ -2987,10 +3007,11 @@ private:
 	 * Live only: not saved or recorded into patterns. */
 	void __not_in_flash("service_cv_pan") service_cv_pan()
 	{
-		if (last_touched_track_ < 0 || !Connected(Input::CV1)) return;
+		int target = cv_target_track(mlr_cv1_target);
+		if (target < 0 || !Connected(Input::CV1)) return;
 		int cv = CVIn1();
 		int offset = (cv * (2 * MLR_PAN_STEPS * 256)) / CV_PAN_FULL_SCALE;
-		mlr_set_pan_cv(last_touched_track_, offset);
+		mlr_set_pan_cv(target, offset);
 	}
 
 	void __not_in_flash("service_settings_autosave") service_settings_autosave()
@@ -3334,8 +3355,12 @@ private:
 			/* 16x8 REC: cols 0-1=channel+arm (above), cols 2-6=mixer (5 slots),
 			 * col 7=reverse, cols 8-14=speed, col 15=play. */
 			if (column >= 2 && column <= 6 && track == lpf_hold_track_) {
-				/* reverse key held: mixer keys set the low-pass, dark left -> open right */
-				group_set_lpf(track, column - 2);
+				/* reverse key held: mixer keys set the low-pass, dark left -> open right
+				 * (ignored on the CV target while CV In 2 drives its cutoff) */
+				bool cv_owns = mlr_cv2_mode == MLR_CV2_MODE_FILTER && track == cv_target_track(mlr_cv2_target) &&
+				               Connected(Input::CV2);
+				if (!cv_owns)
+					group_set_lpf(track, column - 2);
 				lpf_edited_ = true;
 			} else if (column >= 2 && column <= 6) {
 				int slot = column - 2;

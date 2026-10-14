@@ -44,6 +44,9 @@ mlr_recall_t    mlr_recalls[MLR_NUM_RECALLS];
 volatile bool   mlr_scene_saving = false;
 volatile uint8_t mlr_rot_range_pct = MLR_ROT_RANGE_DEFAULT;
 volatile bool   mlr_settings_save_pending = false;
+volatile uint8_t mlr_cv2_mode = MLR_CV2_MODE_FILTER;
+volatile uint8_t mlr_cv1_target = MLR_CV_TARGET_LAST;
+volatile uint8_t mlr_cv2_target = MLR_CV_TARGET_LAST;
 volatile bool   mlr_pan_enabled = false;
 volatile int    mlr_recall_active = -1;
 static uint32_t mlr_clock_ms = 0;
@@ -884,10 +887,10 @@ void __not_in_flash_func(mlr_set_pan)(int track, int pan)
 	pan_update_gains(tr, track);
 }
 
-/* Ladder stage coefficients, Q15: G = g / (1 + g), g = tan(pi * fc / 24000),
- * with each stage's fc chosen so the whole 4-pole cascade is -3 dB at
- * 250 Hz, 600 Hz, 1.5 kHz and 4 kHz; then open (32768 = passthrough). */
-static const uint16_t lpf_coef[MLR_LPF_SLOTS] = { 2294, 5020, 10282, 18688, 32768 };
+/* Ladder stage coefficients, Q15 (G = g / (1 + g), g = tan(pi * fc / 24000)),
+ * chosen so the whole resonant (k = 1) ladder is -3 dB at 250 Hz, 600 Hz,
+ * 1.5 kHz and 4 kHz, peaking +2.3 dB just below; then open (passthrough). */
+static const uint16_t lpf_coef[MLR_LPF_SLOTS] = { 1062, 2441, 5539, 12165, 32768 };
 
 /* Ladder input stage: tanh over 0..2x full scale in steps of 1/64, Q15.
  * Unity gain for small signals; rounds full-scale peaks by ~2.4 dB. */
@@ -905,6 +908,22 @@ static const int16_t lpf_tanh[129] = {
 	31261, 31306, 31350, 31393, 31435, 31475, 31514, 31552, 31588
 };
 
+/* Q15 multiply for ladder values up to |d| < 2^23 without 64-bit math. */
+static inline int32_t __not_in_flash_func(lpf_mul)(int32_t d, int32_t g)
+{
+	return (((d >> 8) * g) >> 7) + (((d & 255) * g) >> 15);
+}
+
+/* Cache G and the zero-delay feedback terms: G^4 and 1 / (1 + G^4), Q15. */
+static inline void __not_in_flash_func(lpf_set_coef)(mlr_track_t *tr, uint16_t g)
+{
+	uint32_t g2 = ((uint32_t)g * g) >> 15;
+	uint32_t g4 = (g2 * g2) >> 15;
+	tr->lpf_g = g;
+	tr->lpf_g4 = (uint16_t)(g4 > 32768u ? 32768u : g4);
+	tr->lpf_r = (uint16_t)((1u << 30) / (32768u + tr->lpf_g4));
+}
+
 void __not_in_flash_func(mlr_set_lpf)(int track, int slot)
 {
 	if (track < 0 || track >= MLR_NUM_TRACKS) return;
@@ -916,7 +935,7 @@ void __not_in_flash_func(mlr_set_lpf)(int track, int slot)
 	tr->lpf_target = target;
 	if (!tr->playing) {  /* nothing audible to glide */
 		tr->lpf_pos = target;
-		tr->lpf_g = lpf_coef[slot];
+		lpf_set_coef(tr, lpf_coef[slot]);
 		return;
 	}
 	/* constant speed: one key per MLR_LPF_GLIDE_SAMPLES (500 ms per step) */
@@ -935,6 +954,20 @@ static inline uint16_t __not_in_flash_func(lpf_coef_at)(uint32_t pos)
 	return (uint16_t)(a + (((b - a) * (int32_t)f) >> 8));
 }
 
+/* CV: put the cutoff at a position directly, no glide. The nearest key
+ * becomes the track's stored cutoff (what a save or the grid display uses). */
+void __not_in_flash_func(mlr_set_lpf_pos)(int track, uint32_t pos)
+{
+	if (track < 0 || track >= MLR_NUM_TRACKS) return;
+	if (pos > ((uint32_t)MLR_LPF_OPEN << 20)) pos = (uint32_t)MLR_LPF_OPEN << 20;
+	mlr_track_t *tr = &mlr_tracks[track];
+	tr->lpf_target = pos;
+	if (tr->lpf_pos == pos) return;
+	tr->lpf_pos = pos;
+	tr->lpf_slot = (uint8_t)((pos + (1u << 19)) >> 20);
+	lpf_set_coef(tr, lpf_coef_at(pos));
+}
+
 /* Smoothly swap a track's output channel. If the track is currently
  * playing, queues a fade-out → swap → fade-in around the change to
  * avoid the click that would otherwise occur from re-routing the active
@@ -945,7 +978,7 @@ void __not_in_flash_func(mlr_set_recorded_channel)(int track, uint8_t channel)
 	channel &= 0x01;
 	mlr_track_t *tr = &mlr_tracks[track];
 
-	/* Grid modes: the channel only picks the record input; pan sets the
+	/* Playing modes: the channel only picks the record input; pan sets the
 	 * output, so there's nothing audible to fade. */
 	if (mlr_pan_enabled || !tr->has_content || !tr->playing || tr->stop_pending) {
 		tr->recorded_channel = channel;
@@ -1056,6 +1089,8 @@ void MLR_COLD_FUNC mlr_init(void)
 
 	/* load saved scene (track state + patterns + recalls + settings) */
 	mlr_rot_range_pct = MLR_ROT_RANGE_DEFAULT;
+	mlr_cv2_mode = MLR_CV2_MODE_FILTER;
+	mlr_cv1_target = mlr_cv2_target = MLR_CV_TARGET_LAST;
 	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
 		mlr_set_pan(t, mlr_pan_default(t));  /* until the scene says otherwise */
 		mlr_set_lpf(t, MLR_LPF_OPEN);
@@ -1149,7 +1184,9 @@ void MLR_COLD_FUNC mlr_rescan_track(int track)
 	bool same_audio = had_content == tr->has_content &&
 	                  old_samples == tr->length_samples && old_bytes == tr->length_bytes;
 	if (!same_audio) tr->pan_cv_q8 = 0;
-	mlr_set_pan(track, same_audio ? keep_pan : mlr_pan_default(track));
+	/* ...unless the sample manager set it for this audio. */
+	mlr_set_pan(track, (same_audio || tr->pan_keep) ? keep_pan : mlr_pan_default(track));
+	tr->pan_keep = false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1473,16 +1510,10 @@ int16_t __not_in_flash_func(mlr_play_mix)(uint8_t volume)
 	return (int16_t)(mix >> 4);
 }
 
-/* Grid-mode dual-output mix.
- *
- * Walks the same tracks as mlr_play_mix() but routes each track's contribution
- * to L or R based on tr->recorded_channel (0 = L/AudioOut1, 1 = R/AudioOut2).
- * Multiple tracks on the same channel sum on that bus; the other bus stays
- * silent for those tracks. This keeps gridless mode untouched (which still
- * uses the single-output mlr_play_mix). */
-/* Route one track's sample to the two outputs. Grid modes: equal-power pan,
- * slewed ~20 ms end to end so pan moves don't click. Gridless: hard to the
- * track's channel, as before. */
+/* Route one track's sample to the two outputs: the ladder filter, then an
+ * equal-power pan slewed ~20 ms end to end so pan moves don't click. Grid and
+ * gridless modes both do this (gridless just has no controls for them).
+ * With mlr_pan_enabled off, hard to the track's recorded channel, unfiltered. */
 #define MLR_PAN_SLEW_STEP 64u
 static inline uint16_t pan_slew(uint16_t cur, uint16_t target)
 {
@@ -1508,15 +1539,27 @@ static inline void __not_in_flash_func(mix_track_route)(mlr_track_t *tr, int32_t
 		if (pos < target) pos = (target - pos > step) ? pos + step : target;
 		else              pos = (pos - target > step) ? pos - step : target;
 		tr->lpf_pos = pos;
-		tr->lpf_g = lpf_coef_at(pos);
+		lpf_set_coef(tr, lpf_coef_at(pos));
 	}
 	uint16_t G = tr->lpf_g;
 	if (G >= 32768u) {
 		int32_t q = s * 16;  /* keep the states on the signal for a click-free close */
 		tr->lpf_s[0] = tr->lpf_s[1] = tr->lpf_s[2] = tr->lpf_s[3] = q;
 	} else {
-		/* input stage: tanh, unity small-signal gain (|s| < 2^16 after +3 dB volume) */
-		uint32_t m = (uint32_t)(s < 0 ? -s : s);
+		/* Zero-delay feedback, k = 1. Each TPT stage is y = G*x + (1-G)*s, so
+		 * the ladder output is y4 = G^4*x + S, where S is what the states
+		 * alone contribute. With x = u - y4 the loop solves exactly:
+		 * y4 = (G^4*u + S) / (1 + G^4). Values are Q4 (1/16 sample). */
+		int32_t g = (int32_t)G;
+		int32_t u = s * 16;
+		int32_t S = tr->lpf_s[0] - lpf_mul(tr->lpf_s[0], g);
+		for (int k = 1; k < 4; k++)
+			S = lpf_mul(S, g) + (tr->lpf_s[k] - lpf_mul(tr->lpf_s[k], g));
+		int32_t y4 = lpf_mul(lpf_mul(u, tr->lpf_g4) + S, tr->lpf_r);
+
+		/* input stage: tanh on the fed-back input, unity small-signal gain */
+		int32_t xin = (u - y4) >> 4;
+		uint32_t m = (uint32_t)(xin < 0 ? -xin : xin);
 		int32_t x;
 		if (m >= 65536u) {
 			x = lpf_tanh[128];
@@ -1524,17 +1567,16 @@ static inline void __not_in_flash_func(mix_track_route)(mlr_track_t *tr, int32_t
 			uint32_t i = m >> 9, f = m & 511u;
 			x = lpf_tanh[i] + (((lpf_tanh[i + 1] - lpf_tanh[i]) * (int32_t)f) >> 9);
 		}
-		int32_t in = (s < 0 ? -x : x) * 16;  /* Q4 */
-		/* TPT one-pole: v = G*(in - s); y = v + s; s = y + v. States are Q4,
-		 * so |in - s| < 2^21; the split multiply keeps products < 2^31. */
+		int32_t in = (xin < 0 ? -x : x) * 16;
+		/* TPT one-pole: v = G*(in - s); y = v + s; s = y + v */
 		for (int k = 0; k < 4; k++) {
-			int32_t d = in - tr->lpf_s[k];
-			int32_t v = (((d >> 8) * (int32_t)G) >> 7) + (((d & 255) * (int32_t)G) >> 15);
+			int32_t v = lpf_mul(in - tr->lpf_s[k], g);
 			int32_t y = v + tr->lpf_s[k];
 			tr->lpf_s[k] = y + v;
 			in = y;
 		}
-		s = in >> 4;
+		/* feedback costs 1/(1+k) of the level: make it up (x2) after the drive */
+		s = in >> 3;
 	}
 
 	uint16_t gl = tr->pan_gl_cur, gr = tr->pan_gr_cur;
@@ -2078,8 +2120,8 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	tr->volume_frac = 256;
 	tr->volume_target = 256;
 	tr->recorded_channel    = 0;
-	tr->pan = -MLR_PAN_STEPS; tr->pan_cv_q8 = 0;
-	tr->lpf_slot = MLR_LPF_OPEN; tr->lpf_g = 32768u;
+	tr->pan = -MLR_PAN_STEPS; tr->pan_cv_q8 = 0; tr->pan_keep = false;
+	tr->lpf_slot = MLR_LPF_OPEN; lpf_set_coef(tr, 32768u);
 	tr->lpf_pos = tr->lpf_target = (uint32_t)MLR_LPF_OPEN << 20;
 	tr->pan_gl = tr->pan_gl_cur = 32768u; tr->pan_gr = tr->pan_gr_cur = 0;
 	tr->rate_mark           = MLR_RATE_MARK_24K;
@@ -2859,6 +2901,8 @@ void mlr_recall_clear(int slot)
  *   [...]  settings_version (uint8_t) + mlr_rot_range_pct (uint8_t)    (2 bytes)
  *   [...]  pan_version (uint8_t) + int8_t pan[MLR_NUM_TRACKS]          (7 bytes)
  *   [...]  lpf_version (uint8_t) + uint8_t lpf_slot[MLR_NUM_TRACKS]    (7 bytes)
+ *   [...]  cv2_version (uint8_t) + mlr_cv2_mode (uint8_t)              (2 bytes)
+ *   [...]  cvt_version (uint8_t) + mlr_cv1_target + mlr_cv2_target    (3 bytes)
  *   [end]  uint32_t CRC32 (over everything from offset 0 to here)
  *
  * Loaders gate the trailing groups / gate_mode blocks on data_len, so
@@ -2893,6 +2937,8 @@ enum {
 	MLR_SCENE_SETTINGS_BYTES = 2,
 	MLR_SCENE_PAN_BYTES = 1 + MLR_NUM_TRACKS,
 	MLR_SCENE_LPF_BYTES = 1 + MLR_NUM_TRACKS,
+	MLR_SCENE_CV2_BYTES = 2,
+	MLR_SCENE_CVT_BYTES = 3,
 	MLR_SCENE_CRC_BYTES = 4,
 	MLR_SCENE_MAX_SERIALIZED_BYTES =
 		MLR_SCENE_HEADER_BYTES +
@@ -2906,6 +2952,8 @@ enum {
 		MLR_SCENE_SETTINGS_BYTES +
 		MLR_SCENE_PAN_BYTES +
 		MLR_SCENE_LPF_BYTES +
+		MLR_SCENE_CV2_BYTES +
+		MLR_SCENE_CVT_BYTES +
 		MLR_SCENE_CRC_BYTES,
 	MLR_SCENE_STAGING_BYTES =
 		((MLR_SCENE_MAX_SERIALIZED_BYTES + MLR_PAGE_SIZE - 1) / MLR_PAGE_SIZE) * MLR_PAGE_SIZE
@@ -3024,6 +3072,15 @@ static uint32_t scene_serialize(void)
 	scene_blob[pos++] = 1;  /* lpf version */
 	for (int t = 0; t < MLR_NUM_TRACKS; t++)
 		scene_blob[pos++] = mlr_tracks[t].lpf_slot;
+
+	/* what CV In 2 drives (appended at v1; follows lpf) */
+	scene_blob[pos++] = 1;  /* cv2 version */
+	scene_blob[pos++] = mlr_cv2_mode;
+
+	/* which track each CV input acts on (appended at v1; follows cv2) */
+	scene_blob[pos++] = 1;  /* cvt version */
+	scene_blob[pos++] = mlr_cv1_target;
+	scene_blob[pos++] = mlr_cv2_target;
 
 	/* write data_len */
 	uint32_t data_len = pos - 8;
@@ -3197,6 +3254,23 @@ void MLR_COLD_FUNC mlr_scene_load(void)
 						(void)lpf_version;
 						for (int t = 0; t < MLR_NUM_TRACKS; t++)
 							mlr_set_lpf(t, flash[pos++]);
+
+						/* CV In 2 mode (follows lpf); older scenes default to filter */
+						if (pos + 2 <= end) {
+							uint8_t cv2_version = flash[pos++];
+							(void)cv2_version;
+							uint8_t mode = flash[pos++];
+							mlr_cv2_mode = (mode == MLR_CV2_MODE_ROTATION) ? MLR_CV2_MODE_ROTATION : MLR_CV2_MODE_FILTER;
+
+							/* CV targets (follow cv2); older scenes: last touched */
+							if (pos + 3 <= end) {
+								uint8_t cvt_version = flash[pos++];
+								(void)cvt_version;
+								uint8_t t1 = flash[pos++], t2 = flash[pos++];
+								mlr_cv1_target = t1 <= MLR_NUM_TRACKS ? t1 : MLR_CV_TARGET_LAST;
+								mlr_cv2_target = t2 <= MLR_NUM_TRACKS ? t2 : MLR_CV_TARGET_LAST;
+							}
+						}
 					}
 				}
 			}

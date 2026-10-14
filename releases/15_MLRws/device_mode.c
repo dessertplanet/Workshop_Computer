@@ -36,6 +36,9 @@ typedef enum {
     SAMPLE_RX_WAIT_TRACK,
     SAMPLE_RX_WAIT_CV1_PITCH,
     SAMPLE_RX_WAIT_ROT_RANGE,
+    SAMPLE_RX_WAIT_CV2_MODE,
+    SAMPLE_RX_WAIT_CV_TARGET,
+    SAMPLE_RX_WAIT_TRACK_VALUE,
     SAMPLE_RX_WAIT_WRITE_LEN,
     SAMPLE_RX_WAIT_WRITE_DATA,
     SAMPLE_RX_DRAIN_DATA,
@@ -212,6 +215,9 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
     info_str(&o, "MLR1 "); info_uint(&o, MLR_NUM_CHANNELS);
     info_str(&o, " FW "); info_str(&o, MLR_FIRMWARE_VERSION);
     info_str(&o, " ROT "); info_uint(&o, mlr_rot_range_pct);
+    info_str(&o, mlr_cv2_mode == MLR_CV2_MODE_ROTATION ? " CV2 ROT" : " CV2 LPF");
+    info_str(&o, " CV1T "); info_uint(&o, mlr_cv1_target);
+    info_str(&o, " CV2T "); info_uint(&o, mlr_cv2_target);
     info_str(&o, "\n");
 
     for (int t = 0; t < MLR_NUM_TRACKS; t++) {
@@ -220,7 +226,7 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
             (const mlr_track_header_t *)(XIP_BASE + flash_off);
         unsigned cv1_pitch_enabled = mlr_tracks[t].has_content && mlr_tracks[t].cv1_pitch_enabled ? 1u : 0u;
 
-        /* "T<t> <samples> <bytes> <keyframes> <rec shift> <channel> <cv1> <rate mark>" */
+        /* "T<t> <samples> <bytes> <keyframes> <rec shift> <channel> <cv1> <rate mark> <pan> <lpf>" */
         info_str(&o, "T"); info_uint(&o, (uint32_t)t);
         if (hdr->magic == MLR_MAGIC) {
             info_str(&o, " "); info_uint(&o, hdr->sample_count);
@@ -234,6 +240,8 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
             info_str(&o, " 0 0 0 0 0 "); info_uint(&o, cv1_pitch_enabled);
             info_str(&o, " "); info_uint(&o, MLR_RATE_MARK_24K);
         }
+        info_str(&o, " "); info_int(&o, mlr_tracks[t].pan);
+        info_str(&o, " "); info_uint(&o, mlr_tracks[t].lpf_slot);
         info_str(&o, "\n");
     }
     info_str(&o, "END\n");
@@ -580,12 +588,24 @@ void __attribute__((section(".flashdata.devmode"))) device_mode_task(void)
             case 'E':
             case 'W':
             case 'P':
+            case 'N':  /* 'N' + track + (0x80 | pan + 6): track pan, -6..+6 */
+            case 'L':  /* 'L' + track + (0x80 | slot): track low-pass, 0..4 (4 = open) */
                 g_sample_mgr.pending_cmd = byte;
                 g_sample_mgr.rx_state = SAMPLE_RX_WAIT_TRACK;
                 break;
             case 'G':
                 /* 'G' + (0x80 | percent): CV In 2 rotation range, card-wide */
                 g_sample_mgr.rx_state = SAMPLE_RX_WAIT_ROT_RANGE;
+                break;
+            case 'M':
+                /* 'M' + (0x80 | mode): what CV In 2 drives (0 rotation, 1 filter) */
+                g_sample_mgr.rx_state = SAMPLE_RX_WAIT_CV2_MODE;
+                break;
+            case 'C':
+                /* 'C' + (0x80 | input << 3 | target): which track CV In 1/2
+                 * acts on (input 0 = CV In 1, 1 = CV In 2; target 0 = last
+                 * touched, 1..6 = that track) */
+                g_sample_mgr.rx_state = SAMPLE_RX_WAIT_CV_TARGET;
                 break;
             default:
                 /* Unknown byte — ignore (sample-manager mode only) */
@@ -615,6 +635,10 @@ void __attribute__((section(".flashdata.devmode"))) device_mode_task(void)
                 g_sample_mgr.rx_state = SAMPLE_RX_WAIT_CV1_PITCH;
                 break;
             }
+            if (g_sample_mgr.pending_cmd == 'N' || g_sample_mgr.pending_cmd == 'L') {
+                g_sample_mgr.rx_state = SAMPLE_RX_WAIT_TRACK_VALUE;
+                break;
+            }
             g_sample_mgr.rx_state = SAMPLE_RX_WAIT_WRITE_LEN;
             g_sample_mgr.len_got = 0;
             break;
@@ -632,6 +656,69 @@ void __attribute__((section(".flashdata.devmode"))) device_mode_task(void)
                 cdc_write_str("OK\n");
             } else {
                 cdc_write_str("ERR\n");
+            }
+            sample_mgr_reset_session();
+            return;
+
+        case SAMPLE_RX_WAIT_CV2_MODE:
+            if (byte == 'X') {
+                sample_mgr_reset_session();
+                cdc_write_str("SYNC\n");
+                return;
+            }
+            if ((byte & 0x80u) && (byte & 0x7Fu) <= MLR_CV2_MODE_FILTER) {
+                uint8_t mode = (uint8_t)(byte & 0x7Fu);
+                if (mode == MLR_CV2_MODE_FILTER && mlr_cv2_mode != MLR_CV2_MODE_FILTER) {
+                    for (int t = 0; t < MLR_NUM_TRACKS; t++)
+                        mlr_tracks[t].splice_q16 = 0;  /* clear held rotations */
+                }
+                mlr_cv2_mode = mode;
+                mlr_settings_save_pending = true;  /* saved once the session ends */
+                cdc_write_str("OK\n");
+            } else {
+                cdc_write_str("ERR\n");
+            }
+            sample_mgr_reset_session();
+            return;
+
+        case SAMPLE_RX_WAIT_CV_TARGET:
+            if (byte == 'X') {
+                sample_mgr_reset_session();
+                cdc_write_str("SYNC\n");
+                return;
+            }
+            if ((byte & 0x80u) && (byte & 0x70u) == 0 && (byte & 0x07u) <= MLR_NUM_TRACKS) {
+                uint8_t target = (uint8_t)(byte & 0x07u);
+                if (byte & 0x08u) mlr_cv2_target = target;
+                else              mlr_cv1_target = target;
+                mlr_settings_save_pending = true;  /* saved once the session ends */
+                cdc_write_str("OK\n");
+            } else {
+                cdc_write_str("ERR\n");
+            }
+            sample_mgr_reset_session();
+            return;
+
+        case SAMPLE_RX_WAIT_TRACK_VALUE:
+            if (byte == 'X') {
+                sample_mgr_reset_session();
+                cdc_write_str("SYNC\n");
+                return;
+            }
+            {
+                uint8_t t = g_sample_mgr.track, v = (uint8_t)(byte & 0x7Fu);
+                bool ok = (byte & 0x80u) && t < MLR_NUM_TRACKS;
+                if (ok && g_sample_mgr.pending_cmd == 'N' && v <= 2 * MLR_PAN_STEPS) {
+                    mlr_set_pan(t, (int)v - MLR_PAN_STEPS);
+                    mlr_tracks[t].pan_cv_q8 = 0;
+                    mlr_tracks[t].pan_keep = true;  /* keep it over an upload's rescan */
+                } else if (ok && g_sample_mgr.pending_cmd == 'L' && v < MLR_LPF_SLOTS) {
+                    mlr_set_lpf(t, v);
+                } else {
+                    ok = false;
+                }
+                if (ok) mlr_settings_save_pending = true;  /* saved once the session ends */
+                cdc_write_str(ok ? "OK\n" : "ERR\n");
             }
             sample_mgr_reset_session();
             return;
