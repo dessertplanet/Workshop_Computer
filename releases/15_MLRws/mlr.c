@@ -976,6 +976,31 @@ void __not_in_flash_func(mlr_set_lpf_pos)(int track, uint32_t pos)
 	lpf_set_coef(tr, lpf_coef_at(pos));
 }
 
+/* mlr_set_lpf_pos for several tracks at once (CV In 2 on a set of tracks):
+ * the coefficients depend only on pos, so they're worked out once and copied,
+ * which keeps a 6-track CV sweep cheap on the audio core. */
+void __not_in_flash_func(mlr_set_lpf_pos_mask)(uint8_t mask, uint32_t pos)
+{
+	if (pos > ((uint32_t)MLR_LPF_OPEN << 20)) pos = (uint32_t)MLR_LPF_OPEN << 20;
+	mlr_track_t *src = NULL;
+	for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+		if (!(mask & (1u << t))) continue;
+		mlr_track_t *tr = &mlr_tracks[t];
+		tr->lpf_target = pos;
+		if (tr->lpf_pos == pos) continue;
+		tr->lpf_pos = pos;
+		tr->lpf_slot = (uint8_t)((pos + (1u << 19)) >> 20);
+		if (!src) {
+			lpf_set_coef(tr, lpf_coef_at(pos));
+			src = tr;
+		} else {
+			tr->lpf_g = src->lpf_g;
+			tr->lpf_g4 = src->lpf_g4;
+			tr->lpf_r = src->lpf_r;
+		}
+	}
+}
+
 /* Smoothly swap a track's output channel. If the track is currently
  * playing, queues a fade-out → swap → fade-in around the change to
  * avoid the click that would otherwise occur from re-routing the active
@@ -2922,6 +2947,7 @@ void mlr_recall_clear(int slot)
  *   [...]  lpf_version (uint8_t) + uint8_t lpf_slot[MLR_NUM_TRACKS]    (7 bytes)
  *   [...]  cv2_version (uint8_t) + mlr_cv2_mode (uint8_t)              (2 bytes)
  *   [...]  cvt_version (uint8_t) + mlr_cv1_target + mlr_cv2_target    (3 bytes)
+ *          (v2: track masks; v1: 0 = last touched, 1..6 = one track)
  *   [end]  uint32_t CRC32 (over everything from offset 0 to here)
  *
  * Loaders gate the trailing groups / gate_mode blocks on data_len, so
@@ -3096,8 +3122,8 @@ static uint32_t scene_serialize(void)
 	scene_blob[pos++] = 1;  /* cv2 version */
 	scene_blob[pos++] = mlr_cv2_mode;
 
-	/* which track each CV input acts on (appended at v1; follows cv2) */
-	scene_blob[pos++] = 1;  /* cvt version */
+	/* which tracks each CV input acts on (appended at v1; follows cv2) */
+	scene_blob[pos++] = 2;  /* cvt version: track masks */
 	scene_blob[pos++] = mlr_cv1_target;
 	scene_blob[pos++] = mlr_cv2_target;
 
@@ -3284,10 +3310,13 @@ void MLR_COLD_FUNC mlr_scene_load(void)
 							/* CV targets (follow cv2); older scenes: last touched */
 							if (pos + 3 <= end) {
 								uint8_t cvt_version = flash[pos++];
-								(void)cvt_version;
 								uint8_t t1 = flash[pos++], t2 = flash[pos++];
-								mlr_cv1_target = t1 <= MLR_NUM_TRACKS ? t1 : MLR_CV_TARGET_LAST;
-								mlr_cv2_target = t2 <= MLR_NUM_TRACKS ? t2 : MLR_CV_TARGET_LAST;
+								if (cvt_version < 2) {  /* v1: one track number -> mask */
+									t1 = (t1 >= 1 && t1 <= MLR_NUM_TRACKS) ? (uint8_t)(1u << (t1 - 1)) : MLR_CV_TARGET_LAST;
+									t2 = (t2 >= 1 && t2 <= MLR_NUM_TRACKS) ? (uint8_t)(1u << (t2 - 1)) : MLR_CV_TARGET_LAST;
+								}
+								mlr_cv1_target = t1 & MLR_CV_TARGET_ALL;
+								mlr_cv2_target = t2 & MLR_CV_TARGET_ALL;
 							}
 						}
 					}

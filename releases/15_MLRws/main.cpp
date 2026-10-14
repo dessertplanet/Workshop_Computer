@@ -104,8 +104,16 @@ enum {
 	PERF_CMD_PAN       = 9,  /* track, arg = pan + MLR_PAN_STEPS (0..12) */
 	PERF_CMD_PAN_CV    = 10, /* track, arg = 128 + offset in 1/10 steps (stands in for CV In 1) */
 	PERF_CMD_LPF       = 11, /* track, arg = low-pass slot 0..4 */
+	PERF_CMD_CV        = 12, /* track = CV input (0 = In 1, 1 = In 2); arg 0 = real jack,
+	                          * 1..254 = held value (arg - 128) * 16, 255 = fast sweep */
 };
 static int perf_splice_override = -1;  /* Q16 splice standing in for CV In 2, -1 = use CV */
+/* Fake CV In 1/2 for the stress test, through the real CV paths: PERF_CV_REAL =
+ * the real jack, PERF_CV_SWEEP = a triangle that moves every control tick. */
+#define PERF_CV_REAL  (-100000)
+#define PERF_CV_SWEEP (-100001)
+static int perf_cv_override[2] = { PERF_CV_REAL, PERF_CV_REAL };
+static int perf_cv_sweep_phase[2] = { 0, 0 };
 volatile uint32_t mlr_perf_cmd = 0;
 volatile uint32_t mlr_perf_cmd_ack = 0;
 #endif
@@ -816,7 +824,7 @@ public:
 					process_copy_gesture();  /* REC arm/channel copy/paste gesture */
 			} else {
 				pan_mode_track_ = -1;
-				lpf_hold_track_ = -1;  /* left the REC page mid-hold: no toggle */
+				lpf_hold_mask_ = 0;  /* left the REC page mid-hold: no toggle */
 			}
 			if (mlr_flushing) {
 				/* A copy gesture just committed; suppress any same-event
@@ -1114,6 +1122,7 @@ private:
 	bool       small_grid_ = false;  /* true when connected grid is 8x8 or smaller */
 	bool       grid_size_latched_ = false;  /* true once grid size has been detected */
 	volatile int8_t grid_redraw_phase_ = -1;  /* core 1 slices one grid redraw outside ProcessSample */
+	uint8_t    cv_pan_rr_ = 0;                   /* CV In 1: next target track to update */
 	volatile int    grid_redraw_page_ = PAGE_REC;
 	volatile bool   grid_redraw_flushing_ = false;
 	volatile bool   grid_render_rec_pos_ = false;
@@ -1192,9 +1201,9 @@ private:
 	uint8_t    mon_ch_last_   = 0;   /* last-known armed/rec track recorded_channel */
 	uint16_t   mon_gl_last_   = 32768u, mon_gr_last_ = 0;  /* ...and its pan gains */
 	volatile int8_t pan_mode_track_ = -1; /* REC page pan mode (both arm keys held), -1 = off */
-	volatile int8_t lpf_hold_track_ = -1; /* REC page: reverse key held -> mixer keys set the low-pass */
-	bool       lpf_edited_ = false;        /* a cutoff key was pressed during this hold */
-	uint32_t   lpf_hold_samples_ = 0;      /* how long the reverse key has been held */
+	volatile uint8_t lpf_hold_mask_ = 0;   /* REC page: reverse keys held -> those rows show/set the low-pass */
+	uint8_t    lpf_edited_mask_ = 0;       /* a cutoff key was pressed during that row's hold */
+	uint32_t   lpf_hold_samples_[MLR_NUM_TRACKS] = {};  /* how long each reverse key has been held */
 	inline static Mode s_mode_ = Mode::HostMLR;
 
 	/* Cross-core volatile state for DeviceGridless ↔ DeviceSampleMgr transitions.
@@ -2806,19 +2815,28 @@ private:
 		note_settings_changed();
 	}
 
-	/* REC page reverse key (16-wide): a short tap with no cutoff change
-	 * toggles reverse on release; holding just shows the filter. */
+	/* REC page reverse keys (16-wide): a short tap with no cutoff change
+	 * toggles reverse on release; holding just shows the filter. Any number
+	 * of rows can be held at once, each timed on its own. */
 	void __not_in_flash("process_lpf_hold") process_lpf_hold()
 	{
-		if (lpf_hold_track_ < 0) return;
-		if (lpf_hold_samples_ < LPF_TAP_SAMPLES)
-			lpf_hold_samples_ += MAIN_CTRL_DIV;
-		if (grid.keyUp() && grid.lastX() == 7 && grid.lastY() - 1 == lpf_hold_track_) {
-			int t = lpf_hold_track_;
-			lpf_hold_track_ = -1;
-			if (!lpf_edited_ && lpf_hold_samples_ < LPF_TAP_SAMPLES)
-				group_set_reverse(t, !mlr_tracks[t].reverse);
+		uint8_t mask = lpf_hold_mask_;
+		if (!mask) return;
+		for (int t = 0; t < MLR_NUM_TRACKS; t++) {
+			if (!(mask & (1u << t))) continue;
+			if (lpf_hold_samples_[t] < LPF_TAP_SAMPLES)
+				lpf_hold_samples_[t] += MAIN_CTRL_DIV;
+			bool released = grid.keyUp() && grid.lastX() == 7 && grid.lastY() - 1 == t;
+			if (released) {
+				if (!(lpf_edited_mask_ & (1u << t)) && lpf_hold_samples_[t] < LPF_TAP_SAMPLES)
+					group_set_reverse(t, !mlr_tracks[t].reverse);
+			} else if (grid.held(7, (uint8_t)(t + 1))) {
+				continue;
+			}
+			/* released (or its key-up was missed): end this row's hold */
+			mask &= (uint8_t)~(1u << t);
 		}
+		lpf_hold_mask_ = mask;
 	}
 
 	/* Pan keys are cols 2..15: 2..7 = 6 steps left, 8 and 9 = centre,
@@ -2929,6 +2947,10 @@ private:
 			case PERF_CMD_PAN:
 				mlr_set_pan(t, arg - MLR_PAN_STEPS);
 				break;
+			case PERF_CMD_CV:
+				if (t < 2)
+					perf_cv_override[t] = arg == 0 ? PERF_CV_REAL : arg == 255 ? PERF_CV_SWEEP : (arg - 128) * 16;
+				break;
 			case PERF_CMD_LPF:
 				mlr_set_lpf(t, arg);
 				break;
@@ -2955,14 +2977,38 @@ private:
 	}
 #endif
 
-	/* Track a CV input acts on: a fixed track, or the last-touched one
-	 * (-1 if none yet). Set from the sample manager. */
-	int cv_target_track(uint8_t target) const
+	/* CV In 1/2 as the CV services see them (the profiling build can fake them). */
+	bool __not_in_flash("cv_in_connected") cv_in_connected(int i)
 	{
-		return (target >= 1 && target <= MLR_NUM_TRACKS) ? (int)target - 1 : last_touched_track_;
+#ifdef MLR_PERF_PROFILING
+		if (perf_cv_override[i] != PERF_CV_REAL) return true;
+#endif
+		return Connected(i ? Input::CV2 : Input::CV1);
+	}
+	int __not_in_flash("cv_in_value") cv_in_value(int i)
+	{
+#ifdef MLR_PERF_PROFILING
+		int o = perf_cv_override[i];
+		if (o == PERF_CV_SWEEP) {
+			/* full -5..+5 V triangle, ~0.7 s period at the 3 kHz control rate */
+			int p = perf_cv_sweep_phase[i] = (perf_cv_sweep_phase[i] + 4) & 4095;
+			return p < 2048 ? p * 2 - 2048 : 6143 - p * 2;
+		}
+		if (o != PERF_CV_REAL) return o;
+#endif
+		return i ? CVIn2() : CVIn1();
 	}
 
-	/* CV In 2 rotates its target track's whole recording: the playhead
+	/* Tracks a CV input acts on, as a mask: the chosen set, or the
+	 * last-touched track when none is chosen (0 if none touched yet). Set
+	 * from the sample manager. */
+	uint8_t cv_target_mask(uint8_t target) const
+	{
+		if (target & MLR_CV_TARGET_ALL) return (uint8_t)(target & MLR_CV_TARGET_ALL);
+		return last_touched_track_ >= 0 ? (uint8_t)(1u << last_touched_track_) : 0u;
+	}
+
+	/* CV In 2 rotates its target tracks' whole recordings: the playhead
 	 * still wraps to the first column (or loop start), but "the start" of the
 	 * audio has moved by this fraction of the track length, so a loop scrubs
 	 * through the material. 0 V = normal, +5 V = mlr_rot_range_pct of the
@@ -2970,36 +3016,39 @@ private:
 	 * wrap or cut. */
 	void __not_in_flash("service_cv_splice") service_cv_splice()
 	{
-		/* Only the target follows the CV. Other tracks, and the target once
+		/* Only the targets follow the CV. Other tracks, and the targets once
 		 * the CV is unplugged, keep their last rotation (delete-hold reset
 		 * clears them). */
-		int target = cv_target_track(mlr_cv2_target);
-		if (target < 0) return;
+		uint8_t mask = cv_target_mask(mlr_cv2_target);
+		if (!mask) return;
 #ifdef MLR_PERF_PROFILING
 		if (perf_splice_override >= 0) {
-			mlr_tracks[target].splice_q16 = (uint16_t)perf_splice_override;
+			for (int t = 0; t < MLR_NUM_TRACKS; t++)
+				if (mask & (1u << t)) mlr_tracks[t].splice_q16 = (uint16_t)perf_splice_override;
 			return;
 		}
 #endif
-		if (!Connected(Input::CV2)) return;
-		int cv = CVIn2();
+		if (!cv_in_connected(1)) return;
+		int cv = cv_in_value(1);
 		if (mlr_cv2_mode == MLR_CV2_MODE_FILTER) {
 			/* CV In 2 sets the cutoff directly: 0 V darkest .. +5 V open,
-			 * continuous, no glide; the track keeps it when the CV lets go */
+			 * continuous, no glide; the tracks keep it when the CV lets go */
 			uint32_t pos = cv <= 0 ? 0u
 			             : cv >= CV_SPLICE_FULL_SCALE ? ((uint32_t)MLR_LPF_OPEN << 20)
 			             : (((uint32_t)cv * ((uint32_t)MLR_LPF_OPEN << 12)) / CV_SPLICE_FULL_SCALE) << 8;
-			mlr_set_lpf_pos(target, pos);
+			mlr_set_lpf_pos_mask(mask, pos);
 			return;
 		}
 		uint32_t q = 0;
 		if (cv >= CV_SPLICE_FULL_SCALE) q = 65535u;
 		else if (cv > 0) q = ((uint32_t)cv * 65535u) / CV_SPLICE_FULL_SCALE;
-		/* +5 V reaches the configured share of the track (sample manager). */
-		mlr_tracks[target].splice_q16 = (uint16_t)((q * mlr_rot_range_pct) / 100u);
+		/* +5 V reaches the configured share of each track (sample manager). */
+		uint16_t splice = (uint16_t)((q * mlr_rot_range_pct) / 100u);
+		for (int t = 0; t < MLR_NUM_TRACKS; t++)
+			if (mask & (1u << t)) mlr_tracks[t].splice_q16 = splice;
 	}
 
-	/* CV In 1 offsets its target track's pan: 5 V = the full L-R width
+	/* CV In 1 offsets its target tracks' pan: 5 V = the full L-R width
 	 * (12 steps), so 0..+5 V sweeps a hard-left track all the way right and
 	 * -5..0 V a hard-right one all the way left; continuous, clamped at the
 	 * edges. Other tracks, and the target once the
@@ -3007,11 +3056,20 @@ private:
 	 * Live only: not saved or recorded into patterns. */
 	void __not_in_flash("service_cv_pan") service_cv_pan()
 	{
-		int target = cv_target_track(mlr_cv1_target);
-		if (target < 0 || !Connected(Input::CV1)) return;
-		int cv = CVIn1();
+		uint8_t mask = cv_target_mask(mlr_cv1_target);
+		if (!mask || !cv_in_connected(0)) return;
+		int cv = cv_in_value(0);
 		int offset = (cv * (2 * MLR_PAN_STEPS * 256)) / CV_PAN_FULL_SCALE;
-		mlr_set_pan_cv(target, offset);
+		/* Each track's gains come off its own base pan, so they can't be
+		 * shared: update one target per control tick, in turn. Every target
+		 * still gets the CV at >= 500 Hz, and the gain slew smooths the steps. */
+		for (int i = 0; i < MLR_NUM_TRACKS; i++) {
+			cv_pan_rr_ = (uint8_t)((cv_pan_rr_ + 1u) % MLR_NUM_TRACKS);
+			if (mask & (1u << cv_pan_rr_)) {
+				mlr_set_pan_cv(cv_pan_rr_, offset);
+				return;
+			}
+		}
 	}
 
 	void __not_in_flash("service_settings_autosave") service_settings_autosave()
@@ -3354,22 +3412,23 @@ private:
 		} else {
 			/* 16x8 REC: cols 0-1=channel+arm (above), cols 2-6=mixer (5 slots),
 			 * col 7=reverse, cols 8-14=speed, col 15=play. */
-			if (column >= 2 && column <= 6 && track == lpf_hold_track_) {
+			if (column >= 2 && column <= 6 && (lpf_hold_mask_ & (1u << track))) {
 				/* reverse key held: mixer keys set the low-pass, dark left -> open right
-				 * (ignored on the CV target while CV In 2 drives its cutoff) */
-				bool cv_owns = mlr_cv2_mode == MLR_CV2_MODE_FILTER && track == cv_target_track(mlr_cv2_target) &&
-				               Connected(Input::CV2);
+				 * (ignored on CV In 2 targets while it drives their cutoff) */
+				bool cv_owns = mlr_cv2_mode == MLR_CV2_MODE_FILTER &&
+				               (cv_target_mask(mlr_cv2_target) & (1u << track)) &&
+				               cv_in_connected(1);
 				if (!cv_owns)
 					group_set_lpf(track, column - 2);
-				lpf_edited_ = true;
+				lpf_edited_mask_ |= (uint8_t)(1u << track);
 			} else if (column >= 2 && column <= 6) {
 				int slot = column - 2;
 				group_set_volume(track, slot);
 			} else if (column == 7) {
 				/* tap toggles reverse on release; hold shows/sets the filter */
-				lpf_hold_track_ = (int8_t)track;
-				lpf_edited_ = false;
-				lpf_hold_samples_ = 0;
+				lpf_hold_mask_ |= (uint8_t)(1u << track);
+				lpf_edited_mask_ &= (uint8_t)~(1u << track);
+				lpf_hold_samples_[track] = 0;
 			} else if (column >= 8 && column <= 14) {
 				int speed = column - 11;  /* -3 .. +3 */
 				group_set_speed(track, speed);
@@ -3777,7 +3836,7 @@ private:
 				if (speed_col != 11)
 					grid.frameLedUnchecked(11, row, 3);  /* dim 1x indicator when not selected */
 
-				if (t == lpf_hold_track_) {
+				if (lpf_hold_mask_ & (1u << t)) {
 					/* low-pass at its current (possibly gliding) position: bright
 					 * spot crossfading between keys, fading to the left (darker),
 					 * off to the right; fully open lights the whole mixer row */

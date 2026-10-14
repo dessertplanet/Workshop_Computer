@@ -216,8 +216,9 @@ static bool __attribute__((section(".flashdata.devmode"))) sample_mgr_send_info(
     info_str(&o, " FW "); info_str(&o, MLR_FIRMWARE_VERSION);
     info_str(&o, " ROT "); info_uint(&o, mlr_rot_range_pct);
     info_str(&o, mlr_cv2_mode == MLR_CV2_MODE_ROTATION ? " CV2 ROT" : " CV2 LPF");
-    info_str(&o, " CV1T "); info_uint(&o, mlr_cv1_target);
-    info_str(&o, " CV2T "); info_uint(&o, mlr_cv2_target);
+    /* track masks (0 = last touched); CV1T/CV2T in earlier 1.2.1 builds held one track */
+    info_str(&o, " CV1M "); info_uint(&o, mlr_cv1_target);
+    info_str(&o, " CV2M "); info_uint(&o, mlr_cv2_target);
     info_str(&o, "\n");
 
     for (int t = 0; t < MLR_NUM_TRACKS; t++) {
@@ -602,9 +603,9 @@ void __attribute__((section(".flashdata.devmode"))) device_mode_task(void)
                 g_sample_mgr.rx_state = SAMPLE_RX_WAIT_CV2_MODE;
                 break;
             case 'C':
-                /* 'C' + (0x80 | input << 3 | target): which track CV In 1/2
-                 * acts on (input 0 = CV In 1, 1 = CV In 2; target 0 = last
-                 * touched, 1..6 = that track) */
+                /* 'C' + (0x80 | input << 6 | mask): which tracks CV In 1/2
+                 * act on (input 0 = CV In 1, 1 = CV In 2; mask bit t = track
+                 * t + 1, 0 = the last-touched track) */
                 g_sample_mgr.rx_state = SAMPLE_RX_WAIT_CV_TARGET;
                 break;
             default:
@@ -687,10 +688,10 @@ void __attribute__((section(".flashdata.devmode"))) device_mode_task(void)
                 cdc_write_str("SYNC\n");
                 return;
             }
-            if ((byte & 0x80u) && (byte & 0x70u) == 0 && (byte & 0x07u) <= MLR_NUM_TRACKS) {
-                uint8_t target = (uint8_t)(byte & 0x07u);
-                if (byte & 0x08u) mlr_cv2_target = target;
-                else              mlr_cv1_target = target;
+            if (byte & 0x80u) {
+                uint8_t mask = (uint8_t)(byte & MLR_CV_TARGET_ALL);
+                if (byte & 0x40u) mlr_cv2_target = mask;
+                else              mlr_cv1_target = mask;
                 mlr_settings_save_pending = true;  /* saved once the session ends */
                 cdc_write_str("OK\n");
             } else {

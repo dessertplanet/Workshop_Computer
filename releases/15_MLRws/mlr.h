@@ -406,8 +406,10 @@ extern volatile bool   mlr_settings_save_pending; /* set by the sample manager; 
 #define MLR_CV2_MODE_ROTATION  0u
 #define MLR_CV2_MODE_FILTER    1u
 extern volatile uint8_t mlr_cv2_mode;    /* what CV In 2 drives on its target track (scene; default filter) */
-/* Which track each CV input acts on: 0 = last touched, 1..6 = that track (scene). */
+/* Which tracks each CV input acts on: a mask (bit t = track t + 1), or 0 for
+ * the last-touched track (scene). */
 #define MLR_CV_TARGET_LAST     0u
+#define MLR_CV_TARGET_ALL      ((1u << MLR_NUM_TRACKS) - 1u)
 extern volatile uint8_t mlr_cv1_target;  /* CV In 1: pan offset */
 extern volatile uint8_t mlr_cv2_target;  /* CV In 2: filter cutoff / rotation */
 extern volatile int    mlr_recall_active;  /* currently selected recall (-1=none) */
@@ -531,6 +533,7 @@ void     mlr_set_pan(int track, int pan);
 void     mlr_set_pan_cv(int track, int offset_q8);  /* CV offset on top of the base pan */
 void     mlr_set_lpf(int track, int slot);
 void     mlr_set_lpf_pos(int track, uint32_t pos);  /* direct, no glide (CV): slot << 20 */
+void     mlr_set_lpf_pos_mask(uint8_t mask, uint32_t pos);  /* same, for a set of tracks */
 int      mlr_pan_effective_q8(int track);  /* gliding base + CV, clamped, in 1/256 steps */
 int      mlr_pan_default(int track);       /* hard to the track's channel side */
 void     mlr_pan_gains(int pan, uint16_t *gl, uint16_t *gr);
