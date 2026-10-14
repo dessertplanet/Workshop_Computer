@@ -3799,8 +3799,8 @@ private:
 					grid.frameLedUnchecked(7, row, 15);
 				}
 				if (t == pan_mode_track_) {
-					int e = mlr_pan_effective_q8(t);  /* includes CV In 1 */
-					draw_pan_row(row, (e >= 0 ? e + 128 : e - 128) / 256);
+					/* gliding position incl. CV In 1, so the row moves with the sound */
+					draw_pan_row(row, mlr_pan_effective_q8(t));
 				}
 			}
 		}
@@ -3808,17 +3808,25 @@ private:
 
 	/* Pan mode: keys 3..16 show the pan, bright at the selected step (keys 9
 	 * and 10 together for centre), with a long, gentle fade across the row so
-	 * it reads differently from the short level gradient on other tracks. */
-	void __not_in_flash("draw_pan_row") draw_pan_row(int row, int pan)
+	 * it reads differently from the short level gradient on other tracks.
+	 * Takes the position in 1/256 steps and blends between keys, so glides
+	 * and CV moves slide across the row instead of hopping key to key. */
+	void __not_in_flash("draw_pan_row") draw_pan_row(int row, int pan_q8)
 	{
-		static const uint8_t fade[] = { 15, 9, 7, 6, 5, 4, 3, 2 };
-		int lo, hi;  /* selected column span */
-		if (pan < 0)      lo = hi = pan + 8;
-		else if (pan > 0) lo = hi = pan + 9;
-		else              { lo = 8; hi = 9; }
+		static const uint8_t fade[] = { 15, 9, 7, 6, 5, 4, 3, 2, 1 };
+		const int N = (int)sizeof(fade) - 1;
+		/* Bright span in columns, Q8: one key off centre, the two centre keys
+		 * at 0; between 0 and +-1 step the span narrows from both to one. */
+		int p = pan_q8;
+		int lo = p < 0 ? p + 8 * 256 : (p < 256 ? 8 * 256 + 2 * p : p + 9 * 256);
+		int hi = p > 0 ? p + 9 * 256 : (p > -256 ? 9 * 256 + 2 * p : p + 8 * 256);
 		for (int c = 2; c <= 15; c++) {
-			int d = c < lo ? lo - c : (c > hi ? c - hi : 0);
-			grid.frameLedUnchecked(c, row, d < (int)sizeof(fade) ? fade[d] : 1);
+			int x = c * 256;
+			int d = x < lo ? lo - x : (x > hi ? x - hi : 0);  /* Q8 keys */
+			int i = d >> 8, f = d & 255;
+			uint8_t lvl = i >= N ? fade[N]
+			            : (uint8_t)(fade[i] - (((fade[i] - fade[i + 1]) * f + 128) >> 8));
+			grid.frameLedUnchecked(c, row, lvl);
 		}
 		grid.frameLedUnchecked(0, row, 15);
 		grid.frameLedUnchecked(1, row, 15);

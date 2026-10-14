@@ -134,6 +134,7 @@ extern "C" {
 #define MLR_LPF_SLOTS          5
 #define MLR_LPF_OPEN           (MLR_LPF_SLOTS - 1)
 #define MLR_LPF_GLIDE_SAMPLES  (MLR_SAMPLE_RATE_HZ / 2u)  /* cutoff glides one key per 500 ms */
+#define MLR_PAN_GLIDE_SAMPLES  (MLR_SAMPLE_RATE_HZ / 10u)  /* pan glides one step per 100 ms */
 
 /* Per-track pan (grid modes): -MLR_PAN_STEPS = hard Out 1, 0 = centre,
  * +MLR_PAN_STEPS = hard Out 2, equal-power law. */
@@ -361,6 +362,7 @@ typedef struct {
 	int8_t         pan;                  /* -MLR_PAN_STEPS..+MLR_PAN_STEPS (grid modes; scene) */
 	int16_t        pan_cv_q8;            /* CV In 1 offset, 1/256 steps; held, not saved */
 	bool           pan_keep;             /* pan set by the sample manager: survives the rescan */
+	int32_t        pan_pos;              /* base pan as heard, pan << 20 once the glide lands */
 	uint8_t        lpf_slot;             /* 0..MLR_LPF_OPEN (scene) */
 	volatile uint32_t lpf_pos;           /* cutoff position, slot << 20 (0 = darkest .. 4 << 20 = open);
 	                                      * glides to lpf_target at one key per 500 ms; read by the grid display */
@@ -529,7 +531,7 @@ void     mlr_set_pan(int track, int pan);
 void     mlr_set_pan_cv(int track, int offset_q8);  /* CV offset on top of the base pan */
 void     mlr_set_lpf(int track, int slot);
 void     mlr_set_lpf_pos(int track, uint32_t pos);  /* direct, no glide (CV): slot << 20 */
-int      mlr_pan_effective_q8(int track);  /* base + CV, clamped, in 1/256 steps */
+int      mlr_pan_effective_q8(int track);  /* gliding base + CV, clamped, in 1/256 steps */
 int      mlr_pan_default(int track);       /* hard to the track's channel side */
 void     mlr_pan_gains(int pan, uint16_t *gl, uint16_t *gr);
 int      mlr_get_column(int track);

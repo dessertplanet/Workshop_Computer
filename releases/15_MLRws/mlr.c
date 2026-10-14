@@ -839,19 +839,24 @@ static inline uint16_t pan_gain_interp(int x)
 	return (uint16_t)(a + (((b - a) * f) >> 8));
 }
 
-int __not_in_flash_func(mlr_pan_effective_q8)(int track)
+static inline int __not_in_flash_func(pan_effective_q8)(const mlr_track_t *tr)
 {
-	const mlr_track_t *tr = &mlr_tracks[track];
-	int e = tr->pan * 256 + tr->pan_cv_q8;
+	int e = (int)(tr->pan_pos >> 12) + tr->pan_cv_q8;  /* pan_pos is 1/2^20 steps */
 	if (e < -MLR_PAN_STEPS * 256) e = -MLR_PAN_STEPS * 256;
 	if (e >  MLR_PAN_STEPS * 256) e =  MLR_PAN_STEPS * 256;
 	return e;
 }
 
-/* Recompute target gains from base pan + CV offset. */
-static void __not_in_flash_func(pan_update_gains)(mlr_track_t *tr, int track)
+int __not_in_flash_func(mlr_pan_effective_q8)(int track)
 {
-	int e = mlr_pan_effective_q8(track);
+	return pan_effective_q8(&mlr_tracks[track]);
+}
+
+/* Recompute target gains from the (gliding) base pan + CV offset. Gains come
+ * off the equal-power table at every glide position, so a sweep holds level. */
+static void __not_in_flash_func(pan_update_gains)(mlr_track_t *tr)
+{
+	int e = pan_effective_q8(tr);
 	tr->pan_gl = pan_gain_interp(e + MLR_PAN_STEPS * 256);
 	tr->pan_gr = pan_gain_interp(MLR_PAN_STEPS * 256 - e);
 	if (!tr->playing) {  /* nothing audible to slew */
@@ -868,7 +873,7 @@ void __not_in_flash_func(mlr_set_pan_cv)(int track, int offset_q8)
 	mlr_track_t *tr = &mlr_tracks[track];
 	if (tr->pan_cv_q8 == offset_q8) return;
 	tr->pan_cv_q8 = (int16_t)offset_q8;
-	pan_update_gains(tr, track);
+	pan_update_gains(tr);
 }
 
 int __not_in_flash_func(mlr_pan_default)(int track)
@@ -884,7 +889,10 @@ void __not_in_flash_func(mlr_set_pan)(int track, int pan)
 	if (pan >  MLR_PAN_STEPS) pan =  MLR_PAN_STEPS;
 	mlr_track_t *tr = &mlr_tracks[track];
 	tr->pan = (int8_t)pan;
-	pan_update_gains(tr, track);
+	/* Playing tracks glide there one step per 100 ms (mix_track_route); a
+	 * stopped track has nothing audible to glide, so it lands now. */
+	if (!tr->playing) tr->pan_pos = pan * (1 << 20);
+	pan_update_gains(tr);
 }
 
 /* Ladder stage coefficients, Q15 (G = g / (1 + g), g = tan(pi * fc / 24000)),
@@ -1579,6 +1587,16 @@ static inline void __not_in_flash_func(mix_track_route)(mlr_track_t *tr, int32_t
 		s = in >> 3;
 	}
 
+	/* pan glide: constant speed, one step per MLR_PAN_GLIDE_SAMPLES; the
+	 * gain slew below still smooths CV moves and each glide increment */
+	int32_t pan_target = tr->pan * (1 << 20);
+	if (tr->pan_pos != pan_target) {
+		const int32_t step = (int32_t)((1u << 20) / MLR_PAN_GLIDE_SAMPLES);
+		int32_t d = pan_target - tr->pan_pos;
+		tr->pan_pos = (d > step) ? tr->pan_pos + step : (d < -step) ? tr->pan_pos - step : pan_target;
+		pan_update_gains(tr);
+	}
+
 	uint16_t gl = tr->pan_gl_cur, gr = tr->pan_gr_cur;
 	if (gl != tr->pan_gl) tr->pan_gl_cur = gl = pan_slew(gl, tr->pan_gl);
 	if (gr != tr->pan_gr) tr->pan_gr_cur = gr = pan_slew(gr, tr->pan_gr);
@@ -2121,6 +2139,7 @@ void __not_in_flash_func(mlr_clear_track)(int track)
 	tr->volume_target = 256;
 	tr->recorded_channel    = 0;
 	tr->pan = -MLR_PAN_STEPS; tr->pan_cv_q8 = 0; tr->pan_keep = false;
+	tr->pan_pos = -MLR_PAN_STEPS * (1 << 20);
 	tr->lpf_slot = MLR_LPF_OPEN; lpf_set_coef(tr, 32768u);
 	tr->lpf_pos = tr->lpf_target = (uint32_t)MLR_LPF_OPEN << 20;
 	tr->pan_gl = tr->pan_gl_cur = 32768u; tr->pan_gr = tr->pan_gr_cur = 0;
