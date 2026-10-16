@@ -1,4 +1,4 @@
-# Blackbird v1.1
+# Blackbird v1.2
 
 A fully monome-crow-compatible program card for the Music Thing Modular Workshop Computer.
 

@@ -3,7 +3,7 @@ Name: Blackbird
 short-description: "A scriptable, live-codable, USB-serial-to-CV device implementing monome crow's protocol"
 Language: C++ (Pico SDK + ComputerCard) + Lua
 Creator: Dune Desormeaux
-Version: 1.1
+Version: 1.2
 Status: Released
 License: GPLv3 or later
 date-created: 2025-11-10
