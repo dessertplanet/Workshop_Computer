@@ -7109,10 +7109,12 @@ int main()
 
     // Initialize TinyUSB stack according to role
     if (g_usb_role == USB_ROLE_DEVICE) {
-        tud_init(BOARD_DEVICE_RHPORT_NUM);
+        const tusb_rhport_init_t dev_init = { .role = TUSB_ROLE_DEVICE, .speed = TUSB_SPEED_FULL };
+        tusb_init(BOARD_DEVICE_RHPORT_NUM, &dev_init);
     } else {
 #if TUSB_OPT_HOST_ENABLED
-        tuh_init(BOARD_DEVICE_RHPORT_NUM);
+        const tusb_rhport_init_t host_init = { .role = TUSB_ROLE_HOST, .speed = TUSB_SPEED_FULL };
+        tusb_init(BOARD_DEVICE_RHPORT_NUM, &host_init);
 #endif
     }
     

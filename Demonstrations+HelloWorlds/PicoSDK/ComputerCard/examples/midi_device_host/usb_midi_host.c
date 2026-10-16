@@ -35,17 +35,20 @@
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF
 //--------------------------------------------------------------------+
+#if TUSB_VERSION_NUMBER < 2100
+  #error "usb_midi_host requires TinyUSB 0.21.0 or later"
+#endif
 #ifndef CFG_TUH_MAX_CABLES
   #define CFG_TUH_MAX_CABLES 16
 #endif
 #ifndef CFG_TUH_MIDI_RX_BUFSIZE
-  #define CFG_TUH_MIDI_RX_BUFSIZE USBH_EPSIZE_BULK_MAX
+  #define CFG_TUH_MIDI_RX_BUFSIZE TUH_EPSIZE_BULK_MAX
 #endif
 #ifndef CFG_TUH_MIDI_TX_BUFSIZE
-  #define CFG_TUH_MIDI_TX_BUFSIZE USBH_EPSIZE_BULK_MAX
+  #define CFG_TUH_MIDI_TX_BUFSIZE TUH_EPSIZE_BULK_MAX
 #endif
 #ifndef CFG_TUH_MIDI_EP_BUFSIZE
-  #define CFG_TUH_MIDI_EP_BUFSIZE USBH_EPSIZE_BULK_MAX
+  #define CFG_TUH_MIDI_EP_BUFSIZE TUH_EPSIZE_BULK_MAX
 #endif
 
 #define MIDI_MAX_DATA_VAL 0x7f
@@ -199,8 +202,8 @@ bool midih_init(void)
     p_midi_host->stream_write = malloc(midih_limits.max_cables * sizeof(midi_stream_t));
     TU_ASSERT((p_midi_host->rx_ff_buf != NULL && p_midi_host->tx_ff_buf != NULL && p_midi_host->stream_write != NULL), 0);
     tu_memclr(p_midi_host->stream_write, sizeof(*(p_midi_host->stream_write))*midih_limits.max_cables);
-    tu_fifo_config(&p_midi_host->rx_ff, p_midi_host->rx_ff_buf, midih_limits.midi_rx_buf, 1, false); // true, true
-    tu_fifo_config(&p_midi_host->tx_ff, p_midi_host->tx_ff_buf, midih_limits.midi_tx_buf, 1, false); // OBVS.
+    tu_fifo_config(&p_midi_host->rx_ff, p_midi_host->rx_ff_buf, midih_limits.midi_rx_buf, false);
+    tu_fifo_config(&p_midi_host->tx_ff, p_midi_host->tx_ff_buf, midih_limits.midi_tx_buf, false);
 
   #if CFG_FIFO_MUTEX
     tu_fifo_config_mutex(&p_midi_host->rx_ff, NULL, osal_mutex_create(&p_midi_host->rx_ff_mutex));
@@ -306,7 +309,7 @@ void midih_close(uint8_t dev_addr)
 //--------------------------------------------------------------------+
 // Enumeration
 //--------------------------------------------------------------------+
-bool midih_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const *desc_itf, uint16_t max_len)
+uint16_t midih_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const *desc_itf, uint16_t max_len)
 {
   (void) rhport;
 
@@ -367,6 +370,9 @@ bool midih_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const *d
   tusb_desc_endpoint_t const* out_desc = NULL;
   while (len_parsed < max_len)
   {
+    // max_len covers the remaining configuration descriptor, so stop at the start of the next interface
+    if (p_mdh->bDescriptorType == TUSB_DESC_INTERFACE || p_mdh->bDescriptorType == TUSB_DESC_INTERFACE_ASSOCIATION)
+      break;
     TU_VERIFY((p_mdh->bDescriptorType == TUSB_DESC_CS_INTERFACE) || 
       (p_mdh->bDescriptorType == TUSB_DESC_CS_ENDPOINT && p_mdh->bDescriptorSubType == MIDI_CS_ENDPOINT_GENERAL) ||
       p_mdh->bDescriptorType == TUSB_DESC_ENDPOINT);
@@ -492,9 +498,9 @@ bool midih_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const *d
       // parse out the bulk endpoint info
       tusb_desc_endpoint_t *p_ep = (tusb_desc_endpoint_t *)p_mdh;
       TU_LOG2("found ENDPOINT Descriptor %02x\r\n", p_ep->bEndpointAddress);
-      if (p_ep->wMaxPacketSize > USBH_EPSIZE_BULK_MAX) {
-        TU_LOG2("ENDPOINT %02x wMaxPacketSize shorted from %u to %u\r\n", p_ep->bEndpointAddress, p_ep->wMaxPacketSize, USBH_EPSIZE_BULK_MAX);
-        p_ep->wMaxPacketSize = USBH_EPSIZE_BULK_MAX;
+      if (p_ep->wMaxPacketSize > TUH_EPSIZE_BULK_MAX) {
+        TU_LOG2("ENDPOINT %02x wMaxPacketSize shorted from %u to %u\r\n", p_ep->bEndpointAddress, p_ep->wMaxPacketSize, TUH_EPSIZE_BULK_MAX);
+        p_ep->wMaxPacketSize = TUH_EPSIZE_BULK_MAX;
       }
       if (tu_edpt_dir(p_ep->bEndpointAddress) == TUSB_DIR_OUT)
       {
@@ -551,7 +557,8 @@ bool midih_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const *d
   }
   p_midi_host->dev_addr = dev_addr;
 
-  return true;
+  // number of descriptor bytes consumed by this driver
+  return len_parsed;
 }
 
 bool tuh_midi_configured(uint8_t dev_addr)
