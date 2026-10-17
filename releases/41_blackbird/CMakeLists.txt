@@ -16,8 +16,17 @@ set(PICO_BOARD pico CACHE STRING "Board type")
 
 cmake_minimum_required (VERSION 3.13)
 include(pico_sdk_import.cmake)
+# Debug harness build (make debug): debugger mailbox, input overrides and a
+# mirror of USB output, for util/bbdbg.py. Same optimisation as release so
+# timings are representative. Builds blackbird_debug and leaves UF2/ alone.
+option(BB_DEBUG_HARNESS "Build with the SWD debug/test harness" OFF)
+
 # Define a variable for the card name
-set(CARD_NAME blackbird)
+if(BB_DEBUG_HARNESS)
+    set(CARD_NAME blackbird_debug)
+else()
+    set(CARD_NAME blackbird)
+endif()
 # type matching project name here
 project(blackbird C CXX ASM)
 set(CMAKE_CXX_STANDARD 17)
@@ -199,6 +208,10 @@ target_compile_definitions(${CARD_NAME} PRIVATE
     PICO_BITS_IN_RAM=1
 )
 
+if(BB_DEBUG_HARNESS)
+    target_compile_definitions(${CARD_NAME} PRIVATE BB_DEBUG_HARNESS COMPUTERCARD_INPUT_OVERRIDES)
+    target_link_options(${CARD_NAME} PRIVATE -Wl,--wrap=tud_cdc_n_write)
+else()
 # Copy UF2 files to UF2 directory and add user script erase blocks
 add_custom_command(
     TARGET ${CARD_NAME}
@@ -217,3 +230,4 @@ add_custom_command(
             ${CMAKE_CURRENT_SOURCE_DIR}/UF2/${CARD_NAME}.uf2
     COMMENT "Adding user script erase blocks to UF2"
 )
+endif()

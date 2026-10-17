@@ -426,6 +426,10 @@ static inline bool check_for_backticks(const char* buffer, int pos) {
 
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
+#ifdef BB_DEBUG_HARNESS
+static void bb_dbg_init(ComputerCard* card);
+static void bb_dbg_service(lua_State* L);
+#endif
 enum UsbRole { USB_ROLE_DEVICE, USB_ROLE_HOST };
 static UsbRole g_usb_role = USB_ROLE_DEVICE;
 static ComputerCard::USBPowerState_t g_usb_power_state = ComputerCard::Unsupported;
@@ -3680,6 +3684,10 @@ public:
     {
         // Initialize USB lock-free queues
         usb_lockfree_init();
+
+#ifdef BB_DEBUG_HARNESS
+        bb_dbg_init(this);
+#endif
         
         // Initialize USB buffer
         g_rx_buffer_pos = 0;
@@ -3745,6 +3753,11 @@ public:
                     }
                 }
             }
+
+#ifdef BB_DEBUG_HARNESS
+            // Debugger mailbox: after RX so injected REPL bytes are seen as processed
+            bb_dbg_service(lua_manager ? lua_manager->L : nullptr);
+#endif
 
             uint32_t now_us = time_us_32();
             if ((now_us - last_led_update_us) >= led_update_interval_us) {
@@ -4635,6 +4648,266 @@ public:
         }
     }
 };
+
+#ifdef BB_DEBUG_HARNESS
+// ============================================================================
+// DEBUG HARNESS (debug builds only: make debug)
+// ============================================================================
+// A mailbox in RAM that a host reads and writes over SWD (OpenOCD) while the
+// card runs, without halting it. util/bbdbg.py is the host side; keep its
+// layout constants in step with this struct (checked by the static_asserts).
+//
+// Host -> card: write script/script_len/cmd, then increment cmd_seq. Core 0
+// runs the command from MainControlLoop and sets ack_seq = cmd_seq when done.
+// Card -> host: stats are refreshed every main loop iteration; all USB CDC
+// output is mirrored into the log ring (log_head counts bytes ever written).
+
+#define BB_DBG_MAGIC       0x47444242u  // "BBDG"
+#define BB_DBG_VERSION     1u
+#define BB_DBG_SCRIPT_MAX  8192
+#define BB_DBG_OUT_MAX     4096
+#define BB_DBG_LOG_MAX     4096         // power of two
+
+enum {
+    BB_DBG_CMD_NONE = 0,
+    BB_DBG_CMD_EVAL = 1,        // run script as a Lua chunk; print() and results -> out
+    BB_DBG_CMD_REPL = 2,        // feed script into the USB REPL path, as if druid sent it
+    BB_DBG_CMD_RESET_STATS = 3, // zero worst-case / overrun / loop counters
+};
+
+enum {
+    BB_DBG_OK = 0,
+    BB_DBG_ERR_LOAD = 1,        // Lua syntax error (message in out)
+    BB_DBG_ERR_RUNTIME = 2,     // Lua runtime error (message in out)
+    BB_DBG_ERR_BAD_CMD = 3,
+    BB_DBG_ERR_NO_LUA = 4,
+};
+
+typedef struct {
+    // --- identification (constant) ---
+    uint32_t magic;
+    uint32_t version;
+    uint32_t struct_size;
+    uint32_t sample_rate_hz;
+    // --- stats (card -> host) ---
+    uint32_t heartbeat;            // MainControlLoop iterations since boot
+    uint32_t uptime_ms;
+    uint32_t ps_worst_us;          // ProcessSample worst case since reset
+    uint32_t ps_overruns;          // ProcessSample runs over the per-sample budget
+    uint32_t ps_budget_us;
+    uint32_t loop_worst_us;        // MainControlLoop worst iteration since reset
+    uint32_t loop_iterations;      // since reset
+    uint32_t lua_mem_bytes;
+    uint32_t lua_mem_peak_bytes;   // since reset
+    uint32_t drops_metro;
+    uint32_t drops_clock;
+    uint32_t drops_input;
+    uint32_t drops_asl_done;
+    uint32_t drops_slope_action;
+    uint32_t drops_slope_cmd;
+    uint32_t drops_usb_rx;
+    uint32_t reserved[20];         // room for more stats without moving the mailbox
+    // --- command mailbox ---
+    uint32_t cmd_seq;              // host increments to submit
+    uint32_t cmd;
+    uint32_t ack_seq;              // card sets to cmd_seq when done
+    int32_t  status;
+    uint32_t script_len;
+    uint32_t out_len;
+    uint32_t out_truncated;
+    uint32_t log_head;             // total bytes ever written to log (ring index = head % LOG_MAX)
+    ComputerCard::InputOverrides inputs;
+    char script[BB_DBG_SCRIPT_MAX];
+    char out[BB_DBG_OUT_MAX];
+    char log[BB_DBG_LOG_MAX];
+} bb_dbg_t;
+
+static_assert(offsetof(bb_dbg_t, heartbeat) == 16, "bbdbg.py layout");
+static_assert(offsetof(bb_dbg_t, cmd_seq) == 160, "bbdbg.py layout");
+static_assert(offsetof(bb_dbg_t, inputs) == 192, "bbdbg.py layout");
+static_assert(sizeof(ComputerCard::InputOverrides) == 10 * 24 + 8, "bbdbg.py layout");
+static_assert(offsetof(bb_dbg_t, script) == 192 + 248, "bbdbg.py layout");
+static_assert((BB_DBG_LOG_MAX & (BB_DBG_LOG_MAX - 1)) == 0, "log ring must be a power of two");
+
+extern "C" {
+__attribute__((used)) volatile bb_dbg_t bb_dbg;
+}
+
+// REPL injection progress (bytes of script already posted to the RX queue)
+static uint32_t g_bb_dbg_repl_pos = 0;
+static bool g_bb_dbg_busy = false;
+
+static void bb_dbg_out_append(const char* s, size_t n) {
+    uint32_t len = bb_dbg.out_len;
+    if (len + n > BB_DBG_OUT_MAX) {
+        n = BB_DBG_OUT_MAX - len;
+        bb_dbg.out_truncated = 1;
+    }
+    memcpy((char*)bb_dbg.out + len, s, n);
+    bb_dbg.out_len = len + n;
+}
+
+// Mirror of all USB CDC output (linked with -Wl,--wrap=tud_cdc_n_write)
+extern "C" uint32_t __real_tud_cdc_n_write(uint8_t itf, void const* buffer, uint32_t bufsize);
+extern "C" uint32_t __wrap_tud_cdc_n_write(uint8_t itf, void const* buffer, uint32_t bufsize) {
+    const char* p = (const char*)buffer;
+    uint32_t head = bb_dbg.log_head;
+    for (uint32_t i = 0; i < bufsize; i++) {
+        bb_dbg.log[(head + i) & (BB_DBG_LOG_MAX - 1)] = p[i];
+    }
+    __dmb();
+    bb_dbg.log_head = head + bufsize;
+    return __real_tud_cdc_n_write(itf, buffer, bufsize);
+}
+
+// print() replacement while a BB_DBG_CMD_EVAL chunk runs
+static int bb_dbg_print(lua_State* L) {
+    int n = lua_gettop(L);
+    for (int i = 1; i <= n; i++) {
+        size_t len;
+        const char* s = luaL_tolstring(L, i, &len);
+        if (i > 1) bb_dbg_out_append("\t", 1);
+        bb_dbg_out_append(s, len);
+        lua_pop(L, 1);
+    }
+    bb_dbg_out_append("\n", 1);
+    return 0;
+}
+
+static int32_t bb_dbg_eval(lua_State* L) {
+    int top = lua_gettop(L);
+
+    // Swap print for the capturing version. rawset, so _G's newindex
+    // tracking of user globals (crow.reset) never sees it.
+    lua_pushglobaltable(L);
+    lua_getfield(L, -1, "print");
+    int saved_print = lua_gettop(L);
+    lua_pushliteral(L, "print");
+    lua_pushcfunction(L, bb_dbg_print);
+    lua_rawset(L, top + 1);
+
+    int32_t status = BB_DBG_OK;
+    output_batch_begin();
+    if (luaL_loadbuffer(L, (const char*)bb_dbg.script, bb_dbg.script_len, "=bbdbg") != LUA_OK) {
+        status = BB_DBG_ERR_LOAD;
+    } else if (lua_pcall(L, 0, LUA_MULTRET, 0) != LUA_OK) {
+        status = BB_DBG_ERR_RUNTIME;
+    }
+    output_batch_flush();
+
+    if (status != BB_DBG_OK) {
+        size_t len;
+        const char* err = lua_tolstring(L, -1, &len);
+        if (err) bb_dbg_out_append(err, len);
+    } else if (lua_gettop(L) > saved_print) {
+        // Like the REPL, show returned values
+        lua_pushcfunction(L, bb_dbg_print);
+        lua_insert(L, saved_print + 1);
+        lua_call(L, lua_gettop(L) - saved_print - 1, 0);
+    }
+
+    lua_settop(L, saved_print);
+    lua_pushliteral(L, "print");
+    lua_insert(L, -2);
+    lua_rawset(L, top + 1);
+    lua_settop(L, top);
+    return status;
+}
+
+// Feed script bytes into the USB RX queue in 64-byte packets, a few per call,
+// so MainControlLoop processes them exactly as it would bytes from druid.
+// Returns true once everything has been posted and processed.
+static bool bb_dbg_repl_step(void) {
+    const uint32_t kPacket = 64;
+    uint32_t len = bb_dbg.script_len;
+    for (int i = 0; i < 4 && g_bb_dbg_repl_pos < len; i++) {
+        if (usb_rx_lockfree_pending_count() >= USB_RX_QUEUE_SIZE - 2) break;
+        uint32_t n = len - g_bb_dbg_repl_pos;
+        if (n > kPacket) n = kPacket;
+        usb_rx_lockfree_post((const char*)bb_dbg.script + g_bb_dbg_repl_pos, (uint16_t)n);
+        g_bb_dbg_repl_pos += n;
+    }
+    return g_bb_dbg_repl_pos >= len && usb_rx_lockfree_pending_count() == 0;
+}
+
+static void bb_dbg_reset_stats(void) {
+    g_worst_case_us = 0;
+    g_overrun_count = 0;
+    g_loop_worst_case_us = 0;
+    g_loop_iteration_count = 0;
+    bb_dbg.lua_mem_peak_bytes = 0;
+}
+
+static void bb_dbg_update_stats(lua_State* L) {
+    bb_dbg.heartbeat = bb_dbg.heartbeat + 1;
+    bb_dbg.uptime_ms = clock_ms_since_boot();
+    bb_dbg.ps_worst_us = g_worst_case_us;
+    bb_dbg.ps_overruns = g_overrun_count;
+    bb_dbg.loop_worst_us = g_loop_worst_case_us;
+    bb_dbg.loop_iterations = g_loop_iteration_count;
+    if (L) {
+        uint32_t mem = (uint32_t)lua_gc(L, LUA_GCCOUNT, 0) * 1024u + (uint32_t)lua_gc(L, LUA_GCCOUNTB, 0);
+        bb_dbg.lua_mem_bytes = mem;
+        if (mem > bb_dbg.lua_mem_peak_bytes) bb_dbg.lua_mem_peak_bytes = mem;
+    }
+    bb_dbg.drops_metro = metro_events_dropped_count();
+    bb_dbg.drops_clock = clock_events_dropped_count();
+    bb_dbg.drops_input = input_events_dropped_count();
+    bb_dbg.drops_asl_done = asl_done_events_dropped_count();
+    bb_dbg.drops_slope_action = g_slope_action_drop_count;
+    bb_dbg.drops_slope_cmd = S_get_cmd_drop_count();
+    bb_dbg.drops_usb_rx = usb_rx_lockfree_drop_count();
+}
+
+static void bb_dbg_init(ComputerCard* card) {
+    memset((void*)&bb_dbg, 0, sizeof(bb_dbg));
+    bb_dbg.version = BB_DBG_VERSION;
+    bb_dbg.struct_size = sizeof(bb_dbg_t);
+    bb_dbg.sample_rate_hz = PROCESS_SAMPLE_RATE_HZ_INT;
+    bb_dbg.ps_budget_us = kProcessSampleOverrunThresholdUs;
+    __dmb();
+    card->SetInputOverrides((ComputerCard::InputOverrides*)&bb_dbg.inputs);
+    bb_dbg.magic = BB_DBG_MAGIC;  // last, so the host never sees a half-initialised mailbox
+}
+
+// Called once per MainControlLoop iteration (core 0, same thread as Lua)
+static void bb_dbg_service(lua_State* L) {
+    bb_dbg_update_stats(L);
+
+    uint32_t seq = bb_dbg.cmd_seq;
+    if (seq == bb_dbg.ack_seq) return;
+    __dmb();  // read the command after seeing the new sequence number
+
+    int32_t status = BB_DBG_OK;
+    if (!g_bb_dbg_busy) {
+        g_bb_dbg_busy = true;
+        g_bb_dbg_repl_pos = 0;
+        bb_dbg.out_len = 0;
+        bb_dbg.out_truncated = 0;
+        if (bb_dbg.script_len > BB_DBG_SCRIPT_MAX) bb_dbg.script_len = BB_DBG_SCRIPT_MAX;
+    }
+
+    switch (bb_dbg.cmd) {
+        case BB_DBG_CMD_EVAL:
+            status = L ? bb_dbg_eval(L) : BB_DBG_ERR_NO_LUA;
+            break;
+        case BB_DBG_CMD_REPL:
+            if (!bb_dbg_repl_step()) return;  // more to feed next iteration
+            break;
+        case BB_DBG_CMD_RESET_STATS:
+            bb_dbg_reset_stats();
+            break;
+        default:
+            status = BB_DBG_ERR_BAD_CMD;
+            break;
+    }
+
+    g_bb_dbg_busy = false;
+    bb_dbg.status = status;
+    __dmb();  // results visible before the ack
+    bb_dbg.ack_seq = seq;
+}
+#endif // BB_DEBUG_HARNESS
 
 // Static wrapper function implementations (after BlackbirdCrow class is fully defined)
 static void handle_usb_command(const char* command) {
