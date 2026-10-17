@@ -23,7 +23,7 @@ PULSE_10MS = pulse(0.01)
 -- init sets up actions
 function init()
   -- Enable MPE routing in firmware.
-  bb.mpe.mode = 'on'
+  bb.mpe_mode(true)
 
   -- Audio outs 1/2: simple gate envelopes for voices 1/2.
   output[3].action = adsr(ENV_ATTACK, 0.0, 5.0, ENV_RELEASE)
@@ -78,8 +78,8 @@ local function pressure_to_volts(val)
 end
 
 -- MPE note callback
-bb.mpe.note = function(type, num, vel, chan)
-  if type == 'on' then
+bb.event_mpe_note = function(type, num, vel, chan)
+  if type == 'note_on' then
     -- duophonic note on
     local voice = voice_dispatch(num)
     output[voice].volts = voice_pitch_volts(num) + (voice_pressure_volts[voice] or 0.0)
@@ -107,7 +107,7 @@ end
 
 -- MPE pressure callback (per-channel)
 -- Add pressure as a pitch CV offset per voice.
-bb.mpe.pressure = function(val, chan)
+bb.event_mpe_pressure = function(val, chan)
   local v = pressure_to_volts(val)
   for i, note in pairs(voice_data) do
     if note and voice_chan[i] == chan then

@@ -459,26 +459,25 @@ static void blackbird_core1_background_service(void);
 static void process_usb_midi_packets_device(void);
 static void process_usb_midi_packets_host(void);
 static void handle_usb_midi_packet(const uint8_t packet[4]);
-static void dispatch_midi_note_event(bool is_on, uint8_t note, float velocity, uint8_t channel);
-static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel);
-static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel);
-static void dispatch_mpe_aftertouch_event(uint8_t pressure, uint8_t channel);
-static void dispatch_midi_aftertouch_event(uint8_t pressure, uint8_t channel);
+static void dispatch_midi_event(uint8_t b1, uint8_t b2, uint8_t b3);
+static void dispatch_mpe_note_event(bool is_on, uint8_t note, float velocity, uint8_t channel);
+static void dispatch_mpe_bend_event(uint16_t bend14, uint8_t channel);
+static void dispatch_mpe_value_event(const char* field, const char* host_name, uint8_t value, uint8_t channel);
 static void midi_clock_handle_tick(void);
 static void midi_clock_handle_start(void);
 static void midi_clock_handle_continue(void);
 static void midi_clock_handle_stop(void);
-static void process_pending_midi_note_offs(void);
-static int lua_bb_midi_out_note(lua_State* L);
-static int lua_bb_mpe_set_mode(lua_State* L);
-static int lua_bb_mpe_note_default(lua_State* L);
-static int lua_bb_mpe_bend_default(lua_State* L);
-static int lua_bb_mpe_slide_default(lua_State* L);
-static int lua_bb_mpe_pressure_default(lua_State* L);
-static int bb_mpe_index(lua_State* L);
-static int bb_mpe_newindex(lua_State* L);
+static int lua_bb_midi_tx(lua_State* L);
+static int lua_bb_midi_out(lua_State* L);
+static int lua_bb_midi_to_msg(lua_State* L);
+static int lua_bb_midi_note_on(lua_State* L);
+static int lua_bb_midi_note_off(lua_State* L);
+static int lua_bb_midi_cc(lua_State* L);
+static int lua_bb_mpe_mode(lua_State* L);
+static void mpe_set_mode(bool enable);
+static void mpe_flush_pending(void);
 
-// MPE routing: when enabled, route incoming MIDI to bb.mpe.* instead of bb.midi.rx.*
+// MPE routing: when enabled, route note/bend/pressure/CC74 to bb.event_mpe_* instead of bb.event_midi
 static volatile bool g_mpe_mode_enabled = false;
 
 // Chooses between internal and external clock based on clock-mode inputs and normalization probe connectivity.
@@ -1486,8 +1485,6 @@ public:
     lua_register(L, "clock_internal_set_tempo", lua_clock_internal_set_tempo);
     lua_register(L, "clock_internal_start", lua_clock_internal_start);
     lua_register(L, "clock_internal_stop", lua_clock_internal_stop);
-    lua_register(L, "bb_midi_out_note", lua_bb_midi_out_note);
-    lua_register(L, "bb_mpe_set_mode", lua_bb_mpe_set_mode);
     
     // Create _c table with l_bootstrap_c_tell (handles both hardware and crow protocol)
     lua_newtable(L);
@@ -1988,28 +1985,8 @@ public:
             lua_pop(L, 1);
         }
 
-        // MIDI table setup (minimal, low-allocation). Host-forwarding defaults are implemented in C
-        // (see dispatch_* fallbacks) to avoid Lua heap spikes during startup.
-                const char* setup_midi_defaults = R"(
-            bb.midi = bb.midi or {}
-            bb.midi.rx = bb.midi.rx or bb.midi.in or {}
-            bb.midi.tx = bb.midi.tx or bb.midi.out or {}
-            bb.midi.in = bb.midi.rx
-            bb.midi.out = bb.midi.tx
-
-            bb.mpe = bb.mpe or {}
-
-                        -- Keep a backing field; C installs a metatable so bb.mpe.mode reads/writes always work.
-                        bb.mpe._mode = bb.mpe._mode or bb.mpe.mode or 'off'
-                        bb.mpe.mode = nil
-        )";
-        if (luaL_dostring(L, setup_midi_defaults) != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error adding bb.midi defaults: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        }
-
-        // Inject bb.midi.tx.note binding alongside midi.rx defaults (idempotent, preserves user tables)
+        // MIDI functions, named as on monome iii (bb.event_midi / bb.event_mpe_* are left for the
+        // script to define). Without handlers, dispatch_* forward to the host via Caw_printf.
         lua_getglobal(L, "bb");
         if (!lua_istable(L, -1)) {
             lua_pop(L, 1);
@@ -2017,129 +1994,21 @@ public:
             lua_setglobal(L, "bb");
             lua_getglobal(L, "bb");
         }
+        static const luaL_Reg bb_midi_funcs[] = {
+            {"midi_tx", lua_bb_midi_tx},
+            {"midi_out", lua_bb_midi_out},
+            {"midi_to_msg", lua_bb_midi_to_msg},
+            {"midi_note_on", lua_bb_midi_note_on},
+            {"midi_note_off", lua_bb_midi_note_off},
+            {"midi_cc", lua_bb_midi_cc},
+            {"mpe_mode", lua_bb_mpe_mode},
+            {NULL, NULL}
+        };
+        luaL_setfuncs(L, bb_midi_funcs, 0);
+        lua_pop(L, 1); // pop bb
 
-        // Ensure bb.midi exists
-        lua_getfield(L, -1, "midi");
-        if (!lua_istable(L, -1)) {
-            lua_pop(L, 1);
-            lua_newtable(L);
-        }
-
-        // Ensure bb.midi.rx exists (defaults already loaded by Lua chunk above)
-        lua_getfield(L, -1, "rx");
-        if (!lua_istable(L, -1)) {
-            lua_pop(L, 1);
-            lua_newtable(L);
-            lua_setfield(L, -2, "rx");
-        } else {
-            lua_pop(L, 1);
-        }
-
-        // Ensure bb.mpe exists (some hosts may run Lua snippets before the defaults chunk succeeds)
-        lua_getfield(L, -2, "mpe"); // bb.mpe
-        if (!lua_istable(L, -1)) {
-            lua_pop(L, 1);
-            lua_newtable(L);
-            lua_setfield(L, -3, "mpe");
-            lua_getfield(L, -2, "mpe");
-        }
-
-        // Ensure backing field bb.mpe._mode exists; avoid creating a real `mode` key.
-        lua_getfield(L, -1, "_mode");
-        if (!lua_isstring(L, -1)) {
-            lua_pop(L, 1);
-            lua_pushliteral(L, "off");
-            lua_setfield(L, -2, "_mode");
-        } else {
-            lua_pop(L, 1);
-        }
-
-        // Remove real `mode` key if present so assignments can be intercepted.
-        lua_pushnil(L);
-        lua_setfield(L, -2, "mode");
-
-        // Install a C metatable so bb.mpe.mode reads/writes always work.
-        lua_newtable(L);
-        lua_pushcfunction(L, bb_mpe_index);
-        lua_setfield(L, -2, "__index");
-        lua_pushcfunction(L, bb_mpe_newindex);
-        lua_setfield(L, -2, "__newindex");
-        lua_setmetatable(L, -2);
-
-        // Sync initial mode into C flag.
-        lua_getfield(L, -1, "_mode");
-        const char* mode = lua_tostring(L, -1);
-        bool enable = (mode && (strcmp(mode, "on") == 0));
-        g_mpe_mode_enabled = enable;
-        lua_pop(L, 1);
-
-        lua_pop(L, 1); // pop bb.mpe
-
-        // Note: we intentionally do not install Lua-side default MPE forwarding callbacks here.
-        // If no handler is installed, dispatch_* will forward to host via Caw_printf without
-        // allocating Lua strings.
-
-        // Install low-allocation default MPE callbacks as C functions (idempotent).
-        // These forward to host via ^^mpe(...) without using tell()/tostring().
-        lua_getfield(L, -2, "mpe"); // bb.mpe
-        if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "note");
-            if (!lua_isfunction(L, -1)) {
-                lua_pop(L, 1);
-                lua_pushcfunction(L, lua_bb_mpe_note_default);
-                lua_setfield(L, -2, "note");
-            } else {
-                lua_pop(L, 1);
-            }
-
-            lua_getfield(L, -1, "bend");
-            if (!lua_isfunction(L, -1)) {
-                lua_pop(L, 1);
-                lua_pushcfunction(L, lua_bb_mpe_bend_default);
-                lua_setfield(L, -2, "bend");
-            } else {
-                lua_pop(L, 1);
-            }
-
-            lua_getfield(L, -1, "slide");
-            if (!lua_isfunction(L, -1)) {
-                lua_pop(L, 1);
-                lua_pushcfunction(L, lua_bb_mpe_slide_default);
-                lua_setfield(L, -2, "slide");
-            } else {
-                lua_pop(L, 1);
-            }
-
-            lua_getfield(L, -1, "pressure");
-            if (!lua_isfunction(L, -1)) {
-                lua_pop(L, 1);
-                lua_pushcfunction(L, lua_bb_mpe_pressure_default);
-                lua_setfield(L, -2, "pressure");
-            } else {
-                lua_pop(L, 1);
-            }
-        }
-        lua_pop(L, 1); // pop bb.mpe
-
-        // Ensure bb.midi.tx exists and set note sender
-        lua_getfield(L, -1, "tx");
-        if (!lua_istable(L, -1)) {
-            lua_pop(L, 1);
-            lua_newtable(L);
-        }
-        lua_pushcfunction(L, lua_bb_midi_out_note);
-        lua_setfield(L, -2, "note");
-        lua_setfield(L, -2, "tx"); // set bb.midi.tx
-
-        // Compatibility aliases
-        lua_getfield(L, -1, "rx");
-        lua_setfield(L, -2, "in");
-        lua_getfield(L, -1, "tx");
-        lua_setfield(L, -2, "out");
-
-        // Write back bb.midi and pop bb
-        lua_setfield(L, -2, "midi");
-        lua_pop(L, 1);
+        // A fresh Lua state starts with MPE routing off.
+        mpe_set_mode(false);
         
         // Set up default pulse output actions
         const char* setup_pulseout_defaults = R"(
@@ -2301,7 +2170,6 @@ public:
     static int lua_clock_internal_set_tempo(lua_State* L);
     static int lua_clock_internal_start(lua_State* L);
     static int lua_clock_internal_stop(lua_State* L);
-    static int lua_bb_midi_out_note(lua_State* L);
     
     // Hardware knob and switch access
     static int lua_get_knob_main(lua_State* L);
@@ -2558,7 +2426,6 @@ static constexpr uint8_t kMidiClockPPQN = 24;
 static constexpr uint8_t kMidiClockWindow = 12;           // samples used for averaging
 static constexpr uint32_t kMidiClockTimeoutUs = 500000u;  // drop state after 0.5s gap
 
-static constexpr int kMidiNoteOffQueueSize = 16;
 
 // High-resolution velocity (MIDI 1.0 convention): CC88 acts as a velocity prefix
 // for the next Note On on the same channel, providing extra 7 fine bits.
@@ -2575,13 +2442,6 @@ static volatile bool g_midi_vel_fine_valid[16] = {false};
 static constexpr int kMaxMidiLuaDispatchPerUsbTick = 1;
 static int g_midi_lua_dispatch_budget = 0;
 
-typedef struct {
-    bool active;
-    uint8_t note;
-    uint8_t channel;
-    uint64_t due_us;
-} midi_note_off_t;
-
 static struct {
     bool running;
     uint32_t tick_count;
@@ -2591,8 +2451,6 @@ static struct {
     uint8_t intervals_pos;
     uint64_t interval_sum_us;
 } g_midi_clock = {false, 0, 0, {0}, 0, 0, 0};
-
-static midi_note_off_t g_midi_note_off_queue[kMidiNoteOffQueueSize] = {};
 
 static inline void lua_mem_snapshot_if_console(lua_State* L, const char* tag) {
     if (!L || !usb_console_ready()) return;
@@ -2649,116 +2507,118 @@ static void midi_clock_reset_state(void) {
     for (int i = 0; i < kMidiClockWindow; i++) g_midi_clock.intervals_us[i] = 0;
 }
 
-// Dispatch Note On/Off into Lua (bb.midi.rx.note or legacy noteon/noteoff) or fall back to ^^midi('noteon'|'noteoff',...)
-static void dispatch_midi_note_event(bool is_on, uint8_t note, float velocity, uint8_t channel) {
-    const char* type_name = is_on ? "on" : "off";
-    bool handled = false;
-    // Preserve a 7-bit velocity for legacy / host-forward paths.
-    uint8_t velocity7 = 0;
-    if (velocity > 0.0f) {
-        float clamped = velocity;
-        if (clamped < 0.0f) clamped = 0.0f;
-        if (clamped > 127.999f) clamped = 127.999f;
-        velocity7 = (uint8_t)clamped;
+// Run a MIDI handler already pushed with its nargs arguments; report errors to the console.
+static bool midi_pcall_handler(lua_State* L, int nargs, const char* name) {
+    int rc = lua_pcall(L, nargs, 0, 0);
+    if (rc == LUA_OK) return true;
+    if (usb_console_ready()) {
+        tud_cdc_write_str("bb.");
+        tud_cdc_write_str(name);
+        if (rc == LUA_ERRMEM) {
+            tud_cdc_write_str(" handler OOM (LUA_ERRMEM)\n\r");
+        } else {
+            const char* err = lua_tostring(L, -1);
+            tud_cdc_write_str(" handler error: ");
+            tud_cdc_write_str(err ? err : "unknown error");
+            tud_cdc_write_str("\n\r");
+        }
+        tud_cdc_write_flush();
     }
+    lua_pop(L, 1);
+    return false;
+}
+
+// Push bb[field] if it is a function. Returns false and leaves the stack unchanged otherwise.
+static bool push_bb_midi_handler(lua_State* L, const char* field) {
+    int base = lua_gettop(L);
+    lua_getglobal(L, "bb");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, field);
+        lua_remove(L, -2);
+        if (lua_isfunction(L, -1)) return true;
+    }
+    lua_settop(L, base);
+    return false;
+}
+
+// Dispatch a raw MIDI message into Lua as bb.event_midi(byte1, byte2, byte3), like monome iii's event_midi.
+// Without a handler (and outside MPE mode), channel voice messages are forwarded to the host as ^^midi(...).
+static void dispatch_midi_event(uint8_t b1, uint8_t b2, uint8_t b3) {
+    bool handled = false;
     LuaManager* lua_mgr = LuaManager::getInstance();
     if (lua_mgr && lua_mgr->L) {
         lua_State* L = lua_mgr->L;
-        lua_getglobal(L, "bb");
-        if (lua_istable(L, -1)) {
-            if (g_mpe_mode_enabled) {
-                lua_getfield(L, -1, "mpe");
-                if (lua_istable(L, -1)) {
-                    lua_getfield(L, -1, "note");
-                    if (lua_isfunction(L, -1)) {
-                        lua_pushstring(L, type_name);
-                        lua_pushinteger(L, note);
-                        lua_pushnumber(L, (lua_Number)velocity);
-                        lua_pushinteger(L, channel);
-                        int rc = lua_pcall(L, 4, 0, 0);
-                        if (rc != LUA_OK) {
-                            if (usb_console_ready()) {
-                                if (rc == LUA_ERRMEM) {
-                                    tud_cdc_write_str("bb.mpe.note handler OOM (LUA_ERRMEM)\n\r");
-                                } else {
-                                    const char* err = lua_tostring(L, -1);
-                                    tud_cdc_write_str("bb.mpe.note handler error: ");
-                                    tud_cdc_write_str(err ? err : "unknown error");
-                                    tud_cdc_write_str("\n\r");
-                                }
-                                tud_cdc_write_flush();
-                            }
-                            lua_pop(L, 1);
-                        } else {
-                            handled = true;
-                        }
-                    } else {
-                        lua_pop(L, 1);
-                    }
-                }
-                lua_pop(L, 1); // pop bb.mpe
-            } else {
-                lua_getfield(L, -1, "midi");
-                if (lua_istable(L, -1)) {
-                    lua_getfield(L, -1, "rx");
-                    if (lua_istable(L, -1)) {
-                        // Prefer unified note handler
-                        lua_getfield(L, -1, "note");
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushstring(L, type_name);
-                            lua_pushinteger(L, note);
-                            lua_pushnumber(L, (lua_Number)velocity);
-                            lua_pushinteger(L, channel);
-                            int rc = lua_pcall(L, 4, 0, 0);
-                            if (rc != LUA_OK) {
-                                if (usb_console_ready()) {
-                                    if (rc == LUA_ERRMEM) {
-                                        tud_cdc_write_str("bb.midi.rx note handler OOM (LUA_ERRMEM)\n\r");
-                                    } else {
-                                        const char* err = lua_tostring(L, -1);
-                                        tud_cdc_write_str("bb.midi.rx note handler error: ");
-                                        tud_cdc_write_str(err ? err : "unknown error");
-                                        tud_cdc_write_str("\n\r");
-                                    }
-                                    tud_cdc_write_flush();
-                                }
-                                lua_pop(L, 1);
-                            } else {
-                                handled = true;
-                            }
-                        } else {
-                            lua_pop(L, 1); // pop non-function note
-                        }
-                    }
-                    lua_pop(L, 1); // pop midi.rx
-                }
-                lua_pop(L, 1); // pop midi
-            }
+        int base = lua_gettop(L);
+        if (push_bb_midi_handler(L, "event_midi")) {
+            lua_pushinteger(L, b1);
+            lua_pushinteger(L, b2);
+            lua_pushinteger(L, b3);
+            handled = midi_pcall_handler(L, 3, "event_midi");
         }
-        lua_pop(L, 1); // pop bb or nil
-        lua_settop(L, 0);
+        lua_settop(L, base);
 
         // MIDI can arrive in short bursts; do a small incremental GC step
         // here so allocations inside user handlers can't outpace the main-loop GC.
         lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
 
-    if (!handled) {
-        if (g_mpe_mode_enabled) {
-            // Match the host-forward API format: ^^mpe('on'|'off',note,vel,chan)
-            // Use a compact float formatting for velocity (may include fractional CC88 data).
-            Caw_printf("^^mpe('%s',%u,%.9g,%u)", type_name, note, (double)velocity, channel);
-        } else {
-            Caw_printf("^^midi('%s',%u,%u,%u)", type_name, note, velocity7, channel);
+    if (handled || g_mpe_mode_enabled) return;
+
+    uint8_t channel = (b1 & 0x0F) + 1;
+    switch (b1 & 0xF0) {
+        case 0x90:
+            Caw_printf("^^midi('%s',%u,%u,%u)", b3 > 0 ? "on" : "off", b2, b3, channel);
+            break;
+        case 0x80:
+            Caw_printf("^^midi('off',%u,%u,%u)", b2, b3, channel);
+            break;
+        case 0xB0:
+            Caw_printf("^^midi('cc',%u,%u,%u)", b2, b3, channel);
+            break;
+        case 0xE0: {
+            float val = (float)((int32_t)(b2 | (b3 << 7)) - 8192) / 8192.0f;
+            if (val > 1.0f) val = 1.0f;
+            if (val < -1.0f) val = -1.0f;
+            Caw_printf("^^midi('bend',%.9g,%u)", (double)val, channel);
+            break;
         }
+        case 0xD0:
+            Caw_printf("^^midi('aftertouch',%u,%u)", b2, channel);
+            break;
+        case 0xA0:
+            Caw_printf("^^midi('aftertouch',%u,%u)", b3, channel);
+            break;
+        default:
+            break;
     }
 }
 
-// Dispatch pitch bend (14-bit) into Lua (bb.midi.rx.bend) or fall back to ^^midi('bend',val)
-static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
-    // Convert 14-bit (0-16383) with center 8192 into -1.0..1.0
-    int32_t centered = (int32_t)bend14 - 8192;
-    float val = (float)centered / 8192.0f;
+// MPE mode: Note On/Off -> bb.event_mpe_note(type, note, vel, ch), or forward ^^mpe('on'|'off',...)
+static void dispatch_mpe_note_event(bool is_on, uint8_t note, float velocity, uint8_t channel) {
+    bool handled = false;
+    LuaManager* lua_mgr = LuaManager::getInstance();
+    if (lua_mgr && lua_mgr->L) {
+        lua_State* L = lua_mgr->L;
+        int base = lua_gettop(L);
+        if (push_bb_midi_handler(L, "event_mpe_note")) {
+            lua_pushstring(L, is_on ? "note_on" : "note_off");
+            lua_pushinteger(L, note);
+            lua_pushnumber(L, (lua_Number)velocity);
+            lua_pushinteger(L, channel);
+            handled = midi_pcall_handler(L, 4, "event_mpe_note");
+        }
+        lua_settop(L, base);
+        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
+    }
+    if (!handled) {
+        // Velocity may include fractional CC88 data.
+        Caw_printf("^^mpe('%s',%u,%.9g,%u)", is_on ? "on" : "off", note, (double)velocity, channel);
+    }
+}
+
+// MPE mode: pitch bend (14-bit, centre 8192) -> bb.event_mpe_bend(-1.0..1.0, ch)
+static void dispatch_mpe_bend_event(uint16_t bend14, uint8_t channel) {
+    float val = (float)((int32_t)bend14 - 8192) / 8192.0f;
     if (val > 1.0f) val = 1.0f;
     if (val < -1.0f) val = -1.0f;
 
@@ -2766,344 +2626,104 @@ static void dispatch_midi_bend_event(uint16_t bend14, uint8_t channel) {
     LuaManager* lua_mgr = LuaManager::getInstance();
     if (lua_mgr && lua_mgr->L) {
         lua_State* L = lua_mgr->L;
-        lua_getglobal(L, "bb");
-        if (lua_istable(L, -1)) {
-            if (g_mpe_mode_enabled) {
-                lua_getfield(L, -1, "mpe");
-                if (lua_istable(L, -1)) {
-                    lua_getfield(L, -1, "bend");
-                    if (lua_isfunction(L, -1)) {
-                        lua_pushnumber(L, val);
-                        lua_pushinteger(L, channel);
-                        int rc = lua_pcall(L, 2, 0, 0);
-                        if (rc != LUA_OK) {
-                            if (usb_console_ready()) {
-                                if (rc == LUA_ERRMEM) {
-                                    tud_cdc_write_str("bb.mpe.bend handler OOM (LUA_ERRMEM)\n\r");
-                                } else {
-                                    const char* err = lua_tostring(L, -1);
-                                    tud_cdc_write_str("bb.mpe.bend handler error: ");
-                                    tud_cdc_write_str(err ? err : "unknown error");
-                                    tud_cdc_write_str("\n\r");
-                                }
-                                tud_cdc_write_flush();
-                            }
-                            lua_pop(L, 1);
-                        } else {
-                            handled = true;
-                        }
-                    } else {
-                        lua_pop(L, 1);
-                    }
-                }
-                lua_pop(L, 1); // pop bb.mpe
-            } else {
-                lua_getfield(L, -1, "midi");
-                if (lua_istable(L, -1)) {
-                    lua_getfield(L, -1, "rx");
-                    if (lua_istable(L, -1)) {
-                        lua_getfield(L, -1, "bend");
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushnumber(L, val);
-                            lua_pushinteger(L, channel);
-                            int rc = lua_pcall(L, 2, 0, 0);
-                            if (rc != LUA_OK) {
-                                if (usb_console_ready()) {
-                                    if (rc == LUA_ERRMEM) {
-                                        tud_cdc_write_str("bb.midi.rx bend handler OOM (LUA_ERRMEM)\n\r");
-                                    } else {
-                                        const char* err = lua_tostring(L, -1);
-                                        tud_cdc_write_str("bb.midi.rx bend handler error: ");
-                                        tud_cdc_write_str(err ? err : "unknown error");
-                                        tud_cdc_write_str("\n\r");
-                                    }
-                                    tud_cdc_write_flush();
-                                }
-                                lua_pop(L, 1);
-                            } else {
-                                handled = true;
-                            }
-                        } else {
-                            lua_pop(L, 1); // pop non-function
-                        }
-                    }
-                    lua_pop(L, 1); // pop midi.rx
-                }
-                lua_pop(L, 1); // pop midi
-            }
+        int base = lua_gettop(L);
+        if (push_bb_midi_handler(L, "event_mpe_bend")) {
+            lua_pushnumber(L, val);
+            lua_pushinteger(L, channel);
+            handled = midi_pcall_handler(L, 2, "event_mpe_bend");
         }
-        lua_pop(L, 1); // pop bb or nil
-        lua_settop(L, 0);
-
-        // Keep Lua GC responsive under high-rate controllers.
+        lua_settop(L, base);
         lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
-
     if (!handled) {
-        if (g_mpe_mode_enabled) {
-            Caw_printf("^^mpe('bend',%.9g,%u)", (double)val, channel);
-        } else {
-            // Include channel to match Lua API signature bb.midi.rx.bend(val, channel)
-            Caw_printf("^^midi('bend',%.9g,%u)", (double)val, channel);
-        }
+        Caw_printf("^^mpe('bend',%.9g,%u)", (double)val, channel);
     }
 }
 
-// Dispatch Control Change into Lua (bb.midi.rx.cc) or fall back to ^^midicc
-static void dispatch_midi_cc_event(uint8_t cc, uint8_t value, uint8_t channel) {
+// MPE mode: channel or poly pressure -> bb.event_mpe_pressure(val, ch), and
+// CC74 -> bb.event_mpe_slide(val, ch). Per-note identification is via MPE channel assignment.
+static void dispatch_mpe_value_event(const char* field, const char* host_name, uint8_t value, uint8_t channel) {
     bool handled = false;
     LuaManager* lua_mgr = LuaManager::getInstance();
     if (lua_mgr && lua_mgr->L) {
         lua_State* L = lua_mgr->L;
-        lua_getglobal(L, "bb");
-        if (lua_istable(L, -1)) {
-            if (g_mpe_mode_enabled) {
-                // In MPE mode, only surface CC74 as slide.
-                if (cc == 74) {
-                    lua_getfield(L, -1, "mpe");
-                    if (lua_istable(L, -1)) {
-                        lua_getfield(L, -1, "slide");
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushinteger(L, value);
-                            lua_pushinteger(L, channel);
-                            int rc = lua_pcall(L, 2, 0, 0);
-                            if (rc != LUA_OK) {
-                                if (usb_console_ready()) {
-                                    if (rc == LUA_ERRMEM) {
-                                        tud_cdc_write_str("bb.mpe.slide handler OOM (LUA_ERRMEM)\n\r");
-                                    } else {
-                                        const char* err = lua_tostring(L, -1);
-                                        tud_cdc_write_str("bb.mpe.slide handler error: ");
-                                        tud_cdc_write_str(err ? err : "unknown error");
-                                        tud_cdc_write_str("\n\r");
-                                    }
-                                    tud_cdc_write_flush();
-                                }
-                                lua_pop(L, 1);
-                            } else {
-                                handled = true;
-                            }
-                        } else {
-                            lua_pop(L, 1);
-                        }
-                    }
-                    lua_pop(L, 1); // pop bb.mpe
-                }
-            } else {
-                lua_getfield(L, -1, "midi");
-                if (lua_istable(L, -1)) {
-                    lua_getfield(L, -1, "rx");
-                    if (lua_istable(L, -1)) {
-                        lua_getfield(L, -1, "cc");
-                        if (lua_isfunction(L, -1)) {
-                            lua_pushinteger(L, cc);
-                            lua_pushinteger(L, value);
-                            lua_pushinteger(L, channel);
-                            int rc = lua_pcall(L, 3, 0, 0);
-                            if (rc != LUA_OK) {
-                                if (usb_console_ready()) {
-                                    if (rc == LUA_ERRMEM) {
-                                        tud_cdc_write_str("bb.midi.rx cc handler OOM (LUA_ERRMEM)\n\r");
-                                    } else {
-                                        const char* err = lua_tostring(L, -1);
-                                        tud_cdc_write_str("bb.midi.rx cc handler error: ");
-                                        tud_cdc_write_str(err ? err : "unknown error");
-                                        tud_cdc_write_str("\n\r");
-                                    }
-                                    tud_cdc_write_flush();
-                                }
-                                lua_pop(L, 1);
-                            } else {
-                                handled = true;
-                            }
-                        } else {
-                            lua_pop(L, 1); // pop non-function
-                        }
-                    }
-                    lua_pop(L, 1); // pop midi.rx
-                }
-                lua_pop(L, 1); // pop midi
-            }
+        int base = lua_gettop(L);
+        if (push_bb_midi_handler(L, field)) {
+            lua_pushinteger(L, value);
+            lua_pushinteger(L, channel);
+            handled = midi_pcall_handler(L, 2, field);
         }
-        lua_pop(L, 1); // pop bb or nil
-        lua_settop(L, 0);
-
-        // Keep Lua GC responsive under high-rate controllers.
+        lua_settop(L, base);
         lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
-
     if (!handled) {
-        if (g_mpe_mode_enabled) {
-            // Only CC74 is routed as slide in MPE mode.
-            if (cc == 74) {
-                Caw_printf("^^mpe('slide',%u,%u)", value, channel);
-            }
-        } else {
-            Caw_printf("^^midi('cc',%u,%u,%u)", cc, value, channel);
+        Caw_printf("^^mpe('%s',%u,%u)", host_name, value, channel);
+    }
+}
+
+// MPE expression is coalesced rather than dropped: we keep the latest bend/pressure/slide per
+// channel and deliver changed values to Lua as the dispatch budget allows (round-robin across
+// slots), so the final value of every gesture arrives even when a controller floods us.
+enum { kMpeDimBend = 0, kMpeDimPressure, kMpeDimSlide, kMpeDimCount };
+static constexpr uint8_t kMpeSlotCount = 16 * kMpeDimCount;
+static uint16_t g_mpe_pending_value[16][kMpeDimCount] = {};
+static uint8_t g_mpe_pending_mask[16] = {};
+static uint8_t g_mpe_flush_pos = 0;
+
+static inline void mpe_set_pending(uint8_t channel, uint8_t dim, uint16_t value) {
+    g_mpe_pending_value[channel - 1][dim] = value;
+    g_mpe_pending_mask[channel - 1] |= (uint8_t)(1u << dim);
+}
+
+static void mpe_dispatch_pending(uint8_t ch_idx, uint8_t dim) {
+    uint16_t value = g_mpe_pending_value[ch_idx][dim];
+    uint8_t channel = (uint8_t)(ch_idx + 1);
+    g_mpe_pending_mask[ch_idx] &= (uint8_t)~(1u << dim);
+    switch (dim) {
+        case kMpeDimBend: dispatch_mpe_bend_event(value, channel); break;
+        case kMpeDimPressure: dispatch_mpe_value_event("event_mpe_pressure", "pressure", (uint8_t)value, channel); break;
+        case kMpeDimSlide: dispatch_mpe_value_event("event_mpe_slide", "slide", (uint8_t)value, channel); break;
+        default: break;
+    }
+}
+
+// Deliver a channel's pending expression immediately (unbudgeted, at most 3 calls) so it keeps its
+// order relative to that channel's notes: MPE controllers send initial bend/pressure before Note On.
+static void mpe_flush_channel(uint8_t channel) {
+    uint8_t ch_idx = (uint8_t)(channel - 1);
+    for (uint8_t dim = 0; dim < kMpeDimCount; dim++) {
+        if (g_mpe_pending_mask[ch_idx] & (1u << dim)) mpe_dispatch_pending(ch_idx, dim);
+    }
+}
+
+// Called once per USB service tick after incoming packets are drained.
+static void mpe_flush_pending(void) {
+    if (!g_mpe_mode_enabled) return;
+    for (uint8_t n = 0; n < kMpeSlotCount && g_midi_lua_dispatch_budget > 0; n++) {
+        uint8_t slot = g_mpe_flush_pos;
+        g_mpe_flush_pos = (uint8_t)((slot + 1) % kMpeSlotCount);
+        uint8_t ch_idx = slot / kMpeDimCount;
+        uint8_t dim = slot % kMpeDimCount;
+        if (g_mpe_pending_mask[ch_idx] & (1u << dim)) {
+            g_midi_lua_dispatch_budget--;
+            mpe_dispatch_pending(ch_idx, dim);
         }
     }
 }
 
-// Dispatch pressure into Lua (bb.mpe.pressure) in MPE mode.
-// We do not include note; per-note identification is available via MPE channel assignment.
-static void dispatch_mpe_aftertouch_event(uint8_t pressure, uint8_t channel) {
-    bool handled = false;
-    LuaManager* lua_mgr = LuaManager::getInstance();
-    if (lua_mgr && lua_mgr->L) {
-        lua_State* L = lua_mgr->L;
-        lua_getglobal(L, "bb");
-        if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "mpe");
-            if (lua_istable(L, -1)) {
-                lua_getfield(L, -1, "pressure");
-                if (lua_isfunction(L, -1)) {
-                    lua_pushinteger(L, pressure);
-                    lua_pushinteger(L, channel);
-                    int rc = lua_pcall(L, 2, 0, 0);
-                    if (rc != LUA_OK) {
-                        if (usb_console_ready()) {
-                            if (rc == LUA_ERRMEM) {
-                                tud_cdc_write_str("bb.mpe.pressure handler OOM (LUA_ERRMEM)\n\r");
-                            } else {
-                                const char* err = lua_tostring(L, -1);
-                                tud_cdc_write_str("bb.mpe.pressure handler error: ");
-                                tud_cdc_write_str(err ? err : "unknown error");
-                                tud_cdc_write_str("\n\r");
-                            }
-                            tud_cdc_write_flush();
-                        }
-                        lua_pop(L, 1);
-                    } else {
-                        handled = true;
-                    }
-                } else {
-                    lua_pop(L, 1);
-                }
-            }
-            lua_pop(L, 1); // pop bb.mpe
-        }
-        lua_pop(L, 1); // pop bb
-        lua_settop(L, 0);
-        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
-    }
-    if (!handled) {
-        Caw_printf("^^mpe('pressure',%u,%u)", pressure, channel);
-    }
-}
-
-// Dispatch aftertouch into Lua (bb.midi.rx.aftertouch) when NOT in MPE mode.
-// We surface channel pressure and poly pressure as a single stream of values.
-static void dispatch_midi_aftertouch_event(uint8_t pressure, uint8_t channel) {
-    bool handled = false;
-    LuaManager* lua_mgr = LuaManager::getInstance();
-    if (lua_mgr && lua_mgr->L) {
-        lua_State* L = lua_mgr->L;
-        lua_getglobal(L, "bb");
-        if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "midi");
-            if (lua_istable(L, -1)) {
-                lua_getfield(L, -1, "rx");
-                if (lua_istable(L, -1)) {
-                    lua_getfield(L, -1, "aftertouch");
-                    if (lua_isfunction(L, -1)) {
-                        lua_pushinteger(L, pressure);
-                        lua_pushinteger(L, channel);
-                        int rc = lua_pcall(L, 2, 0, 0);
-                        if (rc != LUA_OK) {
-                            if (usb_console_ready()) {
-                                if (rc == LUA_ERRMEM) {
-                                    tud_cdc_write_str("bb.midi.rx aftertouch handler OOM (LUA_ERRMEM)\n\r");
-                                } else {
-                                    const char* err = lua_tostring(L, -1);
-                                    tud_cdc_write_str("bb.midi.rx aftertouch handler error: ");
-                                    tud_cdc_write_str(err ? err : "unknown error");
-                                    tud_cdc_write_str("\n\r");
-                                }
-                                tud_cdc_write_flush();
-                            }
-                            lua_pop(L, 1);
-                        } else {
-                            handled = true;
-                        }
-                    } else {
-                        lua_pop(L, 1);
-                    }
-                }
-                lua_pop(L, 1); // pop midi.rx
-            }
-            lua_pop(L, 1); // pop midi
-        }
-        lua_pop(L, 1); // pop bb
-        lua_settop(L, 0);
-        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
-    }
-
-    if (!handled) {
-        Caw_printf("^^midi('aftertouch',%u,%u)", pressure, channel);
-    }
-}
-
-static int lua_bb_mpe_set_mode(lua_State* L) {
-    const char* mode = luaL_optstring(L, 1, "off");
-    bool enable = false;
-    if (mode) {
-        enable = (strcmp(mode, "on") == 0);
-    }
+static void mpe_set_mode(bool enable) {
     g_mpe_mode_enabled = enable;
-    return 0;
+    memset(g_mpe_pending_mask, 0, sizeof(g_mpe_pending_mask));
 }
 
-// Default MPE callbacks (low-allocation): forward directly to host via ^^mpe(...)
-static int lua_bb_mpe_note_default(lua_State* L) {
-    const char* type = luaL_checkstring(L, 1);
-    int note = (int)luaL_checkinteger(L, 2);
-    lua_Number vel = luaL_optnumber(L, 3, 0.0);
-    int chan = (int)luaL_optinteger(L, 4, 1);
-    if (strcmp(type, "on") == 0) {
-        Caw_printf("^^mpe('on',%d,%.9g,%d)", note, (double)vel, chan);
-    } else if (strcmp(type, "off") == 0) {
-        Caw_printf("^^mpe('off',%d,%.9g,%d)", note, (double)vel, chan);
+// bb.mpe_mode(enable) - turn MPE routing on/off; bb.mpe_mode() returns the current state
+static int lua_bb_mpe_mode(lua_State* L) {
+    if (!lua_isnoneornil(L, 1)) {
+        luaL_checktype(L, 1, LUA_TBOOLEAN);
+        mpe_set_mode(lua_toboolean(L, 1));
     }
-    lua_settop(L, 0);
-    return 0;
-}
-
-static int lua_bb_mpe_bend_default(lua_State* L) {
-    lua_Number val = luaL_checknumber(L, 1);
-    int chan = (int)luaL_optinteger(L, 2, 1);
-    Caw_printf("^^mpe('bend',%.9g,%d)", (double)val, chan);
-    lua_settop(L, 0);
-    return 0;
-}
-
-static int lua_bb_mpe_slide_default(lua_State* L) {
-    int val = (int)luaL_checkinteger(L, 1);
-    int chan = (int)luaL_optinteger(L, 2, 1);
-    if (val < 0) val = 0;
-    if (val > 127) val = 127;
-    Caw_printf("^^mpe('slide',%d,%d)", val, chan);
-    lua_settop(L, 0);
-    return 0;
-}
-
-static int lua_bb_mpe_pressure_default(lua_State* L) {
-    // Accept either bb.mpe.pressure(val, chan) or legacy bb.mpe.pressure(note, val, chan).
-    int nargs = lua_gettop(L);
-    int val = 0;
-    int chan = 1;
-    if (nargs >= 3) {
-        val = (int)luaL_checkinteger(L, 2);
-        chan = (int)luaL_optinteger(L, 3, 1);
-    } else {
-        val = (int)luaL_checkinteger(L, 1);
-        chan = (int)luaL_optinteger(L, 2, 1);
-    }
-    if (val < 0) val = 0;
-    if (val > 127) val = 127;
-
-    Caw_printf("^^mpe('pressure',%d,%d)", val, chan);
-    lua_settop(L, 0);
-    return 0;
+    lua_pushboolean(L, g_mpe_mode_enabled);
+    return 1;
 }
 
 static void midi_clock_handle_start(void) {
@@ -3167,57 +2787,232 @@ static void midi_clock_handle_tick(void) {
     }
 }
 
-static inline void midi_send_note(bool is_on, uint8_t note, uint8_t velocity, uint8_t channel) {
-    if (channel < 1) channel = 1;
-    if (channel > 16) channel = 16;
-    uint8_t status = (uint8_t)((is_on ? 0x90 : 0x80) | ((channel - 1) & 0x0F));
-    uint8_t msg[3] = {(uint8_t)status, (uint8_t)(note & 0x7F), (uint8_t)(velocity & 0x7F)};
+// Length of the MIDI message starting with `status`, or 0 for data bytes and sysex (variable length).
+static inline uint8_t midi_message_length(uint8_t status) {
+    if (status < 0x80 || status == 0xF0) return 0;
+    switch (status & 0xF0) {
+        case 0xC0: case 0xD0: return 2;
+        case 0xF0: break;
+        default: return 3;
+    }
+    switch (status) {
+        case 0xF1: case 0xF3: return 2;
+        case 0xF2: return 3;
+        default: return 1;
+    }
+}
 
+static void midi_send_bytes(const uint8_t* data, uint32_t len) {
+    if (len == 0) return;
     if (g_usb_role == USB_ROLE_DEVICE) {
 #if CFG_TUD_MIDI
-        tud_midi_stream_write(0, msg, sizeof(msg));
+        tud_midi_stream_write(0, data, len);
 #endif
     } else {
 #if TUSB_OPT_HOST_ENABLED
         if (g_midi_host_addr && tuh_midi_configured(g_midi_host_addr)) {
             uint8_t cables = tuh_midih_get_num_tx_cables(g_midi_host_addr);
             uint8_t cable = cables ? (uint8_t)(cables - 1) : 0;
-            tuh_midi_stream_write(g_midi_host_addr, cable, msg, sizeof(msg));
+            tuh_midi_stream_write(g_midi_host_addr, cable, data, len);
             tuh_midi_stream_flush(g_midi_host_addr);
         }
 #endif
     }
 }
 
-static void schedule_midi_note_off(uint8_t note, uint8_t channel, uint64_t due_us) {
-    // Find a free slot
-    for (int i = 0; i < kMidiNoteOffQueueSize; i++) {
-        if (!g_midi_note_off_queue[i].active) {
-            g_midi_note_off_queue[i].active = true;
-            g_midi_note_off_queue[i].note = note;
-            g_midi_note_off_queue[i].channel = channel;
-            g_midi_note_off_queue[i].due_us = due_us;
-            return;
-        }
-    }
-
-    // Queue full: send the note off immediately to avoid hanging notes
-    midi_send_note(false, note, 0, channel);
+// Send a group of up to 3 bytes (unused bytes zero). A status byte sends exactly its message
+// length, so bb.midi_tx(0xC0, 5) is a 2-byte program change; data/sysex bytes are sent as given.
+static void midi_send_group(const uint8_t bytes[3], uint8_t count) {
+    uint8_t len = midi_message_length(bytes[0]);
+    midi_send_bytes(bytes, len ? len : count);
 }
 
-static void process_pending_midi_note_offs(void) {
-    uint64_t now = time_us_64();
-    for (int i = 0; i < kMidiNoteOffQueueSize; i++) {
-        if (g_midi_note_off_queue[i].active && (now >= g_midi_note_off_queue[i].due_us)) {
-            midi_send_note(false, g_midi_note_off_queue[i].note, 0, g_midi_note_off_queue[i].channel);
-            g_midi_note_off_queue[i].active = false;
+static void midi_send_channel_msg(uint8_t status, lua_Integer data1, lua_Integer data2, lua_Integer channel) {
+    if (channel < 1) channel = 1;
+    if (channel > 16) channel = 16;
+    uint8_t bytes[3] = {(uint8_t)(status | (channel - 1)), (uint8_t)(data1 & 0x7F), (uint8_t)(data2 & 0x7F)};
+    midi_send_group(bytes, 3);
+}
+
+// Send a Lua array of raw bytes in groups of 3, as iii's midi_out({...}).
+static void midi_send_raw_table(lua_State* L, int idx) {
+    idx = lua_absindex(L, idx);
+    lua_Integer n = (lua_Integer)lua_rawlen(L, idx);
+    for (lua_Integer i = 1; i <= n; i += 3) {
+        uint8_t bytes[3] = {0, 0, 0};
+        uint8_t count = (uint8_t)((n - i + 1) < 3 ? (n - i + 1) : 3);
+        for (uint8_t j = 0; j < count; j++) {
+            lua_rawgeti(L, idx, i + j);
+            bytes[j] = (uint8_t)lua_tointeger(L, -1);
+            lua_pop(L, 1);
         }
+        midi_send_group(bytes, count);
     }
 }
 
-// Parse a single USB MIDI packet; surface Note On/Off and CC
+// bb.midi_tx(byte1, byte2, byte3) - send one raw MIDI message
+static int lua_bb_midi_tx(lua_State* L) {
+    int count = lua_gettop(L);
+    if (count > 3) count = 3;
+    uint8_t bytes[3];
+    for (int i = 0; i < 3; i++) bytes[i] = (uint8_t)luaL_optinteger(L, i + 1, 0);
+    midi_send_group(bytes, (uint8_t)count);
+    return 0;
+}
+
+// bb.midi_note_on(note, vel, ch) - defaults as iii: note 66, vel 100, ch 1
+static int lua_bb_midi_note_on(lua_State* L) {
+    midi_send_channel_msg(0x90, luaL_optinteger(L, 1, 66), luaL_optinteger(L, 2, 100), luaL_optinteger(L, 3, 1));
+    return 0;
+}
+
+// bb.midi_note_off(note, vel, ch)
+static int lua_bb_midi_note_off(lua_State* L) {
+    midi_send_channel_msg(0x80, luaL_optinteger(L, 1, 66), luaL_optinteger(L, 2, 100), luaL_optinteger(L, 3, 1));
+    return 0;
+}
+
+// bb.midi_cc(cc, val, ch) - defaults as iii: cc 1, val 100, ch 1
+static int lua_bb_midi_cc(lua_State* L) {
+    midi_send_channel_msg(0xB0, luaL_optinteger(L, 1, 1), luaL_optinteger(L, 2, 100), luaL_optinteger(L, 3, 1));
+    return 0;
+}
+
+static lua_Integer midi_msg_field(lua_State* L, const char* key, lua_Integer def) {
+    lua_getfield(L, 1, key);
+    lua_Integer v = lua_isnil(L, -1) ? def : luaL_checkinteger(L, -1);
+    lua_pop(L, 1);
+    return v;
+}
+
+// bb.midi_out(msg) - send a message table (as produced by bb.midi_to_msg) or an array of raw bytes
+static int lua_bb_midi_out(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lua_getfield(L, 1, "type");
+    if (lua_isnil(L, -1)) {
+        midi_send_raw_table(L, 1);
+        return 0;
+    }
+    const char* type = luaL_checkstring(L, -1); // stays on the stack while in use
+    lua_Integer ch = midi_msg_field(L, "ch", 1);
+
+    if (strcmp(type, "note_on") == 0) {
+        midi_send_channel_msg(0x90, midi_msg_field(L, "note", 0), midi_msg_field(L, "vel", 100), ch);
+    } else if (strcmp(type, "note_off") == 0) {
+        midi_send_channel_msg(0x80, midi_msg_field(L, "note", 0), midi_msg_field(L, "vel", 100), ch);
+    } else if (strcmp(type, "cc") == 0) {
+        midi_send_channel_msg(0xB0, midi_msg_field(L, "cc", 0), midi_msg_field(L, "val", 0), ch);
+    } else if (strcmp(type, "pitchbend") == 0) {
+        lua_Integer val = midi_msg_field(L, "val", 8192);
+        midi_send_channel_msg(0xE0, val, val >> 7, ch);
+    } else if (strcmp(type, "key_pressure") == 0) {
+        midi_send_channel_msg(0xA0, midi_msg_field(L, "note", 0), midi_msg_field(L, "val", 0), ch);
+    } else if (strcmp(type, "channel_pressure") == 0) {
+        midi_send_channel_msg(0xD0, midi_msg_field(L, "val", 0), 0, ch);
+    } else if (strcmp(type, "program_change") == 0) {
+        midi_send_channel_msg(0xC0, midi_msg_field(L, "val", 0), 0, ch);
+    } else if (strcmp(type, "start") == 0) {
+        const uint8_t b = 0xFA; midi_send_bytes(&b, 1);
+    } else if (strcmp(type, "stop") == 0) {
+        const uint8_t b = 0xFC; midi_send_bytes(&b, 1);
+    } else if (strcmp(type, "continue") == 0) {
+        const uint8_t b = 0xFB; midi_send_bytes(&b, 1);
+    } else if (strcmp(type, "clock") == 0) {
+        const uint8_t b = 0xF8; midi_send_bytes(&b, 1);
+    } else if (strcmp(type, "song_position") == 0) {
+        const uint8_t b[3] = {0xF2, (uint8_t)(midi_msg_field(L, "lsb", 0) & 0x7F), (uint8_t)(midi_msg_field(L, "msb", 0) & 0x7F)};
+        midi_send_bytes(b, 3);
+    } else if (strcmp(type, "song_select") == 0) {
+        const uint8_t b[2] = {0xF3, (uint8_t)(midi_msg_field(L, "val", 0) & 0x7F)};
+        midi_send_bytes(b, 2);
+    } else if (strcmp(type, "sysex") == 0 || strcmp(type, "other") == 0) {
+        lua_getfield(L, 1, "raw");
+        if (lua_istable(L, -1)) midi_send_raw_table(L, -1);
+    } else {
+        return luaL_error(L, "bb.midi_out: unknown message type '%s'", type);
+    }
+    return 0;
+}
+
+// bb.midi_to_msg(data) - decode {byte1, byte2, byte3} into a labelled table, matching iii's midi_to_msg
+static int lua_bb_midi_to_msg(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    uint8_t d[3];
+    for (int i = 0; i < 3; i++) {
+        lua_rawgeti(L, 1, i + 1);
+        d[i] = (uint8_t)lua_tointeger(L, -1);
+        lua_pop(L, 1);
+    }
+    const uint8_t status = d[0];
+    const lua_Integer ch = (status & 0x0F) + 1;
+
+    lua_createtable(L, 0, 4);
+    auto set_int = [L](const char* key, lua_Integer v) {
+        lua_pushinteger(L, v);
+        lua_setfield(L, -2, key);
+    };
+    auto set_type = [L](const char* type) {
+        lua_pushstring(L, type);
+        lua_setfield(L, -2, "type");
+    };
+
+    switch (status & 0xF0) {
+        case 0x90:
+            // Note On with velocity zero is a Note Off
+            set_type(d[2] > 0 ? "note_on" : "note_off");
+            set_int("note", d[1]); set_int("vel", d[2]); set_int("ch", ch);
+            return 1;
+        case 0x80:
+            set_type("note_off");
+            set_int("note", d[1]); set_int("vel", d[2]); set_int("ch", ch);
+            return 1;
+        case 0xB0:
+            set_type("cc");
+            set_int("cc", d[1]); set_int("val", d[2]); set_int("ch", ch);
+            return 1;
+        case 0xE0:
+            set_type("pitchbend");
+            set_int("val", d[1] + (d[2] << 7)); set_int("ch", ch);
+            return 1;
+        case 0xA0:
+            set_type("key_pressure");
+            set_int("note", d[1]); set_int("val", d[2]); set_int("ch", ch);
+            return 1;
+        case 0xD0:
+            set_type("channel_pressure");
+            set_int("val", d[1]); set_int("ch", ch);
+            return 1;
+        case 0xC0:
+            set_type("program_change");
+            set_int("val", d[1]); set_int("ch", ch);
+            return 1;
+        default:
+            break;
+    }
+
+    switch (status) {
+        case 0xFA: set_type("start"); break;
+        case 0xFC: set_type("stop"); break;
+        case 0xFB: set_type("continue"); break;
+        case 0xF8: set_type("clock"); break;
+        case 0xF2: set_type("song_position"); set_int("lsb", d[1]); set_int("msb", d[2]); break;
+        case 0xF3: set_type("song_select"); set_int("val", d[1]); break;
+        case 0xFE: break; // active sensing: empty table
+        default:
+            set_type(status == 0xF0 ? "sysex" : "other");
+            lua_pushvalue(L, 1);
+            lua_setfield(L, -2, "raw");
+            break;
+    }
+    return 1;
+}
+
+// Parse a single USB MIDI event packet: drive MIDI clock, route MPE, and surface raw bytes to bb.event_midi
 static void handle_usb_midi_packet(const uint8_t packet[4]) {
 #if CFG_TUD_MIDI || TUSB_OPT_HOST_ENABLED
+    // CIN 0x0/0x1 are reserved (misc / cable events) and carry no MIDI message
+    if ((packet[0] & 0x0F) < 0x2) return;
+
     uint8_t status = packet[1];
     uint8_t data1 = packet[2];
     uint8_t data2 = packet[3];
@@ -3245,64 +3040,8 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
         g_midi_vel_fine_valid[ch - 1] = false;
     };
 
-    if (msg == 0x90) {
-        if (data2 == 0) {
-            // Note-off always passes to avoid stuck notes.
-            clear_fine_velocity(channel);
-            dispatch_midi_note_event(false, data1, (float)data2, channel);
-        } else {
-            // Consume CC88 fine velocity even if we're dropping this Note On due to throttling.
-            uint8_t fine7 = 0;
-            bool has_fine7 = pop_fine_velocity7(channel, &fine7);
-            float vel = (float)data2;
-            if (has_fine7) vel += ((float)fine7 / 128.0f);
-            // Note-on always passes. Throttling is applied to high-rate controllers (CC/bend/etc)
-            // but dropping note-ons breaks musical correctness (and in MPE, other messages can
-            // easily consume the entire per-tick budget before the note-on arrives).
-            dispatch_midi_note_event(true, data1, vel, channel);
-        }
-    } else if (msg == 0x80) {
-        // Note-off always passes to avoid stuck notes.
-        clear_fine_velocity(channel);
-        dispatch_midi_note_event(false, data1, (float)data2, channel);
-    } else if (msg == 0xB0) {
-        if (data1 == kMidiHiResVelocityCC && channel >= 1 && channel <= 16) {
-            uint8_t idx = (uint8_t)(channel - 1);
-            g_midi_vel_fine7[idx] = (uint8_t)(data2 & 0x7F);
-            g_midi_vel_fine_time_us[idx] = time_us_32();
-            g_midi_vel_fine_valid[idx] = true;
-        }
-        if (g_midi_lua_dispatch_budget > 0) {
-            g_midi_lua_dispatch_budget--;
-            dispatch_midi_cc_event(data1, data2, channel);
-        }
-    } else if (msg == 0xD0) {
-        // Channel pressure (aftertouch)
-        if (g_midi_lua_dispatch_budget > 0) {
-            g_midi_lua_dispatch_budget--;
-            if (g_mpe_mode_enabled) {
-                dispatch_mpe_aftertouch_event(data1 & 0x7F, channel);
-            } else {
-                dispatch_midi_aftertouch_event(data1 & 0x7F, channel);
-            }
-        }
-    } else if (msg == 0xA0) {
-        // Polyphonic key pressure (note aftertouch) includes a note number (data1).
-        if (g_midi_lua_dispatch_budget > 0) {
-            g_midi_lua_dispatch_budget--;
-            if (g_mpe_mode_enabled) {
-                dispatch_mpe_aftertouch_event(data2 & 0x7F, channel);
-            } else {
-                dispatch_midi_aftertouch_event(data2 & 0x7F, channel);
-            }
-        }
-    } else if (msg == 0xE0) {
-        uint16_t bend14 = (uint16_t)(data1 | (data2 << 7));
-        if (g_midi_lua_dispatch_budget > 0) {
-            g_midi_lua_dispatch_budget--;
-            dispatch_midi_bend_event(bend14, channel);
-        }
-    } else if (status == 0xF8) {
+    // Realtime messages drive the clock engine, then reach Lua like any other message.
+    if (status == 0xF8) {
         midi_clock_handle_tick();
     } else if (status == 0xFA) {
         midi_clock_handle_start();
@@ -3310,9 +3049,62 @@ static void handle_usb_midi_packet(const uint8_t packet[4]) {
         midi_clock_handle_continue();
     } else if (status == 0xFC) {
         midi_clock_handle_stop();
-    } else {
-        // Ignore other messages for now
+    } else if (status == 0xFE) {
+        return; // active sensing
     }
+
+    if (msg == 0xB0 && data1 == kMidiHiResVelocityCC) {
+        uint8_t idx = (uint8_t)(channel - 1);
+        g_midi_vel_fine7[idx] = (uint8_t)(data2 & 0x7F);
+        g_midi_vel_fine_time_us[idx] = time_us_32();
+        g_midi_vel_fine_valid[idx] = true;
+    }
+
+    if (g_mpe_mode_enabled) {
+        // Route the MPE subset to bb.event_mpe_*; everything else still goes to bb.event_midi.
+        // Expression is coalesced per channel (see mpe_flush_pending) instead of throttled.
+        if (msg == 0xE0) {
+            mpe_set_pending(channel, kMpeDimBend, (uint16_t)(data1 | (data2 << 7)));
+            return;
+        }
+        if (msg == 0xD0) {
+            mpe_set_pending(channel, kMpeDimPressure, data1 & 0x7F);
+            return;
+        }
+        if (msg == 0xA0) {
+            mpe_set_pending(channel, kMpeDimPressure, data2 & 0x7F);
+            return;
+        }
+        if (msg == 0xB0 && data1 == 74) {
+            mpe_set_pending(channel, kMpeDimSlide, data2 & 0x7F);
+            return;
+        }
+        if (msg == 0x90 && data2 > 0) {
+            mpe_flush_channel(channel);
+            // Consume CC88 fine velocity: vel = vel7 + (fine7 / 128)
+            uint8_t fine7 = 0;
+            float vel = (float)data2;
+            if (pop_fine_velocity7(channel, &fine7)) vel += ((float)fine7 / 128.0f);
+            dispatch_mpe_note_event(true, data1, vel, channel);
+            return;
+        }
+        if (msg == 0x90 || msg == 0x80) {
+            mpe_flush_channel(channel);
+            clear_fine_velocity(channel);
+            dispatch_mpe_note_event(false, data1, (float)data2, channel);
+            return;
+        }
+    }
+
+    // Throttle continuous controllers so fast controllers can't outpace Lua GC.
+    // Notes (especially note-offs), realtime and system messages always pass.
+    bool throttled = (msg == 0xB0 || msg == 0xD0 || msg == 0xA0 || msg == 0xE0);
+    if (throttled) {
+        if (g_midi_lua_dispatch_budget <= 0) return;
+        g_midi_lua_dispatch_budget--;
+    }
+
+    dispatch_midi_event(status, data1, data2);
 #else
     (void)packet;
 #endif
@@ -3424,6 +3216,8 @@ static inline void usb_service_poll_from_main(void) {
             process_usb_midi_packets_host();
 #endif
         }
+
+        mpe_flush_pending();
     }
 
     if (g_usb_tx_tick && g_usb_role == USB_ROLE_DEVICE) {
@@ -3929,8 +3723,6 @@ public:
             // Service USB from main loop (timer IRQs only set tick flags)
             usb_service_poll_from_main();
 
-            // Send any scheduled MIDI note-off events
-            process_pending_midi_note_offs();
             
             // Process USB RX messages from lock-free queue
             usb_rx_message_t rx_msg;
@@ -4964,52 +4756,6 @@ static int bb_connected_index(lua_State* L) {
     
     lua_pushboolean(L, card->IsInputConnected(input));
     return 1;
-}
-
-// bb.mpe metatable helpers: virtual `mode` property backed by `_mode`.
-static int bb_mpe_index(lua_State* L) {
-    // stack: 1=table, 2=key
-    if (lua_type(L, 2) == LUA_TSTRING) {
-        const char* key = lua_tostring(L, 2);
-        if (key && strcmp(key, "mode") == 0) {
-            lua_getfield(L, 1, "_mode");
-            if (!lua_isstring(L, -1)) {
-                lua_pop(L, 1);
-                lua_pushliteral(L, "off");
-            }
-            return 1;
-        }
-    }
-    lua_pushvalue(L, 2);
-    lua_rawget(L, 1);
-    return 1;
-}
-
-static int bb_mpe_newindex(lua_State* L) {
-    // stack: 1=table, 2=key, 3=value
-    if (lua_type(L, 2) == LUA_TSTRING) {
-        const char* key = lua_tostring(L, 2);
-        if (key && strcmp(key, "mode") == 0) {
-            // Store in backing field using raw set (avoid __newindex recursion)
-            lua_pushliteral(L, "_mode");
-            lua_pushvalue(L, 3);
-            lua_rawset(L, 1);
-
-            // Intentionally do NOT create a real `mode` key. Leaving it absent ensures
-            // subsequent bb.mpe.mode assignments continue to route through __newindex.
-
-            const char* mode = lua_tostring(L, 3);
-            bool enable = (mode && (strcmp(mode, "on") == 0));
-            g_mpe_mode_enabled = enable;
-            lua_settop(L, 0);
-            return 0;
-        }
-    }
-    lua_pushvalue(L, 2);
-    lua_pushvalue(L, 3);
-    lua_rawset(L, 1);
-    lua_settop(L, 0);
-    return 0;
 }
 
 // CASL bridge functions
@@ -6243,30 +5989,6 @@ int LuaManager::lua_clock_internal_start(lua_State* L) {
 int LuaManager::lua_clock_internal_stop(lua_State* L) {
     clock_set_source_manual(CLOCK_SOURCE_INTERNAL);
     clock_internal_stop();
-    return 0;
-}
-
-// bb.midi.tx.note(note, vel, duration, channel) - Send note on immediately and schedule note off
-int LuaManager::lua_bb_midi_out_note(lua_State* L) {
-    int note = (int)luaL_checkinteger(L, 1);
-    int vel = luaL_optinteger(L, 2, 100);
-    float duration = (float)luaL_optnumber(L, 3, 0.0);
-    int channel = luaL_optinteger(L, 4, 1);
-
-    if (note < 0) note = 0;
-    if (note > 127) note = 127;
-    if (vel < 0) vel = 0;
-    if (vel > 127) vel = 127;
-    if (channel < 1) channel = 1;
-    if (channel > 16) channel = 16;
-
-    midi_send_note(true, (uint8_t)note, (uint8_t)vel, (uint8_t)channel);
-
-    if (duration > 0.0f) {
-        uint64_t due = time_us_64() + (uint64_t)(duration * 1000000.0f);
-        schedule_midi_note_off((uint8_t)note, (uint8_t)channel, due);
-    }
-
     return 0;
 }
 
