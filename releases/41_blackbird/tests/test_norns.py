@@ -17,6 +17,7 @@ installed are skipped. Add more with BB_NORNS_SCRIPTS="path/a.lua,path/b.lua"
 """
 import os
 import re
+import statistics
 
 from bbdbg import GENERIC_STIMULUS, Skip, apply_stimulus, expected_failure, outputs_moving
 from nornsws import Norns, NornsError, NornsUnavailable
@@ -24,11 +25,48 @@ from nornsws import Norns, NornsError, NornsUnavailable
 NORNS_PORT = int(os.environ.get("NORNS_PORT", "5555"))
 SCRIPT_SECONDS = float(os.environ.get("BB_NORNS_SECONDS", "10"))
 FLOOD_SECONDS = float(os.environ.get("BB_NORNS_FLOOD_SECONDS", "5"))
+LATENCY_NOTES = int(os.environ.get("BB_LATENCY_NOTES", "50"))
+LATENCY_P95_MS = float(os.environ.get("BB_LATENCY_P95_MS", "10"))
+LATENCY_MAX_MS = float(os.environ.get("BB_LATENCY_MAX_MS", "25"))
 
 # path under dust/code -> Lua to run on norns after the script starts, to point it at crow
 NORNS_SCRIPTS = {
-    "awake/awake.lua": "params:set('out', 4)",          # "crow out 1+2"
-    "wobblewobble/wobblewobble.lua": "",                # streams crow inputs, drives all 4 outputs
+    # tehn/awake: "out" option 4 = "crow out 1+2" (pitch on 1, ar() envelope action on 2)
+    "awake/awake.lua": "params:set('out', 4)",
+    # schollz/wobblewobble: uses crow by default; streams both inputs, drives all 4 outputs
+    "wobblewobble/wobblewobble.lua": "",
+    # lylepmills/buoys: crow input 1 is a clock by default. Outputs come from
+    # per-buoy options, and buoys only exist on a grid, so with a grid attached
+    # make four buoys, one per crow output in voltage mode.
+    "buoys/buoys.lua": """
+        if g and g.cols > 0 then
+            for i = 1, 4 do
+                local x, y = i * 2, 2
+                buoys[y][x] = buoys[y][x] or Buoy:new()
+                buoys[y][x].options["crow output"] = i
+                buoys[y][x].options["crow output mode"] = 1
+                buoys[y][x]:activate()
+            end
+        end
+    """,
+    # markwheeler/loom: "output" option 4 = "Crow Out 1+2" (pitch on 1,
+    # output[2].execute() of a to() envelope). Notes normally come from a grid;
+    # encoder 3 on the first page adds random ones.
+    "loom/loom.lua": "params:set('output', 4); for _ = 1, 12 do enc(3, 1) end",
+    # schollz/acid-test: "out_crow" 2 = yes (pitch with per-note slew for slides
+    # on 1, gate on 2). With the jf output off it also sends ii.jf.mode(0) on
+    # every note, so blackbird's ii stub gets steady traffic. It doesn't play
+    # until started (K3), hence toggle_playing.
+    "acid-test/acid-test.lua": "params:set('out_crow', 2); toggle_playing(true)",
+    # vicimity-dndrks/less-concepts: voice 1 -> crow 1/2, voice 2 -> crow 3/4
+    # (pitch on 1 and 3, 5ms trigger actions "{to(5,0),to(0,0.005)}" fired on 2
+    # and 4). Plays from init with its default seed. init() also sends raw
+    # "ii.wsyn.ar_mode(1)" strings, which go to blackbird's ii stub.
+    "less-concepts/less-concepts.lua": "params:set('voice_1_crow_1', 2); params:set('voice_2_crow_2', 2)",
+    # oliviercreurer/dunes: "ext_out" 3 = "crow 1+2" (pitch on 1, an ASL
+    # envelope action per step on 2); its step commands also send random
+    # voltages to 3 and envelopes to 4. The sequencer waits for K2/transport.
+    "dunes/dunes.lua": "params:set('ext_out', 3); running = true",
 }
 for _p in filter(None, os.environ.get("BB_NORNS_SCRIPTS", "").split(",")):
     NORNS_SCRIPTS.setdefault(_p.strip(), "")
@@ -186,6 +224,127 @@ def test_output_flood_from_norns(bb):
     st = bb.stats()
     assert st["drops_usb_rx"] == 0, f"blackbird dropped {st['drops_usb_rx']} USB packets"
     bb.info["main loop worst"] = f"{st['loop_worst_us']}us"
+
+
+# ---------------------------------------------------------------------------
+# latency: timed entirely on blackbird's microsecond clock
+# ---------------------------------------------------------------------------
+# On blackbird, bb.asap (run every main loop iteration) watches output[1] and
+# notes when each note's voltage lands. The note number is recovered from the
+# voltage, (note - 60) / 12, so late or lost replies can't be mismatched.
+LATENCY_PROBE = """
+    lat = { sent = {}, got = {} }
+    local last = output[1].volts
+    bb.asap = function()
+        local v = output[1].volts
+        if v ~= last then
+            last = v
+            local note = math.floor(v * 12 + 60.5)
+            local t0 = lat.sent[note]
+            if t0 and not lat.got[note] then lat.got[note] = bb_dbg_us() - t0 end
+        end
+    end
+"""
+
+# The norns side of the MIDI path, written the way norns scripts usually are:
+# find the device, connect, and set crow output 1 from note-ons.
+NORNS_MIDI_HANDLER = """
+    bbt_port = nil
+    for i, v in pairs(midi.vports) do
+        if v.name and (v.name:find("telephone") or v.name:find("crow")) then bbt_port = i end
+    end
+    if bbt_port then
+        bbt_m = midi.connect(bbt_port)
+        bbt_m.event = function(data)
+            local msg = midi.to_msg(data)
+            if msg.type == "note_on" then crow.output[1].volts = (msg.note - 60) / 12 end
+        end
+    end
+    return bbt_port
+"""
+
+
+def measure_round_trips(bb, trigger):
+    """Send LATENCY_NOTES notes with `trigger` (Lua on blackbird, with %d for the
+    note) ~120ms apart, and return (latencies in ms, notes that never came back)."""
+    import random
+    bb.eval("output[1].volts = -5")  # a voltage no note maps to
+    bb.eval(LATENCY_PROBE)
+    notes = [40 + (i % 60) for i in range(LATENCY_NOTES)]  # distinct within any 60
+    try:
+        for note in notes:
+            bb.eval(f"lat.sent[{note}] = bb_dbg_us(); lat.got[{note}] = nil; " + trigger % note)
+            bb.wait(random.uniform(0.09, 0.15))  # off the USB frame grid
+        bb.wait(0.5)
+        out = bb.eval("for n, d in pairs(lat.got) do print(n, d) end")
+    finally:
+        bb.eval("bb.asap = nil")
+    got = {int(n): int(d) / 1000.0 for n, d in (line.split() for line in out.splitlines() if line.strip())}
+    lost = sorted(set(notes) - set(got))
+    return sorted(got.values()), lost
+
+
+def report_latency(bb, label, ms, lost):
+    if not ms:
+        raise AssertionError(f"{label}: no notes came back ({len(lost)} sent)")
+    p95 = ms[min(len(ms) - 1, int(0.95 * len(ms)))]
+    bb.info[label] = (f"min {ms[0]:.1f}  median {statistics.median(ms):.1f}  "
+                      f"p95 {p95:.1f}  max {ms[-1]:.1f} ms  ({len(ms)} notes, {len(lost)} lost)")
+    assert not lost, f"{label}: {len(lost)} of {LATENCY_NOTES} notes never reached output 1"
+    assert p95 <= LATENCY_P95_MS, f"{label}: p95 {p95:.1f}ms > {LATENCY_P95_MS}ms (BB_LATENCY_P95_MS)"
+    assert ms[-1] <= LATENCY_MAX_MS, f"{label}: worst {ms[-1]:.1f}ms > {LATENCY_MAX_MS}ms (BB_LATENCY_MAX_MS)"
+
+
+def setup_midi_path(bb):
+    n = connected_norns(bb)
+    port = n.run(NORNS_MIDI_HANDLER)
+    if port == "nil":
+        names = n.run("local t = {} for i, v in pairs(midi.vports) do t[#t+1] = i .. '=' .. tostring(v.name) end "
+                      "return table.concat(t, ', ')")
+        raise AssertionError(f"norns has no MIDI port for blackbird (vports: {names})")
+    return n
+
+
+def teardown_midi_path(n):
+    n.run("if bbt_m then bbt_m.event = nil end")
+
+
+def test_latency_midi_note_to_norns_to_bb(bb):
+    """The 'play a note' path: MIDI note-on from blackbird's USB MIDI port ->
+    norns MIDI handler -> crow.output[1].volts -> blackbird output 1."""
+    n = setup_midi_path(bb)
+    try:
+        ms, lost = measure_round_trips(bb, "bb.midi_note_on(%d, 100, 1)")
+    finally:
+        teardown_midi_path(n)
+    report_latency(bb, "midi -> norns -> bb", ms, lost)
+
+
+def test_latency_crow_event_to_norns_to_bb(bb):
+    """Baseline without MIDI: a crow event (_c.tell over serial) -> norns ->
+    crow.output[1].volts -> blackbird. Compare with the MIDI path to see which
+    leg costs what."""
+    n = connected_norns(bb)
+    n.run('crow "bbt_lat = {}"')
+    n.run("crow.bbt_lat.note = function(note) crow.output[1].volts = (note - 60) / 12 end")
+    bb.wait(0.2)
+    ms, lost = measure_round_trips(bb, "bbt_lat.note(%d)")
+    report_latency(bb, "crow event -> norns -> bb", ms, lost)
+
+
+def test_latency_midi_while_busy(bb):
+    """The MIDI path again, in a busy session: LFOs on outputs 2-4 and input 1
+    streaming to norns at 100Hz."""
+    n = setup_midi_path(bb)
+    bb.eval("for i = 2, 4 do output[i](lfo(0.2 + i * 0.1, 5)) end")
+    bb.triangle("cv1", 1, -5, 5)
+    n.run("bbt_s = 0; crow.input[1].stream = function(v) bbt_s = bbt_s + 1 end; crow.input[1].mode('stream', 0.01)")
+    try:
+        ms, lost = measure_round_trips(bb, "bb.midi_note_on(%d, 100, 1)")
+    finally:
+        teardown_midi_path(n)
+        n.run("crow.input[1].mode('none')")
+    report_latency(bb, "midi -> norns -> bb (busy)", ms, lost)
 
 
 # ---------------------------------------------------------------------------

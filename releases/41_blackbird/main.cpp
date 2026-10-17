@@ -4760,6 +4760,13 @@ extern "C" uint32_t __wrap_tud_cdc_n_write(uint8_t itf, void const* buffer, uint
     return __real_tud_cdc_n_write(itf, buffer, bufsize);
 }
 
+// bb_dbg_us(): microsecond timer for latency tests. Wraps every ~71 minutes;
+// differences of two readings are right (as 32-bit integers) for ~35 minutes.
+static int bb_dbg_us(lua_State* L) {
+    lua_pushinteger(L, (lua_Integer)time_us_32());
+    return 1;
+}
+
 // print() replacement while a BB_DBG_CMD_EVAL chunk runs
 static int bb_dbg_print(lua_State* L) {
     int n = lua_gettop(L);
@@ -4873,6 +4880,17 @@ static void bb_dbg_init(ComputerCard* card) {
 // Called once per MainControlLoop iteration (core 0, same thread as Lua)
 static void bb_dbg_service(lua_State* L) {
     bb_dbg_update_stats(L);
+
+    static bool lua_helpers_installed = false;
+    if (L && !lua_helpers_installed) {
+        // rawset, so crow.reset()/^^k (which clear tracked user globals) keep it
+        lua_pushglobaltable(L);
+        lua_pushliteral(L, "bb_dbg_us");
+        lua_pushcfunction(L, bb_dbg_us);
+        lua_rawset(L, -3);
+        lua_pop(L, 1);
+        lua_helpers_installed = true;
+    }
 
     uint32_t seq = bb_dbg.cmd_seq;
     if (seq == bb_dbg.ack_seq) return;

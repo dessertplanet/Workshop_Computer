@@ -132,6 +132,19 @@ maiden uses; client in `util/nornsws.py`) and check the other end over SWD:
   intact (`_c.tell` and `quote`)
 - norns flooding output volts (the wobblewobble case) causes no overruns,
   dropped USB input, or lost final value
+- latency, timed on blackbird's microsecond clock (`bb_dbg_us()`, debug
+  builds only). blackbird plays the keyboard as well as the endpoint: its USB
+  port to norns carries MIDI too. It sends a note-on, norns' MIDI handler sets
+  `crow.output[1].volts`, and blackbird times how long until output 1 lands.
+  Three variants:
+  - the MIDI path
+  - a crow-serial baseline (`_c.tell` → norns → back), to show which leg
+    costs what
+  - the MIDI path in a busy session (LFOs and 100 Hz input streaming)
+
+  Each reports min, median, p95 and max. A run fails if any note is lost, if
+  p95 is over 10 ms (`BB_LATENCY_P95_MS`), or if the worst note is over 25 ms
+  (`BB_LATENCY_MAX_MS`). `BB_LATENCY_NOTES` sets the count (default 50).
 - a script corpus (`NORNS_SCRIPTS` in `tests/test_norns.py`: awake set to crow
   outputs, and wobblewobble) loads and runs for `BB_NORNS_SECONDS` with the
   generic fake inputs. It must produce no errors on norns, keep blackbird
