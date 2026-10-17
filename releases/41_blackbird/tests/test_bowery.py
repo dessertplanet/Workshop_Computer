@@ -19,7 +19,7 @@ import os
 import subprocess
 import sys
 
-from bbdbg import Skip, expected_failure
+from bbdbg import GENERIC_STIMULUS, Skip, apply_stimulus, expected_failure, outputs_moving
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)
@@ -38,19 +38,10 @@ SKIP = {
                    "which blackbird doesn't have; blackbird calibrates from EEPROM",
 }
 
-# Generic stimulus. Crow scripts mostly take a clock or gate on input 1 and a
-# CV on input 2; bbbowery scripts also use the pulse inputs and knobs.
-STIMULUS = [
-    ("square", "cv1", dict(hz=2, low=0, high=5, duty=0.5)),
-    ("triangle", "cv2", dict(hz=0.2, low=-3, high=3)),
-    ("square", "pulse1", dict(hz=4, duty=0.2)),
-    ("square", "pulse2", dict(hz=1, duty=0.2)),
-    ("triangle", "audio1", dict(hz=1, low=-2, high=2)),
-    ("set", "knob_main", 0.5),
-    ("set", "knob_x", 0.3),
-    ("set", "knob_y", 0.7),
-    ("set", "switch", "middle"),
-]
+# Crow scripts mostly take a clock or gate on input 1 and a CV on input 2;
+# bbbowery scripts also use the pulse inputs and knobs. GENERIC_STIMULUS
+# (util/bbdbg.py) covers both.
+STIMULUS = GENERIC_STIMULUS
 
 # script id -> replacement or extra stimulus entries, for scripts that need
 # something specific to do anything.
@@ -92,18 +83,6 @@ def scripts():
     return found
 
 
-def apply_stimulus(bb, entries):
-    for kind, name, arg in entries:
-        if kind == "set":
-            bb.set_input(name, arg)
-        elif kind == "square":
-            bb.square(name, **arg)
-        elif kind == "triangle":
-            bb.triangle(name, **arg)
-        elif kind == "off":
-            bb.release_input(name)
-
-
 def run_script(bb, script_id, path):
     if script_id in SKIP:
         raise Skip(SKIP[script_id])
@@ -119,13 +98,7 @@ def run_script(bb, script_id, path):
     assert "^^ready()" in out, f"no ^^ready() after upload:\n{out.strip()}"
 
     # Run, sampling the outputs to report whether anything moved
-    samples = []
-    steps = max(1, int(SECONDS / 0.5))
-    for _ in range(steps):
-        bb.wait(SECONDS / steps)
-        samples.append(bb.eval("print(output[1].volts, output[2].volts, output[3].volts, output[4].volts)").split())
-    moving = [i + 1 for i in range(4) if len({s[i] for s in samples if len(s) == 4}) > 1]
-    bb.info["outputs moving"] = moving or "none"
+    bb.info["outputs moving"] = outputs_moving(bb, SECONDS) or "none"
 
     st = bb.stats()
     drops = {k: v for k, v in st.items() if k.startswith("drops_") and v}

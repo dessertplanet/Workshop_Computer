@@ -22,6 +22,7 @@ Examples:
   util/bbdbg.py log --follow
   util/bbdbg.py test                       # runs tests/test_*.py
   util/bbdbg.py test tests/test_stress.py -k lfo --repeat 3
+  NORNS_HOST=192.168.1.20 util/bbdbg.py norns "return norns.crow.connected()"
 """
 import argparse
 import importlib.util
@@ -615,6 +616,42 @@ def run_tests(card, paths, keyword=None, repeat=1, allow_flash=False, report=Non
     return failed == 0
 
 
+# Generic fake inputs for running arbitrary scripts: clocks on CV 1 and the
+# pulse inputs, a sweep on CV 2, knobs part-way. (kind, input, argument)
+GENERIC_STIMULUS = [
+    ("square", "cv1", dict(hz=2, low=0, high=5, duty=0.5)),
+    ("triangle", "cv2", dict(hz=0.2, low=-3, high=3)),
+    ("square", "pulse1", dict(hz=4, duty=0.2)),
+    ("square", "pulse2", dict(hz=1, duty=0.2)),
+    ("triangle", "audio1", dict(hz=1, low=-2, high=2)),
+    ("set", "knob_main", 0.5),
+    ("set", "knob_x", 0.3),
+    ("set", "knob_y", 0.7),
+    ("set", "switch", "middle"),
+]
+
+
+def apply_stimulus(card, entries):
+    for kind, name, arg in entries:
+        if kind == "set":
+            card.set_input(name, arg)
+        elif kind == "square":
+            card.square(name, **arg)
+        elif kind == "triangle":
+            card.triangle(name, **arg)
+        elif kind == "off":
+            card.release_input(name)
+
+
+def outputs_moving(card, seconds, interval=0.5):
+    """Sample output[1..4].volts over `seconds`; the outputs that changed."""
+    samples = []
+    for _ in range(max(1, int(seconds / interval))):
+        time.sleep(interval)
+        samples.append(card.eval("print(output[1].volts, output[2].volts, output[3].volts, output[4].volts)").split())
+    return [i + 1 for i in range(4) if len({s[i] for s in samples if len(s) == 4}) > 1]
+
+
 def writes_flash(fn):
     """Decorator: test writes the card's flash; only runs with --allow-flash."""
     fn.writes_flash = True
@@ -669,6 +706,8 @@ def main():
     p = sub.add_parser("repl"); p.add_argument("text")
     p = sub.add_parser("log"); p.add_argument("--follow", action="store_true")
     p = sub.add_parser("input"); p.add_argument("specs", nargs="*"); p.add_argument("--clear", action="store_true")
+    p = sub.add_parser("norns", help="run Lua on norns via matron's REPL (NORNS_HOST)")
+    p.add_argument("code")
     p = sub.add_parser("test")
     p.add_argument("paths", nargs="*", default=[os.path.join(PROJECT, "tests")])
     p.add_argument("-k", dest="keyword")
@@ -676,6 +715,15 @@ def main():
     p.add_argument("--allow-flash", action="store_true", help="also run tests that write flash")
     p.add_argument("--report", help="write JSON results here")
     args = ap.parse_args()
+
+    if args.cmd == "norns":  # doesn't need the card
+        from nornsws import Norns, NornsError
+        try:
+            with Norns() as n:
+                print(n.run(args.code))
+        except NornsError as e:
+            sys.exit(f"bbdbg: {e}")
+        return
 
     try:
         with Blackbird(args.transport, args.host, args.port, args.elf, args.addr) as card:

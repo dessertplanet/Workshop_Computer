@@ -7,6 +7,7 @@
 #   make flash-debug   Build + flash debug harness firmware over SWD
 #   make test          Run tests/ against a card running the debug firmware
 #   make test-bowery   Run only the bbbowery + monome/bowery script tests
+#   make test-norns    Run only the norns tests (NORNS_HOST=<norns address>)
 #   make audit         Check nothing core 1 runs lives in flash (both builds)
 #   make clean         Remove build directories
 #
@@ -25,7 +26,7 @@ OPENOCD_GDB_PORT ?= 3333
 GDB ?= $(shell command -v arm-none-eabi-gdb 2>/dev/null || command -v gdb-multiarch 2>/dev/null)
 TEST_ARGS ?=
 
-.PHONY: all build firmware debug flash flash-debug test test-bowery audit clean help
+.PHONY: all build firmware debug flash flash-debug test test-bowery test-norns audit clean help
 
 all: firmware
 
@@ -67,6 +68,9 @@ test: debug
 test-bowery: debug
 	@python3 util/bbdbg.py --host $(OPENOCD_HOST) --port $(OPENOCD_GDB_PORT) test tests/test_bowery.py $(TEST_ARGS)
 
+test-norns: debug
+	@python3 util/bbdbg.py --host $(OPENOCD_HOST) --port $(OPENOCD_GDB_PORT) test tests/test_norns.py $(TEST_ARGS)
+
 audit: firmware debug
 	@python3 util/core1_flash_audit.py $(BUILD)/blackbird.elf | tail -1
 	@python3 util/core1_flash_audit.py $(BUILD_DEBUG)/blackbird_debug.elf | tail -1
@@ -75,4 +79,4 @@ clean:
 	@rm -rf $(BUILD) $(BUILD_DEBUG)
 
 help:
-	@sed -n '3,14p' GNUmakefile
+	@sed -n '3,15p' GNUmakefile

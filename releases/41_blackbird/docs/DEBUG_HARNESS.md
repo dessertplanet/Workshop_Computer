@@ -117,6 +117,33 @@ Known problems go in `EXPECTED` (XFAIL) or `SKIP` at the top of
 do anything, add it to `STIMULUS_FOR`. `--report results.json` saves the
 whole compatibility table.
 
+## norns
+
+`make test-norns NORNS_HOST=<address>` tests blackbird against a real norns.
+`norns.local` doesn't resolve inside the dev container, so use norns' IP
+address. Plug blackbird's USB into norns and keep the SWD probe on blackbird.
+The tests run Lua on norns through matron's REPL websocket (port 5555, the one
+maiden uses; client in `util/nornsws.py`) and check the other end over SWD:
+
+- norns sees blackbird as a crow, and `crow.identity()` and `crow.version()` answer
+- `crow.output[n].volts` and actions set from norns arrive on the card
+- faked CV on the card reaches norns' `crow.input[n].stream`, `.change` and `query()` callbacks
+- a function assigned from norns, called on crow, brings its arguments back
+  intact (`_c.tell` and `quote`)
+- norns flooding output volts (the wobblewobble case) causes no overruns,
+  dropped USB input, or lost final value
+- a script corpus (`NORNS_SCRIPTS` in `tests/test_norns.py`: awake set to crow
+  outputs, and wobblewobble) loads and runs for `BB_NORNS_SECONDS` with the
+  generic fake inputs. It must produce no errors on norns, keep blackbird
+  connected, and drop no events. Scripts not installed on norns are skipped.
+  Add more with `BB_NORNS_SCRIPTS=dir/script.lua,...`, or in the table with
+  setup Lua that points the script at crow.
+
+The tests unload whatever script is running on norns. If norns can't be
+reached, every norns test skips within about 2 seconds, and the rest of a
+`make test` run carries on. `util/bbdbg.py norns "<lua>"` runs Lua on norns by
+hand.
+
 ## Caveats
 
 - **Halting.** OpenOCD may halt the target when a GDB client attaches.
