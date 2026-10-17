@@ -47,6 +47,7 @@ void clock_reset_stats(void);
 void clock_set_sample_counter(uint64_t samples);
 uint64_t clock_get_sample_counter(void);
 void clock_increment_sample_counter(void);
+uint32_t clock_ms_since_boot(void);
 
 
 ///////////////////////////////////

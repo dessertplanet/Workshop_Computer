@@ -843,15 +843,14 @@ int chan = luaL_checknumber(L, -1);
 }
 
 // Lock-free metro queuing function
-void L_queue_metro( int id, int state )
+// Runs on core 1, so must stay in RAM and must not printf.
+void __not_in_flash_func(L_queue_metro)( int id, int state )
 {
     // Queue via lock-free system (never blocks Core 1)
     if (!metro_lockfree_post(id, state)) {
         // Queue full - drop event (should never happen with proper queue sizing)
-        static uint32_t drop_count = 0;
-        if (++drop_count % 100 == 0) {
-            printf("Warning: Metro queue full, dropped %lu events\n", (unsigned long)drop_count);
-        }
+        static volatile uint32_t drop_count = 0;
+        drop_count++;
     }
 }
 
@@ -945,14 +944,13 @@ void L_handle_metro_lockfree( metro_event_lockfree_t* event )
     }
 }
 
-void L_queue_clock_resume( int coro_id )
+// Runs on core 1, so must stay in RAM and must not printf.
+void __not_in_flash_func(L_queue_clock_resume)( int coro_id )
 {
     if (!clock_lockfree_post(coro_id)) {
         // Queue full - drop event (should never happen with proper queue sizing)
-        static uint32_t drop_count = 0;
-        if (++drop_count % 100 == 0) {
-            printf("Warning: Clock resume queue full, dropped %lu events\n", (unsigned long)drop_count);
-        }
+        static volatile uint32_t drop_count = 0;
+        drop_count++;
     }
 }
 

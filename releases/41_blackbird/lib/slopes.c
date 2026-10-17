@@ -374,7 +374,7 @@ static inline bool slope_cmd_dequeue(slope_cmd_t* out) {
 }
 
 // Process queued commands (Core1 only). Limit per call to bound latency.
-void S_process_pending_commands(void) {
+void __not_in_flash_func(S_process_pending_commands)(void) {
     const int kMaxPerCall = 4;
     slope_cmd_t cmd;
     int processed = 0;
@@ -441,7 +441,7 @@ void S_slope_buffer_reset(void) {
     }
 }
 
-bool S_slope_buffer_needs_fill(int index) {
+bool __not_in_flash_func(S_slope_buffer_needs_fill)(int index) {
     if (index < 0 || index >= SLOPE_CHANNELS) { return false; }
     return slope_buffer_fill_level(index) <= SLOPE_BUFFER_LOW_WATER;
 }
@@ -463,7 +463,7 @@ void S_slope_buffer_fill_block(int index, int samples) {
     }
 }
 
-void S_request_slope_buffer_fill(int index) {
+void __not_in_flash_func(S_request_slope_buffer_fill)(int index) {
     if (index < 0 || index >= SLOPE_CHANNELS) {
         return;
     }
@@ -490,7 +490,7 @@ q16_t S_consume_buffered_sample_q16(int index) {
     return entry.value_q16;
 }
 
-void S_slope_buffer_background_service(void) {
+void __not_in_flash_func(S_slope_buffer_background_service)(void) {
     static int service_index = 0;
     if (!slopes) {
         return;
@@ -642,7 +642,7 @@ bool S_set_oscillator(int index, float freq_hz, float level_volts, Shape_t shape
     return true;
 }
 
-void S_clear_oscillator(int index)
+void __not_in_flash_func(S_clear_oscillator)(int index)
 {
     if (index < 0 || index >= SLOPE_CHANNELS) { return; }
     g_oscillators[index].active = false;
@@ -729,7 +729,7 @@ static slope_buffer_entry_t S_render_one_sample_q16(int index)
             : ( osc->level - 2.0f * osc->level * shaped);
 
         osc->phase += osc->phase_inc;
-        if (osc->phase >= 1.0f) { osc->phase -= floorf(osc->phase); }
+        if (osc->phase >= 1.0f) { osc->phase -= (float)(int32_t)osc->phase; } // floor (phase > 0); floorf lives in flash
 
         q16_t sample_q16 = FLOAT_TO_Q16(sample);
         extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
@@ -831,7 +831,7 @@ q16_t S_step_one_sample_q16(int index)
 // Q16.16 Fixed-Point Slope Engine - Core Implementation
 // All arithmetic in integer math for 5-6x performance improvement on RP2040
 // Internal apply (must run on Core1 with interrupts disabled to avoid preemption by ISR)
-static void S_toward_q16_apply( int        index
+static void __not_in_flash_func(S_toward_q16_apply)( int        index
                               , q16_t      destination_q16
                               , q16_t      ms_q16
                               , Shape_t    shape
@@ -924,7 +924,6 @@ static void S_toward_q16_apply( int        index
         if( overflow_q16 > 0 ){
             slope_advance(self, (int64_t)overflow_q16);
             if( self->countdown_q16 <= 0 ){ // guard against overflow hitting callback
-                printf("FIXME near immediate callback\n");
                 // FIXME this should apply the destination & call self->action
                 self->countdown_q16 = (int64_t)(Q16_ONE >> 16); // force callback on next sample (0.00001)
                 self->here_q16 = Q16_ONE; // set to destination

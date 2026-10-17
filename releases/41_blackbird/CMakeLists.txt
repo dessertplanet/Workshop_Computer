@@ -185,6 +185,18 @@ target_compile_options(${CARD_NAME} PRIVATE
     -fsingle-precision-constant  # Treat float literals as float, not double (critical for RP2040 performance)
     # Note: -fno-exceptions and -fno-rtti already set by pico-sdk
     # Note: -flto disabled due to naming conflict with clock.h/clock()
+    -fno-jump-tables      # switch tables go to .rodata (flash) even for RAM functions; core1 must not read flash
+)
+
+# Core 1 (audio) runs entirely from RAM so it keeps running while core 0 writes
+# flash. Put the SDK's compiler runtime helpers it uses in RAM too.
+# Check with: python3 util/core1_flash_audit.py build/blackbird.elf
+target_compile_definitions(${CARD_NAME} PRIVATE
+    PICO_FLOAT_IN_RAM=1
+    PICO_DIVIDER_IN_RAM=1
+    PICO_INT64_OPS_IN_RAM=1
+    PICO_MEM_IN_RAM=1
+    PICO_BITS_IN_RAM=1
 )
 
 # Copy UF2 files to UF2 directory and add user script erase blocks

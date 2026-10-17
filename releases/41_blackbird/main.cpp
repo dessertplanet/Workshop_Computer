@@ -25,6 +25,7 @@ License is GPLv3 or later- see LICENSE file for details.
 
 #include "ComputerCard.h"
 #include "pico/multicore.h"
+#include "hardware/vreg.h"
 #include "pico/stdlib.h"
 #include "hardware/timer.h"
 #include "hardware/irq.h"
@@ -221,7 +222,7 @@ static volatile uint32_t g_slope_action_null_callback_count = 0;
 
 // Queue slope action callback from Core 1 (called in ISR)
 // IMPORTANT: Callback pointer is captured here to avoid race with new S_toward calls
-extern "C" void queue_slope_action_callback(int channel, Callback_t callback) {
+extern "C" void __not_in_flash_func(queue_slope_action_callback)(int channel, Callback_t callback) {
     if (callback == NULL) {
         g_slope_action_null_callback_count++;
         return;  // Don't queue NULL callbacks
@@ -431,7 +432,7 @@ static ComputerCard::USBPowerState_t g_usb_power_state = ComputerCard::Unsupport
 static uint8_t g_midi_host_addr = 0;
 static volatile uint8_t g_midi_host_connected = 0;
 static volatile uint8_t g_host_ready = 0;
-void core1_entry(); // defined after BlackbirdCrow - non-static so flash_storage can call it
+void core1_entry(); // defined after BlackbirdCrow
 
 static inline bool usb_console_ready() {
     return g_usb_role == USB_ROLE_DEVICE && tud_cdc_connected();
@@ -484,7 +485,7 @@ static volatile bool g_mpe_mode_enabled = false;
 // Implemented later in the file (after the card helpers are available).
 static void auto_update_clock_source_from_connections(void);
 
-static void service_clock_from_core1(void) {
+static void __not_in_flash_func(service_clock_from_core1)(void) {
     uint32_t ticks = 0;
     uint32_t irq_state = save_and_disable_interrupts();
     if (g_clock_ticks_pending) {
@@ -498,12 +499,12 @@ static void service_clock_from_core1(void) {
     }
 
     for (uint32_t i = 0; i < ticks; i++) {
-        uint32_t time_now_ms = to_ms_since_boot(get_absolute_time());
+        uint32_t time_now_ms = clock_ms_since_boot();
         clock_update(time_now_ms);
     }
 }
 
-static void service_timer_from_core1(void) {
+static void __not_in_flash_func(service_timer_from_core1)(void) {
     uint32_t ticks = 0;
     uint32_t irq_state = save_and_disable_interrupts();
     if (g_timer_ticks_pending) {
@@ -521,7 +522,9 @@ static void service_timer_from_core1(void) {
     }
 }
 
-static void blackbird_core1_background_service(void) {
+// Everything core 1 runs must live in RAM, so it keeps running while core 0
+// erases/programs flash (see FlashStorage). Check with util/core1_flash_audit.py.
+static void __not_in_flash_func(blackbird_core1_background_service)(void) {
     S_slope_buffer_background_service();
     service_timer_from_core1();
     service_clock_from_core1();
@@ -3254,9 +3257,6 @@ static inline void usb_process_tx_bounded(void) {
 // Queue output changes during Lua execution, flush all at once to avoid
 // redundant calibration calculations and hardware writes
 
-// Global flag to signal core1 to pause for flash operations
-volatile bool g_flash_operation_pending = false;
-
 typedef struct {
     bool pending;       // Has this output changed?
     float target_volts; // Target voltage to set
@@ -4322,11 +4322,8 @@ public:
                     }
                     
                     
-                    // Write to flash (this will reset core1, do the flash write, then restart core1)
+                    // Write to flash (core1 audio keeps running; it executes from RAM)
                     if (FlashStorage::write_user_script_with_name(g_new_script, g_new_script_len, g_new_script_name)) {
-                        // Give USB time to stabilize after core1 restart
-                        
-                        
                         tud_cdc_write_str("User script saved to flash!\n\r");
                         tud_cdc_write_str("\n\r");
                         tud_cdc_write_str("Press the RESET button (next to card slot)\n\r");
@@ -4455,7 +4452,7 @@ public:
     
     // ULTRA-LIGHTWEIGHT audio callback - ONLY READ INPUTS!
     // NO output processing in ISR - prevents multiplexer misalignment
-    virtual void ProcessSample() override
+    virtual void __not_in_flash("ProcessSample") ProcessSample() override
     {
         // Performance monitoring: capture start time (low-cost)
         uint32_t start_time = time_us_32();
@@ -6813,7 +6810,10 @@ extern "C" {
 
 int main()
 {
-    set_sys_clock_khz(200000, true);
+    // Match MLRws: raise core voltage for overclock margin, let it settle, then 192MHz
+    vreg_set_voltage(VREG_VOLTAGE_1_20);
+    sleep_ms(10);
+    set_sys_clock_khz(192000, true);
 
     // Decide USB role based on power orientation with a short debounce
     sleep_us(150000);

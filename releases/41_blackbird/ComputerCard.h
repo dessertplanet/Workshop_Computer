@@ -536,14 +536,14 @@ private:
 
 	void AudioWorker();
 	
-	static void AudioCallback()
+	static void __not_in_flash_func(AudioCallback)()
 	{
 		thisptr->BufferFull();
 	}
 	static ComputerCard *thisptr;
 
 	// 19-bit CV outputs
-	static void OnCVPWMWrap()
+	static void __not_in_flash_func(OnCVPWMWrap)()
 	{
 		static int32_t error1 = 0, error2 = 0;
 
@@ -775,6 +775,20 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	static volatile int32_t knobssm[4] = { 0, 0, 0, 0 };
 	static volatile int32_t cvsm[2] = { 0, 0 };
 	__attribute__((unused)) static uint32_t np = 0, np1 = 0, np2 = 0;
+
+	// ADC mux-alignment guard (from MLRws). React when the FIFO backs up
+	// past the normal 1-2 sample transit, by restarting the ADC round-robin
+	// from input 0 so samples land in the right buffer slots again.
+	uint32_t fifo_level = adc_fifo_get_level();
+	if (fifo_level > 7)
+	{
+		adc_run(false);
+		adc_fifo_drain();
+		adc_select_input(0);
+		adc_set_round_robin(0);
+		adc_set_round_robin(0b0001111U);
+		adc_run(true);
+	}
 
 	adc_select_input(0);
 

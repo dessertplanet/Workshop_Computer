@@ -6,9 +6,23 @@
 
 // Unified time source (ms since boot)
 #include "pico/time.h" // For get_absolute_time(), to_ms_since_boot
-// Monotonic milliseconds since boot (unifies all clock math)
+#include "hardware/structs/timer.h"
+// Monotonic milliseconds since boot (unifies all clock math). Same value as
+// to_ms_since_boot(get_absolute_time()), but reads the timer directly so core 1
+// can call it while core 0 writes flash (time_us_64() lives in flash).
+uint32_t __not_in_flash_func(clock_ms_since_boot)(void) {
+    uint32_t hi = timer_hw->timerawh;
+    uint32_t lo;
+    while (true) {
+        lo = timer_hw->timerawl;
+        uint32_t next_hi = timer_hw->timerawh;
+        if (hi == next_hi) break;
+        hi = next_hi;
+    }
+    return (uint32_t)((((uint64_t)hi << 32) | lo) / 1000u);
+}
 static inline uint32_t clock_now_ms(void) {
-    return to_ms_since_boot(get_absolute_time());
+    return clock_ms_since_boot();
 }
 
 #include "clock_ll.h" // linked list for clocks
@@ -39,7 +53,7 @@ uint64_t clock_get_sample_counter(void) {
     return sample_counter;
 }
 
-void clock_increment_sample_counter(void) {
+void __not_in_flash_func(clock_increment_sample_counter)(void) {
     sample_counter++;
 }
 
@@ -123,7 +137,7 @@ static inline uint32_t precision_beat_of_now_q16(uint32_t time_now_ms){
 
 // This function must only be called when time_now changes!
 // TIME SENSITIVE. this function is run every 1ms, so optimize it for speed.
-void clock_update(uint32_t time_now)
+void __not_in_flash_func(clock_update)(uint32_t time_now)
 {
     // increments the beat count if we've crossed into the next beat
     clock_internal_run(time_now);
@@ -221,7 +235,8 @@ bool clock_schedule_resume_beatsync( int coro_id, float beats ){
     return ok;
 }
 
-void clock_update_reference(float beats, float beat_duration)
+// Called from core 1 via clock_update(), so must stay in RAM.
+void __not_in_flash_func(clock_update_reference)(float beats, float beat_duration)
 {
     // Convert to fixed point
     reference.beat_q16 = (uint32_t)(beats * (float)Q16_ONE + 0.5f);
@@ -234,7 +249,7 @@ void clock_update_reference(float beats, float beat_duration)
     reference.last_beat_time_ms = clock_now_ms();
 }
 
-void clock_update_reference_from(float beats, float beat_duration, clock_source_t source)
+void __not_in_flash_func(clock_update_reference_from)(float beats, float beat_duration, clock_source_t source)
 {
     if( clock_source == source ){
         clock_update_reference( beats, beat_duration );
