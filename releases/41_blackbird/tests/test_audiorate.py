@@ -155,3 +155,15 @@ def test_lookahead_chains_start_reliably(bb):
         assert bb.mem.read_u32(starts) >= 64, f"round {round_}: output 1's lfo isn't running"
         per_s = ((bb.mem.read_u32(actions) - a0) & 0xFFFFFFFF) / 0.1
         assert per_s > 0.8 * 4 * 8000, f"round {round_}: {per_s:.0f} segments/s, want ~32000 (an lfo stopped)"
+
+
+def test_short_sequences_end_exactly(bb):
+    # Regression: the ISR renders a slope itself when its buffer runs dry,
+    # and could preempt the background render of the same slope half-way.
+    # With lookahead pausing renders at segment ends, buffers ran dry more,
+    # and a slope could end a sample short (an adsr release stuck at 2V/72).
+    for round_ in range(40):
+        bb.eval("for i = 1, 4 do output[i]{ to(2, 0.003, 'linear'), to(0, 0.003, 'linear') } end")
+        bb.wait(0.05)
+        ends = [bb.query(f"output[{i}].volts") for i in range(1, 5)]
+        assert all(abs(v) < 0.001 for v in ends), f"round {round_}: outputs ended at {ends}, want 0"

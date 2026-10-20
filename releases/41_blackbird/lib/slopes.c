@@ -512,8 +512,14 @@ void S_slope_buffer_fill_block(int index, int samples) {
             && !g_oscillators[index].active) {
             break;
         }
+        // Interrupts off per sample: the ISR renders this slope itself when
+        // the buffer runs dry, and preempting a render half-way corrupted it
+        // (one release ended a sample short, stuck at 2V/72)
+        uint32_t irq = save_and_disable_interrupts();
         slope_buffer_entry_t entry = S_render_one_sample_q16(index);
-        if (!slope_buffer_push(index, entry)) {
+        bool pushed = slope_buffer_push(index, entry);
+        restore_interrupts(irq);
+        if (!pushed) {
             break;
         }
     }
