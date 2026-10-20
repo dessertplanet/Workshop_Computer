@@ -601,6 +601,8 @@ private:
 public:
 	/// Audio ISR profile, in CPU cycles (core 1's SysTick, enabled by AudioWorker)
 	static volatile uint32_t profileIsrCycles, profileIsrCount, profileIsrMaxCycles;
+	/// CV output PWM updates (OnCVPWMWrap runs); one per PWM period when none are missed
+	static volatile uint32_t profilePwmWraps;
 private:
 #endif
 	static ComputerCard *thisptr;
@@ -613,6 +615,9 @@ private:
 		static int32_t error1 = 0, error2 = 0;
 
 		pwm_clear_irq(pwm_gpio_to_slice_num(CV_OUT_1)); // clear the interrupt flag
+#ifdef COMPUTERCARD_PROFILE
+		profilePwmWraps = profilePwmWraps + 1;
+#endif
 		uint32_t truncated_cv1_val = (cvValue[0]-error1) & 0xFFFFFF00;
 		error1 += truncated_cv1_val - cvValue[0];
 		pwm_set_gpio_level(CV_OUT_1, (truncated_cv1_val>>8));
@@ -703,6 +708,7 @@ volatile uint32_t ComputerCard::cvValue[2] = {262144,262144};
 ComputerCard *ComputerCard::thisptr;
 #ifdef COMPUTERCARD_PROFILE
 volatile uint32_t ComputerCard::profileIsrCycles, ComputerCard::profileIsrCount, ComputerCard::profileIsrMaxCycles;
+volatile uint32_t ComputerCard::profilePwmWraps;
 #endif
 ComputerCard::ProcessSampleFn ComputerCard::processSampleFn;
 ComputerCard::Core1BackgroundHook ComputerCard::core1_background_hook = nullptr;
@@ -995,11 +1001,20 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 	int32_t scaled = (knobssm[knob] * 130 - 60000) >> 11;
 	if (scaled < 0) scaled = 0;
 	if (scaled > 4095) scaled = 4095;
+#ifdef COMPUTERCARD_INPUT_OVERRIDES
+	// An overridden knob keeps its override value throughout: core 0 can read
+	// it at any time, and would sometimes see the hardware reading in the
+	// moment before ApplyInputOverrides replaced it
+	if (!(inputOverrides && knob < 3 && inputOverrides->in[OvKnobMain + knob].mode != OverrideOff))
+#endif
 	knobs[knob] = scaled;
 #endif
 
 	// Set switch value.
 	int32_t switchRaw = knobssm[3] >> 4;
+#ifdef COMPUTERCARD_INPUT_OVERRIDES
+	if (!(inputOverrides && inputOverrides->in[OvSwitch].mode != OverrideOff)) // as for knobs
+#endif
 	switchVal = static_cast<Switch>((switchRaw>1000) + (switchRaw>3000));
 	if (startupCounter)
 	{

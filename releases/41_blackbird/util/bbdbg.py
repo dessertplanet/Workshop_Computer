@@ -45,7 +45,7 @@ DEFAULT_HOST = os.environ.get("OPENOCD_HOST", "host.docker.internal")
 # Mailbox layout: keep in step with bb_dbg_t in main.cpp (static_asserts there)
 # ---------------------------------------------------------------------------
 MAGIC = 0x47444242
-VERSION = 12
+VERSION = 14
 STAT_FIELDS = [
     "magic", "version", "struct_size", "sample_rate_hz",
     "heartbeat", "uptime_ms", "ps_worst_us", "ps_overruns", "ps_budget_us",
@@ -56,7 +56,7 @@ STAT_FIELDS = [
     "out_changes_1", "out_changes_2", "out_changes_3", "out_changes_4",
     "drops_midi_echo", "pool_pages", "pool_slot_bytes", "pool_capacity_bytes",
     "pool_arena_free_pages", "core1_isr_cycles", "core1_isr_count", "core1_isr_max_cycles",
-    "core1_idle_cycles", "slope_underruns",
+    "core1_idle_cycles", "slope_underruns", "slope_actions", "cv_pwm_wraps",
 ]
 OFF_CMD_SEQ, OFF_CMD, OFF_ACK_SEQ, OFF_STATUS = 160, 164, 168, 172
 OFF_SCRIPT_LEN, OFF_OUT_LEN, OFF_OUT_TRUNCATED, OFF_LOG_HEAD = 176, 180, 184, 188
@@ -75,7 +75,7 @@ OFF_LOOP_SECTIONS = OFF_ALLOC + 3 * 4 * ALLOC_BUCKETS
 LOOP_SECTIONS = ["usb poll (tud_task, rx, midi)", "midi echo", "usb rx -> repl", "harness mailbox",
                  "leds, welcome, perf warning", "log msgs, slope callbacks, detect, input values",
                  "clock events", "metro events", "input events, change callbacks", "asl done events",
-                 "switch, clock source, pulse clocks", "bb.asap", "pulse-in callbacks", "lua gc step",
+                 "switch, clock source, pulse clocks", "bb.asap", "pulse-in callbacks", "(was idle lua gc step)",
                  "pubview", "(end)"]
 STRUCT_SIZE = OFF_LOOP_SECTIONS + 4 * len(LOOP_SECTIONS)
 ALLOC_BUCKET_LABELS = [f"{8 * i + 1}-{8 * (i + 1)}" for i in range(16)] + [

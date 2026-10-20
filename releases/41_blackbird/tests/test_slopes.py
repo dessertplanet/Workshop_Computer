@@ -31,10 +31,10 @@ def test_instant_and_short_slopes(bb):
 def test_long_slopes_keep_their_time(bb):
     # Regression: slope times went through Q16.16 milliseconds, which overflow
     # past 32.8s: 40s and 1h slopes jumped straight to the destination, and a
-    # 70s slope ran ~16x too fast. 40000s is past the ~9h maximum, so clamps.
-    for seconds, effective in ((20, 20), (40, 40), (70, 70), (3600, 3600), (40000, 32767)):
+    # 70s slope ran ~16x too fast. 40000s is past what Q16.16 seconds could hold.
+    for seconds in (20, 40, 70, 3600, 40000):
         v1, rate = slope_rate(bb, seconds)
-        want = 5 / effective
+        want = 5 / seconds
         assert v1 < 0.5, f"to(5, {seconds}): already at {v1}V after 0.2s"
         assert abs(rate - want) <= 0.1 * want + 0.0005, \
             f"to(5, {seconds}): {rate:.5f} V/s, want {want:.5f}"

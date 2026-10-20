@@ -115,21 +115,6 @@ static float lut_lookup_q11(const q11_t* lut, float in) {
     return (float)result / Q11_SCALE;
 }
 
-// Oscillator shape evaluator (matches slope shapes for oscillate)
-static inline float osc_shape_eval(Shape_t shape, float in) {
-    switch (shape) {
-        case SHAPE_Sine:
-            return lut_lookup_q11(lut_sin_ptr ? lut_sin_ptr : lut_sin, in);
-        case SHAPE_Log:
-            return lut_lookup_q11(lut_log_ptr ? lut_log_ptr : lut_log, in);
-        case SHAPE_Expo:
-            return lut_lookup_q11(lut_exp_ptr ? lut_exp_ptr : lut_exp, in);
-        case SHAPE_Linear:
-        default:
-            return in;
-    }
-}
-
 // Q16-native LUT lookup - eliminates redundant float conversions in hot path
 // Directly converts Q16 input to Q16 output via Q11 LUT
 // Performance: Same as lut_lookup_q11 but saves 2 float conversions per call
@@ -263,13 +248,19 @@ static float* shapes_v_log(float* in, int size) {
 static uint8_t slope_count = 0;
 Slope_t* slopes = NULL; // Exported for ll_timers.c conditional processing
 
-// Simple fractional-phase oscillator for audio-friendly oscillate()
+// How long after a slope ends its overflow is still carried into the next one
+// (see S_toward_q16_apply): ~43ms at 24kHz
+#define SLOPE_OVERFLOW_LIMIT_Q16 ((int64_t)1023 << Q16_SHIFT)
+
+// Phase-accumulator oscillator for audio-rate oscillate(). Fixed point: the
+// RP2040 has no FPU, and per-sample software float cost ~14% of core 1 per
+// voice at 24kHz (four voices overran the ISR budget).
 typedef struct {
-    bool    active;
-    float   phase;      // 0..1
-    float   phase_inc;  // freq / sample_rate
-    float   level;      // volts
-    Shape_t shape;      // currently only SHAPE_Sine supported
+    bool     active;
+    uint32_t phase;      // one cycle = 2^32, wraps
+    uint32_t phase_inc;  // freq / sample_rate * 2^32
+    q16_t    level_q16;  // volts
+    Shape_t  shape;
 } oscillator_state_t;
 
 static oscillator_state_t g_oscillators[SLOPE_CHANNELS];
@@ -277,6 +268,7 @@ static oscillator_state_t g_oscillators[SLOPE_CHANNELS];
 typedef struct {
     q16_t value_q16;
     uint8_t action_due;
+    uint16_t seq;         // the slope's tag, for its end event
     Callback_t callback;  // Captured atomically to prevent race conditions
 } slope_buffer_entry_t;
 
@@ -311,7 +303,48 @@ typedef struct {
     uint8_t coalesce;    // 1 if safe to overwrite older pending cmds for same index
     uint8_t use_samples_q16; // 1 when duration_q16 holds samples (Q16), 0 for ms_q16
     int64_t duration_q16;    // samples in Q16 when use_samples_q16==1
+    uint8_t kind;            // SLOPE_CMD_START, or SLOPE_CMD_QUEUE_NEXT (S_queue_next_q16)
+    uint8_t lookahead;
+    uint16_t seq;
+    uint8_t has_jump;        // QUEUE_NEXT only
+    uint8_t has_slope;       // QUEUE_NEXT only
+    q16_t jump_q16;          // QUEUE_NEXT only
+    Callback_t started;      // QUEUE_NEXT only
 } slope_cmd_t;
+#define SLOPE_CMD_START 0
+#define SLOPE_CMD_QUEUE_NEXT 1
+
+// The slope queued to follow each channel's current one (S_queue_next_q16)
+typedef struct {
+    bool valid;
+    bool has_jump;
+    bool has_slope;
+    bool lookahead;
+    uint16_t seq;
+    q16_t jump_q16;
+    q16_t dest_q16;
+    int64_t samples_q16;
+    Shape_t shape;
+    Callback_t started;
+    Callback_t ended;
+} slope_next_t;
+static slope_next_t slope_next[SLOPE_CHANNELS];
+static void slope_queue_next_apply(const slope_cmd_t* cmd);
+static void slope_promote_next(int index, int64_t overflow_q16);
+
+#ifdef BB_DEBUG_HARNESS
+// Segment timing capture for the test harness: samples rendered per channel
+// (less any discarded unplayed), and where channel 0's next 64 slopes begin
+// once armed (by zeroing the count)
+volatile uint32_t g_slope_render_pos[SLOPE_CHANNELS];
+volatile uint32_t g_slope_seg_starts[64];
+volatile uint32_t g_slope_seg_start_count;
+static inline void slope_debug_seg_start(int index, uint32_t pos) {
+    if (index != 0 || g_slope_seg_start_count >= 64) return;  // harness re-arms: count = 0
+    g_slope_seg_starts[g_slope_seg_start_count] = pos;
+    g_slope_seg_start_count = g_slope_seg_start_count + 1;
+}
+#endif
 
 #define SLOPE_CMD_QUEUE_SIZE 32
 static volatile slope_cmd_t slope_cmd_queue[SLOPE_CMD_QUEUE_SIZE];
@@ -380,13 +413,27 @@ void __not_in_flash_func(S_process_pending_commands)(void) {
     slope_cmd_t cmd;
     int processed = 0;
     while (processed < kMaxPerCall && slope_cmd_dequeue(&cmd)) {
-        S_toward_q16_apply(cmd.index, cmd.dest_q16, cmd.ms_q16, cmd.shape, cmd.cb,
-                   cmd.use_samples_q16, cmd.duration_q16);
+        // Interrupts off: the ISR reads (and, if its buffer runs dry, renders)
+        // this slope's state
+        uint32_t irq = save_and_disable_interrupts();
+        if (cmd.kind == SLOPE_CMD_QUEUE_NEXT) {
+            slope_queue_next_apply(&cmd);
+        } else {
+            S_toward_q16_apply(cmd.index, cmd.dest_q16, cmd.ms_q16, cmd.shape, cmd.cb,
+                       cmd.use_samples_q16, cmd.duration_q16);
+            slopes[cmd.index].seq = cmd.seq;
+            slopes[cmd.index].lookahead = cmd.lookahead;
+        }
+        restore_interrupts(irq);
         processed++;
     }
 }
 
+static inline int slope_buffer_fill_level(int index);
 static inline void slope_buffer_clear_channel(int index) {
+#ifdef BB_DEBUG_HARNESS
+    g_slope_render_pos[index] = g_slope_render_pos[index] - slope_buffer_fill_level(index);  // never played
+#endif
     slope_buffer_head[index] = 0;
     slope_buffer_tail[index] = 0;
 }
@@ -456,7 +503,15 @@ void S_slope_buffer_fill_block(int index, int samples) {
         slope_buffer_clear_channel(index);
         slope_buffer_flush_request[index] = 0;
     }
+    Slope_t* self = &slopes[index];
     while (samples-- > 0 && slope_buffer_space_remaining(index) > 0) {
+        // A lookahead slope that has ended: wait for core 0 to queue the next
+        // one rather than render ahead holding (the buffered samples are the
+        // time core 0 has; if they run out, the ISR renders holds meanwhile)
+        if (self->lookahead && self->countdown_q16 <= 0 && !slope_next[index].valid
+            && !g_oscillators[index].active) {
+            break;
+        }
         slope_buffer_entry_t entry = S_render_one_sample_q16(index);
         if (!slope_buffer_push(index, entry)) {
             break;
@@ -489,8 +544,8 @@ q16_t S_consume_buffered_sample_q16(int index) {
         g_slope_inline_renders++;
     }
     if (entry.action_due && entry.callback != NULL) {
-        extern void queue_slope_action_callback(int channel, Callback_t callback);
-        queue_slope_action_callback(index, entry.callback);
+        extern void queue_slope_action_callback(int channel, Callback_t callback, uint16_t seq);
+        queue_slope_action_callback(index, entry.callback, entry.seq);
     }
     return entry.value_q16;
 }
@@ -618,6 +673,10 @@ void S_init( int channels )
         slopes[j].shaped_q16 = 0;
         slopes[j].shape  = SHAPE_Linear;
         slopes[j].action = NULL;
+        slopes[j].action_fired = false;
+        slopes[j].seq = 0;
+        slopes[j].lookahead = false;
+        slope_next[j].valid = false;
 
         slopes[j].here_q16      = 0;
         slopes[j].countdown_q16 = -(int64_t)Q16_ONE;  // -1.0 in Q16
@@ -626,9 +685,9 @@ void S_init( int channels )
 
         // reset oscillator state for this channel
         g_oscillators[j].active = false;
-        g_oscillators[j].phase = 0.0f;
-        g_oscillators[j].phase_inc = 0.0f;
-        g_oscillators[j].level = 0.0f;
+        g_oscillators[j].phase = 0;
+        g_oscillators[j].phase_inc = 0;
+        g_oscillators[j].level_q16 = 0;
         g_oscillators[j].shape = SHAPE_Sine;
     }
     S_slope_buffer_reset();
@@ -639,14 +698,16 @@ bool S_set_oscillator(int index, float freq_hz, float level_volts, Shape_t shape
     if (index < 0 || index >= SLOPE_CHANNELS) { return false; }
     if (freq_hz <= 0.0f) { return false; }
 
+    if (freq_hz > (float)SAMPLE_RATE / 2.0f) { freq_hz = (float)SAMPLE_RATE / 2.0f; } // Nyquist
+
     oscillator_state_t* osc = &g_oscillators[index];
     bool was_active = osc->active;
-    osc->active = true;
-    osc->phase_inc = freq_hz / (float)SAMPLE_RATE;
-    osc->level = level_volts;
-    osc->shape = shape;
     // keep phase continuity if already active; else start at 0
-    if (!was_active) { osc->phase = 0.0f; }
+    if (!was_active) { osc->phase = 0; }
+    osc->phase_inc = (uint32_t)((double)freq_hz / (double)SAMPLE_RATE * 4294967296.0);
+    osc->level_q16 = FLOAT_TO_Q16(level_volts);
+    osc->shape = shape;
+    osc->active = true;
     return true;
 }
 
@@ -668,15 +729,19 @@ void S_reset(void)
         slopes[j].shaped_q16 = 0;
         slopes[j].shape = SHAPE_Linear;
         slopes[j].action = NULL;
+        slopes[j].action_fired = false;
+        slopes[j].seq = 0;
+        slopes[j].lookahead = false;
+        slope_next[j].valid = false;
         slopes[j].here_q16 = 0;
         slopes[j].countdown_q16 = -(int64_t)Q16_ONE;  // -1.0 in Q16
         slopes[j].duration_q16 = 0;
         slopes[j].elapsed_q16 = 0;
 
         g_oscillators[j].active = false;
-        g_oscillators[j].phase = 0.0f;
-        g_oscillators[j].phase_inc = 0.0f;
-        g_oscillators[j].level = 0.0f;
+        g_oscillators[j].phase = 0;
+        g_oscillators[j].phase_inc = 0;
+        g_oscillators[j].level_q16 = 0;
         g_oscillators[j].shape = SHAPE_Sine;
     }
 
@@ -720,43 +785,73 @@ float S_get_state( int index )
 __attribute__((section(".time_critical.S_render_one_sample_q16")))
 static slope_buffer_entry_t S_render_one_sample_q16(int index)
 {
-    slope_buffer_entry_t entry = { .value_q16 = 0, .action_due = 0, .callback = NULL };
+    slope_buffer_entry_t entry = { .value_q16 = 0, .action_due = 0, .seq = 0, .callback = NULL };
     if( index < 0 || index >= SLOPE_CHANNELS || slopes == NULL ){ return entry; }
     Slope_t* self = &slopes[index];
+#ifdef BB_DEBUG_HARNESS
+    g_slope_render_pos[index] = g_slope_render_pos[index] + 1;
+#endif
     
     // Oscillator fast-path (audio-friendly fractional phase accumulator)
     oscillator_state_t* osc = &g_oscillators[index];
     if (osc->active) {
-        float ph = osc->phase;
-        // split phase into rising/falling halves to match ASL lfo semantics
-        bool rising = (ph < 0.5f);
-        float half = rising ? (ph * 2.0f) : ((ph - 0.5f) * 2.0f);
-        float shaped = osc_shape_eval(osc->shape, half);
-        float sample = rising
-            ? (-osc->level + 2.0f * osc->level * shaped)
-            : ( osc->level - 2.0f * osc->level * shaped);
-
-        osc->phase += osc->phase_inc;
-        if (osc->phase >= 1.0f) { osc->phase -= (float)(int32_t)osc->phase; } // floor (phase > 0); floorf lives in flash
-
-        q16_t sample_q16 = FLOAT_TO_Q16(sample);
+        uint32_t ph = osc->phase;
+        osc->phase = ph + osc->phase_inc;  // wraps at one cycle
+        // split phase into rising/falling halves to match ASL lfo semantics:
+        // each half sweeps 0..1 (Q16) through the shape
+        bool rising = (ph < 0x80000000u);
+        q16_t half_q16 = (q16_t)((ph << 1) >> 16);
+        q16_t shaped_q16;
+        switch (osc->shape) {
+            case SHAPE_Sine: shaped_q16 = lut_lookup_q16(lut_sin_ptr ? lut_sin_ptr : lut_sin, half_q16); break;
+            case SHAPE_Log:  shaped_q16 = lut_lookup_q16(lut_log_ptr ? lut_log_ptr : lut_log, half_q16); break;
+            case SHAPE_Expo: shaped_q16 = lut_lookup_q16(lut_exp_ptr ? lut_exp_ptr : lut_exp, half_q16); break;
+            case SHAPE_Linear:
+            default:         shaped_q16 = half_q16; break;
+        }
+        // rising: -level -> +level; falling: +level -> -level
+        q16_t swing_q16 = Q16_MUL(shaped_q16, osc->level_q16 * 2);
+        q16_t sample_q16 = rising ? (swing_q16 - osc->level_q16) : (osc->level_q16 - swing_q16);
         extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
         entry.value_q16 = AShaper_quantize_single_q16(index, sample_q16);
         return entry;
     }
 
-    // If slope inactive, just return last shaped value
+    const int64_t one_sample_q16 = (int64_t)Q16_ONE;
+
+    // Finished, and the next slope is queued: start it on this sample, as far
+    // in as the current one overshot (plus any samples held meanwhile)
+    if( self->countdown_q16 <= 0 && slope_next[index].valid ) {
+        int64_t overflow_q16 = -self->countdown_q16;
+        if( overflow_q16 >= SLOPE_OVERFLOW_LIMIT_Q16 ){ overflow_q16 = 0; }
+#ifdef BB_DEBUG_HARNESS
+        slope_debug_seg_start(index, g_slope_render_pos[index] - 1);
+#endif
+        slope_promote_next(index, overflow_q16);
+    }
+
+    // Finished: hold at the destination, but keep counting the samples since
+    // it ended (negative countdown, to a limit), so a slope started by its
+    // action can begin where it would have been with no gap
     if( self->countdown_q16 <= 0 ) {
+        if( self->countdown_q16 > -SLOPE_OVERFLOW_LIMIT_Q16 ) {
+            self->countdown_q16 -= one_sample_q16;
+        }
         entry.value_q16 = self->shaped_q16;
+        if( self->action != NULL ) {  // finished without rendering (see S_toward_q16_apply)
+            entry.callback = self->action;
+            entry.seq = self->seq;
+            self->action = NULL;
+            entry.action_due = 1;
+            self->action_fired = true;
+        }
         return entry;
     }
     
-    const int64_t one_sample_q16 = (int64_t)Q16_ONE;
+    // countdown may go a fraction of a sample below 0 here: that's how far
+    // past the end this sample is, also carried into the next slope
     self->countdown_q16 -= one_sample_q16;
     self->elapsed_q16   += one_sample_q16;
-    if( self->countdown_q16 < 0 ) {
-        self->countdown_q16 = 0;
-    }
     
     if( self->elapsed_q16 > self->duration_q16 ) {
         self->elapsed_q16 = self->duration_q16;
@@ -812,10 +907,12 @@ static slope_buffer_entry_t S_render_one_sample_q16(int index)
     // CRITICAL: Atomically capture and clear callback when action becomes due
     // This prevents race condition where new S_toward could overwrite action
     // between checking and queuing
-    if( self->countdown_q16 == 0 && self->action != NULL ) {
+    if( self->countdown_q16 <= 0 && self->action != NULL ) {
         entry.callback = self->action;
+        entry.seq = self->seq;
         self->action = NULL;  // Clear immediately after capturing
         entry.action_due = 1;
+        self->action_fired = true;
     }
     
     return entry;
@@ -830,10 +927,102 @@ q16_t S_step_one_sample_q16(int index)
     extern void hardware_output_set_voltage_q16(int channel, q16_t voltage_q16);
     hardware_output_set_voltage_q16(index + 1, entry.value_q16);
     if (entry.action_due && entry.callback != NULL) {
-        extern void queue_slope_action_callback(int channel, Callback_t callback);
-        queue_slope_action_callback(index, entry.callback);
+        extern void queue_slope_action_callback(int channel, Callback_t callback, uint16_t seq);
+        queue_slope_action_callback(index, entry.callback, entry.seq);
     }
     return entry.value_q16;
+}
+
+// Start the queued next slope (core 1): jump first if asked, then the slope,
+// `overflow_q16` samples in (or just hold, if it has no slope). Tells core 0
+// it started.
+static void __not_in_flash_func(slope_promote_next)(int index, int64_t overflow_q16)
+{
+    Slope_t* self = &slopes[index];
+    slope_next_t* n = &slope_next[index];
+    n->valid = false;
+
+    if( n->has_jump ){
+        extern q16_t AShaper_quantize_single_q16(int index, q16_t voltage_q16);
+        self->shaped_q16 = AShaper_quantize_single_q16(index, n->jump_q16);
+        self->last_q16 = self->shaped_q16;
+    }
+    self->seq = n->seq;
+    self->lookahead = n->lookahead;
+    self->action_fired = false;
+
+    if( n->has_slope ){
+        self->dest_q16      = n->dest_q16;
+        self->shape         = n->shape;
+        self->last_q16      = self->shaped_q16;
+        self->scale_q16     = self->dest_q16 - self->last_q16;
+        self->duration_q16  = n->samples_q16;
+        self->countdown_q16 = n->samples_q16;
+        self->elapsed_q16   = 0;
+        self->here_q16      = 0;
+        self->action        = n->lookahead ? NULL : n->ended;
+        if( overflow_q16 >= n->samples_q16 ){  // the whole slope already elapsed (see S_toward_q16_apply)
+            self->elapsed_q16   = n->samples_q16;
+            self->here_q16      = Q16_ONE;
+            self->shaped_q16    = self->dest_q16;
+            self->countdown_q16 = n->samples_q16 - overflow_q16;
+        } else if( overflow_q16 > 0 ){
+            slope_advance(self, overflow_q16);
+        }
+    } else {  // nothing to slope to: hold here (the sequence waits, or is done)
+        self->dest_q16      = self->shaped_q16;
+        self->scale_q16     = 0;
+        self->duration_q16  = 0;
+        self->elapsed_q16   = 0;
+        self->here_q16      = Q16_ONE;
+        self->countdown_q16 = -overflow_q16;
+        self->action        = NULL;
+    }
+
+    if( n->started != NULL ){
+        extern void queue_slope_action_callback(int channel, Callback_t callback, uint16_t seq);
+        queue_slope_action_callback(index, n->started, n->seq);
+    }
+}
+
+// A slope queued by core 0 (core 1, interrupts off). Render starts it on the
+// sample after the current one ends: it pauses there for this (see
+// S_slope_buffer_fill_block), and samples the ISR had to render meanwhile
+// were played, so the overflow counts them. Only if the current slope isn't
+// expecting one (not lookahead), start it now, after the samples played.
+static void __not_in_flash_func(slope_queue_next_apply)(const slope_cmd_t* cmd)
+{
+    int index = cmd->index;
+    if( index < 0 || index >= SLOPE_CHANNELS ){ return; }
+    Slope_t* self = &slopes[index];
+    slope_next_t* n = &slope_next[index];
+    n->has_jump    = cmd->has_jump;
+    n->jump_q16    = cmd->jump_q16;
+    n->has_slope   = cmd->has_slope;
+    n->dest_q16    = cmd->dest_q16;
+    n->samples_q16 = (cmd->duration_q16 > 0) ? cmd->duration_q16 : (int64_t)Q16_ONE;
+    n->shape       = cmd->shape;
+    n->seq         = cmd->seq;
+    n->lookahead   = cmd->lookahead;
+    n->started     = cmd->started;
+    n->ended       = cmd->cb;
+    n->valid       = true;
+
+    if( !self->lookahead && self->countdown_q16 <= 0 ){
+        int64_t played_q16 = -self->countdown_q16;
+        if( played_q16 >= SLOPE_OVERFLOW_LIMIT_Q16 ){
+            played_q16 = 0;  // ended long ago: start afresh
+        } else {
+            played_q16 -= (int64_t)slope_buffer_fill_level(index) << Q16_SHIFT;  // rendered, not played
+            if( played_q16 < 0 ){ played_q16 = 0; }
+        }
+        slope_buffer_clear_channel(index);
+        slope_buffer_flush_request[index] = 0;
+#ifdef BB_DEBUG_HARNESS
+        slope_debug_seg_start(index, g_slope_render_pos[index]);
+#endif
+        slope_promote_next(index, played_q16);
+    }
 }
 
 // Q16.16 Fixed-Point Slope Engine - Core Implementation
@@ -856,6 +1045,15 @@ static void __not_in_flash_func(S_toward_q16_apply)( int        index
     // update destination and shape
     self->dest_q16  = destination_q16;
     self->shape     = shape;
+
+    // A slope started directly replaces any queued to follow (callers that
+    // tag it set seq/lookahead after this)
+    slope_next[index].valid = false;
+    self->seq = 0;
+    self->lookahead = false;
+#ifdef BB_DEBUG_HARNESS
+    slope_debug_seg_start(index, g_slope_render_pos[index] - slope_buffer_fill_level(index));
+#endif
     
     slope_buffer_flush_request[index] = 1; // ensure buffered samples are discarded on Core 1
 
@@ -881,6 +1079,7 @@ static void __not_in_flash_func(S_toward_q16_apply)( int        index
         
         // Set action for instant transitions
         self->action = cb;
+        self->action_fired = false;
         
         // Immediate hardware update for zero-time (instant) transitions
         // We already quantized above; just emit the quantized value
@@ -895,21 +1094,25 @@ static void __not_in_flash_func(S_toward_q16_apply)( int        index
         // save current output level as new starting point
         self->last_q16  = self->shaped_q16;
         self->scale_q16 = self->dest_q16 - self->last_q16;
-        q16_t overflow_q16 = 0;
-
-        // CRITICAL FIX: Check for pending callbacks from instant transitions
-        // If countdown is positive and small (e.g., 1.0 from ms=0 instant transition),
-        // treat it as overflow time so the new slope starts from the correct position
-        const int64_t threshold_100_q16 = ((int64_t)100 << Q16_SHIFT);   // 100.0 in Q16
-        const int64_t threshold_1023_q16 = ((int64_t)1023 << Q16_SHIFT); // 1023.0 in Q16
-
-        if( self->countdown_q16 > 0 && self->countdown_q16 < threshold_100_q16 ){
-            // Pending instant callback - use as overflow but DON'T clear action yet
-            // Action will be set below after we've handled the old callback
-            overflow_q16 = (q16_t)self->countdown_q16;
-        } else if( self->countdown_q16 < 0 && self->countdown_q16 > -threshold_1023_q16 ){
-            overflow_q16 = (q16_t)(-self->countdown_q16);
+        // Overflow: when this slope was started by the previous one's action
+        // (an ASL sequence), start it as far in as the time since the previous
+        // one ended: the fraction of a sample it overshot plus the wait for
+        // core 0 to run the action. Without this each segment ran ~1 sample
+        // long, and audio-rate ASL loops played flat (1kHz at ~907Hz).
+        // Samples rendered past the end but still buffered are discarded
+        // below, unplayed, so they don't count.
+        int64_t overflow_q16 = 0;
+        if( self->action_fired
+            && self->countdown_q16 < 0 && self->countdown_q16 > -SLOPE_OVERFLOW_LIMIT_Q16 ){
+            overflow_q16 = -self->countdown_q16;
+            if( get_core_num() == 1 ){  // with interrupts off: the ISR can't consume meanwhile
+                overflow_q16 -= (int64_t)slope_buffer_fill_level(index) << Q16_SHIFT;
+                slope_buffer_clear_channel(index);
+                slope_buffer_flush_request[index] = 0;
+            }
+            if( overflow_q16 < 0 ){ overflow_q16 = 0; }
         }
+        self->action_fired = false;
 
         // Convert ms to samples: ms * SAMPLES_PER_MS
         // If caller provided samples directly, use them to avoid wide multiply
@@ -929,13 +1132,17 @@ static void __not_in_flash_func(S_toward_q16_apply)( int        index
         // NOW it's safe to update the action pointer for the new slope
         self->action = cb;
 
-        if( overflow_q16 > 0 ){
-            slope_advance(self, (int64_t)overflow_q16);
-            if( self->countdown_q16 <= 0 ){ // guard against overflow hitting callback
-                // FIXME this should apply the destination & call self->action
-                self->countdown_q16 = (int64_t)(Q16_ONE >> 16); // force callback on next sample (0.00001)
-                self->here_q16 = Q16_ONE; // set to destination
-            }
+        if( overflow_q16 >= samples_q16 ){
+            // The whole slope elapsed while its start waited on core 0 (short
+            // audio-rate segments): go straight to the destination, and keep
+            // the rest of the overflow (negative countdown) for the next one.
+            // The action fires on the next sample.
+            self->elapsed_q16   = samples_q16;
+            self->here_q16      = Q16_ONE;
+            self->shaped_q16    = self->dest_q16;
+            self->countdown_q16 = samples_q16 - overflow_q16;
+        } else if( overflow_q16 > 0 ){
+            slope_advance(self, overflow_q16);
         }
     }
 }
@@ -1092,6 +1299,71 @@ void S_toward_samples_q16_coalescable( int        index
     }
 }
 
+void S_toward_seq_q16( int        index
+                     , q16_t      destination_q16
+                     , int64_t    samples_q16
+                     , Shape_t    shape
+                     , Callback_t cb
+                     , uint16_t   seq
+                     , bool       lookahead
+                     , bool       coalesce
+                     )
+{
+    if (!slopes) { return; }
+    slope_cmd_t cmd = { .index = (int8_t)index,
+                        .dest_q16 = destination_q16,
+                        .ms_q16 = 0,
+                        .shape = shape,
+                        .cb = cb,
+                        .coalesce = coalesce ? 1 : 0,
+                        .use_samples_q16 = 1,
+                        .duration_q16 = samples_q16,
+                        .kind = SLOPE_CMD_START,
+                        .lookahead = lookahead ? 1 : 0,
+                        .seq = seq };
+    if (get_core_num() == 1 || !slope_cmd_enqueue(&cmd)) {
+        uint32_t irq = save_and_disable_interrupts();
+        S_toward_q16_apply(index, destination_q16, 0, shape, cb, 1, samples_q16);
+        slopes[index].seq = seq;
+        slopes[index].lookahead = lookahead;
+        restore_interrupts(irq);
+    }
+}
+
+void S_queue_next_q16( int        index
+                     , bool       has_jump
+                     , q16_t      jump_q16
+                     , bool       has_slope
+                     , q16_t      destination_q16
+                     , int64_t    samples_q16
+                     , Shape_t    shape
+                     , uint16_t   seq
+                     , bool       lookahead
+                     , Callback_t started
+                     , Callback_t ended
+                     )
+{
+    if (!slopes || index < 0 || index >= SLOPE_CHANNELS) { return; }
+    slope_cmd_t cmd = { .index = (int8_t)index,
+                        .dest_q16 = destination_q16,
+                        .shape = shape,
+                        .cb = ended,
+                        .use_samples_q16 = 1,
+                        .duration_q16 = samples_q16,
+                        .kind = SLOPE_CMD_QUEUE_NEXT,
+                        .lookahead = (has_slope && lookahead) ? 1 : 0,
+                        .seq = seq,
+                        .has_jump = has_jump ? 1 : 0,
+                        .has_slope = has_slope ? 1 : 0,
+                        .jump_q16 = jump_q16,
+                        .started = started };
+    if (get_core_num() == 1 || !slope_cmd_enqueue(&cmd)) {
+        uint32_t irq = save_and_disable_interrupts();
+        slope_queue_next_apply(&cmd);
+        restore_interrupts(irq);
+    }
+}
+
 void S_toward_samples( int        index
                      , float      destination
                      , int32_t    samples
@@ -1183,7 +1455,7 @@ static float* breakpoint_v( Slope_t* self, float* out, int size )
             Callback_t act = self->action;
             self->action = NULL;
             self->shaped_q16 = self->dest_q16; // save real destination
-            (*act)(self->index);
+            (*act)(self->index, self->seq);
             // side-affects: self->{dest, shape, action, countdown, delta, (here)}
         }
         if( self->action != NULL ){ // instant callback

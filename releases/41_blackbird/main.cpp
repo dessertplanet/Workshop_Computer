@@ -215,25 +215,29 @@ static uint32_t g_noise_state = 0xDEADBEEF;
 #define SLOPE_ACTION_QUEUE_SIZE 64
 typedef struct {
     uint8_t channel;
+    uint16_t seq;
     Callback_t callback;
 } slope_action_entry_t;
 static volatile slope_action_entry_t g_slope_action_queue[SLOPE_ACTION_QUEUE_SIZE];
 static volatile uint32_t g_slope_action_write_idx = 0;
 static volatile uint32_t g_slope_action_read_idx = 0;
 static volatile uint32_t g_slope_action_drop_count = 0;
+static volatile uint32_t g_slope_action_count = 0;  // segment-end callbacks queued (wraps)
 static volatile uint32_t g_slope_action_null_callback_count = 0;
 
 // Queue slope action callback from Core 1 (called in ISR)
 // IMPORTANT: Callback pointer is captured here to avoid race with new S_toward calls
-extern "C" void __not_in_flash_func(queue_slope_action_callback)(int channel, Callback_t callback) {
+extern "C" void __not_in_flash_func(queue_slope_action_callback)(int channel, Callback_t callback, uint16_t seq) {
     if (callback == NULL) {
         g_slope_action_null_callback_count++;
         return;  // Don't queue NULL callbacks
     }
+    g_slope_action_count = g_slope_action_count + 1;
     
     uint32_t next_write = (g_slope_action_write_idx + 1) % SLOPE_ACTION_QUEUE_SIZE;
     if (next_write != g_slope_action_read_idx) {
         g_slope_action_queue[g_slope_action_write_idx].channel = (uint8_t)channel;
+        g_slope_action_queue[g_slope_action_write_idx].seq = seq;
         g_slope_action_queue[g_slope_action_write_idx].callback = callback;
         g_slope_action_write_idx = next_write;
     } else {
@@ -275,12 +279,13 @@ static void process_slope_action_callbacks() {
         // Read volatile struct members individually to avoid copy issues
         uint32_t read_idx = g_slope_action_read_idx;
         uint8_t channel = g_slope_action_queue[read_idx].channel;
+        uint16_t seq = g_slope_action_queue[read_idx].seq;
         Callback_t callback = g_slope_action_queue[read_idx].callback;
         g_slope_action_read_idx = (read_idx + 1) % SLOPE_ACTION_QUEUE_SIZE;
         
         // Execute the queued callback
         if (callback != NULL) {
-            callback((int)channel);
+            callback((int)channel, seq);
         }
     }
 }
@@ -294,13 +299,6 @@ static constexpr uint32_t kProcessSampleOverrunThresholdUs =
     static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~100us)
 static constexpr uint32_t kClockServiceRateHz = 1000;      // crow-compatible cadence
 static constexpr uint32_t kTimerServiceRateHz = 1500;      // ~1.5kHz target (crow-compatible cadence)
-static constexpr int kLuaGcStepSize = 2; // small incremental GC step, every kLuaGcStepIntervalUs
-// The idle-time GC step used to run on every main loop pass (~6.7kHz): each
-// step adds kLuaGcStepSize KB of GC debt, so the collector was kept running
-// even with nothing allocating, and a step could take ~1.4ms (measured as the
-// main loop's worst section). Lua's own allocation-driven GC does the real
-// work; this only keeps a cycle moving during idle time.
-static constexpr uint32_t kLuaGcStepIntervalUs = 5000;
 static constexpr uint32_t kMainLoopSoftBudgetUs = 8000; // soft budget per loop to reduce stalls
 static constexpr int kMaxLogMessagesPerLoop = 4; // cap logs per loop to avoid large spikes
 // ProcessSample (Core 1 audio thread) performance
@@ -1483,8 +1481,12 @@ public:
         // When memory is tight, failed allocations return NULL
         // (PICO_MALLOC_PANIC=0) and Lua does an emergency full GC and retries.
         // setstepmul = 260 (default 200) - do more work per GC step
-        lua_gc(L, LUA_GCSETPAUSE, 120);
-        lua_gc(L, LUA_GCSETSTEPMUL, 260);
+        // stepsize = 2^10 bytes (default 2^13): each incremental step does at
+        // least stepsize * stepmul of work, so with the default a step took
+        // ~1ms, every 5ms (the idle step) and in the middle of scripts. That
+        // stalled the main loop, which runs ASL segment changes, so audio-rate
+        // ASL clicked ~200 times a second. Same total work in smaller pieces.
+        lua_gc(L, LUA_GCINC, 120, 260, 10);
         
         // Override print function
         lua_register(L, "print", lua_print);
@@ -4249,12 +4251,10 @@ public:
             }
             
             LOOP_SECTION(13);
-            // Smooth Lua GC to avoid long pauses: a small step every kLuaGcStepIntervalUs
-            static uint32_t last_gc_step_us = 0;
-            if (lua_manager && lua_manager->L && (time_us_32() - last_gc_step_us) >= kLuaGcStepIntervalUs) {
-                last_gc_step_us = time_us_32();
-                lua_gc(lua_manager->L, LUA_GCSTEP, kLuaGcStepSize);
-            }
+            // No idle GC step here: Lua's own allocation-driven GC does the
+            // work. An idle step adds GC debt even when nothing allocates, so
+            // the collector cycled continuously, and each cycle's atomic phase
+            // stalled this loop ~1ms (audio-rate ASL clicked ~10x a second).
 
             LOOP_SECTION(14);
             // Update public view monitoring (~15fps), but skip if we've blown budget
@@ -4351,6 +4351,10 @@ public:
         }
         g_noise_active_mask = 0;
         clock_cancel_coro_all();
+        // Drop events the old script's detectors, metros and clocks queued
+        // before they stopped: the new script would get them before its
+        // init() (e.g. an input stream callback reading a table init() fills)
+        events_lockfree_clear();
     }
 
     // Run the uploaded script (^^e, ^^w) and call its init(). With
@@ -4810,7 +4814,7 @@ public:
 // output is mirrored into the log ring (log_head counts bytes ever written).
 
 #define BB_DBG_MAGIC       0x47444242u  // "BBDG"
-#define BB_DBG_VERSION     12u
+#define BB_DBG_VERSION     14u
 #define BB_DBG_SCRIPT_MAX  2048
 #define BB_DBG_OUT_MAX     1024
 #define BB_DBG_LOG_MAX     2048         // power of two
@@ -4868,7 +4872,9 @@ typedef struct {
     uint32_t core1_isr_max_cycles; // longest audio ISR, cycles
     uint32_t core1_idle_cycles;    // core 1 cycles idle in its background loop (wraps)
     uint32_t slope_underruns;      // output samples rendered in the ISR because a buffer ran dry
-    uint32_t reserved[3];         // room for more stats without moving the mailbox
+    uint32_t slope_actions;        // ASL segment-end callbacks core 1 queued for core 0 (wraps)
+    uint32_t cv_pwm_wraps;         // CV output PWM updates run (one per 10.4us PWM period if none missed; wraps)
+    uint32_t reserved[1];         // room for more stats without moving the mailbox
     // --- command mailbox ---
     uint32_t cmd_seq;              // host increments to submit
     uint32_t cmd;
@@ -5069,6 +5075,8 @@ static void bb_dbg_update_stats(lua_State* L) {
     bb_dbg.core1_isr_max_cycles = ComputerCard::profileIsrMaxCycles;
     bb_dbg.core1_idle_cycles = g_core1_idle_cycles;
     bb_dbg.slope_underruns = g_slope_inline_renders;
+    bb_dbg.slope_actions = g_slope_action_count;
+    bb_dbg.cv_pwm_wraps = ComputerCard::profilePwmWraps;
     for (int i = 0; i < BB_LOOP_SECTIONS; i++) bb_dbg.loop_section_max_us[i] = g_loop_section_max_us[i];
 
     static int32_t last_out_mv[4];
@@ -5372,9 +5380,6 @@ int LuaManager::lua_LL_set_volts(lua_State* L) {
     if (slew_seconds < 0.0f) {
         slew_seconds = 0.0f;
     }
-    if (slew_seconds > 32767.0f) {
-        slew_seconds = 32767.0f;  // Q16.16 seconds: ~9 hours; beyond that a cast would wrap
-    }
 
     const int idx = channel - 1;
 
@@ -5382,10 +5387,7 @@ int LuaManager::lua_LL_set_volts(lua_State* L) {
     casl_cleardynamics(idx);
 
     Shape_t shape = S_str_to_shape(shape_str);
-    casl_describe_to_literal_q16(idx,
-                                FLOAT_TO_Q16(volts),
-                                FLOAT_TO_Q16(slew_seconds),
-                                shape);
+    casl_describe_to_literal(idx, volts, slew_seconds, shape);
 
     // Match lua_casl_action noise-clearing behavior (LL_set_volts bypasses lua_casl_action).
     if (idx >= 0 && idx < 4 && g_noise_active[idx]) {

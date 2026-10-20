@@ -49,6 +49,7 @@ define gdb_flash
 		-ex "target extended-remote $(OPENOCD_HOST):$(OPENOCD_GDB_PORT)" \
 		-ex "monitor reset init" \
 		-ex "load" \
+		-ex "monitor reset init" \
 		-ex "monitor reset run" \
 		-ex "detach" \
 		$(1)
