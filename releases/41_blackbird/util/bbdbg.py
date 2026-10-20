@@ -136,8 +136,19 @@ class GdbTransport:
             # (gdb-attach event). Resume at once; harmless if already running.
             self.monitor("resume")
 
+    REPLY_TIMEOUT = 30.0
+
     def _read(self):
-        chunk = self.sock.recv(4096)
+        # OpenOCD occasionally stalls for several seconds: keep waiting (see
+        # TclTransport.monitor) rather than lose the reply and desync
+        deadline = time.monotonic() + self.REPLY_TIMEOUT
+        while True:
+            try:
+                chunk = self.sock.recv(4096)
+                break
+            except socket.timeout:
+                if time.monotonic() >= deadline:
+                    raise HarnessError(f"OpenOCD didn't answer within {self.REPLY_TIMEOUT:.0f}s")
         if not chunk:
             raise HarnessError("OpenOCD closed the GDB connection")
         self.buf += chunk

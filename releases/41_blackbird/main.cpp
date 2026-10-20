@@ -1472,21 +1472,22 @@ public:
         // (e.g. `local sin = math.sin`) bind to the fast versions.
         fastmath_lua_install(L, 1);
         
-        // GC tuning. setpause = 120: start a cycle once the heap is 20% over
-        // what the last one left live. crow uses 55, but any pause <= 100
-        // keeps the collector running all the time, and on RP2040 that cost
-        // most of the main loop: measured, the loop fell to ~700Hz idle, ~90Hz
-        // while outputs changed and 7Hz under allocation-heavy scripts, and
-        // compiling a one-line REPL command took ~4.7ms (0.45ms at 120).
+        // GC tuning (pause, stepmul, stepsize):
+        // pause = 110: start a cycle once the heap is 10% over what the last
+        // one left live. crow uses 55, but any pause <= 100 keeps the
+        // collector running all the time, and on RP2040 that cost most of the
+        // main loop: measured, the loop fell to ~700Hz idle, ~90Hz while
+        // outputs changed and 7Hz under allocation-heavy scripts, and
+        // compiling a one-line REPL command took ~4.7ms. 110 rather than 120:
+        // with no idle GC step (see MainControlLoop), peaks rose ~12KB under
+        // heavy allocation at 120 (cvdelay 122KB, vs 110KB at 110); 110 costs
+        // main loop time only while scripts allocate constantly.
         // When memory is tight, failed allocations return NULL
         // (PICO_MALLOC_PANIC=0) and Lua does an emergency full GC and retries.
-        // setstepmul = 260 (default 200) - do more work per GC step
-        // stepsize = 2^10 bytes (default 2^13): each incremental step does at
-        // least stepsize * stepmul of work, so with the default a step took
-        // ~1ms, every 5ms (the idle step) and in the middle of scripts. That
-        // stalled the main loop, which runs ASL segment changes, so audio-rate
-        // ASL clicked ~200 times a second. Same total work in smaller pieces.
-        lua_gc(L, LUA_GCINC, 120, 260, 10);
+        // stepmul = 260 (default 200): do more work per GC step.
+        // stepsize = 2^10 bytes (default 2^13): the same work in smaller
+        // incremental steps, for shorter pauses in the middle of scripts.
+        lua_gc(L, LUA_GCINC, 110, 260, 10);
         
         // Override print function
         lua_register(L, "print", lua_print);
