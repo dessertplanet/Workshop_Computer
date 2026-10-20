@@ -307,14 +307,12 @@ static constexpr int kMaxLogMessagesPerLoop = 4; // cap logs per loop to avoid l
 static volatile bool g_performance_warning = false;
 static volatile uint32_t g_worst_case_us = 0;
 static volatile uint32_t g_overrun_count = 0;
-// Suppress perf warnings during/after flash write/clear operations.
-// These flows prompt the user to reset, so the warning is noise.
+// Suppress perf warnings briefly around flash writes (^^w, ^^c): core 0 has
+// interrupts off while flash is erased and programmed.
 static volatile uint32_t g_suppress_perf_warnings_until_us = 0;
-// Keep all LEDs lit for a while after operations that ask the user to reset.
-static volatile uint32_t g_force_all_leds_on_until_us = 0;
-static volatile bool g_force_all_leds_armed = false;
-static constexpr uint32_t kResetIndicatorHoldUs = 30000000u; // 30s
-static constexpr uint32_t kResetIndicatorBlinkHalfPeriodUs = 1000000u; // 1s on, 1s off => 0.5 Hz
+static constexpr uint32_t kFlashWriteQuietUs = 2000000u; // 2s
+// All LEDs blink at 0.5 Hz after a crash, asking for a reset
+static constexpr uint32_t kResetIndicatorBlinkHalfPeriodUs = 1000000u; // 1s on, 1s off
 
 static inline bool u32_time_before(uint32_t a, uint32_t b) {
     return (int32_t)(a - b) < 0;
@@ -3600,27 +3598,6 @@ public:
     void IndicatorLedOn(uint32_t index, bool state) { this->LedOn(index, state); }
     void IndicatorLedOff(uint32_t index) { this->LedOff(index); }
     void UpdateOutputLeds() {
-        uint32_t now_us = time_us_32();
-        // Only blink all LEDs when explicitly armed (e.g. after flash operations).
-        // This avoids a confusing crash-like LED pattern if memory corruption ever
-        // clobbers the timestamp variable.
-        if (g_force_all_leds_armed && u32_time_before(now_us, g_force_all_leds_on_until_us)) {
-            bool on = ((now_us / kResetIndicatorBlinkHalfPeriodUs) & 1u) == 0u;
-            uint16_t level = on ? 4095 : 0;
-            LedBrightness(0, level);
-            LedBrightness(1, level);
-            LedBrightness(2, level);
-            LedBrightness(3, level);
-            LedOn(4, on);
-            LedOn(5, on);
-            return;
-        }
-
-        // Auto-disarm once the hold period has elapsed.
-        if (g_force_all_leds_armed && !u32_time_before(now_us, g_force_all_leds_on_until_us)) {
-            g_force_all_leds_armed = false;
-        }
-
         int32_t cv1_mv = g_output_state_mv[0];
         int32_t cv2_mv = g_output_state_mv[1];
         int32_t audio1_mv = g_output_state_mv[2];
@@ -4359,6 +4336,66 @@ public:
     }
     
     // Handle commands and send responses directly (single-core)
+    // Stop what the running script started (metros, input detectors, slopes,
+    // noise, clock coroutines) before another script runs
+    void stop_script_activity() {
+        Metro_stop_all();
+        for (int i = 0; i < 2; i++) {
+            Detect_none(Detect_ix_to_p(i));
+        }
+        for (int i = 0; i < 4; i++) {
+            S_toward(i, 0.0, 0.0, SHAPE_Linear, NULL);
+            g_noise_active[i] = false;
+            g_noise_gain[i] = 0;
+            g_noise_lock_counter[i] = 0;
+        }
+        g_noise_active_mask = 0;
+        clock_cancel_coro_all();
+    }
+
+    // Run the uploaded script (^^e, ^^w) and call its init(). With
+    // save_to_flash, a script that ran is also saved, so it runs at boot; one
+    // that failed to evaluate isn't, so it can't replace a working script.
+    void run_uploaded_script(bool save_to_flash) {
+        stop_script_activity();
+        if (!lua_manager->evaluate_safe(g_new_script)) {
+            tud_cdc_write_str(save_to_flash ? "\\script evaluation failed, not saved to flash\n\r"
+                                            : "\\script evaluation failed\n\r");
+            return;
+        }
+        lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
+
+        if (save_to_flash) {
+            g_suppress_perf_warnings_until_us = time_us_32() + kFlashWriteQuietUs;
+            g_performance_warning = false;
+            if (FlashStorage::write_user_script_with_name(g_new_script, g_new_script_len, g_new_script_name)) {
+                char msg[96];
+                snprintf(msg, sizeof(msg), "User script saved to flash%s%s\n\r",
+                         g_new_script_name[0] ? ": " : "", g_new_script_name);
+                tud_cdc_write_str(msg);
+            } else {
+                tud_cdc_write_str("flash write failed\n\r");
+            }
+        }
+
+        // Real crow does NOT call crow.reset() before init() on script upload
+        lua_manager->evaluate_safe("if init then init() end");
+        tud_cdc_write_str("^^ready()\n\r"); // Inform host that script is running
+    }
+
+    // Load First.lua (the default script) from compiled bytecode and run it
+    void load_first_lua() {
+        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+        if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK 
+            || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
+            tud_cdc_write_str(" Failed to load First.lua\n\r");
+        } else {
+            tud_cdc_write_str(" Loaded: First.lua (default)\n\r");
+            // Call init() like real crow does (no crow.reset() before init on startup)
+            lua_manager->evaluate_safe("if init then init() end");
+        }
+    }
+
     void handle_command_with_response(C_cmd_t cmd)
     {
         switch (cmd) {
@@ -4483,55 +4520,7 @@ public:
                 if (g_repl_mode == REPL_discard) {
                     tud_cdc_write_str("upload failed, returning to normal mode\n\r");
                 } else if (g_new_script_len > 0 && lua_manager) {
-                    // Perform aggressive reset before loading new script (matches ^^k behavior)
-                    // This ensures a clean slate with no lingering state from previous script
-                    
-                    // 1. Stop all metros
-                    Metro_stop_all();
-                    
-                    // 2. Clear input detectors
-                    for (int i = 0; i < 2; i++) {
-                        Detect_none(Detect_ix_to_p(i));
-                    }
-                    
-                    // 3. Stop all output slopes
-                    for (int i = 0; i < 4; i++) {
-                        S_toward(i, 0.0, 0.0, SHAPE_Linear, NULL);
-                    }
-                    
-                    // 3b. Stop all noise modes
-                    for (int i = 0; i < 4; i++) {
-                        g_noise_active[i] = false;
-                        g_noise_gain[i] = 0;
-                        g_noise_lock_counter[i] = 0;
-                    }
-                    g_noise_active_mask = 0;  // Clear all bits in mask
-                    
-                    // 4. Cancel all clock coroutines
-                    // 3b. Stop all noise modes
-                    for (int i = 0; i < 4; i++) {
-                        g_noise_active[i] = false;
-                        g_noise_gain[i] = 0;
-                        g_noise_lock_counter[i] = 0;
-                    }
-                    g_noise_active_mask = 0;  // Clear all bits in mask
-                    
-                    // 4. Cancel all clock coroutines
-                    clock_cancel_coro_all();
-                    
-                    // Run script in RAM (temporary) - matches crow's REPL_upload(0)
-                    if (lua_manager->evaluate_safe(g_new_script)) {
-                        // Garbage collect for cleanup
-                        lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
-                        
-                        // Script loaded successfully - now call init() to start it (like Lua_crowbegin)
-                        // Real crow does NOT call crow.reset() before init() on script upload
-                        lua_manager->evaluate_safe("if init then init() end");
-                        tud_cdc_write_str("^^ready()\n\r"); // Inform host that script is running
-                        // Silent success - script is now running
-                    } else {
-                        tud_cdc_write_str("\\script evaluation failed\n\r");
-                    }
+                    run_uploaded_script(false);
                 } else {
                     tud_cdc_write_str("\\no script data received\n\r");
                 }
@@ -4540,50 +4529,14 @@ public:
                 break;
                 
             case C_flashupload: {
-                // Suppress perf warnings caused by upload/flash write stalls.
-                // Druid flow instructs user to reset after completion.
-                g_suppress_perf_warnings_until_us = time_us_32() + kResetIndicatorHoldUs;
-                g_performance_warning = false;
-
                 if (g_repl_mode == REPL_discard) {
                     tud_cdc_write_str("upload failed, discard mode\n\r");
-                    
                 } else if (g_new_script_len > 0 && lua_manager) {
-                    // Try to extract script name from first comment line
+                    // Like crow's ^^w: run the script, and save it to flash
+                    // only if it ran. No reset needed: core 1 runs from RAM
+                    // and keeps going through the flash write.
                     extract_script_name(g_new_script, g_new_script_len);
-                    
-                    // Run script AND save to flash - matches crow's REPL_upload(1)
-                    // Tell user to prepare for manual reset BEFORE we write to flash
-                    
-                    tud_cdc_write_str("\n\r");
-                    tud_cdc_write_str("========================================\n\r");
-                    
-                    if (g_new_script_name[0]) {
-                        char msg[64];
-                        snprintf(msg, sizeof(msg), "Writing %s to flash...\n\r", g_new_script_name);
-                        tud_cdc_write_str(msg);
-                    } else {
-                        tud_cdc_write_str("Writing script to flash...\n\r");
-                    }
-                    
-                    
-                    // Write to flash (core1 audio keeps running; it executes from RAM)
-                    if (FlashStorage::write_user_script_with_name(g_new_script, g_new_script_len, g_new_script_name)) {
-                        tud_cdc_write_str("User script saved to flash!\n\r");
-                        tud_cdc_write_str("\n\r");
-                        tud_cdc_write_str("Press the RESET button (next to card slot)\n\r");
-                        tud_cdc_write_str("on your Workshop Computer to load your script.\n\r");
-                        tud_cdc_write_str("========================================\n\r");
-                        tud_cdc_write_str("\n\r");
-
-                        // Light up all LEDs (and keep them lit) to indicate upload complete
-                        g_force_all_leds_on_until_us = time_us_32() + kResetIndicatorHoldUs;
-                        g_force_all_leds_armed = true;
-                        UpdateOutputLeds();
-                    } else {
-                        tud_cdc_write_str("flash write failed\n\r");
-                        
-                    }
+                    run_uploaded_script(true);
                 } else {
                     char debug_buf[128];
                     snprintf(debug_buf, sizeof(debug_buf), "no script data (len=%lu, lua_manager=%p)\n\r", 
@@ -4596,62 +4549,22 @@ public:
             }
                 
             case C_flashclear:
-                // Suppress perf warnings caused by flash erase/program stalls.
-                // Clear flow instructs user to reset after completion.
-                g_suppress_perf_warnings_until_us = time_us_32() + kResetIndicatorHoldUs;
+                g_suppress_perf_warnings_until_us = time_us_32() + kFlashWriteQuietUs;
                 g_performance_warning = false;
-
-                // Output status BEFORE flash operation (which disables interrupts)
-                
-                tud_cdc_write_str("\n\r");
-                tud_cdc_write_str("========================================\n\r");
-                tud_cdc_write_str("Clearing user script...\n\r");
-                
-                // Write to flash (this will disable interrupts briefly)
                 if (FlashStorage::set_default_script_mode()) {
-                    
                     tud_cdc_write_str("User script cleared!\n\r");
-                    
-                    
-                    // Reset Lua environment immediately (matches real crow behavior)
-                    // This will call crow.reset() which calls public.clear()
-                    // which sends ^^pub("_clear")
+                    // Back to the default script now, as after a reset
                     if (lua_manager) {
-                        // Call crow.reset() to clear state and trigger public.clear()
-                        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
-                        
-                        // Call init() if it exists (but there's no user script now)
-                        lua_manager->evaluate_safe("if init then init() end");
+                        stop_script_activity();
+                        load_first_lua();
                     }
-                    
-                    tud_cdc_write_str("========================================\n\r");
-                    tud_cdc_write_str("Press the RESET button (next to card slot)\n\r");
-                    tud_cdc_write_str("on your Workshop Computer to finalize.\n\r");
-                    tud_cdc_write_str("\n\r");
-
-                    // Light up all LEDs (and keep them lit) to indicate operation complete
-                    g_force_all_leds_on_until_us = time_us_32() + kResetIndicatorHoldUs;
-                    g_force_all_leds_armed = true;
-                    UpdateOutputLeds();
-
                 } else {
                     tud_cdc_write_str("flash write failed\n\r");
-                    
                 }
                 break;
                 
             case C_loadFirst:
-                // Load First.lua from compiled bytecode
-                lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
-                
-                if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK 
-                    || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
-                    tud_cdc_write_str(" Failed to load First.lua\n\r");
-                } else {
-                    tud_cdc_write_str(" Loaded: First.lua (default)\n\r");
-                    // Call init() like real crow does (no crow.reset() before init on startup)
-                    lua_manager->evaluate_safe("if init then init() end");
-                }
+                load_first_lua();
                 break;
                 
             default:
@@ -5458,6 +5371,9 @@ int LuaManager::lua_LL_set_volts(lua_State* L) {
     }
     if (slew_seconds < 0.0f) {
         slew_seconds = 0.0f;
+    }
+    if (slew_seconds > 32767.0f) {
+        slew_seconds = 32767.0f;  // Q16.16 seconds: ~9 hours; beyond that a cast would wrap
     }
 
     const int idx = channel - 1;

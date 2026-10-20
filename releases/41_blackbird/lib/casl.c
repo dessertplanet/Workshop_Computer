@@ -3,6 +3,16 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h> // floorf
+#include "sample_rate.h"
+
+// Lua numbers to Q16.16, saturating: Q16.16 holds +/-32768, and a plain cast
+// of anything bigger wraps (a 10 hour slope time would come out negative)
+static q16_t float_to_q16_sat( float f )
+{
+    if( f >= 32767.0f ){ return 32767 << Q16_SHIFT; }
+    if( f <= -32768.0f ){ return INT32_MIN; }
+    return FLOAT_TO_Q16(f);
+}
 
 // TODO
 // add sequins data type
@@ -269,7 +279,7 @@ static void capture_elem( Casl* self, Elem* e, lua_State* L, int ix )
     switch( ix_type(L, ix) ){ // type of table elem
         case LUA_TNUMBER:{
             float f = ix_num(L, ix);
-            e->obj.q = FLOAT_TO_Q16(f);  // Convert float to Q16 at Lua boundary
+            e->obj.q = float_to_q16_sat(f);  // Convert float to Q16 at Lua boundary
             e->type = ElemT_Fixed;
             break;}
 
@@ -404,8 +414,10 @@ static void next_action( int index )
                 case ToLiteral:{
                     q16_t volts_q16 = resolve(self, &t->a).q;     // Q16.16 volts
                     q16_t seconds_q16 = resolve(self, &t->b).q;   // Q16.16 seconds
-                    // Convert seconds to milliseconds: seconds * 1000
-                    q16_t ms_q16 = Q16_MUL(seconds_q16, FLOAT_TO_Q16(1000.0));
+                    // Seconds to samples, in 64 bits: as Q16.16 milliseconds
+                    // (the old path) anything over 32.8s overflowed, and long
+                    // slopes jumped or ran far too fast
+                    int64_t samples_q16 = (int64_t)seconds_q16 * PROCESS_SAMPLE_RATE_HZ_INT;
 
                     // Coalesce only the simplest possible ASL: a single-stage `to(...)`.
                     // This is what `output[n].volts = x` generates, and it is safe to treat
@@ -416,21 +428,21 @@ static void next_action( int index )
                     }
                     
                     if (coalescable) {
-                        S_toward_q16_coalescable( index
-                                                , volts_q16
-                                                , ms_q16
-                                                , resolve(self, &t->c).shape
-                                                , (ms_q16 > 0) ? &next_action : NULL
-                                                );
+                        S_toward_samples_q16_coalescable( index
+                                                        , volts_q16
+                                                        , samples_q16
+                                                        , resolve(self, &t->c).shape
+                                                        , (samples_q16 > 0) ? &next_action : NULL
+                                                        );
                     } else {
-                        S_toward_q16( index
-                                    , volts_q16
-                                    , ms_q16
-                                    , resolve(self, &t->c).shape
-                                    , (ms_q16 > 0) ? &next_action : NULL
-                                    );
+                        S_toward_samples_q16( index
+                                            , volts_q16
+                                            , samples_q16
+                                            , resolve(self, &t->c).shape
+                                            , (samples_q16 > 0) ? &next_action : NULL
+                                            );
                     }
-                    if(ms_q16 > 0){ return; } // wait for DSP callback before proceeding
+                    if(samples_q16 > 0){ return; } // wait for DSP callback before proceeding
                     break;}
 
                 case ToIf:{
@@ -563,7 +575,7 @@ void casl_setdynamic( int index, int dynamic_ix, float val )
     if(index < 0 || index >= SELVES_COUNT){ return; }
     Casl* self = _selves[index];
 
-    self->dynamics[dynamic_ix].obj.q = FLOAT_TO_Q16(val);  // Convert float to Q16
+    self->dynamics[dynamic_ix].obj.q = float_to_q16_sat(val);  // Convert float to Q16
     self->dynamics[dynamic_ix].type  = ElemT_Fixed;
 }
 

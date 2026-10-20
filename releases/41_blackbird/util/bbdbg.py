@@ -203,10 +203,21 @@ class TclTransport:
         self.sock = connect(host, port, timeout)
         self.buf = b""
 
+    REPLY_TIMEOUT = 30.0
+
     def monitor(self, cmd):
         self.sock.sendall(cmd.encode() + b"\x1a")
+        # OpenOCD occasionally stalls for several seconds (its SWD adapter is
+        # shared over USB). Keep waiting rather than give up: a reply arriving
+        # after we'd given up would be read as the answer to the next command.
+        deadline = time.monotonic() + self.REPLY_TIMEOUT
         while b"\x1a" not in self.buf:
-            chunk = self.sock.recv(4096)
+            try:
+                chunk = self.sock.recv(4096)
+            except socket.timeout:
+                if time.monotonic() < deadline:
+                    continue
+                raise HarnessError(f"OpenOCD didn't answer {cmd[:40]!r} within {self.REPLY_TIMEOUT:.0f}s")
             if not chunk:
                 raise HarnessError("OpenOCD closed the Tcl connection")
             self.buf += chunk

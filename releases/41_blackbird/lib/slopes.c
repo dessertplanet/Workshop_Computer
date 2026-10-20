@@ -859,8 +859,8 @@ static void __not_in_flash_func(S_toward_q16_apply)( int        index
     
     slope_buffer_flush_request[index] = 1; // ensure buffered samples are discarded on Core 1
 
-    // direct update & callback if ms = 0 (ie instant)
-    if( ms_q16 <= 0 ){
+    // direct update & callback if the duration is 0 (ie instant)
+    if( use_samples_q16 ? (duration_q16_override <= 0) : (ms_q16 <= 0) ){
         // Immediate transition: quantize once and store quantized state
         // so subsequent reads (LL_get_state) and future slopes start from
         // the quantized voltage.
