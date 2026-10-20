@@ -21,6 +21,9 @@ int l_crowlib_crow_reset( lua_State* L );
 void l_crowlib_install_user_tracer( lua_State* L );
 void l_crowlib_clear_user_globals( lua_State* L );
 
+// Install ii.self's default actions (volts, slew, ...), if ii is loaded
+void l_crowlib_ii_follow_defaults( lua_State* L );
+
 int l_crowlib_justvolts(lua_State *L);
 int l_crowlib_just12(lua_State *L);
 int l_crowlib_hztovolts(lua_State *L);

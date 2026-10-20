@@ -78,8 +78,11 @@ def test_input_change_detection(bb):
         input[1].mode('change', 1.0, 0.1, 'both')
         input[1].change = function(s) change_n = change_n + 1 end
     """)
+    t0 = bb.query("bb_dbg_us()")
     bb.square("cv1", 10, low=0, high=3)
     bb.wait(1.0)
     bb.release_input("cv1")
+    secs = (bb.query("bb_dbg_us()") - t0) / 1e6  # the card's time: the host's wait can run long
     n = bb.query("change_n")
-    assert 18 <= n <= 22, n  # 10Hz square, both edges
+    expected = 2 * 10 * secs  # 10Hz square, both edges
+    assert abs(n - expected) <= 3, f"{n} changes in {secs:.2f}s, expected ~{expected:.0f}"

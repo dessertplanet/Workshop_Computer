@@ -52,6 +52,18 @@ def test_ii_survives_kill(bb):
     assert bb.query("type(rawget(_G, 'ii'))") == "table"
 
 
+def test_ii_kill_clears_script_handlers(bb):
+    # Regression: ii stays loaded across scripts (crow rebuilds Lua instead), so
+    # a script's ii.<device>.event handler outlived it, and the next reply
+    # called into the script's cleared globals (a runtime error per reply)
+    bb.eval("ii.crow.event = function(e, v) replies = replies + 1 end; ii.jf.my_field = 1")
+    bb.kill_lua()
+    assert bb.query("rawget(ii.crow, 'event') == nil")
+    assert bb.query("rawget(ii.jf, 'my_field') == nil")
+    assert bb.query("rawget(ii.crow, '_name')") == "crow"
+    assert bb.query("type(ii.crow.event)") == "function"  # back to the default (tells the host)
+
+
 def test_ii_to_nobody_is_dropped_quickly(bb):
     # Regression: the handover to the UART pads looked to I2C0 like another
     # leader starting a transaction, and every message timed out (5ms, then a
@@ -168,10 +180,10 @@ def test_ii_crow_soak(bb):
     # every reply in range. A weak ground shows up here as errors.
     need_crow(bb)
     bb.eval("""
-        replies, bad = 0, 0
+        replies, bad = 0, {}
         ii.crow.event = function(e, value)
             replies = replies + 1
-            if math.abs(value - expect) > 0.3 then bad = bad + 1 end
+            if math.abs(value - expect) > 0.3 then bad[#bad + 1] = value end
         end
         output[1].volts = 1.5; expect = 1.5
     """)
@@ -185,4 +197,6 @@ def test_ii_crow_soak(bb):
     got = {k: after[k] - before[k] for k in RESULTS if after[k] != before[k]}
     assert got == {"done": 1600}, got
     assert bb.query("replies") == 800, bb.query("replies")
-    assert bb.query("bad") == 0, bb.query("bad")
+    # (a corrupted byte shows as a jump in steps of 1/II_TT_VOLT*256 = 0.156V)
+    bad = bb.query("table.concat(bad, ' ')")
+    assert bad == "", f"replies off from 1.5V: {bad}"

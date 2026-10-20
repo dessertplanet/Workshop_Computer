@@ -19,17 +19,9 @@ header = [[
 
 ]]
 
+-- blackbird: ii_Type_t lives in lib/ii_codec.h (the generic value encoding)
 types_and_commands = [[
-typedef enum{ ii_void
-            , ii_u8
-            , ii_s8
-            , ii_u16
-            , ii_s16
-            , ii_s16V
-            , ii_s16ms
-            , ii_float   // 32bit (for crow to crow comm'n)
-            , ii_s32T
-} ii_Type_t;
+#include "../lib/ii_codec.h"
 
 typedef struct{
     uint8_t cmd;

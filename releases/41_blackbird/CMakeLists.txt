@@ -53,7 +53,8 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/detect.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/caw.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/ii.c
-        ${CMAKE_CURRENT_LIST_DIR}/lib/ii_i2c.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/ii_bus.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/ii_codec.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/metro.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/clock.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/clock_ll.c

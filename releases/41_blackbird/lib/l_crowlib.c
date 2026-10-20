@@ -507,8 +507,39 @@ lua_gettable(L, 1); // replace @2 with: input[n]
             lua_getfield(L, 1, "self"); // @3
             lua_call(L, 1, 0);
         }
+        lua_settop(L, 1);
+        // ii stays loaded across scripts (crow rebuilds Lua instead), so clear
+        // what the script put in the device tables (ii.jf.event = ...): its
+        // handlers would outlive it, calling into its cleared globals. Each
+        // table's own field is only _name; the rest comes from its metatable.
+        lua_pushnil(L);
+        while(lua_next(L, 1) != 0){ // @2 key, @3 value
+            if(lua_istable(L, 3)){
+                lua_pushliteral(L, "_name");
+                lua_rawget(L, 3);
+                bool is_module = lua_isstring(L, -1);
+                lua_pop(L, 1);
+                if(is_module){
+                    lua_pushnil(L);
+                    while(lua_next(L, 3) != 0){ // @4 key, @5 value
+                        lua_pop(L, 1);
+                        bool keep = lua_type(L, 4) == LUA_TSTRING
+                                 && strcmp(lua_tostring(L, 4), "_name") == 0;
+                        if(!keep){
+                            lua_pushvalue(L, 4);
+                            lua_pushnil(L);
+                            lua_rawset(L, 3); // module[key] = nil (existing key: allowed mid-traversal)
+                        }
+                    }
+                }
+            }
+            lua_settop(L, 2); // keep the key for lua_next
+        }
     }
     lua_settop(L, 0);
+
+    // ii.self defaults (only if ii has been loaded)
+    l_crowlib_ii_follow_defaults(L);
 
     // ii_follow_reset() -- resets forwarding to output libs (only if exists)
     lua_getglobal(L, "ii_follow_reset");
@@ -833,7 +864,23 @@ static int _ii_self_lfo( lua_State* L ){
 	return 0;
 }
 
+// ii.self's default actions (crow's: volts, slew, ... act on the outputs).
+// Only if ii is loaded (it loads on first use, and installs these then).
+void l_crowlib_ii_follow_defaults( lua_State* L ){
+	int top = lua_gettop(L);
+	lua_pushglobaltable(L);
+	lua_pushliteral(L, "ii");
+	lua_rawget(L, -2);
+	if( lua_istable(L, -1) ){
+		lua_settop(L, top);
+		lua_pushcfunction(L, _ii_follow_reset);
+		lua_call(L, 0, 0);
+	}
+	lua_settop(L, top);
+}
+
 static int _ii_follow_reset( lua_State* L ){
+	lua_settop(L, 0);
 	lua_getglobal(L, "ii"); // @1
 	lua_getfield(L, 1, "self"); // @2
 

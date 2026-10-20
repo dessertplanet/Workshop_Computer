@@ -1,10 +1,10 @@
 #pragma once
 
-// ii (I2C) leader, ported from crow's lib/ii.c: a queue of messages for ii
-// devices, encoded from the device descriptors (lib/ii/*.lua, generated into
-// ii_c_layer.h), sent by the non-blocking driver in ii_i2c.c. Replies to
-// queries go to Lua's ii_LeadRx_handler (ii.lua). Core 0 only.
-// Leader only for now: blackbird doesn't answer as an ii follower yet.
+// ii (I2C) as crow does it, ported from crow's lib/ii.c. Leader: a queue of
+// messages for ii devices, encoded from the device descriptors (lib/ii/*.lua,
+// generated into ii_c_layer.h), sent by ii_bus.c; replies go to Lua's
+// ii_LeadRx_handler (ii.lua). Core 0 only.
+// Follower: answers as crow at one of crow's addresses (ii.self).
 
 #include <stdint.h>
 
@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-// crow's follower addresses (kept for ii.address, unused until follower mode)
+// crow's follower addresses: ii.address picks one (4 by default)
 typedef enum{ II_CROW  = 0x01
             , II_CROW2 = 0x02
             , II_CROW3 = 0x03
@@ -40,6 +40,10 @@ uint8_t ii_leader_enqueue_bytes(uint8_t address, uint8_t* data, uint8_t tx_len, 
 // Advance the bus: start queued messages, finish ones in flight. Call from the
 // main loop (outside Lua: replies are passed straight to Lua).
 void ii_leader_process(void);
+
+// Follower: hand messages a leader wrote to us to Lua (ii.self), and answer
+// getters Lua must answer. Main loop, outside Lua, as ii_leader_process.
+void ii_follower_process(void);
 
 #ifdef __cplusplus
 }

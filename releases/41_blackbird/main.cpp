@@ -437,6 +437,14 @@ static int32_t get_output_state_simple(int channel) {
     return 0;
 }
 
+// For ii follower getters (lib/ii.c), from the I2C interrupt: cached values only
+extern "C" float bb_ii_input_volts(int index) {
+    return (index >= 0 && index < 2) ? get_input_state_simple(index) : 0.0f;
+}
+extern "C" float bb_ii_output_volts(int index) {
+    return (float)get_output_state_simple(index) * 0.001f;
+}
+
 // Forward declarations
 static void public_update();
 
@@ -1821,6 +1829,10 @@ public:
                     lua_pushvalue(L, 2);
                     lua_pushvalue(L, 3);
                     lua_rawset(L, 1);        // _G[key] = lib, bypassing the _user tracer
+                    if (strcmp(key, "ii") == 0) {
+                        l_crowlib_ii_follow_defaults(L);  // ii.self.volts etc.
+                        lua_settop(L, 3);
+                    }
                     return 1;                // lib
                 }
             }
@@ -4249,6 +4261,7 @@ public:
             // ii: start queued messages, finish ones in flight (never waits on
             // the bus). Replies go straight to Lua, so this is outside Lua.
             ii_leader_process();
+            ii_follower_process();
 
             // No idle GC step here: Lua's own allocation-driven GC does the
             // work. An idle step adds GC debt even when nothing allocates, so

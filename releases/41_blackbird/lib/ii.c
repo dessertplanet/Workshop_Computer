@@ -1,5 +1,6 @@
-// ii leader, ported from crow (monome/crow lib/ii.c, GPL-3.0). The follower
-// side (crow answering as ii.self) isn't here yet.
+// ii as crow does it, ported from crow (monome/crow lib/ii.c, GPL-3.0):
+// leader (ii.jf.*, ii.raw, ...) and follower (answering at one of crow's
+// addresses, as ii.self). The bus itself is ii_bus.c, values ii_codec.c.
 
 #include "ii.h"
 
@@ -8,16 +9,15 @@
 #include <string.h>
 
 #include "ii_c_layer.h"  // generated from lib/ii/*.lua (CMakeLists.txt)
-#include "ii_i2c.h"
+#include "ii_codec.h"
+#include "ii_bus.h"
 #include "caw.h"         // Caw_printf
+#include "hardware/sync.h"
 #include "../lua/src/lua.h"
 
 #define II_MAX_BROADCAST_LEN 9 // cmd byte + 4*s16 args
 #define II_MAX_RECEIVE_LEN 10
 #define II_QUEUE_LENGTH 16
-#define II_GET 128  // cmd >= are getter requests
-#define II_TT_VOLT  ((float)1638.3)
-#define II_TT_iVOLT ((float)1.0/II_TT_VOLT)
 
 typedef struct{
     uint8_t address;
@@ -28,10 +28,8 @@ typedef struct{
     bool is_raw;
 } ii_q_t;
 
-static uint8_t type_size( ii_Type_t t );
-static float decode( uint8_t* data, ii_Type_t type );
-static uint8_t encode( uint8_t* dest, ii_Type_t type, float data );
 static uint8_t encode_packet( uint8_t* dest, const ii_Cmd_t* c, uint8_t cmd, float* data );
+static int follow_request( const uint8_t* msg, uint8_t len, uint8_t* reply );
 
 // Leader queue (ring buffer). In flight: the message at the head, until the
 // driver reports how it went.
@@ -39,22 +37,24 @@ static ii_q_t   l_iq[II_QUEUE_LENGTH];
 static uint8_t  l_head = 0, l_count = 0;
 static bool     in_flight = false;
 static bool     retrying = false;
-static uint8_t  follower_index = 1; // ii.address (follower mode, later)
+// ii.address: 1-4, crow's addresses 0x01-0x04. 4 by default: a real crow
+// (1) can share the bus, and Teletype reaches us with CROW.SEL 4
+static uint8_t  follower_index = 4;
 
-// How each transaction ended, by ii_i2c_status_t (for tests and diagnosis)
+// How each transaction ended, by ii_bus_status_t (for tests and diagnosis)
 volatile uint32_t g_ii_results[6];
 
-static float lim_f( float v, float lo, float hi ){
-    return v < lo ? lo : (v > hi ? hi : v);
-}
 
 ////////////////////////
 // setup
 
 void ii_init( void ){
-    ii_i2c_init();
+    // the UART pads, where ComputerCard put I2C0 (COMPUTERCARD_II_ON_UART_PINS)
+    const ii_bus_config_t bus = { .i2c = i2c0, .sda_pin = 0, .scl_pin = 1 };
+    ii_bus_init(&bus);
     l_head = l_count = 0;
     in_flight = retrying = false;
+    ii_bus_follow( follower_index, follow_request );
 }
 const char* ii_list_modules( void ){
     return ii_module_list;
@@ -63,16 +63,17 @@ const char* ii_list_cmds( uint8_t address ){
     return ii_list_commands(address);
 }
 void ii_set_pullups( uint8_t state ){
-    ii_i2c_set_pullups(state != 0); // the RP2040's weak internal pull-ups only
+    ii_bus_set_pullups(state != 0); // the RP2040's weak internal pull-ups only
 }
 void ii_set_fastmode( uint8_t state ){
-    ii_i2c_set_fast(state != 0);
+    ii_bus_set_fast(state != 0);
 }
 uint8_t ii_get_address( void ){
     return follower_index;
 }
 void ii_set_address( uint8_t index ){
-    follower_index = (index >= 1 && index <= 4) ? index : 1;
+    follower_index = (index >= 1 && index <= 4) ? index : 4;
+    ii_bus_follow( follower_index, follow_request );
 }
 
 
@@ -104,7 +105,7 @@ uint8_t ii_leader_enqueue( uint8_t address
 
     q->is_raw = false;
     q->address = address;
-    q->query_length = type_size( c->return_type );
+    q->query_length = ii_type_size( c->return_type );
     q->arg = data[0]; // save a copy of the first argument
     q->length = encode_packet( q->data, c, cmd, data );
     ii_pickle( &q->address, q->data, &q->length );
@@ -122,7 +123,7 @@ uint8_t ii_leader_enqueue_bytes( uint8_t  address
 
     if( tx_len > II_MAX_BROADCAST_LEN ){ tx_len = II_MAX_BROADCAST_LEN; }
     if( rx_len > II_MAX_RECEIVE_LEN ){ rx_len = II_MAX_RECEIVE_LEN; }
-    if( tx_len + rx_len > II_I2C_MAX_BYTES ){ rx_len = II_I2C_MAX_BYTES - tx_len; }
+    if( tx_len + rx_len > II_BUS_MAX_BYTES ){ rx_len = II_BUS_MAX_BYTES - tx_len; }
 
     q->is_raw = true;
     q->address = address;
@@ -144,7 +145,7 @@ static void lead_callback( ii_q_t* q, uint8_t* rx_data )
     if( cmd != NULL ){
         return_type = cmd->return_type;
     }
-    float value = decode( rx_data, return_type );
+    float value = ii_decode( rx_data, return_type );
 
     extern lua_State* get_lua_state(void);
     lua_State* L = get_lua_state();
@@ -163,21 +164,21 @@ static void lead_callback( ii_q_t* q, uint8_t* rx_data )
 
 void ii_leader_process( void )
 {
-    uint8_t rx[II_I2C_MAX_BYTES];
+    uint8_t rx[II_BUS_MAX_BYTES];
 
     if( in_flight ){
-        ii_i2c_status_t s = ii_i2c_poll(rx);
-        if( s == II_I2C_BUSY ){ return; }
+        ii_bus_status_t s = ii_bus_poll(rx);
+        if( s == II_BUS_BUSY ){ return; }
         in_flight = false;
         if( (unsigned)s < 6 ){ g_ii_results[s] = g_ii_results[s] + 1; }
         ii_q_t* q = &l_iq[l_head];
         switch( s ){
-            case II_I2C_DONE:
+            case II_BUS_DONE:
                 retrying = false;
                 if( q->query_length ){ lead_callback( q, rx ); }
                 queue_pop();
                 break;
-            case II_I2C_NAK: // nobody at that address: drop it quietly, as crow does
+            case II_BUS_NAK: // nobody at that address: drop it quietly, as crow does
                 retrying = false;
                 queue_pop();
                 break;
@@ -185,7 +186,7 @@ void ii_leader_process( void )
                 if( retrying ){
                     retrying = false;
                     queue_pop();
-                    Caw_printf( (s == II_I2C_TIMEOUT)
+                    Caw_printf( (s == II_BUS_TIMEOUT)
                         ? "ii: bus stuck or lines low. check ii devices and connections."
                         : "ii: bus error." );
                 } else {
@@ -196,146 +197,14 @@ void ii_leader_process( void )
         return; // start the next one on the next pass
     }
 
-    if( l_count == 0 || !ii_i2c_idle() ){ return; }
+    if( l_count == 0 || !ii_bus_idle() ){ return; }
     ii_q_t* q = &l_iq[l_head];
-    if( ii_i2c_start( q->address, q->data, q->length, q->query_length ) ){
+    if( ii_bus_start( q->address, q->data, q->length, q->query_length ) ){
         in_flight = true;
     }
 }
 
 
-/////////////////////////////////////
-// ii Type Encode/Decode (as crow)
-
-static uint8_t type_size( ii_Type_t t )
-{
-    switch(t){ case ii_void:  return 0;
-               case ii_u8:    return 1;
-               case ii_s8:    return 1;
-               case ii_u16:   return 2;
-               case ii_s16:   return 2;
-               case ii_s16V:  return 2;
-               case ii_s16ms: return 2;
-               case ii_float: return 4;
-               case ii_s32T:  return 4;
-               default:       return 0;
-    }
-    return 0;
-}
-
-static float decode( uint8_t* data, ii_Type_t type )
-{
-    float val = 0; // return value default to zero
-    uint16_t u16 = 0;
-    int16_t s16;
-    switch( type ){
-        case ii_u8:
-            val = (float)(*data++);
-            break;
-        case ii_s8:
-            val = (float)(*(int8_t*)data++);
-            break;
-        case ii_u16:
-            u16  = ((uint16_t)*data++)<<8;
-            u16 |= *data++;
-            val = (float)u16;
-            break;
-        case ii_s16:
-            u16  = ((uint16_t)*data++)<<8;
-            u16 |= *data++;
-            memcpy(&s16, &u16, 2);
-            val = (float)s16;
-            break;
-        case ii_s16V:
-            u16  = ((uint16_t)*data++)<<8;
-            u16 |= *data++;
-            memcpy(&s16, &u16, 2);
-            val = (float)s16 * II_TT_iVOLT; // Scale Teletype down to float
-            break;
-        case ii_s16ms:
-            u16  = ((uint16_t)*data++)<<8;
-            u16 |= *data++;
-            memcpy(&s16, &u16, 2);
-            val = (float)s16 / 1000.0f;
-            break;
-        case ii_float:
-            memcpy(&val, data, 4);
-            break;
-        case ii_s32T:
-            // seconds: signed 16
-            u16  = ((uint16_t)*data++)<<8;
-            u16 |= *data++;
-            memcpy(&s16, &u16, 2);
-            val = (float)s16;
-            // subsecond: signed 16 V
-            u16  = ((uint16_t)*data++)<<8;
-            u16 |= *data++;
-            memcpy(&s16, &u16, 2);
-            val += (float)s16 * II_TT_iVOLT;
-            break;
-        default: printf("ii_decode unmatched\n"); break;
-    }
-    return val;
-}
-
-static uint8_t encode( uint8_t* dest, ii_Type_t type, float data )
-{
-    uint8_t len = 0;
-    uint8_t* d = dest;
-
-    uint16_t u16; int16_t s16;
-    switch( type ){
-        case ii_u8: d[len++] = (uint8_t)lim_f(data,0.0f,255.0f);
-            break;
-        case ii_s8: d[len++] = (uint8_t)(int8_t)lim_f(data,-128.0f,127.0f);
-            break;
-        case ii_u16:
-            u16 = (uint16_t)lim_f(data, 0.0f, 65535.0f);
-            d[len++] = (uint8_t)(u16>>8);          // High byte first
-            d[len++] = (uint8_t)(u16 & 0x00FF);    // Low byte
-            break;
-        case ii_s16V:
-            data *= II_TT_VOLT; // Scale float up to Teletype
-            // FLOWS THROUGH
-        case ii_s16:
-            s16 = (int16_t)lim_f(data, -32768.0f, 32767.0f);
-            memcpy(&u16, &s16, 2);
-            d[len++] = (uint8_t)(u16>>8);
-            d[len++] = (uint8_t)(u16 & 0x00FF);
-            break;
-        case ii_s16ms:
-            data *= 1000.0f;
-            s16 = (int16_t)lim_f(data, -32768.0f, 32767.0f);
-            memcpy(&u16, &s16, 2);
-            d[len++] = (uint8_t)(u16>>8);
-            d[len++] = (uint8_t)(u16 & 0x00FF);
-            break;
-        case ii_float:
-            memcpy( &(d[len]), &data, 4 );
-            len += 4;
-            break;
-        case ii_s32T:{
-            int iTime = (int)data;
-            float subTime = data - (float)iTime;
-            if( iTime < -32768 ){
-                iTime = -32768; subTime = 0.0f;
-            } else if( iTime > 32767 ){
-                iTime = 32767; subTime = 0.0f;
-            }
-            s16 = (int16_t)iTime;
-            memcpy(&u16, &s16, 2);
-            d[len++] = (uint8_t)(u16>>8);
-            d[len++] = (uint8_t)(u16 & 0x00FF);
-            subTime *= II_TT_VOLT; // Scale float up to Teletype
-            s16 = (int16_t)subTime;
-            memcpy(&u16, &s16, 2);
-            d[len++] = (uint8_t)(u16>>8);
-            d[len++] = (uint8_t)(u16 & 0x00FF);
-            break;}
-        default: return 0;
-    }
-    return len;
-}
 
 static uint8_t encode_packet( uint8_t* dest
                             , const ii_Cmd_t* c
@@ -346,7 +215,139 @@ static uint8_t encode_packet( uint8_t* dest
     uint8_t len = 0;
     dest[len++] = cmd; // first byte is command
     for( int i=0; i<(c->args); i++ ){
-        len += encode( &dest[len], c->argtype[i], *data++ );
+        len += ii_encode( &dest[len], c->argtype[i], *data++ );
     }
     return len;
+}
+
+
+////////////////////////////////////////////
+// follower: answering as crow (ii.self)
+
+// blackbird's input and output voltages, for the built-in getters (main.cpp).
+// Called from the I2C interrupt: they only read cached values.
+extern float bb_ii_input_volts( int index );   // 0-based
+extern float bb_ii_output_volts( int index );
+
+#define II_CROW_GET_INPUT  (II_GET_OFFSET + 3)
+#define II_CROW_GET_OUTPUT (II_GET_OFFSET + 4)
+
+// How follower messages were handled (for tests and diagnosis):
+// commands, queries answered in the interrupt, queries answered by Lua,
+// two-step getters, unknown commands
+volatile uint32_t g_ii_follow_stats[5];
+
+// A getter that Lua must answer, held (bus stretched) for the main loop
+static uint8_t       query_msg[16];
+static volatile uint8_t query_len = 0;
+
+static const ii_Cmd_t* follower_command( uint8_t cmd ){
+    return ii_find_command( follower_index, cmd ); // crow's descriptor
+}
+
+static void decode_args( const ii_Cmd_t* c, const uint8_t* data, float* args ){
+    int pos = 0;
+    for( int i = 0; i < c->args; i++ ){
+        args[i] = ii_decode( &data[pos], c->argtype[i] );
+        pos += ii_type_size( c->argtype[i] );
+    }
+}
+
+// The built-in getters (input, output): no Lua, so fine in the interrupt.
+// Encoded answer length, or -1 if it isn't one of them.
+static int builtin_get( const ii_Cmd_t* c, const uint8_t* msg, uint8_t* reply ){
+    if( c->cmd != II_CROW_GET_INPUT && c->cmd != II_CROW_GET_OUTPUT ){ return -1; }
+    float args[4] = {0};
+    decode_args( c, &msg[1], args );
+    int ch = (int)args[0] - 1; // ii is 1-based
+    float v = (c->cmd == II_CROW_GET_INPUT) ? bb_ii_input_volts(ch) : bb_ii_output_volts(ch);
+    return ii_encode( reply, c->return_type, v );
+}
+
+// I2C interrupt: a leader is reading from us. `msg` is the getter it wrote,
+// in this transfer or (Teletype's two-step) just before
+static int follow_request( const uint8_t* msg, uint8_t len, uint8_t* reply ){
+    if( len == 0 ){ return 0; }
+    const ii_Cmd_t* c = follower_command( msg[0] );
+    if( c == NULL || c->cmd < II_GET_OFFSET ){ g_ii_follow_stats[4]++; return 0; }
+    int n = builtin_get( c, msg, reply );
+    if( n >= 0 ){ g_ii_follow_stats[1]++; return n; }
+    memcpy( query_msg, msg, len ); // Lua answers, from the main loop
+    query_len = len;
+    return II_BUS_DEFER;
+}
+
+static bool lua_follower_ready( lua_State* L ){
+    // ii.lua loads on first use: reading `ii` loads it (and its handlers)
+    lua_getglobal( L, "ii" );
+    bool ok = lua_istable( L, -1 );
+    lua_pop( L, 1 );
+    return ok;
+}
+
+// ii.self.<name>(args) for a command
+static void lua_follower_command( const ii_Cmd_t* c, const uint8_t* msg ){
+    extern lua_State* get_lua_state(void);
+    lua_State* L = get_lua_state();
+    if( L == NULL || !lua_follower_ready( L ) ){ return; }
+    float args[4] = {0};
+    decode_args( c, &msg[1], args );
+    lua_getglobal( L, "ii_followRx_handler" );
+    lua_pushinteger( L, c->cmd );
+    for( int i = 0; i < c->args; i++ ){ lua_pushnumber( L, args[i] ); }
+    if( lua_pcall( L, 1 + c->args, 0, 0 ) != LUA_OK ){
+        Caw_printf( "lua runtime error: %s", lua_tostring( L, -1 ) );
+        lua_pop( L, 1 );
+    }
+}
+
+// A getter's answer: built in, or ii.self.query (Lua). Encoded length.
+static int follower_get( const ii_Cmd_t* c, const uint8_t* msg, uint8_t* reply ){
+    int n = builtin_get( c, msg, reply );
+    if( n >= 0 ){ return n; }
+    float value = 0.0f;
+    extern lua_State* get_lua_state(void);
+    lua_State* L = get_lua_state();
+    if( L != NULL && lua_follower_ready( L ) ){
+        float args[4] = {0};
+        decode_args( c, &msg[1], args );
+        lua_getglobal( L, "ii_followRxTx_handler" );
+        lua_pushinteger( L, c->cmd );
+        for( int i = 0; i < c->args; i++ ){ lua_pushnumber( L, args[i] ); }
+        if( lua_pcall( L, 1 + c->args, 1, 0 ) != LUA_OK ){
+            Caw_printf( "lua runtime error: %s", lua_tostring( L, -1 ) );
+        } else if( lua_isnumber( L, -1 ) ){
+            value = (float)lua_tonumber( L, -1 );
+        }
+        lua_pop( L, 1 );
+    }
+    return ii_encode( reply, c->return_type, value );
+}
+
+void ii_follower_process( void ){
+    uint8_t reply[II_BUS_MAX_BYTES];
+
+    // A getter written and read in one transfer, held for Lua's answer
+    if( query_len ){
+        const ii_Cmd_t* c = follower_command( query_msg[0] );
+        int n = c ? follower_get( c, query_msg, reply ) : 0;
+        query_len = 0;
+        g_ii_follow_stats[2]++;
+        ii_bus_reply( reply, (uint8_t)n );
+    }
+
+    uint8_t msg[II_BUS_MAX_BYTES];
+    uint8_t len;
+    while( (len = ii_bus_receive( msg )) ){
+        const ii_Cmd_t* c = follower_command( msg[0] );
+        if( c == NULL ){ g_ii_follow_stats[4]++; continue; }
+        if( c->cmd < II_GET_OFFSET ){
+            g_ii_follow_stats[0]++;
+            lua_follower_command( c, msg );
+        } else {
+            // a getter written on its own: the read that follows is answered
+            // from it (follow_request), so nothing to do here
+            g_ii_follow_stats[3]++;
+        }
+    }
 }
