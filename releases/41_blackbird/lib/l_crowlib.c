@@ -298,6 +298,54 @@ void l_crowlib_emptyinit(lua_State* L){
     lua_setglobal(L, "init");
 }
 
+// _G.__newindex: a new global, from the script. Record it in _user.
+static int _user_tracer( lua_State* L ){
+    // @1 _G, @2 key, @3 value
+    lua_pushliteral(L, "_user");
+    lua_rawget(L, 1);
+    if( lua_istable(L, -1) ){
+        lua_pushvalue(L, 2);
+        lua_pushboolean(L, 1);
+        lua_rawset(L, -3); // _user[key] = true
+    }
+    lua_pop(L, 1);
+    lua_rawset(L, 1); // _G[key] = value
+    return 0;
+}
+
+void l_crowlib_install_user_tracer( lua_State* L ){
+    lua_pushglobaltable(L);
+    lua_newtable(L);
+    lua_setfield(L, -2, "_user");             // _G has no tracer yet: plain set
+    if( !lua_getmetatable(L, -1) ){ lua_newtable(L); }
+    lua_pushcfunction(L, _user_tracer);
+    lua_setfield(L, -2, "__newindex");
+    lua_setmetatable(L, -2);
+    lua_pop(L, 1);
+}
+
+void l_crowlib_clear_user_globals( lua_State* L ){
+    int top = lua_gettop(L);
+    lua_pushglobaltable(L);                   // @g
+    int g = lua_gettop(L);
+    lua_pushliteral(L, "_user");
+    lua_rawget(L, g);                         // @u
+    int u = lua_gettop(L);
+    if( lua_istable(L, u) ){
+        lua_pushnil(L);
+        while( lua_next(L, u) != 0 ){         // key, value
+            lua_pop(L, 1);                    // key
+            lua_pushvalue(L, -1);             // key, key (copy: lua_tostring would convert number keys in place)
+            lua_pushnil(L);
+            lua_rawset(L, g);                 // _G[key] = nil; key stays for lua_next
+        }
+    }
+    lua_pushliteral(L, "_user");
+    lua_newtable(L);
+    lua_rawset(L, g);
+    lua_settop(L, top);
+}
+
 int l_crowlib_crow_reset( lua_State* L ){
     // Optional debug: print Lua heap usage around reset.
     // Enable at runtime by setting: bb.debug_reset_mem = true
@@ -315,6 +363,12 @@ int l_crowlib_crow_reset( lua_State* L ){
         int b = lua_gc(L, LUA_GCCOUNTB, 0);
         printf("[reset] lua heap before: %d.%03d KB\n", kb, b);
     }
+
+    // Free the script's memory first: everything below calls into Lua, and
+    // with the heap full (a script that ran out) those calls would fail
+    // before the script's globals were cleared
+    l_crowlib_clear_user_globals(L);
+    lua_gc(L, LUA_GCCOLLECT, 0);
 
     S_reset();
     
@@ -441,8 +495,12 @@ lua_gettable(L, 1); // replace @2 with: input[n]
 	}
 	lua_settop(L, 0);
 
-    // ii.reset_events(ii.self) - only if ii exists
-    lua_getglobal(L, "ii"); // @1
+    // ii.reset_events(ii.self) - only if ii has been loaded. rawget: ii loads
+    // on first use (_G's __index), and a plain read would load it here
+    lua_pushglobaltable(L);
+    lua_pushstring(L, "ii");
+    lua_rawget(L, -2);
+    lua_remove(L, 1); // @1
     if(!lua_isnil(L, 1)){
         lua_getfield(L, 1, "reset_events"); // @2
         if(!lua_isnil(L, 2)){
@@ -542,41 +600,8 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     lua_setglobal(L, "_pulsein2_change_callback");
     lua_settop(L, 0);
 
-    // Clear user globals using Crow's _user table approach.
-    // This prevents user scripts from retaining references across script reload cycles
-    // when the host only calls crow.reset() between uploads.
-    lua_getglobal(L, "_user"); // @1
-    if (lua_istable(L, 1)) {
-        lua_pushnil(L); // @2 (first key for lua_next)
-        while (lua_next(L, 1) != 0) {
-            // stack: _user (1), key (2), value (3)
-            const char* key = lua_tostring(L, 2);
-            if (key) {
-                lua_pushnil(L);
-                lua_setglobal(L, key); // _G[key] = nil
-            }
-            lua_pop(L, 1); // pop value, keep key
-        }
-    }
-    lua_settop(L, 0);
-
-    // Reset _user tracking table
-    lua_newtable(L);
-    lua_setglobal(L, "_user");
-    lua_settop(L, 0);
-
-    // Reinstall _G tracer so future globals are tracked and can be cleared
-    if (luaL_dostring(L,
-        "local function __bb_trace(t, k, v)\n"
-        "  _user[k] = true\n"
-        "  rawset(t, k, v)\n"
-        "end\n"
-        "local mt = getmetatable(_G) or {}\n"
-        "mt.__newindex = __bb_trace\n"
-        "setmetatable(_G, mt)\n"
-    )) {
-        lua_pop(L, 1);
-    }
+    // Clear user globals again: any the module resets above made
+    l_crowlib_clear_user_globals(L);
 
     // Force garbage collection to reclaim memory from previous script
     // Do two full cycles (mirrors existing reload behavior elsewhere).

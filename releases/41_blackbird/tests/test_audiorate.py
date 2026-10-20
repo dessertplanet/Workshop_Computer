@@ -136,3 +136,22 @@ def test_restarting_a_running_lookahead_chain(bb):
     rate = bb.stats()["sample_rate_hz"]
     lengths = sum(segment_cycle_lengths(bb, 1000), [])
     assert set(lengths) == {rate / 1000}, sorted(set(lengths))
+
+
+def test_lookahead_chains_start_reliably(bb):
+    # Regression: core 1 posts slope events from both its background render
+    # and the audio ISR, and the ISR could interrupt a post half-way: an event
+    # was lost, and the lookahead ASL chain it belonged to stopped dead (about
+    # 1 in 7 restarts of four 4kHz lfos left one silent)
+    starts = bb.symbol("g_slope_seg_start_count")
+    actions = bb.base + 4 * STAT_FIELDS.index("slope_actions")
+    for round_ in range(30):
+        bb.reset()
+        bb.eval("for i = 1, 4 do output[i](lfo(1/4000, 2)) end")
+        bb.wait(0.15)
+        bb.mem.write_u32(starts, 0)
+        a0 = bb.mem.read_u32(actions)
+        bb.wait(0.1)
+        assert bb.mem.read_u32(starts) >= 64, f"round {round_}: output 1's lfo isn't running"
+        per_s = ((bb.mem.read_u32(actions) - a0) & 0xFFFFFFFF) / 0.1
+        assert per_s > 0.8 * 4 * 8000, f"round {round_}: {per_s:.0f} segments/s, want ~32000 (an lfo stopped)"

@@ -75,7 +75,7 @@ OFF_LOOP_SECTIONS = OFF_ALLOC + 3 * 4 * ALLOC_BUCKETS
 LOOP_SECTIONS = ["usb poll (tud_task, rx, midi)", "midi echo", "usb rx -> repl", "harness mailbox",
                  "leds, welcome, perf warning", "log msgs, slope callbacks, detect, input values",
                  "clock events", "metro events", "input events, change callbacks", "asl done events",
-                 "switch, clock source, pulse clocks", "bb.asap", "pulse-in callbacks", "(was idle lua gc step)",
+                 "switch, clock source, pulse clocks", "bb.asap", "pulse-in callbacks", "ii leader",
                  "pubview", "(end)"]
 STRUCT_SIZE = OFF_LOOP_SECTIONS + 4 * len(LOOP_SECTIONS)
 ALLOC_BUCKET_LABELS = [f"{8 * i + 1}-{8 * (i + 1)}" for i in range(16)] + [

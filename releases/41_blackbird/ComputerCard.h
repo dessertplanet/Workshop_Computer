@@ -669,6 +669,10 @@ private:
 #define DEBUG_1 0
 #define DEBUG_2 1
 
+// ii (I2C0) on the UART pads, with COMPUTERCARD_II_ON_UART_PINS
+#define II_SDA 0
+#define II_SCL 1
+
 #define SPI_PORT spi0
 #define SPI_DREQ DREQ_SPI0_TX
 
@@ -1338,8 +1342,8 @@ ComputerCard::ComputerCard()
 	gpio_set_function(EEPROM_SCL, GPIO_FUNC_I2C);
 
 	
-	// If not using UART pins for UART, instead use as debug lines
-#ifndef ENABLE_UART_DEBUGGING
+	// If not using UART pins for UART (or ii), instead use as debug lines
+#if !defined(ENABLE_UART_DEBUGGING) && !defined(COMPUTERCARD_II_ON_UART_PINS)
 	// Debug pins
 	gpio_init(DEBUG_1);
 	gpio_set_dir(DEBUG_1, GPIO_OUT);
@@ -1354,6 +1358,25 @@ ComputerCard::ComputerCard()
 	// Read EEPROM calibration values
 	cvOutsCalibrated = (ReadEEPROM() == 0);
 	inputsCalibrated = (ReadInputEEPROM() == 0);
+
+#ifdef COMPUTERCARD_II_ON_UART_PINS
+	// Calibration is read (nothing uses the EEPROM after boot): hand I2C0
+	// over to the UART pads for ii. Only I2C0 can reach GPIO 0/1, and one
+	// peripheral can't serve both pin pairs at once. Weak internal pull-ups
+	// keep an unconnected bus idle; the ii bus's own (crow, Teletype) do the work.
+	// Order matters: the controller sees its pins' inputs combined, so the
+	// new pins (pulled up) join before the old ones leave and the lines stay
+	// high. Dropping 16/17 first looked like a START from another leader, and
+	// the controller then waited forever for the bus. The reset after clears
+	// anything it saw anyway.
+	gpio_pull_up(II_SDA);
+	gpio_pull_up(II_SCL);
+	gpio_set_function(II_SDA, GPIO_FUNC_I2C);
+	gpio_set_function(II_SCL, GPIO_FUNC_I2C);
+	gpio_set_function(EEPROM_SDA, GPIO_FUNC_NULL);
+	gpio_set_function(EEPROM_SCL, GPIO_FUNC_NULL);
+	i2c_init(i2c0, 100 * 1000);
+#endif
 	
 	// Flash chip size and unique card ID, both read from the flash chip itself
 	// by ProbeFlash(), before main().

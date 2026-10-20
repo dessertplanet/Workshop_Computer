@@ -53,6 +53,7 @@ macro (add_card _name)
         ${CMAKE_CURRENT_LIST_DIR}/lib/detect.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/caw.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/ii.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/ii_i2c.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/metro.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/clock.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/clock_ll.c
@@ -161,6 +162,31 @@ add_lua_header(lib/lib-lua/hotswap.lua HOTSWAP_HEADER)
 add_lua_header(lib/lib-lua/First.lua FIRST_HEADER)
 
 
+# ii device tables, generated from crow's device descriptors (lib/ii/*.lua) by
+# crow's generators, run with a host Lua interpreter built here
+file(GLOB HOST_LUA_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/lua/src/*.c)
+list(REMOVE_ITEM HOST_LUA_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/lua/src/luac.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/lua/src/linit_crow.c)
+set(HOST_LUA ${CMAKE_BINARY_DIR}/host_lua/lua)
+add_custom_command(
+    OUTPUT ${HOST_LUA}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/host_lua
+    COMMAND gcc -O1 -DLUA_USE_C89 -I${CMAKE_CURRENT_SOURCE_DIR}/lua/src ${HOST_LUA_SOURCES} -lm -o ${HOST_LUA}
+    DEPENDS ${HOST_LUA_SOURCES}
+    COMMENT "Building host lua for the ii generators"
+)
+file(GLOB II_DESCRIPTORS ${CMAKE_CURRENT_SOURCE_DIR}/lib/ii/*.lua)
+list(SORT II_DESCRIPTORS)
+foreach(II_GEN ii_c_layer ii_mod_gen)
+    add_custom_command(
+        OUTPUT ${CMAKE_BINARY_DIR}/${II_GEN}.h
+        COMMAND ${HOST_LUA} ${CMAKE_CURRENT_SOURCE_DIR}/util/${II_GEN}.lua ${CMAKE_BINARY_DIR}/${II_GEN}.h ${II_DESCRIPTORS}
+        DEPENDS ${HOST_LUA} ${CMAKE_CURRENT_SOURCE_DIR}/util/${II_GEN}.lua ${II_DESCRIPTORS}
+        COMMENT "Generating ${II_GEN}.h from the ii descriptors"
+    )
+endforeach()
+
 message(STATUS "Blackbird: Production build - no test scripts embedded")
 set(TEST_DEFINE "PRODUCTION_BUILD")
 
@@ -179,6 +205,8 @@ target_sources(${CARD_NAME} PRIVATE
   ${INPUT_HEADER}
   ${OUTPUT_HEADER}
   ${II_HEADER}
+  ${CMAKE_BINARY_DIR}/ii_c_layer.h
+  ${CMAKE_BINARY_DIR}/ii_mod_gen.h
   ${CALIBRATE_HEADER}
   ${SEQUINS_HEADER}
   ${QUOTE_HEADER}
@@ -189,6 +217,10 @@ target_sources(${CARD_NAME} PRIVATE
 
 # Add conditional compilation defines
 target_compile_definitions(${CARD_NAME} PRIVATE ${TEST_DEFINE} PROCESS_SAMPLE_RATE_HZ_INT=${BB_SAMPLE_RATE_HZ})
+
+# ii (I2C) on the UART pads, GPIO 0 (SDA) / 1 (SCL): I2C0 reads the EEPROM
+# calibration at boot, then moves there (ComputerCard.h)
+target_compile_definitions(${CARD_NAME} PRIVATE COMPUTERCARD_II_ON_UART_PINS)
 target_include_directories(${CARD_NAME} PRIVATE ${CMAKE_BINARY_DIR})
 
 # Performance optimizations for main code

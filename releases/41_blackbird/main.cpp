@@ -59,11 +59,13 @@ extern "C" {
 #include "lib/detect.h"
 #include "lib/l_crowlib.h"
 #include "lib/l_bootstrap.h"
+#include "lib/l_ii_mod.h"
 #include "lib/ll_timers.h"
 #include "lib/metro.h"
 #include "lib/mailbox.h"
 #include "lib/clock.h"
 #include "lib/events_lockfree.h"
+#include "lib/ii.h"
 #include "lib/flash_storage.h"
 #include "lib/lua_pool.h"
 #include "lib/caw.h"
@@ -91,6 +93,7 @@ extern const unsigned int clock_len;
 #include "quote.h"
 #include "timeline.h"
 #include "hotswap.h"
+#include "ii.h"  // ii.lua bytecode (generated, in the build dir; the C API is lib/ii.h)
 
 // ============================================================================
 // GLOBAL VARIABLES
@@ -232,6 +235,12 @@ extern "C" void __not_in_flash_func(queue_slope_action_callback)(int channel, Ca
         g_slope_action_null_callback_count++;
         return;  // Don't queue NULL callbacks
     }
+    // Core 1 posts from both its background render (a queued slope starting)
+    // and the audio ISR (slope ends; renders when a buffer runs dry): with
+    // interrupts on, the ISR could post between another post's reading and
+    // advancing the write index, and one event was lost (a lookahead ASL
+    // chain then stopped dead)
+    uint32_t irq = save_and_disable_interrupts();
     g_slope_action_count = g_slope_action_count + 1;
     
     uint32_t next_write = (g_slope_action_write_idx + 1) % SLOPE_ACTION_QUEUE_SIZE;
@@ -239,11 +248,13 @@ extern "C" void __not_in_flash_func(queue_slope_action_callback)(int channel, Ca
         g_slope_action_queue[g_slope_action_write_idx].channel = (uint8_t)channel;
         g_slope_action_queue[g_slope_action_write_idx].seq = seq;
         g_slope_action_queue[g_slope_action_write_idx].callback = callback;
+        __dmb();  // the entry before the index, for core 0
         g_slope_action_write_idx = next_write;
     } else {
         // Queue full - track drops for diagnostic reporting
         g_slope_action_drop_count++;
     }
+    restore_interrupts(irq);
 }
 
 // Process slope action callbacks on Core 0 (called from MainControlLoop)
@@ -1622,20 +1633,7 @@ public:
         load_embedded_asl();
 
         // Track user-created globals so crow.reset() can clear them reliably
-        if (luaL_dostring(L, R"(
-            _user = {}
-            local function __bb_trace(t, k, v)
-                _user[k] = true
-                rawset(t, k, v)
-            end
-            setmetatable(_G, { __newindex = __bb_trace })
-        )") != LUA_OK) {
-            const char* error = lua_tostring(L, -1);
-            printf("Error setting up _user tracking: %s\n\r", error ? error : "unknown error");
-            lua_pop(L, 1);
-        }
-
-        // After the tracer: setmetatable() above replaces _G's metatable
+        l_crowlib_install_user_tracer(L);
         install_lazy_libs();
     }
     
@@ -1786,9 +1784,9 @@ public:
     }
     
     // Load crow ecosystem libraries that don't conflict with our custom setup
-    // sequins, timeline and hotswap load on first use rather than at boot:
-    // together they hold ~24KB of Lua heap, which scripts that don't use them
-    // can have instead. _G's __index loads one the first time its name is read
+    // sequins, timeline, hotswap and ii load on first use rather than at boot:
+    // together they hold ~24KB of Lua heap (and ii's device tables more),
+    // which scripts that don't use them can have instead. _G's __index loads one the first time its name is read
     // (sequins{...}, if timeline then ..., type(hotswap) all count) and
     // rawsets the global, so it then behaves as if it had always been there.
     // Loading timeline or hotswap reads `sequins`/`timeline`, which loads
@@ -1799,15 +1797,27 @@ public:
             { "sequins", sequins, sequins_len },
             { "timeline", timeline, timeline_len },
             { "hotswap", hotswap, hotswap_len },
+            { "ii", ii, ii_len },  // its C functions are registered at boot (l_ii_mod_preload)
         };
         const char* key = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
         if (key) {
             for (const LazyLib& lib : libs) {
                 if (strcmp(key, lib.name) == 0) {
-                    if (luaL_loadbuffer(L, (const char*)lib.bytecode, lib.len, lib.name) != LUA_OK) {
-                        return lua_error(L);
-                    }
-                    lua_call(L, 0, 1);       // stack: _G, key, lib
+                    // Globals the library defines (ii.lua's ii_LeadRx_handler,
+                    // ...) belong to the firmware, not the script that happened
+                    // to load it: switch the _user tracer (__newindex) off
+                    // meanwhile, or crow.reset/^^k would delete them
+                    lua_getmetatable(L, 1);                // _G, key, mt
+                    lua_getfield(L, -1, "__newindex");     // _G, key, mt, tracer
+                    lua_pushnil(L);
+                    lua_setfield(L, -3, "__newindex");
+                    int status = luaL_loadbuffer(L, (const char*)lib.bytecode, lib.len, lib.name);
+                    if (status == LUA_OK) status = lua_pcall(L, 0, 1, 0);  // _G, key, mt, tracer, lib|err
+                    lua_pushvalue(L, -2);
+                    lua_setfield(L, -4, "__newindex");     // tracer back on
+                    if (status != LUA_OK) return lua_error(L);
+                    lua_replace(L, 3);                     // _G, key, lib, tracer
+                    lua_settop(L, 3);                      // stack: _G, key, lib
                     lua_pushvalue(L, 2);
                     lua_pushvalue(L, 3);
                     lua_rawset(L, 1);        // _G[key] = lib, bypassing the _user tracer
@@ -1875,26 +1885,9 @@ public:
             lua_pop(L, 1);
         }
 
-                // ii is optional / not implemented in the emulator; ensure scripts that
-                // reference ii.* in init() don't crash and abort initialization.
-                if (luaL_dostring(L, R"(
-                        if ii == nil then
-                            local function __bb_ii_stub()
-                                return setmetatable({}, {
-                                    __index = function(t, k)
-                                        local v = __bb_ii_stub()
-                                        rawset(t, k, v)
-                                        return v
-                                    end,
-                                    __call = function(...) end,
-                                })
-                            end
-                            ii = __bb_ii_stub()
-                        end
-                )") != LUA_OK) {
-                        printf("  ERROR installing ii stub: %s\n\r", lua_tostring(L, -1));
-                        lua_pop(L, 1);
-                }
+        // ii (leader, on the UART pads): its C functions now; ii.lua itself
+        // loads on first use of `ii` (lazy_lib_index)
+        l_ii_mod_preload(L);
         
         // Create Workshop Computer namespace table with knob and switch
         create_bb_table(L);
@@ -3869,6 +3862,7 @@ public:
     {
         // Initialize USB lock-free queues
         usb_lockfree_init();
+        ii_init();  // ii leader on the UART pads (ComputerCard moved I2C0 there)
 
 #ifdef BB_DEBUG_HARNESS
         bb_dbg_init(this);
@@ -4252,6 +4246,10 @@ public:
             }
             
             LOOP_SECTION(13);
+            // ii: start queued messages, finish ones in flight (never waits on
+            // the bus). Replies go straight to Lua, so this is outside Lua.
+            ii_leader_process();
+
             // No idle GC step here: Lua's own allocation-driven GC does the
             // work. An idle step adds GC debt even when nothing allocates, so
             // the collector cycled continuously, and each cycle's atomic phase
@@ -4358,6 +4356,50 @@ public:
         events_lockfree_clear();
     }
 
+    // Clear the old script (its globals, then a full GC) and reset the crow
+    // modules (crow.reset), compiling no Lua: after a script ran the heap
+    // out, compiling even "crow.reset()" failed, so ^^k and uploads couldn't
+    // free anything and only a power cycle recovered
+    void reset_lua_script() {
+        lua_State* L = lua_manager->L;
+        l_crowlib_clear_user_globals(L);
+        lua_gc(L, LUA_GCCOLLECT, 0);
+        lua_pushcfunction(L, l_crowlib_crow_reset);
+        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            tud_cdc_write_str("crow.reset error: ");
+            const char* e = lua_tostring(L, -1);
+            tud_cdc_write_str(e ? e : "?");
+            tud_cdc_write_str("\n\r");
+            lua_pop(L, 1);
+        }
+    }
+
+    static int init_nop(lua_State* L) { (void)L; return 0; }
+
+    // init = a no-op, set raw (not one of the script's globals)
+    void reset_init() {
+        lua_State* L = lua_manager->L;
+        lua_pushglobaltable(L);
+        lua_pushliteral(L, "init");
+        lua_pushcfunction(L, init_nop);
+        lua_rawset(L, -3);
+        lua_pop(L, 1);
+    }
+
+    // Call the script's init(), if it has one
+    void call_init() {
+        lua_State* L = lua_manager->L;
+        lua_getglobal(L, "init");
+        if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return; }
+        if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+            tud_cdc_write_str("lua runtime error: ");
+            const char* e = lua_tostring(L, -1);
+            tud_cdc_write_str(e ? e : "?");
+            tud_cdc_write_str("\n\r");
+            lua_pop(L, 1);
+        }
+    }
+
     // Run the uploaded script (^^e, ^^w) and call its init(). With
     // save_to_flash, a script that ran is also saved, so it runs at boot; one
     // that failed to evaluate isn't, so it can't replace a working script.
@@ -4384,20 +4426,20 @@ public:
         }
 
         // Real crow does NOT call crow.reset() before init() on script upload
-        lua_manager->evaluate_safe("if init then init() end");
+        call_init();
         tud_cdc_write_str("^^ready()\n\r"); // Inform host that script is running
     }
 
     // Load First.lua (the default script) from compiled bytecode and run it
     void load_first_lua() {
-        lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
+        reset_lua_script();
         if (luaL_loadbuffer(lua_manager->L, (const char*)First, First_len, "First.lua") != LUA_OK 
             || lua_pcall(lua_manager->L, 0, 0, 0) != LUA_OK) {
             tud_cdc_write_str(" Failed to load First.lua\n\r");
         } else {
             tud_cdc_write_str(" Loaded: First.lua (default)\n\r");
             // Call init() like real crow does (no crow.reset() before init on startup)
-            lua_manager->evaluate_safe("if init then init() end");
+            call_init();
         }
     }
 
@@ -4479,24 +4521,12 @@ public:
                     // 4. Cancel all clock coroutines
                     clock_cancel_coro_all();
                     
-                    // 6. Reset crow modules to defaults (calls crow.reset() in Lua)
-                    lua_manager->evaluate_safe("if crow and crow.reset then crow.reset() end");
-                    
-                    // 7. Clear user globals using Crow's _user table approach
-                    lua_manager->evaluate_safe(
-                        "if _user then "
-                        "  for k,_ in pairs(_user) do "
-                        "    _G[k] = nil "
-                        "  end "
-                        "end "
-                        "_G._user = {}"
-                    );
+                    // 6. Clear the script's globals, then reset crow modules to
+                    // defaults (crow.reset), compiling no Lua (see reset_lua_script)
+                    reset_lua_script();
 
-                    // 8. Reset init() to nop_fn to prevent errors if new script doesn't define it
-                    lua_manager->evaluate_safe("init = nop_fn");
-                    
-                    // 8. Reset init() to empty function
-                    lua_manager->evaluate_safe("_G.init = function() end");
+                    // 7. Reset init() so a new script that doesn't define one is fine
+                    reset_init();
                     
                     // 9. Garbage collect twice for thorough cleanup
                     lua_gc(lua_manager->L, LUA_GCCOLLECT, 1);
@@ -4515,7 +4545,7 @@ public:
                 g_new_script_len = 0;
                 memset(g_new_script, 0, sizeof(g_new_script));
                 g_new_script_name[0] = '\0';  // Clear script name
-                lua_manager->evaluate_safe("crow.reset()"); // Reset crow state before upload
+                reset_lua_script(); // Reset crow state before upload (frees the old script's memory)
                 g_repl_mode = REPL_reception;
                 tud_cdc_write_str("script upload started\n\r");
                 
