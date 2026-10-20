@@ -13,7 +13,7 @@ System Computer.
 
 It aims to present a very simple C++ interface for card programmers 
 to use the jacks, knobs, switch and LEDs, for programs running at
-a fixed PROCESS_SAMPLE_RATE_HZ audio sample rate (currently 9.6kHz).
+a fixed PROCESS_SAMPLE_RATE_HZ audio sample rate (currently 24kHz).
 
 See README.md and the examples/ directory
 
@@ -50,6 +50,9 @@ SOFTWARE.
 
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
+#ifdef COMPUTERCARD_PROFILE
+#include "hardware/structs/systick.h"
+#endif
 #include "lib/sample_rate.h"
 
 #define PULSE_1_RAW_OUT 8
@@ -160,7 +163,7 @@ protected:
 			return mixf;
 		}
 	private:
-		// Notch at fs/4 (12kHz at 48kHz, 2.4kHz at Blackbird's 9.6kHz), to remove
+		// Notch at fs/4 (12kHz at 48kHz, 6kHz at Blackbird's 24kHz), to remove
 		// interference from mux lines. The mux steps once per sample, so the
 		// interference tracks the sample rate and the coefficients need no change.
 		int32_t mix1, mix2, mixf1, mixf2;
@@ -583,8 +586,23 @@ private:
 	
 	static void __not_in_flash_func(AudioCallback)()
 	{
+#ifdef COMPUTERCARD_PROFILE
+		uint32_t start = systick_hw->cvr;
 		thisptr->BufferFull();
+		uint32_t cycles = (start - systick_hw->cvr) & 0xFFFFFF;  // SysTick counts down, 24 bits
+		profileIsrCycles = profileIsrCycles + cycles;
+		profileIsrCount = profileIsrCount + 1;
+		if (cycles > profileIsrMaxCycles) profileIsrMaxCycles = cycles;
+#else
+		thisptr->BufferFull();
+#endif
 	}
+#ifdef COMPUTERCARD_PROFILE
+public:
+	/// Audio ISR profile, in CPU cycles (core 1's SysTick, enabled by AudioWorker)
+	static volatile uint32_t profileIsrCycles, profileIsrCount, profileIsrMaxCycles;
+private:
+#endif
 	static ComputerCard *thisptr;
 	typedef void (*ProcessSampleFn)(ComputerCard *);
 	static ProcessSampleFn processSampleFn;
@@ -683,6 +701,9 @@ volatile uint32_t ComputerCard::cvValue[2] = {262144,262144};
 
 
 ComputerCard *ComputerCard::thisptr;
+#ifdef COMPUTERCARD_PROFILE
+volatile uint32_t ComputerCard::profileIsrCycles, ComputerCard::profileIsrCount, ComputerCard::profileIsrMaxCycles;
+#endif
 ComputerCard::ProcessSampleFn ComputerCard::processSampleFn;
 ComputerCard::Core1BackgroundHook ComputerCard::core1_background_hook = nullptr;
 
@@ -702,6 +723,12 @@ uint32_t __not_in_flash_func(ComputerCard::next_norm_probe)()
 // Main audio core function
 void __not_in_flash_func(ComputerCard::AudioWorker)()
 {
+#ifdef COMPUTERCARD_PROFILE
+	// Free-running SysTick on this core, at the CPU clock, no interrupt
+	systick_hw->rvr = 0xFFFFFF;
+	systick_hw->cvr = 0;
+	systick_hw->csr = 0x5;
+#endif
 
 	adc_select_input(0);
 	adc_set_round_robin(0b0001111U);
@@ -994,13 +1021,13 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 			np = (np<<1)+(normprobe&0x1);
 		}
 
-		// CV sampled at the ProcessSample rate (~9.6kHz) comes in over two successive samples
+		// CV sampled at the ProcessSample rate (24kHz) comes in over two successive samples
 		if (norm_probe_count == 14 || norm_probe_count == 15)
 		{
 			plug_state[2+cvi] = (plug_state[2+cvi]<<1)+(ADC_Buffer[cpuPhase][7]<1800);
 		}
 
-		// Audio and pulse measured every sample at the ProcessSample rate (~9.6kHz)
+		// Audio and pulse measured every sample at the ProcessSample rate (24kHz)
 		if (norm_probe_count == 15)
 		{
 			plug_state[Input::Audio1] = (plug_state[Input::Audio1]<<1)+(ADC_Buffer[cpuPhase][5]<1800);

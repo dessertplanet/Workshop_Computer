@@ -408,7 +408,11 @@ void clock_internal_start( float new_beat, bool transport_start )
     if( transport_start ){
         clock_start_from( CLOCK_SOURCE_INTERNAL ); // user callback
     }
-    internal.wakeup_ms  = 0; // force event
+    // Force a beat on the next tick. Not 0: clock_internal_run() advances
+    // wakeup_ms by one interval per beat, so starting from 0 it would race
+    // through a beat per ms until it caught up with uptime (thousands of
+    // beats, every clock.sync firing each ms) after any tempo change or start.
+    internal.wakeup_ms  = clock_now_ms();
     internal.error_q16  = 0;
     internal.running    = true;
 }

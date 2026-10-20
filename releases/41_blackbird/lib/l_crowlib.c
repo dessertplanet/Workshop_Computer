@@ -488,8 +488,12 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     }
     lua_settop(L, 0);
 
-    // hotswap.cleanup() - only if hotswap exists
-    lua_getglobal(L, "hotswap"); // @1
+    // hotswap.cleanup() - only if hotswap has been loaded. rawget: hotswap
+    // loads on first use (_G's __index), and a plain read would load it here
+    lua_pushglobaltable(L);
+    lua_pushstring(L, "hotswap");
+    lua_rawget(L, -2);
+    lua_remove(L, 1); // @1
     if(!lua_isnil(L, 1)){
         lua_getfield(L, 1, "cleanup");
         if(!lua_isnil(L, 2)){

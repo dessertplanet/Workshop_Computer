@@ -45,7 +45,7 @@ DEFAULT_HOST = os.environ.get("OPENOCD_HOST", "host.docker.internal")
 # Mailbox layout: keep in step with bb_dbg_t in main.cpp (static_asserts there)
 # ---------------------------------------------------------------------------
 MAGIC = 0x47444242
-VERSION = 8
+VERSION = 12
 STAT_FIELDS = [
     "magic", "version", "struct_size", "sample_rate_hz",
     "heartbeat", "uptime_ms", "ps_worst_us", "ps_overruns", "ps_budget_us",
@@ -55,7 +55,8 @@ STAT_FIELDS = [
     "heap_free_bytes", "lua_alloc_failures", "drops_usb_tx",
     "out_changes_1", "out_changes_2", "out_changes_3", "out_changes_4",
     "drops_midi_echo", "pool_pages", "pool_slot_bytes", "pool_capacity_bytes",
-    "pool_arena_free_pages",
+    "pool_arena_free_pages", "core1_isr_cycles", "core1_isr_count", "core1_isr_max_cycles",
+    "core1_idle_cycles", "slope_underruns",
 ]
 OFF_CMD_SEQ, OFF_CMD, OFF_ACK_SEQ, OFF_STATUS = 160, 164, 168, 172
 OFF_SCRIPT_LEN, OFF_OUT_LEN, OFF_OUT_TRUNCATED, OFF_LOG_HEAD = 176, 180, 184, 188
@@ -63,13 +64,20 @@ OFF_INPUTS = 192
 INPUT_STRIDE = 24                       # mode, low, high, period, width, phase
 OFF_CONNECTED_MASK = OFF_INPUTS + 10 * INPUT_STRIDE
 OFF_CONNECTED_VALUE = OFF_CONNECTED_MASK + 4
-SCRIPT_MAX, OUT_MAX, LOG_MAX = 4096, 2048, 4096
+SCRIPT_MAX, OUT_MAX, LOG_MAX = 2048, 1024, 2048
 OFF_SCRIPT = OFF_INPUTS + 10 * INPUT_STRIDE + 8
 OFF_OUT = OFF_SCRIPT + SCRIPT_MAX
 OFF_LOG = OFF_OUT + OUT_MAX
 ALLOC_BUCKETS = 24
 OFF_ALLOC = OFF_LOG + LOG_MAX          # alloc_live, alloc_live_bytes, alloc_total
-STRUCT_SIZE = OFF_ALLOC + 3 * 4 * ALLOC_BUCKETS
+OFF_LOOP_SECTIONS = OFF_ALLOC + 3 * 4 * ALLOC_BUCKETS
+# MainControlLoop sections, as marked with LOOP_SECTION(n) in main.cpp
+LOOP_SECTIONS = ["usb poll (tud_task, rx, midi)", "midi echo", "usb rx -> repl", "harness mailbox",
+                 "leds, welcome, perf warning", "log msgs, slope callbacks, detect, input values",
+                 "clock events", "metro events", "input events, change callbacks", "asl done events",
+                 "switch, clock source, pulse clocks", "bb.asap", "pulse-in callbacks", "lua gc step",
+                 "pubview", "(end)"]
+STRUCT_SIZE = OFF_LOOP_SECTIONS + 4 * len(LOOP_SECTIONS)
 ALLOC_BUCKET_LABELS = [f"{8 * i + 1}-{8 * (i + 1)}" for i in range(16)] + [
     "129-192", "193-256", "257-512", "513-1K", "1K-2K", "2K-4K", ">4K", "-"]
 
@@ -355,6 +363,11 @@ class Blackbird:
         live, live_bytes, total = w[:ALLOC_BUCKETS], w[ALLOC_BUCKETS:2 * ALLOC_BUCKETS], w[2 * ALLOC_BUCKETS:]
         return [(ALLOC_BUCKET_LABELS[i], live[i], live_bytes[i], total[i]) for i in range(ALLOC_BUCKETS - 1)]
 
+    def loop_sections(self):
+        """Worst time per main loop section since reset_stats(): {name: us}."""
+        w = self.mem.read_words(self.base + OFF_LOOP_SECTIONS, len(LOOP_SECTIONS))
+        return dict(zip(LOOP_SECTIONS, w))
+
     def stats(self):
         """Current stats. Drop counters (drops_*) count from the last
         reset_stats(), like the worst-case figures do."""
@@ -406,6 +419,29 @@ class Blackbird:
                 info["where"] = addr2line(self.elf, [f[1], f[2] & ~1])
                 found.append(info)
         return found
+
+    CPU_HZ = 192_000_000
+
+    def load(self, seconds=3.0):
+        """Measure CPU load over `seconds` (debug builds with COMPUTERCARD_PROFILE).
+        Returns a dict: core1 busy %, audio ISR % and its average/max time,
+        core1 background work % (output rendering, timers, clock), core0 main
+        loop rate."""
+        a = self.stats()
+        time.sleep(seconds)
+        b = self.stats()
+        d = lambda k: (b[k] - a[k]) & 0xFFFFFFFF
+        cycles = d("uptime_ms") / 1000 * self.CPU_HZ
+        isr = d("core1_isr_cycles") / cycles
+        busy = 1 - d("core1_idle_cycles") / cycles
+        n = max(1, d("core1_isr_count"))
+        return dict(core1_busy_pct=round(100 * busy, 1), isr_pct=round(100 * isr, 1),
+                    slope_underruns_per_s=round(d("slope_underruns") / (d("uptime_ms") / 1000), 1),
+                    background_pct=round(100 * (busy - isr), 1),
+                    isr_avg_us=round(d("core1_isr_cycles") / n / self.CPU_HZ * 1e6, 2),
+                    isr_max_us=round(b["core1_isr_max_cycles"] / self.CPU_HZ * 1e6, 1),
+                    isr_rate_hz=round(d("core1_isr_count") / (d("uptime_ms") / 1000)),
+                    core0_loop_hz=round(d("heartbeat") / (d("uptime_ms") / 1000)))
 
     def heap_map(self):
         """Walk newlib's malloc heap over SWD. Returns a dict: used_chunks,

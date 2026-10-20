@@ -167,7 +167,8 @@ bool S_slope_buffer_needs_fill(int index);
 void S_slope_buffer_fill_block(int index, int samples);
 void S_request_slope_buffer_fill(int index);
 q16_t S_consume_buffered_sample_q16(int index);
-void S_slope_buffer_background_service(void);
+bool S_slope_buffer_background_service(void);  // true if it rendered samples
+extern volatile uint32_t g_slope_inline_renders;  // buffer underruns (sample rendered in the ISR instead)
 
 // Process any queued cross-core slope commands (Core1 only).
 // This avoids cross-core races on 64-bit slope state.

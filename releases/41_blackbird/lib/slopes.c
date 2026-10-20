@@ -17,7 +17,7 @@
 
 // Sample-rate & channel count are centralized in `sample_rate.h` / `slopes.h`
 // (SAMPLES_PER_MS, SAMPLES_PER_MS_Q16, SLOPE_CHANNELS). Remove local fallbacks
-// to guarantee consistency with the actual ISR rate (8kHz).
+// to guarantee consistency with the actual ISR rate.
 
 // ========================================================================
 // Q11 Fixed-Point LUT System for RP2040 (Cortex-M0+ has no FPU)
@@ -281,6 +281,7 @@ typedef struct {
 } slope_buffer_entry_t;
 
 static slope_buffer_entry_t slope_output_buffers[SLOPE_CHANNELS][SLOPE_BUFFER_CAPACITY];
+volatile uint32_t g_slope_inline_renders = 0;  // samples rendered in the ISR because a buffer ran dry
 static uint8_t slope_buffer_head[SLOPE_CHANNELS];
 static uint8_t slope_buffer_tail[SLOPE_CHANNELS];
 static volatile uint8_t slope_buffer_flush_request[SLOPE_CHANNELS];
@@ -481,7 +482,11 @@ q16_t S_consume_buffered_sample_q16(int index) {
     }
     slope_buffer_entry_t entry;
     if (!slope_buffer_pop(index, &entry)) {
+        // Buffer ran dry: render this sample here in the ISR. The output stays
+        // correct; it only costs ISR time. Counted, as a sign the background
+        // rendering on core 1 isn't keeping up.
         entry = S_render_one_sample_q16(index);
+        g_slope_inline_renders++;
     }
     if (entry.action_due && entry.callback != NULL) {
         extern void queue_slope_action_callback(int channel, Callback_t callback);
@@ -490,10 +495,11 @@ q16_t S_consume_buffered_sample_q16(int index) {
     return entry.value_q16;
 }
 
-void __not_in_flash_func(S_slope_buffer_background_service)(void) {
+// Returns true if it rendered samples into a buffer (for core 1 load profiling)
+bool __not_in_flash_func(S_slope_buffer_background_service)(void) {
     static int service_index = 0;
     if (!slopes) {
-        return;
+        return false;
     }
 
     // Apply any queued cross-core slope commands first
@@ -514,8 +520,9 @@ void __not_in_flash_func(S_slope_buffer_background_service)(void) {
     if (requested_channel >= 0) {
         if (S_slope_buffer_needs_fill(requested_channel)) {
             S_slope_buffer_fill_block(requested_channel, SLOPE_RENDER_CHUNK);
+            return true;
         }
-        return;
+        return false;
     }
 
     for (int i = 0; i < SLOPE_CHANNELS; i++) {
@@ -523,10 +530,11 @@ void __not_in_flash_func(S_slope_buffer_background_service)(void) {
         if (S_slope_buffer_needs_fill(channel)) {
             S_slope_buffer_fill_block(channel, SLOPE_RENDER_CHUNK);
             service_index = (channel + 1) % SLOPE_CHANNELS;
-            return;
+            return true;
         }
     }
     service_index = (service_index + 1) % SLOPE_CHANNELS;
+    return false;
 }
 
 // Compute normalized progress (0-1 in Q16) from elapsed samples

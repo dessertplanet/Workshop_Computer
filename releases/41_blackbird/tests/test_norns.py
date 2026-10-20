@@ -18,6 +18,7 @@ installed are skipped. Add more with BB_NORNS_SCRIPTS="path/a.lua,path/b.lua"
 import os
 import re
 import statistics
+import time
 
 from bbdbg import GENERIC_STIMULUS, Skip, apply_stimulus, expected_failure, outputs_moving
 from nornsws import Norns, NornsError, NornsUnavailable
@@ -219,11 +220,15 @@ def test_input_change_reaches_norns(bb):
     n.run("bbt_n = 0; crow.input[1].change = function(s) bbt_n = bbt_n + 1 end;"
           "crow.input[1].mode('change', 1.0, 0.1, 'both')")
     bb.wait(0.1)
+    t0 = time.monotonic()
     bb.square("cv1", 5, low=0, high=3)
     bb.wait(2.0)
     bb.release_input("cv1")
+    elapsed = time.monotonic() - t0  # the host's view of how long the square ran
+    bb.wait(0.3)  # let in-flight events reach norns
     got = n.query("bbt_n")
-    assert 18 <= got <= 22, f"norns saw {got} changes, expected ~20"
+    expected = 2 * 5 * elapsed  # both edges of a 5Hz square
+    assert abs(got - expected) <= 3, f"norns saw {got} changes, expected ~{expected:.0f} over {elapsed:.2f}s"
 
 
 def test_forwarded_function_arguments(bb):
@@ -398,6 +403,71 @@ def test_latency_midi_while_busy(bb):
         teardown_midi_path(n)
         n.run("crow.input[1].mode('none')")
     report_latency(bb, "midi -> norns -> bb (busy)", ms, lost)
+
+
+CHORD_SPREAD_MS = float(os.environ.get("BB_CHORD_SPREAD_MS", "1.5"))
+
+
+def test_midi_chord_arrival_spread(bb):
+    """norns plays an 8-note chord into blackbird's MIDI port. How far apart do
+    the notes reach Lua? Timed on blackbird's microsecond clock, first note to
+    last. Asserted with the chord sent as one write, which measures
+    blackbird's part; sent as 8 note_on calls, norns puts the notes in separate
+    USB frames, so that spread (reported only) is mostly norns."""
+    n = setup_midi_path(bb)
+    bb.eval("chord = {}; bb.event_midi = function(b1, b2, b3) "
+            "if b1 & 0xF0 == 0x90 and b3 > 0 then chord[#chord + 1] = bb_dbg_us() end end")
+    sends = {
+        "one write": "local d = {} for note = 60, 67 do d[#d+1] = 0x90; d[#d+1] = note; d[#d+1] = 100 end bbt_m:send(d)",
+        "8 note_on calls": "for note = 60, 67 do bbt_m:note_on(note, 100, 1) end",
+    }
+    results = {}
+    try:
+        for label, send in sends.items():
+            spreads, counts = [], []
+            for _ in range(10):
+                bb.eval("chord = {}")
+                n.run(send)
+                n.run("for note = 60, 67 do bbt_m:note_off(note, 0, 1) end")
+                bb.wait(0.3)
+                count, spread = bb.eval("print(#chord, #chord > 1 and (chord[#chord] - chord[1]) or 0)").split()
+                counts.append(int(count))
+                spreads.append(int(spread) / 1000)
+            spreads.sort()
+            results[label] = (spreads, counts)
+            bb.info[f"chord spread, {label}"] = f"median {statistics.median(spreads):.2f}  max {spreads[-1]:.2f} ms"
+    finally:
+        bb.eval("bb.event_midi = nil")
+        teardown_midi_path(n)
+    for label, (spreads, counts) in results.items():
+        assert all(c == 8 for c in counts), f"{label}: notes per chord {counts}"
+    spreads = results["one write"][0]
+    assert spreads[-1] <= CHORD_SPREAD_MS, \
+        f"chord (one write) spread up to {spreads[-1]:.2f}ms > {CHORD_SPREAD_MS}ms (BB_CHORD_SPREAD_MS)"
+
+
+def test_midi_flood_into_allocating_handler(bb):
+    """2000 note-ons from norns in bursts of 100, into a Lua handler that makes
+    garbage on every event. With no GC step forced per MIDI event, Lua's own
+    GC must keep up: every note arrives, and memory levels off."""
+    n = setup_midi_path(bb)
+    bb.eval("flood_n = 0; bb.event_midi = function(b1, b2, b3) "
+            "if b1 & 0xF0 == 0x90 then flood_n = flood_n + 1; local t = { b1, b2, b3, tostring(b2) } end end")
+    bb.reset_stats()
+    try:
+        for burst in range(20):
+            n.run("local d = {} for i = 1, 100 do d[#d+1] = 0x90; d[#d+1] = (i % 60) + 30; d[#d+1] = 100 end bbt_m:send(d)")
+            bb.wait(0.05)
+        bb.wait(1.0)
+        got = bb.query("flood_n")
+    finally:
+        bb.eval("bb.event_midi = nil")
+        teardown_midi_path(n)
+    st = bb.stats()
+    bb.info["flood"] = (f"{got}/2000 notes, lua peak {st['lua_mem_peak_bytes'] // 1024} KB, "
+                        f"alloc failures {st['lua_alloc_failures']}")
+    assert got == 2000, f"{got} of 2000 notes reached Lua"
+    assert st["lua_mem_peak_bytes"] < 160 * 1024, f"Lua memory peaked at {st['lua_mem_peak_bytes'] // 1024} KB"
 
 
 def test_midi_echo_burst_reaches_norns_intact(bb):

@@ -26,6 +26,7 @@ License is GPLv3 or later- see LICENSE file for details.
 #include "ComputerCard.h"
 #include "pico/multicore.h"
 #include "hardware/vreg.h"
+#include "hardware/structs/systick.h"
 #include "pico/stdlib.h"
 #include "hardware/timer.h"
 #include "hardware/irq.h"
@@ -293,8 +294,13 @@ static constexpr uint32_t kProcessSampleOverrunThresholdUs =
     static_cast<uint32_t>(kProcessSampleBudgetUs + 0.5);  // >=100% utilization (~100us)
 static constexpr uint32_t kClockServiceRateHz = 1000;      // crow-compatible cadence
 static constexpr uint32_t kTimerServiceRateHz = 1500;      // ~1.5kHz target (crow-compatible cadence)
-static constexpr int kLuaGcStepSize = 2; // small incremental GC step per main loop
-static constexpr int kLuaMidiGcStepSize = 25; // extra GC work per MIDI event burst (prevents Lua OOM)
+static constexpr int kLuaGcStepSize = 2; // small incremental GC step, every kLuaGcStepIntervalUs
+// The idle-time GC step used to run on every main loop pass (~6.7kHz): each
+// step adds kLuaGcStepSize KB of GC debt, so the collector was kept running
+// even with nothing allocating, and a step could take ~1.4ms (measured as the
+// main loop's worst section). Lua's own allocation-driven GC does the real
+// work; this only keeps a cycle moving during idle time.
+static constexpr uint32_t kLuaGcStepIntervalUs = 5000;
 static constexpr uint32_t kMainLoopSoftBudgetUs = 8000; // soft budget per loop to reduce stalls
 static constexpr int kMaxLogMessagesPerLoop = 4; // cap logs per loop to avoid large spikes
 // ProcessSample (Core 1 audio thread) performance
@@ -319,6 +325,26 @@ static volatile uint32_t g_lua_alloc_failures = 0;
 
 // MainControlLoop (Core 0) performance
 static volatile uint32_t g_loop_worst_case_us = 0;
+
+#ifdef BB_DEBUG_HARNESS
+// Worst time per MainControlLoop section (debug builds), to find stalls.
+// Section numbers are listed in util/bbdbg.py (LOOP_SECTIONS).
+#define BB_LOOP_SECTIONS 16
+static volatile uint32_t g_loop_section_max_us[BB_LOOP_SECTIONS];
+static uint32_t g_loop_section = 0, g_loop_section_start = 0;
+static inline void loop_section(uint32_t next) {
+    uint32_t now = time_us_32();
+    uint32_t d = now - g_loop_section_start;
+    if (d > g_loop_section_max_us[g_loop_section]) g_loop_section_max_us[g_loop_section] = d;
+    g_loop_section = next;
+    g_loop_section_start = now;
+}
+#define LOOP_BEGIN(t) do { g_loop_section = 0; g_loop_section_start = (t); } while (0)
+#define LOOP_SECTION(n) loop_section(n)
+#else
+#define LOOP_BEGIN(t) do {} while (0)
+#define LOOP_SECTION(n) do {} while (0)
+#endif
 static volatile uint32_t g_loop_iteration_count = 0;
 
 // ============================================================================
@@ -513,8 +539,8 @@ extern "C" void hardware_pulse_output_set(int channel, bool state);
 
 // Forward declaration for pulse input connection check (defined after BlackbirdCrow class)
 static bool is_pulse_input_connected(int pulse_idx);
-static void service_clock_from_core1(void);
-static void service_timer_from_core1(void);
+static bool service_clock_from_core1(void);
+static bool service_timer_from_core1(void);
 static void blackbird_core1_background_service(void);
 static void process_usb_midi_packets_device(void);
 static void process_usb_midi_packets_host(void);
@@ -544,7 +570,7 @@ static volatile bool g_mpe_mode_enabled = false;
 // Implemented later in the file (after the card helpers are available).
 static void auto_update_clock_source_from_connections(void);
 
-static void __not_in_flash_func(service_clock_from_core1)(void) {
+static bool __not_in_flash_func(service_clock_from_core1)(void) {
     uint32_t ticks = 0;
     uint32_t irq_state = save_and_disable_interrupts();
     if (g_clock_ticks_pending) {
@@ -554,16 +580,17 @@ static void __not_in_flash_func(service_clock_from_core1)(void) {
     restore_interrupts(irq_state);
 
     if (ticks == 0) {
-        return;
+        return false;
     }
 
     for (uint32_t i = 0; i < ticks; i++) {
         uint32_t time_now_ms = clock_ms_since_boot();
         clock_update(time_now_ms);
     }
+    return true;
 }
 
-static void __not_in_flash_func(service_timer_from_core1)(void) {
+static bool __not_in_flash_func(service_timer_from_core1)(void) {
     uint32_t ticks = 0;
     uint32_t irq_state = save_and_disable_interrupts();
     if (g_timer_ticks_pending) {
@@ -573,20 +600,37 @@ static void __not_in_flash_func(service_timer_from_core1)(void) {
     restore_interrupts(irq_state);
 
     if (ticks == 0) {
-        return;
+        return false;
     }
 
     for (uint32_t i = 0; i < ticks; i++) {
         Timer_Process();
     }
+    return true;
 }
 
 // Everything core 1 runs must live in RAM, so it keeps running while core 0
 // erases/programs flash (see FlashStorage). Check with util/core1_flash_audit.py.
+#ifdef BB_DEBUG_HARNESS
+// Core 1 cycles spent in background passes that found nothing to do (load profiling)
+static volatile uint32_t g_core1_idle_cycles = 0;
+#endif
+
 static void __not_in_flash_func(blackbird_core1_background_service)(void) {
-    S_slope_buffer_background_service();
-    service_timer_from_core1();
-    service_clock_from_core1();
+#ifdef BB_DEBUG_HARNESS
+    uint32_t start = systick_hw->cvr;
+    uint32_t isr_before = ComputerCard::profileIsrCycles;
+#endif
+    bool worked = S_slope_buffer_background_service();
+    worked |= service_timer_from_core1();
+    worked |= service_clock_from_core1();
+#ifdef BB_DEBUG_HARNESS
+    if (!worked) {
+        uint32_t elapsed = (start - systick_hw->cvr) & 0xFFFFFF;
+        uint32_t in_isr = ComputerCard::profileIsrCycles - isr_before;  // the ISR may have run meanwhile
+        g_core1_idle_cycles = g_core1_idle_cycles + (elapsed > in_isr ? elapsed - in_isr : 0);
+    }
+#endif
 }
 static int bb_connected_index(lua_State* L);
 extern "C" void L_handle_input_lockfree(input_event_lockfree_t* event);
@@ -1589,6 +1633,9 @@ public:
             printf("Error setting up _user tracking: %s\n\r", error ? error : "unknown error");
             lua_pop(L, 1);
         }
+
+        // After the tracer: setmetatable() above replaces _G's metatable
+        install_lazy_libs();
     }
     
     // Load embedded ASL libraries from compiled bytecode
@@ -1738,6 +1785,51 @@ public:
     }
     
     // Load crow ecosystem libraries that don't conflict with our custom setup
+    // sequins, timeline and hotswap load on first use rather than at boot:
+    // together they hold ~24KB of Lua heap, which scripts that don't use them
+    // can have instead. _G's __index loads one the first time its name is read
+    // (sequins{...}, if timeline then ..., type(hotswap) all count) and
+    // rawsets the global, so it then behaves as if it had always been there.
+    // Loading timeline or hotswap reads `sequins`/`timeline`, which loads
+    // those first. rawset keeps them out of _user, so crow.reset/^^k keep them.
+    struct LazyLib { const char* name; const unsigned char* bytecode; size_t len; };
+    static int lazy_lib_index(lua_State* L) {
+        static const LazyLib libs[] = {
+            { "sequins", sequins, sequins_len },
+            { "timeline", timeline, timeline_len },
+            { "hotswap", hotswap, hotswap_len },
+        };
+        const char* key = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
+        if (key) {
+            for (const LazyLib& lib : libs) {
+                if (strcmp(key, lib.name) == 0) {
+                    if (luaL_loadbuffer(L, (const char*)lib.bytecode, lib.len, lib.name) != LUA_OK) {
+                        return lua_error(L);
+                    }
+                    lua_call(L, 0, 1);       // stack: _G, key, lib
+                    lua_pushvalue(L, 2);
+                    lua_pushvalue(L, 3);
+                    lua_rawset(L, 1);        // _G[key] = lib, bypassing the _user tracer
+                    return 1;                // lib
+                }
+            }
+        }
+        lua_pushnil(L);
+        return 1;
+    }
+
+    void install_lazy_libs() {
+        lua_pushglobaltable(L);
+        if (!lua_getmetatable(L, -1)) {
+            lua_newtable(L);
+            lua_pushvalue(L, -1);
+            lua_setmetatable(L, -3);
+        }
+        lua_pushcfunction(L, lazy_lib_index);
+        lua_setfield(L, -2, "__index");
+        lua_pop(L, 2);
+    }
+
     void load_crow_ecosystem() {
         if (!L) return;
         
@@ -1758,15 +1850,14 @@ public:
         };
         
         // Load only essential libraries (sequins before public!)
-        load_lib("sequins.lua", "sequins", sequins, sequins_len);
+        // sequins, timeline, hotswap load on first use: see install_lazy_libs(),
+        // called in init() once _G's metatable (the _user tracer) is in place
         load_lib("public.lua", "public", public_lua, public_len);
         load_lib("clock.lua", "clock", clock, clock_len);
         
         // Optional libraries - comment these out to save memory:
         // load_lib("calibrate.lua", "cal", calibrate, calibrate_len);
         load_lib("quote.lua", "quote", quote, quote_len);
-        load_lib("timeline.lua", "timeline", timeline, timeline_len);
-        load_lib("hotswap.lua", "hotswap", hotswap, hotswap_len);
         
         // Define delay() function (from l_crowlib.c)
         // This creates a closure using clock.run and clock.sleep
@@ -2501,7 +2592,9 @@ static volatile bool g_midi_vel_fine_valid[16] = {false};
 // MIDI->Lua throttling
 // Limit the number of Lua calls we do per USB service tick (1kHz) so arpeggiators
 // and fast playing can't outpace Lua GC. Note-offs always pass to avoid stuck notes.
-static constexpr int kMaxMidiLuaDispatchPerUsbTick = 1;
+// Continuous controllers (CC, pressure, bend) reaching Lua per 1ms tick; notes
+// always pass. Was 1, from when every Lua call carried several ms of GC work.
+static constexpr int kMaxMidiLuaDispatchPerUsbTick = 16;
 static int g_midi_lua_dispatch_budget = 0;
 
 static struct {
@@ -2704,9 +2797,9 @@ static void dispatch_midi_event(uint8_t b1, uint8_t b2, uint8_t b3) {
         }
         lua_settop(L, base);
 
-        // MIDI can arrive in short bursts; do a small incremental GC step
-        // here so allocations inside user handlers can't outpace the main-loop GC.
-        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
+        // (No per-event GC step: at 25KB of debt it took ~1.7ms per event, so
+        // an 8-note chord reached Lua spread over ~12ms. Lua's own
+        // allocation-driven GC keeps pace with what handlers allocate.)
     }
 
     if (handled || g_mpe_mode_enabled) return;
@@ -2729,7 +2822,6 @@ static void dispatch_mpe_note_event(bool is_on, uint8_t note, float velocity, ui
             handled = midi_pcall_handler(L, 4, "event_mpe_note");
         }
         lua_settop(L, base);
-        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
     if (!handled) {
         // Velocity may include fractional CC88 data.
@@ -2754,7 +2846,6 @@ static void dispatch_mpe_bend_event(uint16_t bend14, uint8_t channel) {
             handled = midi_pcall_handler(L, 2, "event_mpe_bend");
         }
         lua_settop(L, base);
-        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
     if (!handled) {
         midi_echo_push(kEchoMpeBend, 0, 0, channel, val);
@@ -2775,7 +2866,6 @@ static void dispatch_mpe_value_event(const char* field, const char* host_name, u
             handled = midi_pcall_handler(L, 2, field);
         }
         lua_settop(L, base);
-        lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
     if (!handled) {
         midi_echo_push(strcmp(host_name, "slide") == 0 ? kEchoMpeSlide : kEchoMpePressure, 0, value, channel);
@@ -2817,7 +2907,8 @@ static void mpe_flush_channel(uint8_t channel) {
     }
 }
 
-// Called once per USB service tick after incoming packets are drained.
+// Called on every main loop pass after incoming packets are drained; dispatch
+// is limited by the per-1ms-tick budget.
 static void mpe_flush_pending(void) {
     if (!g_mpe_mode_enabled) return;
     for (uint8_t n = 0; n < kMpeSlotCount && g_midi_lua_dispatch_budget > 0; n++) {
@@ -3312,34 +3403,34 @@ void tuh_midi_tx_cb(uint8_t dev_addr) {
 #endif
 
 static inline void usb_service_poll_from_main(void) {
-    // Coalesce ticks to bounded work per loop iteration
+    // Reset MIDI->Lua dispatch budget once per USB service tick (1kHz).
     if (g_usb_service_tick) {
         g_usb_service_tick = 0;
-
-        // Reset MIDI->Lua dispatch budget once per USB service tick (1kHz).
         g_midi_lua_dispatch_budget = kMaxMidiLuaDispatchPerUsbTick;
+    }
 
-        if (g_usb_role == USB_ROLE_DEVICE) {
-            usb_task();
+    // Service USB on every main loop pass (it used to wait for the 1kHz
+    // tick), so input from the host is seen as soon as the loop comes round.
+    if (g_usb_role == USB_ROLE_DEVICE) {
+        usb_task();
 
-            // RX: Read available data and queue for main loop processing
-            while (tud_cdc_available()) {
-                uint8_t buf[64];
-                uint32_t count = tud_cdc_read(buf, sizeof(buf));
-                if (count == 0) break;
-                usb_rx_lockfree_post((char*)buf, count);
-            }
-
-            process_usb_midi_packets_device();
-        } else {
-#if TUSB_OPT_HOST_ENABLED
-            tuh_task();
-            process_usb_midi_packets_host();
-#endif
+        // RX: Read available data and queue for main loop processing
+        while (tud_cdc_available()) {
+            uint8_t buf[64];
+            uint32_t count = tud_cdc_read(buf, sizeof(buf));
+            if (count == 0) break;
+            usb_rx_lockfree_post((char*)buf, count);
         }
 
-        mpe_flush_pending();
+        process_usb_midi_packets_device();
+    } else {
+#if TUSB_OPT_HOST_ENABLED
+        tuh_task();
+        process_usb_midi_packets_host();
+#endif
     }
+
+    mpe_flush_pending();
 
     if (g_usb_tx_tick && g_usb_role == USB_ROLE_DEVICE) {
         g_usb_tx_tick = 0;
@@ -3841,12 +3932,15 @@ public:
         while (1) {
             // === PERFORMANCE MONITORING: Track loop iteration time ===
             uint32_t loop_start_time = time_us_32();
+            LOOP_BEGIN(loop_start_time);
 
             // Service USB from main loop (timer IRQs only set tick flags)
             usb_service_poll_from_main();
+            LOOP_SECTION(1);
             midi_echo_service();
 
             
+            LOOP_SECTION(2);
             // Process USB RX messages from lock-free queue
             usb_rx_message_t rx_msg;
             while (usb_rx_lockfree_get(&rx_msg)) {
@@ -3869,11 +3963,13 @@ public:
                 }
             }
 
+            LOOP_SECTION(3);
 #ifdef BB_DEBUG_HARNESS
             // Debugger mailbox: after RX so injected REPL bytes are seen as processed
             bb_dbg_service(lua_manager ? lua_manager->L : nullptr);
 #endif
 
+            LOOP_SECTION(4);
             uint32_t now_us = time_us_32();
             if ((now_us - last_led_update_us) >= led_update_interval_us) {
                 last_led_update_us = now_us;
@@ -3923,6 +4019,7 @@ public:
                 // Note: Don't reset g_worst_case_us here - let user query via perf_stats()
             }
             
+            LOOP_SECTION(5);
             // Process queued messages from audio thread (bounded to avoid stalls)
             process_queued_messages_limited(kMaxLogMessagesPerLoop);
             
@@ -3938,6 +4035,7 @@ public:
             // Update stream-equivalent values for .volts queries (always maintained)
             update_input_stream_values();
 
+            LOOP_SECTION(6);
             // Process lock-free clock resume events before anything else can stall them
             const int max_clock_events_per_loop = 32;  // allow higher rates, still bounded
             clock_event_lockfree_t clock_event;
@@ -3957,6 +4055,7 @@ public:
                 }
             }
 
+            LOOP_SECTION(7);
             // Process lock-free metro events (high priority but bounded per loop)
             const int max_metro_events_per_loop = 32;
             metro_event_lockfree_t metro_event;
@@ -3976,6 +4075,7 @@ public:
                 }
             }
             
+            LOOP_SECTION(8);
             // Process lock-free input detection events (high priority)
             // IMPORTANT: Limit events per iteration to prevent starving clock system
             // Fast triggers can fill the queue, blocking clock_update() and coroutines
@@ -4033,6 +4133,7 @@ public:
                 }
             }
             
+            LOOP_SECTION(9);
             // Process lock-free ASL done events (medium priority, bounded)
             const int max_asl_done_events_per_loop = 32;
             asl_done_event_lockfree_t asl_done_event;
@@ -4045,6 +4146,7 @@ public:
                 }
             }
             
+            LOOP_SECTION(10);
             // Check for switch changes and fire callback
             static ComputerCard::Switch last_switch = ComputerCard::Switch::Middle;
             static bool first_switch_check = true;
@@ -4098,6 +4200,7 @@ public:
                 }
             }
 
+            LOOP_SECTION(11);
             // === ASAP CALLBACK: User-defined high-frequency function (bb.asap) ===
             // Runs every MainControlLoop iteration. Intended for lightweight mapping logic
             // (e.g. reading knobs and updating outputs). Heavy work will degrade performance.
@@ -4126,6 +4229,7 @@ public:
                 lua_settop(lua_manager->L, 0); // clean stack
             }
             
+            LOOP_SECTION(12);
             // Check for pulse input changes and fire callbacks
             // Edge detection happens at the ProcessSample() rate, we just check flags here
             // REENTRANCY PROTECTION: Skip callback if one is already running (prevents crashes from fast clocks)
@@ -4167,11 +4271,15 @@ public:
                 }
             }
             
-            // Smooth Lua GC to avoid long pauses; tiny step each loop
-            if (lua_manager && lua_manager->L) {
+            LOOP_SECTION(13);
+            // Smooth Lua GC to avoid long pauses: a small step every kLuaGcStepIntervalUs
+            static uint32_t last_gc_step_us = 0;
+            if (lua_manager && lua_manager->L && (time_us_32() - last_gc_step_us) >= kLuaGcStepIntervalUs) {
+                last_gc_step_us = time_us_32();
                 lua_gc(lua_manager->L, LUA_GCSTEP, kLuaGcStepSize);
             }
 
+            LOOP_SECTION(14);
             // Update public view monitoring (~15fps), but skip if we've blown budget
             static uint32_t last_pubview_time = 0;
             if (now - last_pubview_time >= 66) { // ~15fps (66ms = 1000/15)
@@ -4181,6 +4289,15 @@ public:
                 }
             }
             
+            // Send this pass's USB serial output now, rather than waiting for
+            // the 2ms periodic flush (TinyUSB sends the rest when each packet
+            // completes)
+            if (g_usb_role == USB_ROLE_DEVICE && tud_cdc_connected() &&
+                tud_cdc_write_available() < CFG_TUD_CDC_TX_BUFSIZE) {
+                tud_cdc_write_flush();
+            }
+
+            LOOP_SECTION(15);
             // === PERFORMANCE MONITORING: Track loop worst-case time ===
             uint32_t loop_elapsed = time_us_32() - loop_start_time;
             if (loop_elapsed > g_loop_worst_case_us) {
@@ -4740,7 +4857,7 @@ public:
         
         // === PERFORMANCE MONITORING (low-cost) ===
         // Check if ProcessSample exceeded time budget
-        // Each sample has a budget of kProcessSampleBudgetUs (≈104us at 9.6kHz); only >=100% counts as an overrun
+        // Each sample has a budget of kProcessSampleBudgetUs (≈42us at 24kHz); only >=100% counts as an overrun
         uint32_t elapsed = time_us_32() - start_time;
         
         // Always track worst-case execution time (available via perf_stats())
@@ -4780,10 +4897,10 @@ public:
 // output is mirrored into the log ring (log_head counts bytes ever written).
 
 #define BB_DBG_MAGIC       0x47444242u  // "BBDG"
-#define BB_DBG_VERSION     8u
-#define BB_DBG_SCRIPT_MAX  4096
-#define BB_DBG_OUT_MAX     2048
-#define BB_DBG_LOG_MAX     4096         // power of two
+#define BB_DBG_VERSION     12u
+#define BB_DBG_SCRIPT_MAX  2048
+#define BB_DBG_OUT_MAX     1024
+#define BB_DBG_LOG_MAX     2048         // power of two
 #define BB_DBG_ALLOC_BUCKETS 24         // 8-byte steps to 128, then 192, 256, 512, 1K, 2K, 4K, more
 
 enum {
@@ -4833,7 +4950,12 @@ typedef struct {
     uint32_t pool_slot_bytes;      // bytes in pool slots handed out
     uint32_t pool_capacity_bytes;  // bytes in all pool slots
     uint32_t pool_arena_free_pages; // pool arena pages not in use
-    uint32_t reserved[8];         // room for more stats without moving the mailbox
+    uint32_t core1_isr_cycles;     // audio ISR cycles, total (wraps; take differences)
+    uint32_t core1_isr_count;      // audio ISR runs
+    uint32_t core1_isr_max_cycles; // longest audio ISR, cycles
+    uint32_t core1_idle_cycles;    // core 1 cycles idle in its background loop (wraps)
+    uint32_t slope_underruns;      // output samples rendered in the ISR because a buffer ran dry
+    uint32_t reserved[3];         // room for more stats without moving the mailbox
     // --- command mailbox ---
     uint32_t cmd_seq;              // host increments to submit
     uint32_t cmd;
@@ -4852,6 +4974,7 @@ typedef struct {
     uint32_t alloc_live[BB_DBG_ALLOC_BUCKETS];
     uint32_t alloc_live_bytes[BB_DBG_ALLOC_BUCKETS];
     uint32_t alloc_total[BB_DBG_ALLOC_BUCKETS];
+    uint32_t loop_section_max_us[BB_LOOP_SECTIONS];  // worst time per MainControlLoop section
 } bb_dbg_t;
 
 static_assert(offsetof(bb_dbg_t, heartbeat) == 16, "bbdbg.py layout");
@@ -4991,6 +5114,8 @@ static bool bb_dbg_repl_step(void) {
 }
 
 static void bb_dbg_reset_stats(void) {
+    ComputerCard::profileIsrMaxCycles = 0;
+    for (int i = 0; i < BB_LOOP_SECTIONS; i++) g_loop_section_max_us[i] = 0;
     g_worst_case_us = 0;
     g_overrun_count = 0;
     g_loop_worst_case_us = 0;
@@ -5026,6 +5151,12 @@ static void bb_dbg_update_stats(lua_State* L) {
     bb_dbg.pool_slot_bytes = pool.slot_bytes;
     bb_dbg.pool_capacity_bytes = pool.capacity_bytes;
     bb_dbg.pool_arena_free_pages = pool.arena_free_pages;
+    bb_dbg.core1_isr_cycles = ComputerCard::profileIsrCycles;
+    bb_dbg.core1_isr_count = ComputerCard::profileIsrCount;
+    bb_dbg.core1_isr_max_cycles = ComputerCard::profileIsrMaxCycles;
+    bb_dbg.core1_idle_cycles = g_core1_idle_cycles;
+    bb_dbg.slope_underruns = g_slope_inline_renders;
+    for (int i = 0; i < BB_LOOP_SECTIONS; i++) bb_dbg.loop_section_max_us[i] = g_loop_section_max_us[i];
 
     static int32_t last_out_mv[4];
     for (int ch = 0; ch < 4; ch++) {

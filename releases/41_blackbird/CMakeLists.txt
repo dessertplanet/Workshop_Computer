@@ -20,6 +20,9 @@ include(pico_sdk_import.cmake)
 # mirror of USB output, for util/bbdbg.py. Same optimisation as release so
 # timings are representative. Builds blackbird_debug and leaves UF2/ alone.
 option(BB_DEBUG_HARNESS "Build with the SWD debug/test harness" OFF)
+# 24kHz: measured on hardware, core 1 is ~68% busy at worst (stress test) at
+# this rate; 40kHz+ saturates it and drops samples. Was 9.6kHz up to v1.2.
+set(BB_SAMPLE_RATE_HZ 24000 CACHE STRING "Audio ISR / output rendering rate (must divide 6000000)")
 
 # Define a variable for the card name
 if(BB_DEBUG_HARNESS)
@@ -185,7 +188,7 @@ target_sources(${CARD_NAME} PRIVATE
 )
 
 # Add conditional compilation defines
-target_compile_definitions(${CARD_NAME} PRIVATE ${TEST_DEFINE})
+target_compile_definitions(${CARD_NAME} PRIVATE ${TEST_DEFINE} PROCESS_SAMPLE_RATE_HZ_INT=${BB_SAMPLE_RATE_HZ})
 target_include_directories(${CARD_NAME} PRIVATE ${CMAKE_BINARY_DIR})
 
 # Performance optimizations for main code
@@ -217,7 +220,7 @@ target_compile_definitions(${CARD_NAME} PRIVATE
 target_link_options(${CARD_NAME} PRIVATE -Wl,--wrap=tud_cdc_n_write)
 
 if(BB_DEBUG_HARNESS)
-    target_compile_definitions(${CARD_NAME} PRIVATE BB_DEBUG_HARNESS COMPUTERCARD_INPUT_OVERRIDES)
+    target_compile_definitions(${CARD_NAME} PRIVATE BB_DEBUG_HARNESS COMPUTERCARD_INPUT_OVERRIDES COMPUTERCARD_PROFILE)
 else()
 # Copy UF2 files to UF2 directory and add user script erase blocks
 add_custom_command(

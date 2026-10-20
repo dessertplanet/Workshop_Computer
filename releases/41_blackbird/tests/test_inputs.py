@@ -27,9 +27,13 @@ def test_knobs(bb):
         bb.set_input("knob_main", value)
         bb.set_input("knob_x", 1 - value)
         bb.set_input("knob_y", value)
-        bb.wait(0.02)
-        got = (bb.query("bb.knob.main"), bb.query("bb.knob.x"), bb.query("bb.knob.y"))
-        assert all(close(g, w, 0.01) for g, w in zip(got, (value, 1 - value, value))), \
+        want = (value, 1 - value, value)
+        for _ in range(15):  # the knobs settle in ~20ms, but the first change after a reset can take longer
+            bb.wait(0.02)
+            got = (bb.query("bb.knob.main"), bb.query("bb.knob.x"), bb.query("bb.knob.y"))
+            if all(close(g, w, 0.01) for g, w in zip(got, want)):
+                break
+        assert all(close(g, w, 0.01) for g, w in zip(got, want)), \
             f"knobs main/x/y = {got}, set {value}/{1 - value}/{value}"
 
 
