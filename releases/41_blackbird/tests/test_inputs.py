@@ -28,9 +28,9 @@ def test_knobs(bb):
         bb.set_input("knob_x", 1 - value)
         bb.set_input("knob_y", value)
         bb.wait(0.02)
-        assert close(bb.query("bb.knob.main"), value, 0.01)
-        assert close(bb.query("bb.knob.x"), 1 - value, 0.01)
-        assert close(bb.query("bb.knob.y"), value, 0.01)
+        got = (bb.query("bb.knob.main"), bb.query("bb.knob.x"), bb.query("bb.knob.y"))
+        assert all(close(g, w, 0.01) for g, w in zip(got, (value, 1 - value, value))), \
+            f"knobs main/x/y = {got}, set {value}/{1 - value}/{value}"
 
 
 def test_switch_position_and_change_callback(bb):

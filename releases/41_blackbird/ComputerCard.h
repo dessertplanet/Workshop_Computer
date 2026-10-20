@@ -93,6 +93,15 @@ public:
 	void Run()
 	{
 		ComputerCard::thisptr = this;
+		// Resolve the virtual ProcessSample once, here, and keep the plain
+		// function pointer in RAM. vtables live in flash, and the audio ISR must
+		// not read flash: blackbird writes flash from the other core while
+		// audio runs, and a vtable read mid-write returns 0 (core1 jumped to
+		// address 0 and faulted). GCC extension: bound member pointer -> function.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpmf-conversions"
+		processSampleFn = (ProcessSampleFn)(this->*(&ComputerCard::ProcessSample));
+#pragma GCC diagnostic pop
 		AudioWorker();
 	}
 
@@ -577,6 +586,8 @@ private:
 		thisptr->BufferFull();
 	}
 	static ComputerCard *thisptr;
+	typedef void (*ProcessSampleFn)(ComputerCard *);
+	static ProcessSampleFn processSampleFn;
 
 	// 19-bit CV outputs
 	static void __not_in_flash_func(OnCVPWMWrap)()
@@ -672,6 +683,7 @@ volatile uint32_t ComputerCard::cvValue[2] = {262144,262144};
 
 
 ComputerCard *ComputerCard::thisptr;
+ComputerCard::ProcessSampleFn ComputerCard::processSampleFn;
 ComputerCard::Core1BackgroundHook ComputerCard::core1_background_hook = nullptr;
 
 void ComputerCard::RegisterCore1BackgroundHook(Core1BackgroundHook hook)
@@ -1025,8 +1037,8 @@ void __not_in_flash_func(ComputerCard::BufferFull)()
 #endif
 
 	////////////////////////////////////////
-	// Run the DSP
-	ProcessSample();
+	// Run the DSP (through the pointer resolved in Run(), not the vtable)
+	processSampleFn(this);
 
 	////////////////////////////////////////
 	// Collect DSP outputs and put them in the DAC SPI buffer

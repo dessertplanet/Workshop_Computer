@@ -67,7 +67,7 @@ Notes:
 - Every message type is delivered, including program change, clock/start/stop/continue, song position and sysex. Active sensing (`0xFE`) is ignored.
 - MIDI clock messages also drive Blackbird's `clock` when the clock source is MIDI (see below).
 - To keep up with fast controllers, Blackbird passes at most one CC / pitch bend / pressure message per millisecond to Lua and drops the rest. Notes and all other messages always get through.
-- If `bb.event_midi` is not defined, notes, CC, pitch bend and aftertouch are forwarded to the host as crow-style messages (e.g. `^^midi('on',60,100,1)`, `^^midi('cc',1,64,1)`, `^^midi('bend',0.5,1)`, `^^midi('aftertouch',64,1)`).
+- If `bb.event_midi` is not defined, notes, CC, pitch bend and aftertouch are forwarded to the host as crow-style messages (e.g. `^^midi('on',60,100,1)`, `^^midi('cc',1,64,1)`, `^^midi('bend',0.5,1)`, `^^midi('aftertouch',64,1)`). These go out at most one every 4ms, so a burst (an all-notes-off is ~128 messages) can't overrun the host: norns' crow reader loses data if lines arrive faster than its Lua handles them. Up to 128 can wait their turn; beyond that, the extras are dropped.
 
 ### `bb.midi_to_msg(data)`
 
@@ -181,7 +181,7 @@ Notes:
 
 - Each MPE note plays on its own channel, so use `ch` to tell which note an expression message belongs to. In a standard MPE setup, channel 1 is the zone's master channel: bend/pressure there apply to all notes, and notes arrive on channels 2–16.
 - Expression (bend, pressure, slide) is **coalesced, not dropped**: if a controller sends faster than Lua can keep up, intermediate values are skipped but the latest value per channel is always delivered, so a release back to 0 is never lost. A channel's pending expression is delivered before its next Note On/Off, preserving the order MPE controllers rely on.
-- Callbacks you don't define are forwarded to the host as crow-style messages via `^^mpe(...)` (e.g. `^^mpe('on',note,vel,ch)`, `^^mpe('pressure',val,ch)`).
+- Callbacks you don't define are forwarded to the host as crow-style messages via `^^mpe(...)` (e.g. `^^mpe('on',note,vel,ch)`, `^^mpe('pressure',val,ch)`), paced the same way as `^^midi`.
 
 #### High-resolution velocity (CC88) in MPE mode
 

@@ -43,23 +43,28 @@ def test_everything_at_once(bb):
 
 
 def test_fast_input_edges(bb):
-    """CV change detection near its limit, with Lua doing work per edge."""
+    """CV change detection at 500 edges/s (a 250Hz gate), with Lua setting an
+    output per edge. Every edge must arrive. Above ~500 edges/s blackbird
+    merges edges (one pending change per input), by design."""
     bb.eval("""
         edge_n = 0
         input[1].mode('change', 1.0, 0.1, 'both')
         input[1].change = function(s) edge_n = edge_n + 1; output[1].volts = s and 5 or 0 end
     """)
-    bb.square("cv1", 500, low=0, high=3)
+    bb.square("cv1", 250, low=0, high=3)
     bb.wait(SECONDS)
     n = bb.query("edge_n")
-    assert n >= 0.9 * 1000 * SECONDS, n
+    assert n >= 0.98 * 500 * SECONDS, f"{n} of {500 * SECONDS:.0f} edges"
     assert_no_drops(bb)
 
 
 def test_lua_memory_is_stable(bb):
-    """Allocate garbage from a fast metro; Lua memory must level off."""
+    """Allocate garbage from a fast metro: Lua memory must level off, and the
+    metro must keep up (an over-eager GC once held this at 7 ticks/s)."""
     bb.eval("""
+        gc_ticks = 0
         metro[1].event = function()
+            gc_ticks = gc_ticks + 1
             local t = {}
             for i = 1, 50 do t[i] = { i, tostring(i) } end
         end
@@ -70,4 +75,7 @@ def test_lua_memory_is_stable(bb):
     first_half_peak = bb.stats()["lua_mem_peak_bytes"]
     bb.wait(SECONDS / 2)
     peak = bb.stats()["lua_mem_peak_bytes"]
+    ticks = bb.query("gc_ticks")
     assert peak <= first_half_peak * 1.25, f"Lua memory still growing: {first_half_peak} -> {peak}"
+    assert ticks >= 0.5 * 500 * SECONDS, f"metro managed {ticks / SECONDS:.0f} of 500 ticks/s"
+    bb.info["metro ticks/s"] = round(ticks / SECONDS)

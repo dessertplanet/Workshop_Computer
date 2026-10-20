@@ -65,6 +65,7 @@ macro (add_card _name)
                 ${CMAKE_CURRENT_LIST_DIR}/lib/fastmath.c
                 ${CMAKE_CURRENT_LIST_DIR}/lib/fastmath_lut.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/flash_storage.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/lib/lua_pool.c
                 ${CMAKE_CURRENT_LIST_DIR}/../../Demonstrations+HelloWorlds/PicoSDK/ComputerCard/examples/midi_device_host/usb_midi_host.c
                 ${CMAKE_CURRENT_LIST_DIR}/../../Demonstrations+HelloWorlds/PicoSDK/ComputerCard/examples/midi_device_host/usb_midi_host_app_driver.c
       )
@@ -206,11 +207,17 @@ target_compile_definitions(${CARD_NAME} PRIVATE
     PICO_INT64_OPS_IN_RAM=1
     PICO_MEM_IN_RAM=1
     PICO_BITS_IN_RAM=1
+    # Let malloc return NULL instead of panicking. Lua's allocator handles NULL
+    # by running an emergency GC and retrying, then raising "not enough memory".
+    PICO_MALLOC_PANIC=0
 )
+
+# All USB serial writes go through __wrap_tud_cdc_n_write (main.cpp), which
+# never sends a partial message.
+target_link_options(${CARD_NAME} PRIVATE -Wl,--wrap=tud_cdc_n_write)
 
 if(BB_DEBUG_HARNESS)
     target_compile_definitions(${CARD_NAME} PRIVATE BB_DEBUG_HARNESS COMPUTERCARD_INPUT_OVERRIDES)
-    target_link_options(${CARD_NAME} PRIVATE -Wl,--wrap=tud_cdc_n_write)
 else()
 # Copy UF2 files to UF2 directory and add user script erase blocks
 add_custom_command(

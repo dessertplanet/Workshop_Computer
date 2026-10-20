@@ -45,13 +45,17 @@ DEFAULT_HOST = os.environ.get("OPENOCD_HOST", "host.docker.internal")
 # Mailbox layout: keep in step with bb_dbg_t in main.cpp (static_asserts there)
 # ---------------------------------------------------------------------------
 MAGIC = 0x47444242
-VERSION = 1
+VERSION = 8
 STAT_FIELDS = [
     "magic", "version", "struct_size", "sample_rate_hz",
     "heartbeat", "uptime_ms", "ps_worst_us", "ps_overruns", "ps_budget_us",
     "loop_worst_us", "loop_iterations", "lua_mem_bytes", "lua_mem_peak_bytes",
     "drops_metro", "drops_clock", "drops_input", "drops_asl_done",
     "drops_slope_action", "drops_slope_cmd", "drops_usb_rx",
+    "heap_free_bytes", "lua_alloc_failures", "drops_usb_tx",
+    "out_changes_1", "out_changes_2", "out_changes_3", "out_changes_4",
+    "drops_midi_echo", "pool_pages", "pool_slot_bytes", "pool_capacity_bytes",
+    "pool_arena_free_pages",
 ]
 OFF_CMD_SEQ, OFF_CMD, OFF_ACK_SEQ, OFF_STATUS = 160, 164, 168, 172
 OFF_SCRIPT_LEN, OFF_OUT_LEN, OFF_OUT_TRUNCATED, OFF_LOG_HEAD = 176, 180, 184, 188
@@ -59,11 +63,15 @@ OFF_INPUTS = 192
 INPUT_STRIDE = 24                       # mode, low, high, period, width, phase
 OFF_CONNECTED_MASK = OFF_INPUTS + 10 * INPUT_STRIDE
 OFF_CONNECTED_VALUE = OFF_CONNECTED_MASK + 4
-SCRIPT_MAX, OUT_MAX, LOG_MAX = 8192, 4096, 4096
+SCRIPT_MAX, OUT_MAX, LOG_MAX = 4096, 2048, 4096
 OFF_SCRIPT = OFF_INPUTS + 10 * INPUT_STRIDE + 8
 OFF_OUT = OFF_SCRIPT + SCRIPT_MAX
 OFF_LOG = OFF_OUT + OUT_MAX
-STRUCT_SIZE = OFF_LOG + LOG_MAX
+ALLOC_BUCKETS = 24
+OFF_ALLOC = OFF_LOG + LOG_MAX          # alloc_live, alloc_live_bytes, alloc_total
+STRUCT_SIZE = OFF_ALLOC + 3 * 4 * ALLOC_BUCKETS
+ALLOC_BUCKET_LABELS = [f"{8 * i + 1}-{8 * (i + 1)}" for i in range(16)] + [
+    "129-192", "193-256", "257-512", "513-1K", "1K-2K", "2K-4K", ">4K", "-"]
 
 CMD_EVAL, CMD_REPL, CMD_RESET_STATS = 1, 2, 3
 STATUS_NAMES = {0: "ok", 1: "load error", 2: "runtime error", 3: "bad command", 4: "no lua"}
@@ -278,6 +286,16 @@ class Memory:
         self.write_words(addr, list(struct.unpack(f"<{len(data) // 4}I", data)))
 
 
+def addr2line(elf, addrs):
+    """'function file:line' for each address, best effort."""
+    try:
+        out = subprocess.run(["arm-none-eabi-addr2line", "-f", "-C", "-e", elf] + [hex(a) for a in addrs],
+                             capture_output=True, text=True).stdout.splitlines()
+        return [f"{out[i]} {os.path.basename(out[i + 1])}" for i in range(0, len(out) - 1, 2)]
+    except OSError:
+        return []
+
+
 def find_symbol(elf, name="bb_dbg"):
     try:
         out = subprocess.run(["arm-none-eabi-nm", elf], capture_output=True, text=True, check=True).stdout
@@ -331,11 +349,24 @@ class Blackbird:
         return find_symbol(self.elf, name)
 
     # --- stats -------------------------------------------------------------
+    def alloc_histogram(self):
+        """Lua allocations by size bucket: list of (label, live, live_bytes, total)."""
+        w = self.mem.read_words(self.base + OFF_ALLOC, 3 * ALLOC_BUCKETS)
+        live, live_bytes, total = w[:ALLOC_BUCKETS], w[ALLOC_BUCKETS:2 * ALLOC_BUCKETS], w[2 * ALLOC_BUCKETS:]
+        return [(ALLOC_BUCKET_LABELS[i], live[i], live_bytes[i], total[i]) for i in range(ALLOC_BUCKETS - 1)]
+
     def stats(self):
-        return dict(zip(STAT_FIELDS, self.mem.read_words(self.base, len(STAT_FIELDS))))
+        """Current stats. Drop counters (drops_*) count from the last
+        reset_stats(), like the worst-case figures do."""
+        st = dict(zip(STAT_FIELDS, self.mem.read_words(self.base, len(STAT_FIELDS))))
+        for k, base in getattr(self, "_drop_base", {}).items():
+            st[k] = (st[k] - base) & 0xFFFFFFFF
+        return st
 
     def reset_stats(self):
         self._command(CMD_RESET_STATS)
+        raw = dict(zip(STAT_FIELDS, self.mem.read_words(self.base, len(STAT_FIELDS))))
+        self._drop_base = {k: v for k, v in raw.items() if k.startswith("drops_")}
 
     # --- commands ----------------------------------------------------------
     def _command(self, cmd, script=b"", timeout=5.0):
@@ -357,13 +388,77 @@ class Blackbird:
             out += "\n[output truncated]"
         return status, out
 
+    FAULT_MAGIC = 0xFA017ED0
+
+    def faults(self):
+        """HardFaults captured by the firmware's handler (g_fault_info), per core:
+        a list of dicts with pc/lr/sp/xpsr and their source locations."""
+        try:
+            addr = self.symbol("g_fault_info")
+        except HarnessError:
+            return []
+        words = self.mem.read_words(addr, 22)
+        found = []
+        for core in (0, 1):
+            f = words[core * 11:(core + 1) * 11]
+            if f[0] == self.FAULT_MAGIC:
+                info = dict(core=core, pc=f[1], lr=f[2], xpsr=f[3], sp=f[4], icsr=f[10])
+                info["where"] = addr2line(self.elf, [f[1], f[2] & ~1])
+                found.append(info)
+        return found
+
+    def heap_map(self):
+        """Walk newlib's malloc heap over SWD. Returns a dict: used_chunks,
+        free_chunks (list of sizes, largest first), free_bytes, top_bytes (free
+        space at the end, including heap not yet sbrk'd) and largest_free.
+        Fragmentation shows as free_bytes spread over many small chunks."""
+        sbrk_base = self.mem.read_u32(self.symbol("__malloc_sbrk_base"))
+        top = self.mem.read_u32(self.symbol("__malloc_av_") + 8)  # av_[2]
+        limit = self.symbol("__HeapLimit")
+        first = (sbrk_base + 7) & ~7
+        data = self.mem.read_bytes(first, top + 8 - first)
+        chunks, off = [], 0
+        while first + off < top:
+            size = struct.unpack_from("<I", data, off + 4)[0] & ~3
+            if size < 8 or first + off + size > top:
+                raise HarnessError(f"heap walk: bad chunk at 0x{first + off:08x} (size {size})")
+            chunks.append((off, size))
+            off += size
+        free = []
+        used = 0
+        for k, (off, size) in enumerate(chunks):
+            next_off = chunks[k + 1][0] if k + 1 < len(chunks) else top - first
+            if struct.unpack_from("<I", data, next_off + 4)[0] & 1:
+                used += 1
+            else:
+                free.append(size)
+        top_size = self.mem.read_u32(top + 4) & ~3
+        top_bytes = top_size + (limit - (top + top_size))
+        free.sort(reverse=True)
+        return dict(used_chunks=used, free_chunks=free, free_bytes=sum(free), top_bytes=top_bytes,
+                    largest_free=max([top_bytes] + free[:1]))
+
+    def halted_cores(self):
+        """Names of halted cores. A reset (e.g. the card's button) with OpenOCD
+        attached can leave them halted, which looks like a stuck main loop."""
+        try:
+            names = self.t.monitor("target names").split()
+            return [n for n in names if self.t.monitor(f"{n} curstate").strip() == "halted"]
+        except HarnessError:
+            return []
+
     def _wait_ack(self, seq, timeout):
         deadline = time.monotonic() + timeout
         while self.mem.read_u32(self.base + OFF_ACK_SEQ) != seq:
             if time.monotonic() > deadline:
                 beat = self.mem.read_u32(self.base + 16)
+                halted = self.halted_cores()
+                if halted:
+                    raise HarnessError(f"command {seq} not acknowledged: {', '.join(halted)} halted "
+                                       "(was the card reset with OpenOCD attached? resume with "
+                                       "`monitor resume`, or reflash)")
                 raise HarnessError(f"command {seq} not acknowledged within {timeout}s "
-                                   f"(heartbeat {beat}: is the main loop stuck, or the core halted?)")
+                                   f"(heartbeat {beat}: is the main loop stuck?)")
             time.sleep(0.005)
 
     def eval(self, code, timeout=5.0, check=True):
@@ -537,7 +632,46 @@ def discover(paths):
     return tests
 
 
-def run_tests(card, paths, keyword=None, repeat=1, allow_flash=False, report=None):
+def card_crashed(card):
+    """True if the card's main loop has stopped (crash, panic, halted cores)."""
+    try:
+        if card.halted_cores():
+            return True
+        a = card.stats()["heartbeat"]
+        time.sleep(0.3)
+        return card.stats()["heartbeat"] == a
+    except (HarnessError, OSError):
+        return True
+
+
+def reset_card(card, boot_seconds=10):
+    """Reset the card through OpenOCD and wait until it has really rebooted:
+    RAM survives a reset, so the old mailbox would still look valid. Plain
+    `reset run` can leave the RP2040 in its boot ROM; `reset init` first
+    (as flashing does) boots reliably. Note: this re-enumerates USB, so a
+    connected norns needs the cable replugging afterwards."""
+    card.t.monitor("reset init")
+    card.t.monitor("reset run")
+    deadline = time.monotonic() + boot_seconds + 15
+    time.sleep(boot_seconds)
+    while time.monotonic() < deadline:
+        for name in card.halted_cores():  # a reset can leave the cores halted
+            card.t.monitor(f"targets {name}; resume")
+        try:
+            card._check_mailbox()
+            a = card.stats()
+            time.sleep(0.5)
+            b = card.stats()
+            if b["heartbeat"] != a["heartbeat"] and b["uptime_ms"] < (boot_seconds + 15) * 1000:
+                card.log_head = card.mem.read_u32(card.base + OFF_LOG_HEAD)
+                return
+        except HarnessError:
+            pass
+        time.sleep(1)
+    raise HarnessError("card didn't come back after reset")
+
+
+def run_tests(card, paths, keyword=None, repeat=1, allow_flash=False, report=None, reset_on_crash=False):
     tests = discover(paths)
     if keyword:
         tests = [t for t in tests if keyword in t[0]]
@@ -558,6 +692,9 @@ def run_tests(card, paths, keyword=None, repeat=1, allow_flash=False, report=Non
                 st = card.stats()
                 log, _ = card.read_log()
                 problems = []
+                for f in card.faults():
+                    problems.append(f"HardFault on core {f['core']}: pc 0x{f['pc']:08x} lr 0x{f['lr']:08x} "
+                                    f"sp 0x{f['sp']:08x}  ({' <- '.join(f['where'])})")
                 if st["ps_overruns"] > ctx.allow_overruns:
                     problems.append(f"{st['ps_overruns']} ProcessSample overruns (worst {st['ps_worst_us']}us)")
                 if st["heartbeat"] == beat0:
@@ -583,8 +720,11 @@ def run_tests(card, paths, keyword=None, repeat=1, allow_flash=False, report=Non
                 error = traceback.format_exc()
                 st = {}
             dt = time.monotonic() - t0
+            crashed = bool(error) and reset_on_crash and card_crashed(card)
             xfail = getattr(fn, "xfail", None)
-            if xfail:
+            if crashed:
+                outcome = "crash"
+            elif xfail:
                 outcome = "xfail" if error else "xpass"
             else:
                 outcome = "fail" if error else "pass"
@@ -606,10 +746,13 @@ def run_tests(card, paths, keyword=None, repeat=1, allow_flash=False, report=Non
                 print("      " + error.replace("\n", "\n      "))
             for k, v in getattr(ctx, "info", {}).items():
                 print(f"      {k}: {v}")
+            if crashed:
+                print("      card crashed: resetting it")
+                reset_card(card)
     card.clear_inputs()
-    counts = {k: sum(r["result"] == k for r in results) for k in ("pass", "fail", "xfail", "xpass", "skip")}
+    counts = {k: sum(r["result"] == k for r in results) for k in ("pass", "fail", "crash", "xfail", "xpass", "skip")}
     print("\n" + ", ".join(f"{v} {k}" for k, v in counts.items() if v or k in ("pass", "fail")))
-    failed = counts["fail"]
+    failed = counts["fail"] + counts["crash"]
     if report:
         with open(report, "w") as f:
             json.dump(results, f, indent=2)
@@ -643,13 +786,15 @@ def apply_stimulus(card, entries):
             card.release_input(name)
 
 
-def outputs_moving(card, seconds, interval=0.5):
-    """Sample output[1..4].volts over `seconds`; the outputs that changed."""
-    samples = []
-    for _ in range(max(1, int(seconds / interval))):
-        time.sleep(interval)
-        samples.append(card.eval("print(output[1].volts, output[2].volts, output[3].volts, output[4].volts)").split())
-    return [i + 1 for i in range(4) if len({s[i] for s in samples if len(s) == 4}) > 1]
+def outputs_moving(card, seconds):
+    """Wait `seconds`; the outputs whose value changed meanwhile, with how many
+    times. Counted on the card at main loop rate, so short pulses count too."""
+    keys = [f"out_changes_{i}" for i in range(1, 5)]
+    before = card.stats()
+    time.sleep(seconds)
+    after = card.stats()
+    changes = [(after[k] - before[k]) & 0xFFFFFFFF for k in keys]
+    return {i + 1: n for i, n in enumerate(changes) if n}
 
 
 def writes_flash(fn):
@@ -714,6 +859,8 @@ def main():
     p.add_argument("--repeat", type=int, default=1)
     p.add_argument("--allow-flash", action="store_true", help="also run tests that write flash")
     p.add_argument("--report", help="write JSON results here")
+    p.add_argument("--reset-on-crash", action="store_true",
+                   help="if a test leaves the card crashed, record CRASH, reset it and carry on")
     args = ap.parse_args()
 
     if args.cmd == "norns":  # doesn't need the card
@@ -759,7 +906,8 @@ def main():
                     parse_input_spec(card, spec)
             elif args.cmd == "test":
                 sys.modules.setdefault("bbdbg", sys.modules[__name__])
-                ok = run_tests(card, args.paths, args.keyword, args.repeat, args.allow_flash, args.report)
+                ok = run_tests(card, args.paths, args.keyword, args.repeat, args.allow_flash, args.report,
+                               args.reset_on_crash)
                 sys.exit(0 if ok else 1)
     except (HarnessError, OSError) as e:
         sys.exit(f"bbdbg: {e}")

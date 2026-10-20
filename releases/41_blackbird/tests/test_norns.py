@@ -33,8 +33,30 @@ LATENCY_MAX_MS = float(os.environ.get("BB_LATENCY_MAX_MS", "25"))
 NORNS_SCRIPTS = {
     # tehn/awake: "out" option 4 = "crow out 1+2" (pitch on 1, ar() envelope action on 2)
     "awake/awake.lua": "params:set('out', 4)",
-    # schollz/wobblewobble: uses crow by default; streams both inputs, drives all 4 outputs
-    "wobblewobble/wobblewobble.lua": "",
+    # schollz/wobblewobble: streams both crow inputs; its engine sends each
+    # output's value at 15Hz with slew. Its default is a constant per output, so
+    # start four different LFOs over -5..10V, then keep re-randomising one
+    # output's modulation type, frequency, meta and slew every 0.3-1s (each
+    # slew change also sends output[n].slew). Seeded, so runs repeat.
+    "wobblewobble/wobblewobble.lua": """
+        math.randomseed(1)
+        for i, m in ipairs({4, 5, 6, 14}) do  -- wobbly sine, snek, lorenz, pulse
+            params:set(i .. "minval", -5); params:set(i .. "maxval", 10)
+            params:set(i .. "freq", ({0.5, 3, 11, 0.07})[i])
+            params:set(i .. "modulation", m)
+        end
+        bbt_wobble = clock.run(function()
+            while true do
+                clock.sleep(0.3 + math.random() * 0.7)
+                local i = math.random(4)
+                params:set(i .. "modulation", math.random(2, 14))
+                params:set(i .. "freq", math.random() ^ 3 * 40)
+                params:set(i .. "meta", math.random(-50, 50))
+                params:set(i .. "meta2", math.random(-50, 50))
+                params:set(i .. "slewrate", math.random(0, 15))
+            end
+        end)
+    """,
     # lylepmills/buoys: crow input 1 is a clock by default. Outputs come from
     # per-buoy options, and buoys only exist on a grid, so with a grid attached
     # make four buoys, one per crow output in voltage mode.
@@ -77,6 +99,12 @@ EXPECTED = {
 
 NORNS_ERRORS = re.compile(r"load fail|stack traceback|attempt to |cleanup failed|### .*error", re.IGNORECASE)
 
+# Errors from norns itself that happen with or without blackbird (checked by
+# running the scripts with crow output off). Reported as info, not failures.
+NORNS_SIDE_ERRORS = re.compile(
+    r"clock\.lua:\d+: bad argument #1 to 'resume' \(thread expected\)"  # norns clock cleanup race
+)
+
 _norns = None
 _norns_error = None
 
@@ -107,8 +135,25 @@ def connected_norns(bb):
     return n
 
 
-def norns_errors(n, since):
-    return [l for l in n.output_since(since) if NORNS_ERRORS.search(l)]
+def norns_errors(n, since, bb=None):
+    """Error lines in norns' output since `since`, each with the two lines
+    before it (a traceback's message comes before 'stack traceback:').
+    Known norns-side errors (NORNS_SIDE_ERRORS) and their tracebacks are left
+    out, and counted in bb.info if bb is given."""
+    lines = [l for l in n.output_since(since) if l.strip() and l.strip() != "<ok>" and not l.startswith("@@bbt")]
+    out, skipping, ignored = [], False, 0
+    for i, l in enumerate(lines):
+        if NORNS_SIDE_ERRORS.search(l):
+            skipping, ignored = True, ignored + 1
+            continue
+        if skipping and (l.startswith("\t") or l.startswith("stack traceback")):
+            continue
+        skipping = False
+        if NORNS_ERRORS.search(l):
+            out += [c for c in lines[max(0, i - 2):i + 1] if c not in out[-3:] and not NORNS_SIDE_ERRORS.search(c)]
+    if bb is not None and ignored:
+        bb.info["norns-side errors ignored"] = ignored
+    return out
 
 
 def close(a, b, tol):
@@ -264,6 +309,14 @@ NORNS_MIDI_HANDLER = """
 """
 
 
+def midi_note_trigger(bb):
+    """Lua that sends a note-on for note %d, in whichever MIDI API the firmware has
+    (bb.midi_note_on since the iii-aligned API; bb.midi.tx.note before, e.g. 1.1M)."""
+    if bb.query("bb.midi_note_on ~= nil"):
+        return "bb.midi_note_on(%d, 100, 1)"
+    return "bb.midi.tx.note(%d, 100, 0, 1)"
+
+
 def measure_round_trips(bb, trigger):
     """Send LATENCY_NOTES notes with `trigger` (Lua on blackbird, with %d for the
     note) ~120ms apart, and return (latencies in ms, notes that never came back)."""
@@ -314,7 +367,7 @@ def test_latency_midi_note_to_norns_to_bb(bb):
     norns MIDI handler -> crow.output[1].volts -> blackbird output 1."""
     n = setup_midi_path(bb)
     try:
-        ms, lost = measure_round_trips(bb, "bb.midi_note_on(%d, 100, 1)")
+        ms, lost = measure_round_trips(bb, midi_note_trigger(bb))
     finally:
         teardown_midi_path(n)
     report_latency(bb, "midi -> norns -> bb", ms, lost)
@@ -340,11 +393,29 @@ def test_latency_midi_while_busy(bb):
     bb.triangle("cv1", 1, -5, 5)
     n.run("bbt_s = 0; crow.input[1].stream = function(v) bbt_s = bbt_s + 1 end; crow.input[1].mode('stream', 0.01)")
     try:
-        ms, lost = measure_round_trips(bb, "bb.midi_note_on(%d, 100, 1)")
+        ms, lost = measure_round_trips(bb, midi_note_trigger(bb))
     finally:
         teardown_midi_path(n)
         n.run("crow.input[1].mode('none')")
     report_latency(bb, "midi -> norns -> bb (busy)", ms, lost)
+
+
+def test_midi_echo_burst_reaches_norns_intact(bb):
+    """norns sends blackbird 128 MIDI note-offs at once (what awake's
+    all_notes_off() does). blackbird echoes each to the host as ^^midi; the
+    echoes are paced so norns' crow reader, which loses bytes if a second read
+    lands before Lua has handled the first, gets every one intact."""
+    n = setup_midi_path(bb)
+    since = n.mark()
+    n.run("bbt_echo = 0; norns.crow.events.midi = function(...) bbt_echo = bbt_echo + 1 end")
+    n.run("for note = 0, 127 do bbt_m:note_off(note, 0, 1) end")
+    bb.wait(1.5)  # 128 echoes at 4ms each
+    got = n.query("bbt_echo")
+    errors = norns_errors(n, since, bb)
+    teardown_midi_path(n)
+    assert not errors, "errors on norns:\n    " + "\n    ".join(errors)
+    assert got == 128, f"norns got {got} of 128 echoes"
+    assert bb.stats()["drops_midi_echo"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +442,7 @@ def run_norns_script(bb, path, setup):
     apply_stimulus(bb, GENERIC_STIMULUS)
     bb.info["outputs moving"] = outputs_moving(bb, SCRIPT_SECONDS) or "none"
 
-    errors = norns_errors(n, since)
+    errors = norns_errors(n, since, bb)
     still_connected = n.query("norns.crow.connected()")
     n.run("norns.script.clear()", timeout=10)
     assert not errors, "errors on norns:\n    " + "\n    ".join(errors)

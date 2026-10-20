@@ -1004,16 +1004,21 @@ void L_handle_asl_done_lockfree( asl_done_event_lockfree_t* event )
     
     int channel = event->channel + 1; // Convert to 1-based for Lua
     
-    // Use crow-style ASL completion callback: output[channel].done()
-    char lua_call[128];
-    snprintf(lua_call, sizeof(lua_call),
-        "if output and output[%d] and output[%d].done then output[%d].done() end",
-        channel, channel, channel);
-    
-    // Execute Lua callback
-    if (luaL_dostring(L, lua_call) != LUA_OK) {
-        const char* error = lua_tostring(L, -1);
-        printf("ASL done callback error: %s\n", error ? error : "unknown");
-        lua_pop(L, 1);
+    // Crow-style ASL completion callback: output[channel].done(), if set.
+    // Called directly rather than by compiling a chunk: that cost ~8ms per
+    // completion on RP2040 (mostly GC work triggered by the compiler's
+    // allocations), capping the main loop near 90Hz whenever outputs changed.
+    int top = lua_gettop(L);
+    lua_getglobal(L, "output");
+    if (lua_istable(L, -1)) {
+        lua_geti(L, -1, channel);
+        if (lua_toboolean(L, -1)) {
+            lua_getfield(L, -1, "done");
+            if (lua_toboolean(L, -1) && lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                const char* error = lua_tostring(L, -1);
+                printf("ASL done callback error: %s\n", error ? error : "unknown");
+            }
+        }
     }
+    lua_settop(L, top);
 }

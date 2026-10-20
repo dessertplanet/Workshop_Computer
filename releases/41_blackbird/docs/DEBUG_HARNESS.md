@@ -39,9 +39,23 @@ debug build. Its live watch can show `bb_dbg` while the card runs.
 through the debug port without halting the cores (`read_memory` /
 `write_memory`), so the card keeps running normally while the host talks to it.
 
-- **Stats.** Core 0 refreshes them every main loop iteration: worst-case
-  and overrun counts for `ProcessSample`, main loop worst case, Lua memory and
-  its peak, and drop counts for every event queue.
+- **Stats.** Core 0 refreshes them every main loop iteration:
+  - worst-case and overrun counts for `ProcessSample`
+  - main loop worst case and iteration count
+  - Lua memory and its peak
+  - free C heap (`heap_free_bytes`) and failed Lua allocations
+    (`lua_alloc_failures`, each one retried after an emergency GC)
+  - drop counts for every event queue, USB output and paced MIDI echoes
+  - how many times each output's value changed (`out_changes_1..4`), counted
+    at main loop rate so short pulses register
+  - the Lua small-object pool: pages, bytes used and capacity, and free arena
+    pages
+  - Lua allocation sizes: live objects, live bytes and allocations ever made,
+    per size bucket, via `Blackbird.alloc_histogram()`
+
+`Blackbird.heap_map()` walks newlib's heap over SWD and gives the real
+fragmentation picture: chunks in use, free chunk sizes, and the largest free
+block.
 - **Commands.** The host writes `script`, `script_len` and `cmd`, then
   increments `cmd_seq`. Core 0 runs the command in the main loop, on the same
   thread as Lua, and sets `ack_seq` when it is done.
@@ -158,6 +172,32 @@ reached, every norns test skips within about 2 seconds, and the rest of a
 hand.
 
 ## Caveats
+
+- **Don't press the card's reset button during a run.** `^^w` lights every
+  LED and asks for a reset, but the tests clean up after themselves (`^^c`). A
+  reset with OpenOCD attached leaves both cores halted. The harness says so
+  when it happens; recover with a reflash.
+- **HardFaults** on either core are captured by a RAM-resident handler
+  (`g_fault_info`), and the runner fails the test with the faulting PC and LR,
+  symbolized. This is how a vtable read from flash during flash writes was
+  found. `test_flash.py` writes flash while core 1 is fully loaded, as the
+  dynamic check for flash reads that `util/core1_flash_audit.py` can't see.
+- **Memory headroom.** Lua objects of 64 bytes or less live in a small-object
+  pool (`lib/lua_pool.c`), in a 64 KB arena reserved at boot. That keeps
+  their churn out of the main heap: after the whole bowery corpus, the largest
+  free block is 15 KB, where it used to be about 4 KB. The debug build has
+  about 11 KB less heap than release, though, because of the harness buffers.
+  So one of the big-memory scripts (bowery's cvdelay or krahenlied, depending
+  on order) can still run out during a long run. Check with
+  `Blackbird.heap_map()`.
+
+- **Reflashing while norns is connected.** After `make flash-debug`, norns
+  may not notice blackbird re-enumerate. It keeps reporting
+  `norns.crow.connected()` as true, but nothing gets through. Replug the
+  norns ↔ Workshop Computer USB cable after each flash.
+- **Input change detection** delivers every edge up to about 500 edges/s per
+  input (a 250 Hz gate). Faster than that, edges are merged (one pending
+  change per input), by design.
 
 - **Halting.** OpenOCD may halt the target when a GDB client attaches.
   `bbdbg.py` resumes it at once, but while it is halted the ADC keeps

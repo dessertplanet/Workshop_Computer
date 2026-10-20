@@ -64,6 +64,7 @@ extern "C" {
 #include "lib/clock.h"
 #include "lib/events_lockfree.h"
 #include "lib/flash_storage.h"
+#include "lib/lua_pool.h"
 #include "lib/caw.h"
 #include "lib/sample_rate.h"
 }
@@ -99,39 +100,40 @@ extern const unsigned int clock_len;
 // Stores stacked registers and active vector, then BKPTs.
 // NOTE: Avoids any USB/stdio calls in fault context.
 // ============================================================================
+// HardFault capture, per core. Both the handler and what it calls are in RAM:
+// a core can fault while the other is writing flash, and a handler in flash
+// would then fault on its own fetch and lock the core up with no record.
+// Read g_fault_info over SWD; util/bbdbg.py reports it.
+#define FAULT_INFO_MAGIC 0xFA017ED0u
 extern "C" {
-static volatile uint32_t g_hardfault_stack[8]; // r0,r1,r2,r3,r12,lr,pc,xpsr
-static volatile uint32_t g_hardfault_lr = 0;
-static volatile uint32_t g_hardfault_sp = 0;
-static volatile uint32_t g_hardfault_icsr = 0;
-}
+// per core: magic, pc, lr, xpsr, sp, r0, r1, r2, r3, r12, icsr
+__attribute__((used)) volatile uint32_t g_fault_info[2][11];
 
-extern "C" void hardfault_capture_c(uint32_t *sp) {
-    g_hardfault_sp = (uint32_t)sp;
-    // Active vector number in ICSR[8:0]
-    g_hardfault_icsr = *((volatile uint32_t*)0xE000ED04);
-    // Stacked registers
-    g_hardfault_stack[0] = sp[0];  // r0
-    g_hardfault_stack[1] = sp[1];  // r1
-    g_hardfault_stack[2] = sp[2];  // r2
-    g_hardfault_stack[3] = sp[3];  // r3
-    g_hardfault_stack[4] = sp[4];  // r12
-    g_hardfault_stack[5] = sp[5];  // lr
-    g_hardfault_stack[6] = sp[6];  // pc
-    g_hardfault_stack[7] = sp[7];  // xpsr
-    __asm volatile("mov %0, lr" : "=r"(g_hardfault_lr));
-
+void __not_in_flash_func(hardfault_capture_c)(uint32_t *sp) {
+    uint32_t core = sio_hw->cpuid & 1;
+    volatile uint32_t *f = g_fault_info[core];
+    f[1] = sp[6];   // pc
+    f[2] = sp[5];   // lr
+    f[3] = sp[7];   // xpsr
+    f[4] = (uint32_t)sp;
+    f[5] = sp[0]; f[6] = sp[1]; f[7] = sp[2]; f[8] = sp[3]; f[9] = sp[4];
+    f[10] = *((volatile uint32_t*)0xE000ED04);  // ICSR
+    f[0] = FAULT_INFO_MAGIC;
     __asm volatile("bkpt #0");
     while (1) {
         __asm volatile("nop");
     }
 }
 
-extern "C" __attribute__((naked)) void HardFault_Handler(void) {
+// Replaces the SDK's weak isr_hardfault (which lives in flash)
+__attribute__((naked, section(".time_critical.isr_hardfault"))) void isr_hardfault(void) {
     __asm volatile(
         "mov r0, sp\n"
-        "b hardfault_capture_c\n"
+        "ldr r1, =hardfault_capture_c\n"
+        "bx r1\n"
+        ".ltorg\n"
     );
+}
 }
 
 // CV Output & Input State
@@ -312,6 +314,9 @@ static inline bool u32_time_before(uint32_t a, uint32_t b) {
     return (int32_t)(a - b) < 0;
 }
 
+// Lua allocations that failed (each is followed by an emergency GC and retry)
+static volatile uint32_t g_lua_alloc_failures = 0;
+
 // MainControlLoop (Core 0) performance
 static volatile uint32_t g_loop_worst_case_us = 0;
 static volatile uint32_t g_loop_iteration_count = 0;
@@ -427,6 +432,7 @@ static inline bool check_for_backticks(const char* buffer, int pos) {
 class BlackbirdCrow;
 static volatile BlackbirdCrow* g_blackbird_instance = nullptr;
 #ifdef BB_DEBUG_HARNESS
+static void bb_dbg_alloc_note(size_t size, int dir);
 static void bb_dbg_init(ComputerCard* card);
 static void bb_dbg_service(lua_State* L);
 #endif
@@ -440,6 +446,55 @@ void core1_entry(); // defined after BlackbirdCrow
 
 static inline bool usb_console_ready() {
     return g_usb_role == USB_ROLE_DEVICE && tud_cdc_connected();
+}
+
+// tud_task(), tracking nesting so CDC writes made from inside it (from
+// TinyUSB callbacks) know not to call it again.
+static volatile uint32_t g_usb_task_depth = 0;
+static inline void usb_task(void) {
+    g_usb_task_depth++;
+    tud_task();
+    g_usb_task_depth--;
+}
+
+// All USB serial output passes through here (linked with
+// -Wl,--wrap=tud_cdc_n_write). A write is taken whole or dropped whole, never
+// cut short: TinyUSB writes what fits in its 2KB FIFO and loses the rest, and
+// a cut-off line corrupts the crow protocol for the host (norns' parser
+// choked on half-sent ^^midi events during bursts). If a host is listening
+// and the FIFO is short of room, keep the USB task running for up to 5ms to
+// drain it first.
+static volatile uint32_t g_usb_tx_dropped = 0;
+static constexpr uint32_t kUsbTxWaitUs = 5000;
+#ifdef BB_DEBUG_HARNESS
+static void bb_dbg_log_mirror(const void* buffer, uint32_t size);
+#endif
+extern "C" uint32_t __real_tud_cdc_n_write(uint8_t itf, void const* buffer, uint32_t bufsize);
+extern "C" uint32_t __wrap_tud_cdc_n_write(uint8_t itf, void const* buffer, uint32_t bufsize) {
+#ifdef BB_DEBUG_HARNESS
+    bb_dbg_log_mirror(buffer, bufsize);
+#endif
+    if (!tud_cdc_n_connected(itf)) {
+        return __real_tud_cdc_n_write(itf, buffer, bufsize);  // nobody listening
+    }
+    const uint8_t* p = (const uint8_t*)buffer;
+    uint32_t done = 0;
+    while (done < bufsize) {
+        // Writes bigger than the FIFO go in FIFO-sized pieces
+        uint32_t want = bufsize - done;
+        if (want > CFG_TUD_CDC_TX_BUFSIZE) want = CFG_TUD_CDC_TX_BUFSIZE;
+        uint32_t start = time_us_32();
+        while (tud_cdc_n_write_available(itf) < want) {
+            tud_cdc_n_write_flush(itf);
+            if (g_usb_task_depth > 0 || time_us_32() - start >= kUsbTxWaitUs) {
+                g_usb_tx_dropped++;
+                return done;
+            }
+            usb_task();
+        }
+        done += __real_tud_cdc_n_write(itf, p + done, want);
+    }
+    return done;
 }
 
 static inline void usb_console_write(const char* s) {
@@ -550,7 +605,7 @@ static bool output_is_batching();
 
 class LuaManager;
 
-#define MESSAGE_QUEUE_SIZE 32
+#define MESSAGE_QUEUE_SIZE 8  // only rare "queue full" warnings use it; each slot is ~250 bytes of RAM
 #define MESSAGE_MAX_LENGTH 240
 
 typedef struct {
@@ -1192,7 +1247,7 @@ static inline void flush_if_needed() {
         uint32_t timeout = 0;
         while (tud_cdc_write_available() < 128 && timeout < 10000) {
             sleep_us(10);
-            tud_task();  // Process USB tasks
+            usb_task();  // Process USB tasks
             timeout++;
         }
     }
@@ -1270,7 +1325,7 @@ static void print_table_recursive(lua_State* L, int index, int depth) {
         tud_cdc_write_flush();
         uint32_t timeout = 0;
         while (tud_cdc_write_available() < 256 && timeout < 100000) {
-            tud_task();
+            usb_task();
             sleep_us(100);
             timeout++;
         }
@@ -1280,70 +1335,64 @@ static void print_table_recursive(lua_State* L, int index, int depth) {
     }
     
     // Custom allocator with memory tracking and diagnostics
+    // Lua's allocator. Objects <= LUA_POOL_MAX_SIZE go to the small-object
+    // pool (lib/lua_pool.c), larger ones to malloc. Lua passes the real old
+    // size whenever ptr != NULL; for a new block, osize is an object type.
+    // A failed (re)allocation returns NULL and leaves the old block intact:
+    // Lua then runs an emergency full GC and retries.
+    static void* lua_realloc_block(void* ptr, size_t osize, size_t nsize) {
+        if (ptr == NULL) {
+            void* p = lua_pool_alloc(nsize);
+            return p ? p : malloc(nsize);
+        }
+        if (lua_pool_fits(ptr, nsize)) {
+            return ptr;  // same size class: stays put
+        }
+        bool old_in_pool = osize <= LUA_POOL_MAX_SIZE && lua_pool_owns(ptr);
+        if (!old_in_pool && nsize > LUA_POOL_MAX_SIZE) {
+            return realloc(ptr, nsize);
+        }
+        // Moving between pool and malloc, or between pool size classes
+        void* p = (nsize <= LUA_POOL_MAX_SIZE) ? lua_pool_alloc(nsize) : NULL;
+        if (!p) p = malloc(nsize);
+        if (!p) return NULL;
+        memcpy(p, ptr, osize < nsize ? osize : nsize);
+        if (old_in_pool) lua_pool_free(ptr);
+        else free(ptr);
+        return p;
+    }
+
     static void* lua_custom_alloc(void* ud, void* ptr, size_t osize, size_t nsize) {
         (void)ud;  // unused
-        
-        // Track memory allocation statistics for diagnostics
-        static size_t total_allocated = 0;
-        static size_t peak_allocated = 0;
-        static size_t allocation_count = 0;
-        
+
         if (nsize == 0) {
             // Free
             if (ptr) {
-                total_allocated -= osize;
-                free(ptr);
+                if (!lua_pool_free(ptr)) free(ptr);
+#ifdef BB_DEBUG_HARNESS
+                bb_dbg_alloc_note(osize, -1);
+#endif
             }
             return NULL;
-        } else {
-            // Allocate or reallocate
-            void* new_ptr = realloc(ptr, nsize);
-            
-            if (new_ptr == NULL) {
-                // Allocation failed! Use TinyUSB CDC for output
-                char buffer[256];
-                
-                tud_cdc_write_str("\n\r");
-                tud_cdc_write_str("========================================\n\r");
-                tud_cdc_write_str("*** LUA MEMORY ALLOCATION FAILED ***\n\r");
-                tud_cdc_write_str("========================================\n\r");
-                
-                snprintf(buffer, sizeof(buffer), "Requested: %zu bytes\n\r", nsize);
-                tud_cdc_write_str(buffer);
-                
-                snprintf(buffer, sizeof(buffer), "Old size: %zu bytes\n\r", osize);
-                tud_cdc_write_str(buffer);
-                
-                snprintf(buffer, sizeof(buffer), "Total allocated: %zu bytes (%.2f KB)\n\r", 
-                         total_allocated, total_allocated / 1024.0f);
-                tud_cdc_write_str(buffer);
-                
-                snprintf(buffer, sizeof(buffer), "Peak allocated: %zu bytes (%.2f KB)\n\r", 
-                         peak_allocated, peak_allocated / 1024.0f);
-                tud_cdc_write_str(buffer);
-                
-                snprintf(buffer, sizeof(buffer), "Allocation #%zu\n\r", allocation_count);
-                tud_cdc_write_str(buffer);
-                
-                tud_cdc_write_str("========================================\n\r");
-                tud_cdc_write_str("Try: 1) Run collectgarbage()\n\r");
-                tud_cdc_write_str("     2) Simplify your script\n\r");
-                tud_cdc_write_str("     3) Remove unused libraries\n\r");
-                tud_cdc_write_str("========================================\n\r");
-                
-                
-                return NULL;  // Return NULL to let Lua handle it
-            }
-            
-            // Update statistics
-            total_allocated = total_allocated - osize + nsize;
-            if (total_allocated > peak_allocated) {
-                peak_allocated = total_allocated;
-            }
-            allocation_count++;
-            
-            return new_ptr;
         }
+
+        void* new_ptr = lua_realloc_block(ptr, osize, nsize);
+        if (new_ptr == NULL) {
+            // Give the pool's spare empty pages back to the heap and try once more
+            lua_pool_trim();
+            new_ptr = lua_realloc_block(ptr, osize, nsize);
+        }
+        if (new_ptr == NULL) {
+            // Lua handles this: it runs an emergency full GC and retries,
+            // and only raises "not enough memory" if that fails too.
+            g_lua_alloc_failures++;
+            return NULL;
+        }
+#ifdef BB_DEBUG_HARNESS
+        if (ptr) bb_dbg_alloc_note(osize, -1);
+        bb_dbg_alloc_note(nsize, +1);
+#endif
+        return new_ptr;
     }
 
 public:
@@ -1365,6 +1414,7 @@ public:
         }
         
         // Create Lua state with custom allocator for memory tracking
+        lua_pool_init();  // the pool's arena goes in before any Lua allocation
         L = lua_newstate(lua_custom_alloc, NULL);
         if (!L) {
             printf("Error: Could not create Lua state\n\r");
@@ -1382,11 +1432,16 @@ public:
         // (e.g. `local sin = math.sin`) bind to the fast versions.
         fastmath_lua_install(L, 1);
         
-        // CRITICAL: Set aggressive garbage collection like crow does
-        // Without this, Lua will run out of memory on embedded systems!
-        // setpause = 55 (default 200) - run GC more frequently
-        // setstepmul = 260 (default 200) - do more work per GC cycle
-        lua_gc(L, LUA_GCSETPAUSE, 55);
+        // GC tuning. setpause = 120: start a cycle once the heap is 20% over
+        // what the last one left live. crow uses 55, but any pause <= 100
+        // keeps the collector running all the time, and on RP2040 that cost
+        // most of the main loop: measured, the loop fell to ~700Hz idle, ~90Hz
+        // while outputs changed and 7Hz under allocation-heavy scripts, and
+        // compiling a one-line REPL command took ~4.7ms (0.45ms at 120).
+        // When memory is tight, failed allocations return NULL
+        // (PICO_MALLOC_PANIC=0) and Lua does an emergency full GC and retries.
+        // setstepmul = 260 (default 200) - do more work per GC step
+        lua_gc(L, LUA_GCSETPAUSE, 120);
         lua_gc(L, LUA_GCSETSTEPMUL, 260);
         
         // Override print function
@@ -2550,6 +2605,91 @@ static bool push_bb_midi_handler(lua_State* L, const char* field) {
 
 // Dispatch a raw MIDI message into Lua as bb.event_midi(byte1, byte2, byte3), like monome iii's event_midi.
 // Without a handler (and outside MPE mode), channel voice messages are forwarded to the host as ^^midi(...).
+// ---------------------------------------------------------------------------
+// Paced echoes of incoming MIDI to the host
+// ---------------------------------------------------------------------------
+// Incoming MIDI that no Lua handler takes is echoed to the host as ^^midi /
+// ^^mpe lines. They go out at most one per kMidiEchoIntervalUs: a burst (a
+// host's all-notes-off is ~128 messages) sent at full speed outruns norns'
+// crow reader, which reuses one line buffer and loses bytes when a second
+// read lands before Lua has handled the first (norns device_crow.cc).
+// A lone message still goes out on the next main loop iteration.
+enum MidiEchoKind : uint8_t { kEchoMidi, kEchoMpeNote, kEchoMpeBend, kEchoMpePressure, kEchoMpeSlide };
+struct midi_echo_t { uint8_t kind, a, b, c; float f; };
+static constexpr uint32_t kMidiEchoQueueSize = 128;      // power of two; excess echoes are dropped
+static constexpr uint32_t kMidiEchoIntervalUs = 4000;
+static midi_echo_t g_midi_echo_queue[kMidiEchoQueueSize];
+static uint32_t g_midi_echo_head = 0, g_midi_echo_tail = 0;  // core 0 only
+static uint32_t g_midi_echo_last_us = 0;
+static volatile uint32_t g_midi_echo_dropped = 0;
+
+static void midi_echo_push(uint8_t kind, uint8_t a, uint8_t b, uint8_t c, float f = 0.0f) {
+    if (g_midi_echo_head - g_midi_echo_tail >= kMidiEchoQueueSize) {
+        g_midi_echo_dropped++;
+        return;
+    }
+    g_midi_echo_queue[g_midi_echo_head & (kMidiEchoQueueSize - 1)] = { kind, a, b, c, f };
+    g_midi_echo_head++;
+}
+
+static void midi_echo_send(const midi_echo_t& e) {
+    switch (e.kind) {
+        case kEchoMidi: {
+            uint8_t b1 = e.a, b2 = e.b, b3 = e.c;
+            uint8_t channel = (b1 & 0x0F) + 1;
+            switch (b1 & 0xF0) {
+                case 0x90:
+                    Caw_printf("^^midi('%s',%u,%u,%u)", b3 > 0 ? "on" : "off", b2, b3, channel);
+                    break;
+                case 0x80:
+                    Caw_printf("^^midi('off',%u,%u,%u)", b2, b3, channel);
+                    break;
+                case 0xB0:
+                    Caw_printf("^^midi('cc',%u,%u,%u)", b2, b3, channel);
+                    break;
+                case 0xE0: {
+                    float val = (float)((int32_t)(b2 | (b3 << 7)) - 8192) / 8192.0f;
+                    if (val > 1.0f) val = 1.0f;
+                    if (val < -1.0f) val = -1.0f;
+                    Caw_printf("^^midi('bend',%.9g,%u)", (double)val, channel);
+                    break;
+                }
+                case 0xD0:
+                    Caw_printf("^^midi('aftertouch',%u,%u)", b2, channel);
+                    break;
+                case 0xA0:
+                    Caw_printf("^^midi('aftertouch',%u,%u)", b3, channel);
+                    break;
+                default:
+                    break;
+            }
+            break;
+        }
+        case kEchoMpeNote:
+            Caw_printf("^^mpe('%s',%u,%.9g,%u)", e.a ? "on" : "off", e.b, (double)e.f, e.c);
+            break;
+        case kEchoMpeBend:
+            Caw_printf("^^mpe('bend',%.9g,%u)", (double)e.f, e.c);
+            break;
+        case kEchoMpePressure:
+            Caw_printf("^^mpe('%s',%u,%u)", "pressure", e.b, e.c);
+            break;
+        case kEchoMpeSlide:
+            Caw_printf("^^mpe('%s',%u,%u)", "slide", e.b, e.c);
+            break;
+    }
+}
+
+// Called every main loop iteration
+static void midi_echo_service(void) {
+    if (g_midi_echo_head == g_midi_echo_tail) return;
+    uint32_t now = time_us_32();
+    if (now - g_midi_echo_last_us < kMidiEchoIntervalUs) return;
+    g_midi_echo_last_us = now;
+    midi_echo_send(g_midi_echo_queue[g_midi_echo_tail & (kMidiEchoQueueSize - 1)]);
+    g_midi_echo_tail++;
+}
+
 static void dispatch_midi_event(uint8_t b1, uint8_t b2, uint8_t b3) {
     bool handled = false;
     LuaManager* lua_mgr = LuaManager::getInstance();
@@ -2571,33 +2711,7 @@ static void dispatch_midi_event(uint8_t b1, uint8_t b2, uint8_t b3) {
 
     if (handled || g_mpe_mode_enabled) return;
 
-    uint8_t channel = (b1 & 0x0F) + 1;
-    switch (b1 & 0xF0) {
-        case 0x90:
-            Caw_printf("^^midi('%s',%u,%u,%u)", b3 > 0 ? "on" : "off", b2, b3, channel);
-            break;
-        case 0x80:
-            Caw_printf("^^midi('off',%u,%u,%u)", b2, b3, channel);
-            break;
-        case 0xB0:
-            Caw_printf("^^midi('cc',%u,%u,%u)", b2, b3, channel);
-            break;
-        case 0xE0: {
-            float val = (float)((int32_t)(b2 | (b3 << 7)) - 8192) / 8192.0f;
-            if (val > 1.0f) val = 1.0f;
-            if (val < -1.0f) val = -1.0f;
-            Caw_printf("^^midi('bend',%.9g,%u)", (double)val, channel);
-            break;
-        }
-        case 0xD0:
-            Caw_printf("^^midi('aftertouch',%u,%u)", b2, channel);
-            break;
-        case 0xA0:
-            Caw_printf("^^midi('aftertouch',%u,%u)", b3, channel);
-            break;
-        default:
-            break;
-    }
+    midi_echo_push(kEchoMidi, b1, b2, b3);
 }
 
 // MPE mode: Note On/Off -> bb.event_mpe_note(type, note, vel, ch), or forward ^^mpe('on'|'off',...)
@@ -2619,7 +2733,7 @@ static void dispatch_mpe_note_event(bool is_on, uint8_t note, float velocity, ui
     }
     if (!handled) {
         // Velocity may include fractional CC88 data.
-        Caw_printf("^^mpe('%s',%u,%.9g,%u)", is_on ? "on" : "off", note, (double)velocity, channel);
+        midi_echo_push(kEchoMpeNote, is_on ? 1 : 0, note, channel, velocity);
     }
 }
 
@@ -2643,7 +2757,7 @@ static void dispatch_mpe_bend_event(uint16_t bend14, uint8_t channel) {
         lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
     if (!handled) {
-        Caw_printf("^^mpe('bend',%.9g,%u)", (double)val, channel);
+        midi_echo_push(kEchoMpeBend, 0, 0, channel, val);
     }
 }
 
@@ -2664,7 +2778,7 @@ static void dispatch_mpe_value_event(const char* field, const char* host_name, u
         lua_gc(L, LUA_GCSTEP, kLuaMidiGcStepSize);
     }
     if (!handled) {
-        Caw_printf("^^mpe('%s',%u,%u)", host_name, value, channel);
+        midi_echo_push(strcmp(host_name, "slide") == 0 ? kEchoMpeSlide : kEchoMpePressure, 0, value, channel);
     }
 }
 
@@ -3206,7 +3320,7 @@ static inline void usb_service_poll_from_main(void) {
         g_midi_lua_dispatch_budget = kMaxMidiLuaDispatchPerUsbTick;
 
         if (g_usb_role == USB_ROLE_DEVICE) {
-            tud_task();
+            usb_task();
 
             // RX: Read available data and queue for main loop processing
             while (tud_cdc_available()) {
@@ -3730,6 +3844,7 @@ public:
 
             // Service USB from main loop (timer IRQs only set tick flags)
             usb_service_poll_from_main();
+            midi_echo_service();
 
             
             // Process USB RX messages from lock-free queue
@@ -4650,6 +4765,8 @@ public:
 };
 
 #ifdef BB_DEBUG_HARNESS
+#include <malloc.h>   // mallinfo
+#include <unistd.h>   // sbrk
 // ============================================================================
 // DEBUG HARNESS (debug builds only: make debug)
 // ============================================================================
@@ -4663,10 +4780,11 @@ public:
 // output is mirrored into the log ring (log_head counts bytes ever written).
 
 #define BB_DBG_MAGIC       0x47444242u  // "BBDG"
-#define BB_DBG_VERSION     1u
-#define BB_DBG_SCRIPT_MAX  8192
-#define BB_DBG_OUT_MAX     4096
+#define BB_DBG_VERSION     8u
+#define BB_DBG_SCRIPT_MAX  4096
+#define BB_DBG_OUT_MAX     2048
 #define BB_DBG_LOG_MAX     4096         // power of two
+#define BB_DBG_ALLOC_BUCKETS 24         // 8-byte steps to 128, then 192, 256, 512, 1K, 2K, 4K, more
 
 enum {
     BB_DBG_CMD_NONE = 0,
@@ -4706,7 +4824,16 @@ typedef struct {
     uint32_t drops_slope_action;
     uint32_t drops_slope_cmd;
     uint32_t drops_usb_rx;
-    uint32_t reserved[20];         // room for more stats without moving the mailbox
+    uint32_t heap_free_bytes;      // C heap free: unallocated top + free chunks (refreshed ~10Hz)
+    uint32_t lua_alloc_failures;   // failed Lua allocations (each retried after an emergency GC)
+    uint32_t drops_usb_tx;         // USB serial writes dropped whole (host not draining)
+    uint32_t out_changes[4];       // times each output's value changed, seen at main loop rate
+    uint32_t drops_midi_echo;      // MIDI echoes to the host dropped (paced queue full)
+    uint32_t pool_pages;           // Lua small-object pool: 1KB pages held
+    uint32_t pool_slot_bytes;      // bytes in pool slots handed out
+    uint32_t pool_capacity_bytes;  // bytes in all pool slots
+    uint32_t pool_arena_free_pages; // pool arena pages not in use
+    uint32_t reserved[8];         // room for more stats without moving the mailbox
     // --- command mailbox ---
     uint32_t cmd_seq;              // host increments to submit
     uint32_t cmd;
@@ -4720,6 +4847,11 @@ typedef struct {
     char script[BB_DBG_SCRIPT_MAX];
     char out[BB_DBG_OUT_MAX];
     char log[BB_DBG_LOG_MAX];
+    // Lua allocation sizes, per bucket (see bb_dbg_alloc_bucket): live
+    // objects, their bytes, and allocations ever made
+    uint32_t alloc_live[BB_DBG_ALLOC_BUCKETS];
+    uint32_t alloc_live_bytes[BB_DBG_ALLOC_BUCKETS];
+    uint32_t alloc_total[BB_DBG_ALLOC_BUCKETS];
 } bb_dbg_t;
 
 static_assert(offsetof(bb_dbg_t, heartbeat) == 16, "bbdbg.py layout");
@@ -4737,6 +4869,29 @@ __attribute__((used)) volatile bb_dbg_t bb_dbg;
 static uint32_t g_bb_dbg_repl_pos = 0;
 static bool g_bb_dbg_busy = false;
 
+static uint32_t bb_dbg_alloc_bucket(size_t size) {
+    if (size <= 128) return size == 0 ? 0 : (uint32_t)((size - 1) >> 3);  // 0..15
+    if (size <= 192) return 16;
+    if (size <= 256) return 17;
+    if (size <= 512) return 18;
+    if (size <= 1024) return 19;
+    if (size <= 2048) return 20;
+    if (size <= 4096) return 21;
+    return 22;
+}
+
+static void bb_dbg_alloc_note(size_t size, int dir) {
+    uint32_t b = bb_dbg_alloc_bucket(size);
+    if (dir > 0) {
+        bb_dbg.alloc_live[b] = bb_dbg.alloc_live[b] + 1;
+        bb_dbg.alloc_live_bytes[b] = bb_dbg.alloc_live_bytes[b] + (uint32_t)size;
+        bb_dbg.alloc_total[b] = bb_dbg.alloc_total[b] + 1;
+    } else {
+        bb_dbg.alloc_live[b] = bb_dbg.alloc_live[b] - 1;
+        bb_dbg.alloc_live_bytes[b] = bb_dbg.alloc_live_bytes[b] - (uint32_t)size;
+    }
+}
+
 static void bb_dbg_out_append(const char* s, size_t n) {
     uint32_t len = bb_dbg.out_len;
     if (len + n > BB_DBG_OUT_MAX) {
@@ -4747,17 +4902,15 @@ static void bb_dbg_out_append(const char* s, size_t n) {
     bb_dbg.out_len = len + n;
 }
 
-// Mirror of all USB CDC output (linked with -Wl,--wrap=tud_cdc_n_write)
-extern "C" uint32_t __real_tud_cdc_n_write(uint8_t itf, void const* buffer, uint32_t bufsize);
-extern "C" uint32_t __wrap_tud_cdc_n_write(uint8_t itf, void const* buffer, uint32_t bufsize) {
+// Mirror of all USB CDC output, called from __wrap_tud_cdc_n_write
+static void bb_dbg_log_mirror(const void* buffer, uint32_t size) {
     const char* p = (const char*)buffer;
     uint32_t head = bb_dbg.log_head;
-    for (uint32_t i = 0; i < bufsize; i++) {
+    for (uint32_t i = 0; i < size; i++) {
         bb_dbg.log[(head + i) & (BB_DBG_LOG_MAX - 1)] = p[i];
     }
     __dmb();
-    bb_dbg.log_head = head + bufsize;
-    return __real_tud_cdc_n_write(itf, buffer, bufsize);
+    bb_dbg.log_head = head + size;
 }
 
 // bb_dbg_us(): microsecond timer for latency tests. Wraps every ~71 minutes;
@@ -4864,10 +5017,40 @@ static void bb_dbg_update_stats(lua_State* L) {
     bb_dbg.drops_slope_action = g_slope_action_drop_count;
     bb_dbg.drops_slope_cmd = S_get_cmd_drop_count();
     bb_dbg.drops_usb_rx = usb_rx_lockfree_drop_count();
+    bb_dbg.lua_alloc_failures = g_lua_alloc_failures;
+    bb_dbg.drops_usb_tx = g_usb_tx_dropped;
+    bb_dbg.drops_midi_echo = g_midi_echo_dropped;
+    lua_pool_stats_t pool;
+    lua_pool_get_stats(&pool);
+    bb_dbg.pool_pages = pool.pages;
+    bb_dbg.pool_slot_bytes = pool.slot_bytes;
+    bb_dbg.pool_capacity_bytes = pool.capacity_bytes;
+    bb_dbg.pool_arena_free_pages = pool.arena_free_pages;
+
+    static int32_t last_out_mv[4];
+    for (int ch = 0; ch < 4; ch++) {
+        int32_t mv = g_output_state_mv[ch];
+        if (mv != last_out_mv[ch]) {
+            last_out_mv[ch] = mv;
+            bb_dbg.out_changes[ch] = bb_dbg.out_changes[ch] + 1;
+        }
+    }
+
+    static uint32_t last_heap_ms = 0;
+    uint32_t now_ms = bb_dbg.uptime_ms;
+    if (now_ms - last_heap_ms >= 100) {
+        last_heap_ms = now_ms;
+        extern char __HeapLimit;
+        struct mallinfo mi = mallinfo();
+        char* top = (char*)sbrk(0);
+        bb_dbg.heap_free_bytes = (uint32_t)mi.fordblks + (uint32_t)(&__HeapLimit - top);
+    }
 }
 
 static void bb_dbg_init(ComputerCard* card) {
-    memset((void*)&bb_dbg, 0, sizeof(bb_dbg));
+    // Everything but the allocation histogram, which already holds the Lua
+    // state's boot-time allocations (bb_dbg starts zeroed, in .bss)
+    memset((void*)&bb_dbg, 0, offsetof(bb_dbg_t, alloc_live));
     bb_dbg.version = BB_DBG_VERSION;
     bb_dbg.struct_size = sizeof(bb_dbg_t);
     bb_dbg.sample_rate_hz = PROCESS_SAMPLE_RATE_HZ_INT;
@@ -7077,7 +7260,7 @@ extern "C" {
         // Force flush loop - keep servicing USB tasks to push data out
         uint32_t timeout = 0;
         while (tud_cdc_write_available() < 256 && timeout < 100000) {
-            tud_task();
+            usb_task();
             sleep_us(100);
             timeout++;
         }
@@ -7138,7 +7321,7 @@ int main()
     if (g_usb_role == USB_ROLE_DEVICE) {
         absolute_time_t until = make_timeout_time_ms(2000);
         while (!tud_cdc_connected() && absolute_time_diff_us(get_absolute_time(), until) > 0) {
-            tud_task();  // Must service TinyUSB while waiting
+            usb_task();  // Must service TinyUSB while waiting
             usb_wait_led_step();
             tight_loop_contents();
         }

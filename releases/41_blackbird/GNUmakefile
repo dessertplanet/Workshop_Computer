@@ -9,6 +9,7 @@
 #   make test-bowery   Run only the bbbowery + monome/bowery script tests
 #   make test-norns    Run only the norns tests (NORNS_HOST=<norns address>)
 #   make audit         Check nothing core 1 runs lives in flash (both builds)
+#   make host-test     Run host-side unit tests (no card needed)
 #   make clean         Remove build directories
 #
 # OpenOCD runs on the host: override OPENOCD_HOST / OPENOCD_GDB_PORT if needed.
@@ -26,7 +27,7 @@ OPENOCD_GDB_PORT ?= 3333
 GDB ?= $(shell command -v arm-none-eabi-gdb 2>/dev/null || command -v gdb-multiarch 2>/dev/null)
 TEST_ARGS ?=
 
-.PHONY: all build firmware debug flash flash-debug test test-bowery test-norns audit clean help
+.PHONY: all build firmware debug flash flash-debug test test-bowery test-norns audit host-test clean help
 
 all: firmware
 
@@ -75,8 +76,13 @@ audit: firmware debug
 	@python3 util/core1_flash_audit.py $(BUILD)/blackbird.elf | tail -1
 	@python3 util/core1_flash_audit.py $(BUILD_DEBUG)/blackbird_debug.elf | tail -1
 
+host-test:
+	@mkdir -p build-host
+	@cc -O1 -g -fsanitize=address,undefined -Wall -Wextra -Ilib -o build-host/test_lua_pool tests/host/test_lua_pool.c lib/lua_pool.c
+	@./build-host/test_lua_pool
+
 clean:
-	@rm -rf $(BUILD) $(BUILD_DEBUG)
+	@rm -rf $(BUILD) $(BUILD_DEBUG) build-host
 
 help:
-	@sed -n '3,15p' GNUmakefile
+	@sed -n '3,16p' GNUmakefile
