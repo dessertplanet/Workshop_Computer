@@ -2,12 +2,13 @@
 
 // ii (I2C) bus for a Workshop Computer card: no dependency on the card, its
 // language or crow. On the UART pads, ComputerCard moves I2C0 there
-// (COMPUTERCARD_II_ON_UART_PINS), and the card passes those pins here.
+// (EnableI2COverUART(); COMPUTERCARD_II_ON_UART_PINS in blackbird's copy),
+// and the card passes those pins here.
 //
 // Leader: non-blocking. A transaction (write, then optionally a read) fits in
 // the controller's 16-entry FIFOs, so it's loaded in one go and the card's
-// main loop polls for the end. Nothing here ever waits on the bus. Keep it
-// off the audio core.
+// main loop polls for the end. Nothing here waits on the bus, except that
+// recovering from a timeout (a stuck bus) takes about 1ms.
 //
 // Follower (optional): answers at one address, from the I2C interrupt on the
 // core that called ii_bus_follow(). Messages a leader writes are queued for

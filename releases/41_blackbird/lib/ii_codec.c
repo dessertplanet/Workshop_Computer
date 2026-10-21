@@ -98,7 +98,7 @@ uint8_t ii_encode( uint8_t* dest, ii_Type_t type, float data )
             break;
         case ii_s16V:
             data *= II_TT_VOLT; // Scale float up to Teletype
-            // FLOWS THROUGH
+            __attribute__((fallthrough)); // then as ii_s16
         case ii_s16:
             s16 = (int16_t)lim_f(data, -32768.0f, 32767.0f);
             memcpy(&u16, &s16, 2);
