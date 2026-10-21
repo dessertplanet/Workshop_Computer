@@ -7,8 +7,11 @@ extern "C" {
 /// I2C over UART: the Computer on an ii (I2C) bus, as a follower and, when
 /// Pulse In 1 fires, briefly as a leader (as crow does).
 ///
-/// Connect the UART pads (TX = SDA, RX = SCL) and ground to the ii bus,
-/// whose pull-ups must go to 3.3V only. ii_bus.c can be reused by any card.
+/// Connect the UART pads (TX = SDA, RX = SCL) and ground to the ii bus.
+/// The bus needs pull-ups, to 3.3V only, from another device (crow and
+/// Teletype have them) or from resistors (about 2.2-4.7k): the RP2040's
+/// internal ones are too weak on their own, even when the Computer leads.
+/// ii_bus.c can be reused by any card.
 ///
 /// ii values are 16-bit, big-endian. Volts are 16383 = 10V (Teletype's V 10).
 ///

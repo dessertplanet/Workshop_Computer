@@ -95,8 +95,11 @@ public:
 	    Moves the I2C0 peripheral from the calibration EEPROM, which the
 	    constructor has already read and which isn't needed after, to the
 	    (usually unpopulated) UART pads: TX = GPIO 0 = SDA, RX = GPIO 1 = SCL.
-	    Turns on the RP2040's weak pull-ups there; an I2C bus needs proper
-	    pull-ups too, to 3.3V only, as the RP2040 isn't 5V tolerant.
+	    Turns on the RP2040's internal pull-ups there, but they are too weak
+	    (50-80k) to run a bus: something else must pull the bus up, whether
+	    the Computer leads or follows. crow and Teletype do; otherwise fit
+	    about 2.2-4.7k from SDA and SCL to 3.3V. Pull-ups to 3.3V only, as
+	    the RP2040 isn't 5V tolerant.
 
 	    Call before Run(). Define ENABLE_UART_DEBUGGING as well, so that the
 	    constructor doesn't drive the UART pads as debug outputs before this is
