@@ -23,12 +23,18 @@ def fill_heap(bb):
 
 
 def test_kill_recovers_a_full_heap(bb):
+    # Libraries loaded on first use stay loaded, so what a clean kill leaves
+    # depends on what ran before: compare with one
+    bb.kill_lua()
+    bb.wait(0.2)
+    clean = bb.stats()["lua_mem_bytes"]
     fill_heap(bb)
     bb.kill_lua()
     bb.wait(0.2)
     assert bb.query("chain == nil")
     assert bb.query("type(init)") == "function"
-    assert bb.stats()["lua_mem_bytes"] < 100 * 1024
+    mem = bb.stats()["lua_mem_bytes"]
+    assert mem < clean + 4 * 1024, f"{mem} bytes after the kill, {clean} after a clean one"
 
 
 def test_upload_recovers_a_full_heap(bb):
