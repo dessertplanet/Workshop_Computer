@@ -40,7 +40,6 @@ macro (add_card _name)
     if (TARGET ${_name})
             target_include_directories(${_name} PUBLIC 
                 ${CMAKE_CURRENT_LIST_DIR}
-                ${CMAKE_CURRENT_LIST_DIR}/../../Demonstrations+HelloWorlds/PicoSDK/ComputerCard/examples/midi_device_host
             )
             target_link_libraries(${_name} pico_unique_id pico_stdlib pico_multicore hardware_dma hardware_i2c hardware_pwm hardware_adc hardware_spi hardware_flash lua tinyusb_device tinyusb_host tinyusb_board)
       pico_add_extra_outputs(${_name})
@@ -71,8 +70,8 @@ macro (add_card _name)
                 ${CMAKE_CURRENT_LIST_DIR}/lib/fastmath_lut.c
         ${CMAKE_CURRENT_LIST_DIR}/lib/flash_storage.cpp
         ${CMAKE_CURRENT_LIST_DIR}/lib/lua_pool.c
-                ${CMAKE_CURRENT_LIST_DIR}/../../Demonstrations+HelloWorlds/PicoSDK/ComputerCard/examples/midi_device_host/usb_midi_host.c
-                ${CMAKE_CURRENT_LIST_DIR}/../../Demonstrations+HelloWorlds/PicoSDK/ComputerCard/examples/midi_device_host/usb_midi_host_app_driver.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/usb_midi_host.c
+        ${CMAKE_CURRENT_LIST_DIR}/lib/usb_midi_host_app_driver.c
       )
       target_compile_definitions(${_name} PRIVATE PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
       # Disable stdio USB - we're using TinyUSB directly with custom descriptors for druid compatibility

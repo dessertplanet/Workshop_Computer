@@ -36,7 +36,7 @@ License is GPLv3 or later- see LICENSE file for details.
 #include "lib/fastmath.h"
 #include "class/cdc/cdc_device.h"
 #include "class/midi/midi_device.h"
-#include "usb_midi_host.h"
+#include "lib/usb_midi_host.h"
 #include "lib/debug.h"
 #include "lib/usb_lockfree.h"
 #include <cstdio>
