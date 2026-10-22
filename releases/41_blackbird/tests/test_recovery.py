@@ -44,3 +44,24 @@ def test_upload_recovers_a_full_heap(bb):
     assert bb.query("recovered") == 7
     assert bb.query("init_ran") is True
     assert bb.query("chain == nil")
+
+
+def test_kill_unloads_libraries_loaded_on_first_use(bb):
+    # Regression: sequins, timeline, hotswap and ii load on first use and
+    # stayed loaded through ^^k (~31KB), so after a session of scripts a big
+    # one (nb_drumcrow's) ran out of memory compiling. ^^k now unloads them.
+    bb.kill_lua()
+    bb.wait(0.2)
+    bb.eval("collectgarbage('collect')")
+    clean = bb.stats()["lua_mem_bytes"]
+    bb.eval("local a, b, c, d = sequins, timeline, hotswap, ii")
+    loaded = bb.stats()["lua_mem_bytes"]
+    assert loaded > clean + 20 * 1024, (clean, loaded)
+    bb.kill_lua()
+    bb.wait(0.2)
+    bb.eval("collectgarbage('collect')")
+    after = bb.stats()["lua_mem_bytes"]
+    assert after < clean + 2 * 1024, f"{after} bytes after ^^k, {clean} before the libraries loaded"
+    # and they load again on use
+    assert bb.query("type(sequins) .. type(timeline) .. type(hotswap) .. type(ii) .. type(ii_followRx_handler)") \
+        == "tabletabletabletablefunction"

@@ -74,6 +74,93 @@ def segment_cycle_lengths(bb, freq, outputs=1, captures=4):
     return lengths
 
 
+def test_asl_cycles_survive_long_lua_callbacks(bb):
+    # Regression: core 0 queues each lookahead segment's successor, from the
+    # main loop, so a long Lua callback (nb_drumcrow's 100Hz update took 3.4ms)
+    # left short segments' successors unqueued past core 1's render-ahead: the
+    # output held, then jumped to catch up, at the callback's rate (heard as
+    # clicks and distortion, worse the higher the pitch). A Lua count hook
+    # now queues them during long callbacks too.
+    rate = bb.stats()["sample_rate_hz"]
+    bb.eval("busy_m = metro.init{ time = 0.01, event = function() "
+            "local t = bb_dbg_us() local x = 0 while bb_dbg_us() - t < 3000 do x = x + 1 end end } busy_m:start()")
+    freq = 4000
+    lengths = sum(segment_cycle_lengths(bb, freq, outputs=4, captures=12), [])
+    bb.eval("busy_m:stop()")
+    assert set(lengths) == {rate / freq}, f"cycle lengths {sorted(set(lengths))}, want {rate / freq}"
+
+
+def held_samples(bb, during):
+    """Audio-rate lfos on all outputs; run `during()`, and return how many
+    samples core 1 held per output waiting for core 0 to queue a segment."""
+    starved = bb.symbol("g_slope_starved_samples")
+    bb.eval("for i = 1, 4 do output[i](lfo(1 / 4000, 2)) end")
+    bb.wait(0.3)
+    for i in range(4):
+        bb.mem.write_u32(starved + 4 * i, 0)
+    during()
+    return bb.mem.read_words(starved, 4)
+
+
+def test_asl_cycles_survive_garbage_collection(bb):
+    # Regression: the Lua collector's atomic phase (one indivisible step, ~2.6ms
+    # with nb_drumcrow loaded) and runs of sweep steps held core 0 past core 1's
+    # render-ahead every collection cycle (a pop every few seconds). The
+    # collector now calls back to drain queued slope callbacks as it works
+    # (lua_setgcinterrupt).
+    # A big live structure, rewritten (so re-marked in the atomic phase), and
+    # garbage to keep collection cycles coming
+    bb.eval("live = {} for i = 1, 400 do live[i] = {i, i * 2} end "
+            "gc_m = metro.init{ time = 0.01, event = function() "
+            "for i = 1, 100 do live[math.random(400)] = {i, i} end end } gc_m:start()")
+    held = held_samples(bb, lambda: bb.wait(8.0))
+    bb.eval("gc_m:stop()")
+    assert held == [0, 0, 0, 0], f"samples held waiting for core 0, per output: {held}"
+
+
+def test_asl_cycles_survive_repl_commands(bb):
+    # Regression: compiling a chunk (each REPL line, each command norns sends)
+    # is ~5ms of C with no Lua instructions for the count hook: each held
+    # audio-rate outputs (a pop per command, e.g. per nb_drumcrow note). The
+    # allocator, which compiling calls throughout, now drains too.
+    def commands():
+        for i in range(30):
+            bb.eval(f"repl_x = {{{i}, 'a{i}', function(v) return v * {i} + math.sin(v) end}}")
+            bb.wait(0.05)
+    held = held_samples(bb, commands)
+    assert held == [0, 0, 0, 0], f"samples held waiting for core 0, per output: {held}"
+
+
+def capture_output(bb, channel):
+    """512 consecutive samples of an output, as the ISR sends them (volts)."""
+    import struct
+    cap, count = bb.symbol("g_out_capture"), bb.symbol("g_out_capture_count")
+    bb.mem.write_u32(bb.symbol("g_out_capture_channel"), channel - 1)
+    bb.mem.write_u32(count, 0)
+    while bb.mem.read_u32(count) < 512:
+        bb.wait(0.01)
+    words = bb.mem.read_words(cap, 256)
+    return [v / 4096 for v in struct.unpack("<512h", struct.pack("<256I", *words))]
+
+
+def test_asl_corners_land_between_samples(bb):
+    # Regression: the sample in which a lookahead segment ended rendered that
+    # segment's end value, and the next segment started on the following
+    # sample (as far in as it should have been): every audio-rate corner had
+    # one sample stuck at the peak, then a double step (distortion, rising
+    # with pitch). The next segment now starts within the sample it begins in.
+    rate = bb.stats()["sample_rate_hz"]
+    freq, level = 1100, 4  # corners every 10.9 samples, so between samples
+    slope = 2 * level / (rate / freq / 2)  # volts per sample along each ramp
+    bb.eval(f"output[1](lfo({1 / freq!r}, {level}, 'linear'))")
+    bb.wait(0.2)
+    for _ in range(4):
+        v = capture_output(bb, 1)
+        steps = [abs(b - a) for a, b in zip(v, v[1:])]
+        assert max(steps) <= slope * 1.02 + 0.002, \
+            f"a step of {max(steps):.3f}V, the ramp is {slope:.3f}V/sample"
+
+
 def test_asl_cycles_have_no_jitter(bb):
     # Regression: each ASL segment started only when core 0 heard the previous
     # one had ended, 1-3 samples later and varying, so audio-rate ASL had

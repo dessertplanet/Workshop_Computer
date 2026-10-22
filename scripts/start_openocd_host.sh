@@ -46,7 +46,7 @@ gdb_port="${OPENOCD_GDB_PORT:-3333}"
 gdb_max_connections="${OPENOCD_GDB_MAX_CONNECTIONS:-3}"
 gdb_targets="${OPENOCD_GDB_TARGETS:-rp2040.core0 rp2040.core1}"
 telnet_port="${OPENOCD_TELNET_PORT:-4444}"
-tcl_port="${OPENOCD_TCL_PORT:-6666}"
+tcl_port="${OPENOCD_TCL_PORT:-6667}"
 
 extra_args=()
 

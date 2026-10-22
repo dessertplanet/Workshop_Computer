@@ -250,11 +250,47 @@ extern "C" void __not_in_flash_func(queue_slope_action_callback)(int channel, Ca
         g_slope_action_queue[g_slope_action_write_idx].callback = callback;
         __dmb();  // the entry before the index, for core 0
         g_slope_action_write_idx = next_write;
+        lua_interrupt_pending = 1;  // drain it from inside Lua, if Lua is running
     } else {
         // Queue full - track drops for diagnostic reporting
         g_slope_action_drop_count++;
     }
     restore_interrupts(irq);
+}
+
+// Run the queued slope callbacks: casl's, which queue each lookahead segment's
+// successor (on_slope_started) or start the next segment (on_slope_ended).
+// C only: they never call into Lua.
+static void drain_slope_action_callbacks() {
+    while (g_slope_action_read_idx != g_slope_action_write_idx) {
+        uint32_t read_idx = g_slope_action_read_idx;
+        uint8_t channel = g_slope_action_queue[read_idx].channel;
+        uint16_t seq = g_slope_action_queue[read_idx].seq;
+        Callback_t callback = g_slope_action_queue[read_idx].callback;
+        g_slope_action_read_idx = (read_idx + 1) % SLOPE_ACTION_QUEUE_SIZE;
+        if (callback != NULL) {
+            callback((int)channel, seq);
+        }
+    }
+}
+
+// Drain them from inside Lua too. A lookahead segment's successor must be
+// queued before core 1 renders past its end, and with short (audio-rate)
+// segments core 1's render-ahead gave core 0 ~1.5ms, each successor being
+// queued only once its predecessor starts. Long stretches of Lua ran that dry,
+// and the output held then jumped (heard as clicks/distortion): nb_drumcrow's
+// 100Hz update (3ms of Lua) every 10ms, the collector's atomic phase (~2.6ms,
+// can't be split) every few seconds, compiling each REPL line or command
+// norns sends (~2-5ms). So drain from inside Lua (blackbird additions to its
+// Lua): from the VM, at its next call, jump or loop back-edge once core 1
+// sets lua_interrupt_pending (queue_slope_action_callback); from the
+// collector as it works (lua_setgcinterrupt); and from the allocator, which
+// compiling calls throughout. (A count hook did this at first, but cost ~45%
+// of Lua's speed: Lua 5.4 then traces every instruction.) The latter two can
+// run inside a C function: not while casl_describe is parsing an ASL, as a
+// half-described casl mustn't be stepped.
+static void drain_slope_action_callbacks_from_lua() {
+    if (!casl_describing()) drain_slope_action_callbacks();
 }
 
 // Process slope action callbacks on Core 0 (called from MainControlLoop)
@@ -285,20 +321,9 @@ static void process_slope_action_callbacks() {
     //     last_reported_cmd_drops = cmd_drops;
     // }
 
-    
-    while (g_slope_action_read_idx != g_slope_action_write_idx) {
-        // Read volatile struct members individually to avoid copy issues
-        uint32_t read_idx = g_slope_action_read_idx;
-        uint8_t channel = g_slope_action_queue[read_idx].channel;
-        uint16_t seq = g_slope_action_queue[read_idx].seq;
-        Callback_t callback = g_slope_action_queue[read_idx].callback;
-        g_slope_action_read_idx = (read_idx + 1) % SLOPE_ACTION_QUEUE_SIZE;
-        
-        // Execute the queued callback
-        if (callback != NULL) {
-            callback((int)channel, seq);
-        }
-    }
+
+    casl_describing_clear();  // not in Lua here
+    drain_slope_action_callbacks();
 }
 
 // ============================================================================
@@ -1423,6 +1448,7 @@ static void print_table_recursive(lua_State* L, int index, int depth) {
 
     static void* lua_custom_alloc(void* ud, void* ptr, size_t osize, size_t nsize) {
         (void)ud;  // unused
+        drain_slope_action_callbacks_from_lua();
 
         if (nsize == 0) {
             // Free
@@ -1482,6 +1508,10 @@ public:
         
         // Register panic handler
         lua_atpanic(L, lua_panic_handler);
+
+        // Keep audio-rate ASL fed during long Lua callbacks (coroutines inherit it)
+        lua_setinterrupt(drain_slope_action_callbacks_from_lua);
+        lua_setgcinterrupt(drain_slope_action_callbacks_from_lua);
         
         
         // Load basic Lua libraries
@@ -6403,43 +6433,50 @@ int LuaManager::lua_set_input_none(lua_State* L) {
 
 // Metro system Lua bindings implementation
 
-// metro_start(id, time) - Start a metro with specified interval
+// Lua numbers metros from 1 (metro[1]..metro[8]), the C side from 0, as crow.
+
+// metro_start(id, time, count, stage) - Start a metro: tick every `time` seconds,
+// `count` times (negative: forever), numbering ticks from `stage`
 int LuaManager::lua_metro_start(lua_State* L) {
-    int id = luaL_checkinteger(L, 1);
+    int ix = (int)luaL_checkinteger(L, 1) - 1;
     float time = (float)luaL_checknumber(L, 2);
-    
+    int count = (int)luaL_optinteger(L, 3, -1);
+    int stage = (int)luaL_optinteger(L, 4, 1);
+
     // Set time first, then start (crow-style)
-    Metro_set_time(id, time);
-    Metro_start(id);
+    Metro_set_time(ix, time);
+    Metro_set_count(ix, count);
+    Metro_set_stage(ix, stage);
+    Metro_start(ix);
     return 0;
 }
 
 // metro_stop(id) - Stop a metro
 int LuaManager::lua_metro_stop(lua_State* L) {
-    int id = luaL_checkinteger(L, 1);
-    
+    int ix = (int)luaL_checkinteger(L, 1) - 1;
+
     // Call C metro backend
-    Metro_stop(id);
+    Metro_stop(ix);
     return 0;
 }
 
 // metro_set_time(id, time) - Change metro interval
 int LuaManager::lua_metro_set_time(lua_State* L) {
-    int id = luaL_checkinteger(L, 1);
+    int ix = (int)luaL_checkinteger(L, 1) - 1;
     float time = (float)luaL_checknumber(L, 2);
-    
+
     // Call C metro backend
-    Metro_set_time(id, time);
+    Metro_set_time(ix, time);
     return 0;
 }
 
 // metro_set_count(id, count) - Set metro repeat count
 int LuaManager::lua_metro_set_count(lua_State* L) {
-    int id = luaL_checkinteger(L, 1);
+    int ix = (int)luaL_checkinteger(L, 1) - 1;
     int count = luaL_checkinteger(L, 2);
-    
+
     // Call C metro backend
-    Metro_set_count(id, count);
+    Metro_set_count(ix, count);
     return 0;
 }
 

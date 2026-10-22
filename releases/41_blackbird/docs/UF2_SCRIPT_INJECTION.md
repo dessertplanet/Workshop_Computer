@@ -26,7 +26,7 @@ A build artifact suitable as a base is produced as:
 
 The normal release UF2 remains:
 
-- `UF2/blackbird.uf2` (post-processed to *clear* the user-script region)
+- `UF2/blackbird.<version>.release.uf2`, for example `UF2/blackbird.1.2.release.uf2` (post-processed to *clear* the user-script region)
 
 ## Flash Layout
 

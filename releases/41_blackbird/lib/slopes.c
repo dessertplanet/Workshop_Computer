@@ -162,11 +162,44 @@ static inline q16_t shapes_step_wait_q16(q16_t here_q16)
     return (here_q16 <= 0) ? 0 : Q16_ONE;
 }
 
-// The more complex back/rebound shapes still use float helpers for now.
-// They remain stubs (identity) until fully implemented.
-static float shapes_ease_out_back(float in) { return in; } // TODO: Implement proper back easing
-static float shapes_ease_in_back(float in) { return in; } // TODO: Implement proper back easing  
-static float shapes_ease_out_rebound(float in) { return in; } // TODO: Implement proper rebound
+// 'over', 'under' and 'rebound': crow's easings (crow lib/shapes.c), in Q16.
+// 'under' dips ~10% below the start before rising, 'over' overshoots the end
+// by ~10% then settles, 'rebound' bounces three times into the end.
+#define EASE_BACK_A_Q16  177051  // 2.70158
+#define EASE_BACK_B_Q16  111515  // 1.70158
+
+static inline __attribute__((always_inline)) q16_t shapes_ease_in_back_q16(q16_t in)   // in^2 * (2.70158*in - 1.70158)
+{
+    return Q16_MUL(Q16_MUL(in, in), Q16_MUL(EASE_BACK_A_Q16, in) - EASE_BACK_B_Q16);
+}
+
+static inline __attribute__((always_inline)) q16_t shapes_ease_out_back_q16(q16_t in)  // x^2 * (2.70158*x + 1.70158) + 1, x = in - 1
+{
+    q16_t x = in - Q16_ONE;
+    return Q16_MUL(Q16_MUL(x, x), Q16_MUL(EASE_BACK_A_Q16, x) + EASE_BACK_B_Q16) + Q16_ONE;
+}
+
+static inline __attribute__((always_inline)) q16_t shapes_ease_out_rebound_q16(q16_t in)  // 7.5625*x^2 + c, in four bounces
+{
+    q16_t x, c;
+    if      (in < 23831) { x = in;          c = 0;     } // in < 1/2.75
+    else if (in < 47663) { x = in - 35747; c = 49152; } // < 2/2.75:   x = in - 1.5/2.75,   c = 0.75
+    else if (in < 59578) { x = in - 53620; c = 61440; } // < 2.5/2.75: x = in - 2.25/2.75,  c = 0.9375
+    else                 { x = in - 62557; c = 64512; } //             x = in - 2.625/2.75, c = 0.984375
+    return Q16_MUL(495616, Q16_MUL(x, x)) + c;          // 7.5625
+}
+
+// Over, Under and Rebound for a position 0..1 through the segment (clamped)
+static inline __attribute__((always_inline)) q16_t shapes_ease_q16(Shape_t shape, q16_t in)
+{
+    if (in <= 0) return 0;
+    if (in >= Q16_ONE) return Q16_ONE;  // land exactly on the target
+    switch (shape) {
+        case SHAPE_Over:  return shapes_ease_out_back_q16(in);
+        case SHAPE_Under: return shapes_ease_in_back_q16(in);
+        default:          return shapes_ease_out_rebound_q16(in);
+    }
+}
 
 // Missing shape functions using local wrBlocks - similar to crow implementation
 #include <math.h>
@@ -344,6 +377,18 @@ static inline void slope_debug_seg_start(int index, uint32_t pos) {
     g_slope_seg_starts[g_slope_seg_start_count] = pos;
     g_slope_seg_start_count = g_slope_seg_start_count + 1;
 }
+// Samples held because a lookahead slope ended before core 0 queued the next
+// (audible: the output stalls, then jumps to catch up), per channel, and when
+// the last 32 such stalls began (time_us_32)
+volatile uint32_t g_slope_starved_samples[SLOPE_CHANNELS];
+volatile uint32_t g_slope_starve_times[32];
+volatile uint32_t g_slope_starve_count;
+// One output's samples as the ISR takes them, 512 at a time once armed (by
+// zeroing the count): volts in 1/4096ths
+#define OUT_CAPTURE_LEN 512
+volatile int16_t g_out_capture[OUT_CAPTURE_LEN];
+volatile uint32_t g_out_capture_count = OUT_CAPTURE_LEN;
+volatile uint32_t g_out_capture_channel = 0;
 #endif
 
 #define SLOPE_CMD_QUEUE_SIZE 32
@@ -549,6 +594,13 @@ q16_t S_consume_buffered_sample_q16(int index) {
         entry = S_render_one_sample_q16(index);
         g_slope_inline_renders++;
     }
+#ifdef BB_DEBUG_HARNESS
+    if ((uint32_t)index == g_out_capture_channel && g_out_capture_count < OUT_CAPTURE_LEN) {
+        int32_t v = entry.value_q16 >> 4;
+        g_out_capture[g_out_capture_count] = (int16_t)(v > 32767 ? 32767 : (v < -32768 ? -32768 : v));
+        g_out_capture_count = g_out_capture_count + 1;
+    }
+#endif
     if (entry.action_due && entry.callback != NULL) {
         extern void queue_slope_action_callback(int channel, Callback_t callback, uint16_t seq);
         queue_slope_action_callback(index, entry.callback, entry.seq);
@@ -812,6 +864,9 @@ static slope_buffer_entry_t S_render_one_sample_q16(int index)
             case SHAPE_Sine: shaped_q16 = lut_lookup_q16(lut_sin_ptr ? lut_sin_ptr : lut_sin, half_q16); break;
             case SHAPE_Log:  shaped_q16 = lut_lookup_q16(lut_log_ptr ? lut_log_ptr : lut_log, half_q16); break;
             case SHAPE_Expo: shaped_q16 = lut_lookup_q16(lut_exp_ptr ? lut_exp_ptr : lut_exp, half_q16); break;
+            case SHAPE_Over:
+            case SHAPE_Under:
+            case SHAPE_Rebound: shaped_q16 = shapes_ease_q16(osc->shape, half_q16); break;
             case SHAPE_Linear:
             default:         shaped_q16 = half_q16; break;
         }
@@ -840,6 +895,15 @@ static slope_buffer_entry_t S_render_one_sample_q16(int index)
     // it ended (negative countdown, to a limit), so a slope started by its
     // action can begin where it would have been with no gap
     if( self->countdown_q16 <= 0 ) {
+#ifdef BB_DEBUG_HARNESS
+        if( self->lookahead ){
+            if( self->countdown_q16 > -one_sample_q16 ){  // the first held sample: a new stall
+                g_slope_starve_times[g_slope_starve_count % 32] = time_us_32() | (uint32_t)index;
+                g_slope_starve_count = g_slope_starve_count + 1;
+            }
+            g_slope_starved_samples[index] = g_slope_starved_samples[index] + 1;
+        }
+#endif
         if( self->countdown_q16 > -SLOPE_OVERFLOW_LIMIT_Q16 ) {
             self->countdown_q16 -= one_sample_q16;
         }
@@ -858,6 +922,19 @@ static slope_buffer_entry_t S_render_one_sample_q16(int index)
     // past the end this sample is, also carried into the next slope
     self->countdown_q16 -= one_sample_q16;
     self->elapsed_q16   += one_sample_q16;
+
+    // Ended part-way through this sample, with the next lookahead slope
+    // queued: this sample is already that far into it. (Rendering the end
+    // value here and starting the next on the following sample put every
+    // audio-rate corner a sample late: one sample stuck on the peak, then a
+    // double step.) Slopes with an end action still end on their own sample.
+    if( self->countdown_q16 < 0 && self->lookahead && self->action == NULL
+        && slope_next[index].valid ) {
+#ifdef BB_DEBUG_HARNESS
+        slope_debug_seg_start(index, g_slope_render_pos[index] - 1);
+#endif
+        slope_promote_next(index, -self->countdown_q16);
+    }
     
     if( self->elapsed_q16 > self->duration_q16 ) {
         self->elapsed_q16 = self->duration_q16;
@@ -896,6 +973,11 @@ static slope_buffer_entry_t S_render_one_sample_q16(int index)
             break;
         case SHAPE_Wait:
             shaped_q16 = (here_q16 <= 0) ? 0 : Q16_ONE;
+            break;
+        case SHAPE_Over:
+        case SHAPE_Under:
+        case SHAPE_Rebound:
+            shaped_q16 = shapes_ease_q16(self->shape, here_q16);
             break;
         case SHAPE_Linear:
         default:
@@ -1519,13 +1601,9 @@ static float* shaper_v( Slope_t* self, float* out, int size )
             shaped_q16 = shapes_step_wait_q16(here_q16);
             break;
         case SHAPE_Over:
-            shaped_q16 = FLOAT_TO_Q16(shapes_ease_out_back(Q16_TO_FLOAT(here_q16)));
-            break;
         case SHAPE_Under:
-            shaped_q16 = FLOAT_TO_Q16(shapes_ease_in_back(Q16_TO_FLOAT(here_q16)));
-            break;
         case SHAPE_Rebound:
-            shaped_q16 = FLOAT_TO_Q16(shapes_ease_out_rebound(Q16_TO_FLOAT(here_q16)));
+            shaped_q16 = shapes_ease_q16(self->shape, here_q16);
             break;
         case SHAPE_Linear:
         default:

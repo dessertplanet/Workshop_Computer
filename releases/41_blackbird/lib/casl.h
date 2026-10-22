@@ -94,6 +94,8 @@ typedef struct{
 
 Casl* casl_init( int index );
 void casl_describe( int index, lua_State* L );
+bool casl_describing( void );        // casl_describe is parsing (see casl.c)
+void casl_describing_clear( void );
 void casl_describe_to_literal( int index, float volts, float seconds, Shape_t shape );
 void casl_action( int index, int action );
 

@@ -1,7 +1,7 @@
 # Blackbird — local Makefile.
 #
 # Usage:
-#   make firmware      Build release firmware (UF2/blackbird.uf2)
+#   make firmware      Build release firmware (UF2/blackbird.<version>.release.uf2)
 #   make debug         Build the SWD debug/test harness firmware (build-debug/blackbird_debug.elf)
 #   make flash         Build + flash release firmware over SWD (OpenOCD)
 #   make flash-debug   Build + flash debug harness firmware over SWD

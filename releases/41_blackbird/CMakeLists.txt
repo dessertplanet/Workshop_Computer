@@ -254,6 +254,17 @@ target_link_options(${CARD_NAME} PRIVATE -Wl,--wrap=tud_cdc_n_write)
 if(BB_DEBUG_HARNESS)
     target_compile_definitions(${CARD_NAME} PRIVATE BB_DEBUG_HARNESS COMPUTERCARD_INPUT_OVERRIDES COMPUTERCARD_PROFILE)
 else()
+# The release UF2 is named with the version from info.yaml (blackbird.1.2.release.uf2),
+# as the site expects; move the previous release into "UF2/older versions" when bumping it.
+# Re-run cmake after changing the version.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/info.yaml)
+file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/info.yaml BB_VERSION_LINE REGEX "^Version:")
+string(REGEX REPLACE "^Version:[ \t]*([^ \t]+).*$" "\\1" BB_VERSION "${BB_VERSION_LINE}")
+if(NOT BB_VERSION)
+    message(FATAL_ERROR "No Version: line found in info.yaml")
+endif()
+set(BB_RELEASE_UF2 ${CARD_NAME}.${BB_VERSION}.release.uf2)
+
 # Copy UF2 files to UF2 directory and add user script erase blocks
 add_custom_command(
     TARGET ${CARD_NAME}
@@ -269,7 +280,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E env python3 
             ${CMAKE_CURRENT_SOURCE_DIR}/util/add_uf2_erase_block.py
             ${CMAKE_CURRENT_BINARY_DIR}/${CARD_NAME}.uf2
-            ${CMAKE_CURRENT_SOURCE_DIR}/UF2/${CARD_NAME}.uf2
-    COMMENT "Adding user script erase blocks to UF2"
+            ${CMAKE_CURRENT_SOURCE_DIR}/UF2/${BB_RELEASE_UF2}
+    COMMENT "Adding user script erase blocks to UF2 (UF2/${BB_RELEASE_UF2})"
 )
 endif()

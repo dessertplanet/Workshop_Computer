@@ -631,6 +631,26 @@ lua_gettable(L, 1); // replace @2 with: input[n]
     lua_setglobal(L, "_pulsein2_change_callback");
     lua_settop(L, 0);
 
+    // Unload the libraries that load on first use (main.cpp, lazy_lib_index:
+    // ~31KB together), so each script starts with the heap of a fresh boot:
+    // otherwise any script that used them left them loaded, and a big one
+    // after it (nb_drumcrow's) ran out of memory compiling. They load again
+    // when a script uses them. ii's global handlers go too, as they'd keep it
+    // alive: the follower reads `ii` (loading it) before calling them, and a
+    // leader reply finding no handler is dropped. rawset: no _user tracer.
+    {
+        static const char* const unload[] = { "sequins", "timeline", "hotswap", "ii"
+                                             , "ii_LeadRx_handler", "ii_followRx_handler"
+                                             , "ii_followRxTx_handler" };
+        lua_pushglobaltable(L);
+        for (size_t i = 0; i < sizeof(unload) / sizeof(unload[0]); i++) {
+            lua_pushstring(L, unload[i]);
+            lua_pushnil(L);
+            lua_rawset(L, -3);
+        }
+        lua_settop(L, 0);
+    }
+
     // Clear user globals again: any the module resets above made
     l_crowlib_clear_user_globals(L);
 
@@ -984,7 +1004,7 @@ void L_handle_metro_lockfree( metro_event_lockfree_t* event )
 
     lua_getglobal(L, "metro_handler");
     if (lua_isfunction(L, -1)) {
-        lua_pushinteger(L, metro_id);  // First argument: metro ID
+        lua_pushinteger(L, metro_id + 1);  // First argument: metro ID (Lua's metro[1] is C's 0)
         lua_pushinteger(L, stage);     // Second argument: stage/count
         
         // Protected call to prevent crashes

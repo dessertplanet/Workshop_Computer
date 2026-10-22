@@ -96,6 +96,15 @@ static void seq_append( Casl* self, To* t )
 
 static void parse_table( Casl* self, lua_State* L );
 static To* to_alloc( Casl* self );
+// Set while casl_describe parses: the Lua collector can run inside it, and
+// drains queued slope callbacks (main.cpp), which mustn't step this casl
+// half-described. Core 0 only.
+// (A Lua error while parsing, from luaL_check*, skips the reset: the main
+// loop calls casl_describing_clear outside Lua, where it can't be set.)
+static bool _describing = false;
+bool casl_describing( void ){ return _describing; }
+void casl_describing_clear( void ){ _describing = false; }
+
 void casl_describe( int index, lua_State* L )
 {
     if(index < 0 || index >= SELVES_COUNT){
@@ -117,7 +126,9 @@ void casl_describe( int index, lua_State* L )
 
     // Check if table is empty before parsing
     if (lua_rawlen(L, -1) > 0) {
+        _describing = true;
         parse_table(self, L);
+        _describing = false;
     }
     // seq_exit(self)? // i think we want to start inside the first Seq anyway
 }
