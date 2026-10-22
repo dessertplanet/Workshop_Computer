@@ -45,11 +45,14 @@ def test_ii_loads_on_first_use(bb):
 def test_ii_survives_kill(bb):
     # Regression: ii.lua loads lazily, from inside a script, and its globals
     # (ii_LeadRx_handler, which delivers every reply) were recorded as the
-    # script's, so the next ^^k deleted them and replies silently stopped
+    # script's, so the next ^^k deleted them and replies silently stopped.
+    # ^^k now unloads ii on purpose (handlers and all, to free its memory):
+    # the next use must load it whole again.
     assert bb.query("type(ii.crow)") == "table"
     bb.kill_lua()
+    assert bb.query("rawget(_G, 'ii') == nil") is True
+    assert bb.query("type(ii.crow)") == "table"
     assert bb.query("type(ii_LeadRx_handler)") == "function"
-    assert bb.query("type(rawget(_G, 'ii'))") == "table"
 
 
 def test_ii_kill_clears_script_handlers(bb):
