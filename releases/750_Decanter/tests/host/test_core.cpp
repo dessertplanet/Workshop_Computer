@@ -1,4 +1,4 @@
-// Host tests for the Computer-Probe core: payload store, flashing engine and
+// Host tests for the Decanter core: payload store, flashing engine and
 // fake FAT volume, against simulated flash. Build and run with `make` here.
 //
 //   ./test_core [real.uf2 real.bin]
@@ -181,8 +181,8 @@ static std::vector<uint32_t> PagesCovering(uint32_t start, uint32_t len)
 static void TestUploadAndFlash()
 {
 	printf("upload in random order, then flash\n");
-	SimFlash probe(2 * 1024 * 1024);
-	Store s(probe);
+	SimFlash card(2 * 1024 * 1024);
+	Store s(card);
 	CHECK(!s.Valid());
 	CHECK(s.Capacity() == (2 * 1024 * 1024 - kSlotsOffset) / kSectorSize);
 
@@ -201,7 +201,7 @@ static void TestUploadAndFlash()
 	CHECK(s.Valid());
 	CHECK(s.SectorCount() == 3);
 	CHECK(s.DataCrcMatches());
-	CHECK(probe.notErased == 0);
+	CHECK(card.notErased == 0);
 
 	SimTarget t;
 	uint32_t lastDone = 0, lastTotal = 0;
@@ -230,9 +230,9 @@ static void TestUploadAndFlash()
 
 static void TestRefusesProtectedSector()
 {
-	printf("refuses the Mk2 calibration sector\n");
-	SimFlash probe(2 * 1024 * 1024);
-	Store s(probe);
+	printf("refuses the protected last sector\n");
+	SimFlash card(2 * 1024 * 1024);
+	Store s(card);
 
 	Image good = MakeImage(PagesCovering(0, 1024), 2);
 	Feed(s, good.Blocks());
@@ -247,8 +247,8 @@ static void TestRefusesProtectedSector()
 	CHECK(!s.Valid()); // the old payload is gone, never a mix
 
 	// Addresses outside flash entirely
-	SimFlash probe2(2 * 1024 * 1024);
-	Store s2(probe2);
+	SimFlash card2(2 * 1024 * 1024);
+	Store s2(card2);
 	uint8_t page[256] = {0};
 	uf2::Block b = MakeBlock(0x20000000, 0, 1, page);
 	s2.HandleBlock((const uint8_t *)&b);
@@ -261,8 +261,8 @@ static void TestRefusesProtectedSector()
 static void TestIgnoresOtherFamiliesAndJunk()
 {
 	printf("ignores other families and non-UF2 sectors\n");
-	SimFlash probe(2 * 1024 * 1024);
-	Store s(probe);
+	SimFlash card(2 * 1024 * 1024);
+	Store s(card);
 
 	uint8_t junk[512];
 	memset(junk, 0x5A, sizeof(junk));
@@ -291,8 +291,8 @@ static void TestIgnoresOtherFamiliesAndJunk()
 static void TestReuploadAndRestart()
 {
 	printf("re-upload replaces; interrupted copy restarts cleanly\n");
-	SimFlash probe(2 * 1024 * 1024);
-	Store s(probe);
+	SimFlash card(2 * 1024 * 1024);
+	Store s(card);
 
 	Image a = MakeImage(PagesCovering(0, 8192), 5);
 	Feed(s, a.Blocks());
@@ -322,7 +322,7 @@ static void TestReuploadAndRestart()
 	}
 	Feed(s, dup);
 	CHECK(s.State() == UploadState::Complete);
-	CHECK(probe.notErased == 0);
+	CHECK(card.notErased == 0);
 
 	// Stray re-writes of the finished file's blocks keep the payload
 	Feed(s, std::vector<uf2::Block>(cb.end() - 3, cb.end()));
@@ -336,8 +336,8 @@ static void TestReuploadAndRestart()
 static void TestNeverMixesFiles()
 {
 	printf("interrupted copy of one file, then a different same-size file\n");
-	SimFlash probe(2 * 1024 * 1024);
-	Store s(probe);
+	SimFlash card(2 * 1024 * 1024);
+	Store s(card);
 
 	Image a = MakeImage(PagesCovering(0, 8192), 10);
 	Image b = MakeImage(PagesCovering(0, 8192), 11);
@@ -371,19 +371,19 @@ static void TestBadBlocksAndCapacity()
 	printf("bad blocks and capacity\n");
 	uint8_t page[256] = {0};
 
-	SimFlash probe(2 * 1024 * 1024);
-	Store s(probe);
+	SimFlash card(2 * 1024 * 1024);
+	Store s(card);
 	uf2::Block b = MakeBlock(kTargetFlashBase + 0x80, 0, 1, page); // misaligned
 	s.HandleBlock((const uint8_t *)&b);
 	CHECK(s.Error() == UploadError::BadBlock);
 
-	Store s2(probe);
+	Store s2(card);
 	b = MakeBlock(kTargetFlashBase, 0, 1, page);
 	b.payloadSize = 476;
 	s2.HandleBlock((const uint8_t *)&b);
 	CHECK(s2.Error() == UploadError::BadBlock);
 
-	// A probe card too small for the payload: 0x41000 + 2 slots
+	// A program card too small for the payload: 0x41000 + 2 slots
 	SimFlash tiny(kSlotsOffset + 2 * kSectorSize);
 	Store s3(tiny);
 	CHECK(s3.Capacity() == 2);
@@ -396,8 +396,8 @@ static void TestBadBlocksAndCapacity()
 static void TestFlashFailures()
 {
 	printf("flash failures are reported, payload corruption is caught\n");
-	SimFlash probe(2 * 1024 * 1024);
-	Store s(probe);
+	SimFlash card(2 * 1024 * 1024);
+	Store s(card);
 	Image img = MakeImage(PagesCovering(0, 3 * 4096), 9);
 	Feed(s, img.Blocks());
 	CHECK(s.Valid());
@@ -415,7 +415,7 @@ static void TestFlashFailures()
 	CHECK(FlashPayload(s, t2) == FlashResult::EraseFailed);
 
 	// Flip a bit in a stored slot
-	probe.mem[kSlotsOffset + 100] ^= 0x01;
+	card.mem[kSlotsOffset + 100] ^= 0x01;
 	CHECK(s.Valid());
 	CHECK(!s.DataCrcMatches());
 	SimTarget t3;
@@ -431,7 +431,7 @@ static void TestFlashFailures()
 static void TestGhostFat(const char *imagePath)
 {
 	printf("fake FAT16 volume\n");
-	const char *info = "Hello from Computer-Probe\r\n";
+	const char *info = "Hello from Decanter\r\n";
 	uint32_t len = uint32_t(strlen(info));
 	uint8_t s[512];
 
@@ -487,8 +487,8 @@ static void TestRealUf2(const char *uf2Path, const char *binPath)
 	fclose(f);
 	fclose(g);
 
-	SimFlash probe(2 * 1024 * 1024);
-	Store s(probe);
+	SimFlash card(2 * 1024 * 1024);
+	Store s(card);
 	for (size_t i = 0; i + 512 <= uf2data.size(); i += 512) s.HandleBlock(&uf2data[i]);
 	CHECK(s.State() == UploadState::Complete);
 	CHECK(s.BlocksReceived() == uf2data.size() / 512);

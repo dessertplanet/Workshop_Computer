@@ -1,8 +1,9 @@
 /*
-Computer-Probe (card 876)
+Decanter (card 750)
 
 Stores a firmware image (UF2) on the card and flashes it onto a target RP2040,
-such as a Radio Music Mk2 in BOOTSEL.
+over USB (target in BOOTSEL) or over the UART pads (target running firmware
+with a Decanter updater).
 
 The USB role comes from the Computer's USB-C chip, which settles it at
 power-up and keeps it until the next power cycle (re-plugging the cable, or
@@ -13,6 +14,18 @@ Computer is connected to when it powers up:
     stored payload.
   - Host (plugged into a target): whenever an RP2040 in BOOTSEL appears, the
     payload is flashed onto it, verified, and the target rebooted.
+
+UART, in either mode: the UART pads, wired straight through to a target's
+rear header (SDA-SDA, SCL-SCL, GND-GND), reach a target running a firmware
+with a Decanter UART updater, while it runs. The card looks for one all the
+time. When one answers, it compares the target's flash with the payload
+(a CRC per sector, which the target answers without stopping) and flashes it
+only if they differ, so a target can stay connected. A target is checked
+again when it reconnects or the payload changes. The switch isn't used.
+
+USB host mode only flashes a target in BOOTSEL; any other USB device (such
+as a target running its normal firmware) is ignored, and reached over UART
+if it is wired.
 
 LEDs (0 top left ... 5 bottom right):
   0     payload stored and valid
@@ -40,11 +53,12 @@ erases and programs flash.
 #include "ghostfat.h"
 #include "payload.h"
 #include "picoboot_transport.h"
+#include "uart_transport.h"
 
-#define PROBE_VERSION "0.1"
+#define DECANTER_VERSION "0.1"
 
 ////////////////////////////////////////////////////////////////////////////////
-// The probe card's flash
+// The program card's flash
 
 class Rp2040Flash : public FlashBackend
 {
@@ -77,7 +91,7 @@ static bool FirmwareFits()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// State shared with core 1, and readable over SWD (GDB: p probeStatus)
+// State shared with core 1, and readable over SWD (GDB: p decanterStatus)
 
 enum class Mode : uint8_t
 {
@@ -96,7 +110,19 @@ enum class HostState : uint8_t
 	DidNotBoot,  // the target we just flashed came straight back in BOOTSEL
 };
 
-struct ProbeStatus
+enum class UartState : uint8_t
+{
+	Searching,    // no target answering
+	Checking,     // comparing the target's flash with the payload
+	UpToDate,     // the target already has the payload
+	Flashing,
+	Done,         // flashed, verified and rebooted
+	Failed,       // see uartError; not retried until the target reconnects or the payload changes
+	NoPayload,    // a target answered, but there's nothing to flash
+	Incompatible, // the target speaks another protocol version
+};
+
+struct DecanterStatus
 {
 	volatile Mode mode;
 	volatile bool payloadValid;
@@ -115,14 +141,22 @@ struct ProbeStatus
 	volatile uint8_t picobootCmd;      // last PICOBOOT command sent
 	volatile uint32_t picobootStatus;  // bootrom status code after a failure
 	volatile uint32_t targetsFlashed;
+
+	// UART flashing
+	volatile UartState uart;
+	volatile UartTransport::Error uartError;
+	volatile uint8_t uartCmd;         // last command sent
+	volatile uint8_t uartStatus;      // target's status code if it refused
+	volatile uint32_t uartRetries;
+	volatile uint8_t uartTargetId[8]; // flash unique ID of the last target seen
 };
 
-ProbeStatus probeStatus;
+DecanterStatus decanterStatus;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Core 1: LEDs
 
-class ProbeCard : public ComputerCard
+class DecanterCard : public ComputerCard
 {
 	uint32_t ticks = 0;
 
@@ -147,54 +181,37 @@ public:
 		bool fast = ticks & (1 << 12);  // ~6 Hz at 48 kHz
 		bool slow = ticks & (1 << 15);  // ~0.7 Hz
 
-		if (probeStatus.mode == Mode::Fatal)
+		if (decanterStatus.mode == Mode::Fatal)
 		{
 			for (int i = 0; i < 6; i++) LedOn(i, fast);
 			return;
 		}
 
-		LedOn(0, probeStatus.payloadValid);
+		LedOn(0, decanterStatus.payloadValid);
+		bool host = decanterStatus.mode == Mode::Host;
+		LedOn(1, host ? (decanterStatus.targetConnected || slow) : decanterStatus.driveMounted);
 
-		if (probeStatus.mode == Mode::Host)
-		{
-			LedOn(1, probeStatus.targetConnected || slow);
-			switch (probeStatus.host)
-			{
-			case HostState::Flashing:
-				ProgressBar(probeStatus.sectorsDone, probeStatus.sectorsTotal);
-				break;
-			case HostState::Done:
-				for (int i = 2; i < 6; i++) LedOn(i);
-				break;
-			case HostState::Failed:
-			case HostState::NoPayload:
-			case HostState::DidNotBoot:
-				for (int i = 2; i < 6; i++) LedOn(i, fast);
-				break;
-			default:
-				for (int i = 2; i < 6; i++) LedOff(i);
-				break;
-			}
-			return;
-		}
+		UartState uart = decanterStatus.uart;
+		HostState hs = decanterStatus.host;
+		bool failed = uart == UartState::Failed || uart == UartState::NoPayload || uart == UartState::Incompatible ||
+		              hs == HostState::Failed || hs == HostState::NoPayload || hs == HostState::DidNotBoot ||
+		              decanterStatus.upload == payload::UploadState::Failed;
+		bool done = uart == UartState::Done || uart == UartState::UpToDate || hs == HostState::Done;
 
-		LedOn(1, probeStatus.driveMounted);
-		switch (probeStatus.upload)
-		{
-		case payload::UploadState::Receiving:
-			ProgressBar(probeStatus.blocksReceived, probeStatus.blocksExpected);
-			break;
-		case payload::UploadState::Failed:
+		if (decanterStatus.upload == payload::UploadState::Receiving)
+			ProgressBar(decanterStatus.blocksReceived, decanterStatus.blocksExpected);
+		else if (uart == UartState::Flashing || hs == HostState::Flashing)
+			ProgressBar(decanterStatus.sectorsDone, decanterStatus.sectorsTotal);
+		else if (failed)
 			for (int i = 2; i < 6; i++) LedOn(i, fast);
-			break;
-		default:
+		else if (done)
+			for (int i = 2; i < 6; i++) LedOn(i);
+		else
 			for (int i = 2; i < 6; i++) LedOff(i);
-			break;
-		}
 	}
 };
 
-static ProbeCard *card = nullptr;
+static DecanterCard *card = nullptr;
 
 static void Core1Entry()
 {
@@ -204,8 +221,8 @@ static void Core1Entry()
 ////////////////////////////////////////////////////////////////////////////////
 // Core 0: payload store and the USB drive
 
-static Rp2040Flash probeFlash;
-static payload::Store payloadStore(probeFlash); // ~4kB of tables: not on the stack
+static Rp2040Flash cardFlash;
+static payload::Store payloadStore(cardFlash); // ~4kB of tables: not on the stack
 static payload::Store *const store = &payloadStore;
 
 static char infoText[ghostfat::kMaxInfoLen];
@@ -218,7 +235,7 @@ static const char *UploadErrorText(payload::UploadError e)
 	case payload::UploadError::None: return "none";
 	case payload::UploadError::BadBlock: return "malformed UF2 block";
 	case payload::UploadError::OutOfRange: return "the file writes outside target flash, or at/above 0x1FF000";
-	case payload::UploadError::TooLarge: return "the file is too large for the probe card";
+	case payload::UploadError::TooLarge: return "the file is too large for the program card";
 	}
 	return "?";
 }
@@ -231,7 +248,7 @@ static void UpdateInfoText()
 			n += snprintf(infoText + n, sizeof(infoText) - n, fmt, args...);
 	};
 
-	add("Computer-Probe (card 876), firmware " PROBE_VERSION "\r\n\r\n");
+	add("Decanter (card 750), firmware " DECANTER_VERSION "\r\n\r\n");
 
 	const payload::Header *h = store->GetHeader();
 	if (h)
@@ -272,27 +289,42 @@ static void UpdateInfoText()
 	if (store->IgnoredBlocks())
 		add("  (%lu blocks for other chips ignored)\r\n", (unsigned long)store->IgnoredBlocks());
 
-	add("Probe capacity: %lu sectors (%lu kB)\r\n\r\n",
+	switch (decanterStatus.uart)
+	{
+	case UartState::Searching: break;
+	case UartState::Checking: add("UART: checking a target\r\n"); break;
+	case UartState::UpToDate: add("UART: the connected target already has the payload\r\n"); break;
+	case UartState::Flashing: add("UART: flashing a target\r\n"); break;
+	case UartState::Done: add("UART: target flashed\r\n"); break;
+	case UartState::NoPayload: add("UART: a target answered, but no payload is stored\r\n"); break;
+	case UartState::Incompatible: add("UART: the target's updater speaks a different protocol version\r\n"); break;
+	case UartState::Failed: add("UART: FAILED (error %u, command %u, status %u). The target may be left in BOOTSEL\r\n",
+	                            (unsigned)decanterStatus.uartError, (unsigned)decanterStatus.uartCmd, (unsigned)decanterStatus.uartStatus); break;
+	}
+
+	add("Capacity: %lu sectors (%lu kB)\r\n\r\n",
 	    (unsigned long)store->Capacity(), (unsigned long)(store->Capacity() * 4));
 	add("To store a payload, copy an RP2040 .uf2 file onto this drive. It replaces\r\n"
-	    "the stored payload. Target flash at or above 0x1FF000 is never written (the\r\n"
-	    "Radio Music Mk2 keeps its calibration there), and files that reach it are\r\n"
-	    "refused.\r\n\r\n"
+	    "the stored payload. Target flash at or above 0x1FF000 (the last 4kB of a\r\n"
+	    "2MB flash, where targets may keep calibration data) is never written, and\r\n"
+	    "files that reach it are refused.\r\n\r\n"
 	    "To flash a target, power down, connect the Computer to the target with\r\n"
-	    "a USB-C cable, and power up with the target in BOOTSEL (Radio Music Mk2:\r\n"
-	    "hold Reset while powering up, then push both knobs). The payload is\r\n"
-	    "flashed automatically. The USB role is only chosen at power-up.\r\n");
+	    "a USB-C cable, and power up with the target in BOOTSEL. The payload is\r\n"
+	    "flashed automatically. The USB role is only chosen at power-up.\r\n\r\n"
+	    "To flash a running target over UART, wire the UART pads to its rear\r\n"
+	    "header (SDA-SDA, SCL-SCL, GND-GND). Its firmware must include a Decanter\r\n"
+	    "UART updater. It is flashed only if it doesn't already have the payload.\r\n");
 
 	infoLen = uint32_t(n < (int)sizeof(infoText) ? n : (int)sizeof(infoText) - 1);
 }
 
 static void PublishStatus()
 {
-	probeStatus.payloadValid = store->Valid();
-	probeStatus.upload = store->State();
-	probeStatus.uploadError = store->Error();
-	probeStatus.blocksReceived = store->BlocksReceived();
-	probeStatus.blocksExpected = store->BlocksExpected();
+	decanterStatus.payloadValid = store->Valid();
+	decanterStatus.upload = store->State();
+	decanterStatus.uploadError = store->Error();
+	decanterStatus.blocksReceived = store->BlocksReceived();
+	decanterStatus.blocksExpected = store->BlocksExpected();
 }
 
 static volatile bool ejected = false;
@@ -303,8 +335,8 @@ extern "C" uint32_t tud_msc_inquiry2_cb(uint8_t lun, scsi_inquiry_resp_t *resp, 
 	(void)lun;
 	(void)bufsize;
 	memcpy(resp->vendor_id, "MTM     ", 8);
-	memcpy(resp->product_id, "Computer-Probe  ", 16);
-	memcpy(resp->product_rev, PROBE_VERSION "  ", 4);
+	memcpy(resp->product_id, "Decanter        ", 16);
+	memcpy(resp->product_rev, DECANTER_VERSION "  ", 4);
 	return sizeof(scsi_inquiry_resp_t);
 }
 
@@ -361,6 +393,9 @@ extern "C" int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset
 {
 	(void)lun;
 	(void)lba;
+	// The payload is being read out to a target over UART: don't change it
+	if (decanterStatus.uart == UartState::Flashing) return -1;
+
 	// With CFG_TUD_MSC_EP_BUFSIZE at 512, each call is one whole sector. Only
 	// whole sectors can be UF2 blocks; anything else (FAT and directory
 	// updates included) is accepted and dropped.
@@ -407,7 +442,7 @@ extern "C" void tuh_mount_cb(uint8_t daddr)
 {
 	mountedAddr = daddr;
 	mountPending = true;
-	probeStatus.targetConnected = true;
+	decanterStatus.targetConnected = true;
 }
 
 extern "C" void tuh_umount_cb(uint8_t daddr)
@@ -417,7 +452,7 @@ extern "C" void tuh_umount_cb(uint8_t daddr)
 		mountedAddr = 0;
 		mountPending = false;
 	}
-	probeStatus.targetConnected = false;
+	decanterStatus.targetConnected = false;
 }
 
 static PicobootTransport picoboot;
@@ -433,35 +468,41 @@ constexpr uint32_t kDidNotBootWindowMs = 10000;
 static void FlashProgress(uint32_t done, uint32_t total, void *ctx)
 {
 	(void)ctx;
-	probeStatus.sectorsDone = done;
-	probeStatus.sectorsTotal = total;
+	decanterStatus.sectorsDone = done;
+	decanterStatus.sectorsTotal = total;
 }
 
 static void RecordPicoboot()
 {
-	probeStatus.picobootError = picoboot.LastError();
-	probeStatus.picobootCmd = picoboot.LastCommand();
-	probeStatus.picobootStatus = picoboot.LastStatus();
+	decanterStatus.picobootError = picoboot.LastError();
+	decanterStatus.picobootCmd = picoboot.LastCommand();
+	decanterStatus.picobootStatus = picoboot.LastStatus();
 }
 
 static void FlashTarget(uint8_t daddr)
 {
-	probeStatus.flashResult = FlashResult::Ok;
-	probeStatus.picobootError = PicobootTransport::Error::None;
-	probeStatus.sectorsDone = 0;
-	probeStatus.sectorsTotal = store->SectorCount();
+	// Only a target in BOOTSEL is flashed over USB. Anything else (such as a
+	// target running its normal firmware, reachable over UART instead) is left alone
+	uint16_t vid = 0, pid = 0;
+	tuh_vid_pid_get(daddr, &vid, &pid);
+	if (vid != 0x2E8A || pid != 0x0003) return;
+
+	decanterStatus.flashResult = FlashResult::Ok;
+	decanterStatus.picobootError = PicobootTransport::Error::None;
+	decanterStatus.sectorsDone = 0;
+	decanterStatus.sectorsTotal = store->SectorCount();
 
 	if (!store->Valid())
 	{
-		probeStatus.host = HostState::NoPayload;
+		decanterStatus.host = HostState::NoPayload;
 		return;
 	}
 
-	probeStatus.host = HostState::Flashing;
+	decanterStatus.host = HostState::Flashing;
 	if (!picoboot.Open(daddr))
 	{
 		RecordPicoboot();
-		probeStatus.host = HostState::Failed;
+		decanterStatus.host = HostState::Failed;
 		return;
 	}
 
@@ -470,16 +511,16 @@ static void FlashTarget(uint8_t daddr)
 	if (sameTarget && !is_nil_time(lastFlashedAt) &&
 	    absolute_time_diff_us(lastFlashedAt, get_absolute_time()) < int64_t(kDidNotBootWindowMs) * 1000)
 	{
-		probeStatus.host = HostState::DidNotBoot;
+		decanterStatus.host = HostState::DidNotBoot;
 		return;
 	}
 
 	FlashResult r = FlashPayload(*store, picoboot, FlashProgress, nullptr);
-	probeStatus.flashResult = r;
+	decanterStatus.flashResult = r;
 	RecordPicoboot();
 	if (r != FlashResult::Ok)
 	{
-		probeStatus.host = HostState::Failed;
+		decanterStatus.host = HostState::Failed;
 		return;
 	}
 
@@ -489,8 +530,132 @@ static void FlashTarget(uint8_t daddr)
 	lastSerialLen = picoboot.SerialLength();
 	memcpy(lastSerial, picoboot.Serial(), lastSerialLen * 2);
 	lastFlashedAt = get_absolute_time();
-	probeStatus.targetsFlashed = probeStatus.targetsFlashed + 1;
-	probeStatus.host = HostState::Done;
+	decanterStatus.targetsFlashed = decanterStatus.targetsFlashed + 1;
+	decanterStatus.host = HostState::Done;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Core 0: UART flashing, in either USB mode
+
+static UartTransport uartLink;
+static bool usbHost = false;
+static absolute_time_t nextHello = nil_time;
+static uint32_t missedHellos = 0;
+
+// The target last handled, and the payload it was handled with: it is left
+// alone until it disconnects, or the payload changes
+static bool handled = false;
+static uint8_t handledId[8];
+static uint32_t handledPayload = 0;
+
+// Keep USB running between sectors (drive writes are refused while flashing,
+// see tud_msc_write10_cb)
+static void ServiceUsb()
+{
+	if (usbHost) tuh_task();
+	else tud_task();
+}
+
+static void UartFlashProgress(uint32_t done, uint32_t total, void *ctx)
+{
+	(void)ctx;
+	decanterStatus.sectorsDone = done;
+	decanterStatus.sectorsTotal = total;
+	ServiceUsb();
+}
+
+static void RecordUart()
+{
+	decanterStatus.uartError = uartLink.LastError();
+	decanterStatus.uartCmd = uartLink.LastCommand();
+	decanterStatus.uartStatus = uartLink.LastStatus();
+	decanterStatus.uartRetries = uartLink.Retries();
+}
+
+// A value that changes whenever the stored payload does
+static uint32_t PayloadKey()
+{
+	const payload::Header *h = store->GetHeader();
+	return h ? h->headerCrc : 0;
+}
+
+static void ServiceUart()
+{
+	// A HELLO blocks the loop while it waits for an answer: not during an upload
+	if (store->State() == payload::UploadState::Receiving) return;
+	if (!is_nil_time(nextHello) && !time_reached(nextHello)) return;
+	nextHello = make_timeout_time_ms(250);
+
+	ru::HelloInfo info;
+	if (!uartLink.Hello(info, 30))
+	{
+		// Gone for a second: forget it, so it is checked again when it's back
+		if (++missedHellos >= 4)
+		{
+			decanterStatus.uart = UartState::Searching;
+			handled = false;
+		}
+		return;
+	}
+	missedHellos = 0;
+
+	uint32_t key = PayloadKey();
+	if (handled && key == handledPayload && memcmp(info.uniqueId, handledId, 8) == 0) return;
+	handled = true;
+	handledPayload = key;
+	memcpy(handledId, info.uniqueId, 8);
+	for (int i = 0; i < 8; i++) decanterStatus.uartTargetId[i] = info.uniqueId[i];
+
+	if (info.protocolVersion != ru::kProtocolVersion)
+	{
+		decanterStatus.uart = UartState::Incompatible;
+		return;
+	}
+	if (!store->Valid())
+	{
+		decanterStatus.uart = UartState::NoPayload;
+		return;
+	}
+
+	decanterStatus.uart = UartState::Checking;
+	MatchResult m = PayloadMatchesTarget(*store, uartLink);
+	if (m == MatchResult::Matches)
+	{
+		decanterStatus.uart = UartState::UpToDate;
+		return;
+	}
+	if (m == MatchResult::Unknown)
+	{
+		RecordUart();
+		decanterStatus.uart = UartState::Failed;
+		return;
+	}
+
+	decanterStatus.uart = UartState::Flashing;
+	decanterStatus.sectorsDone = 0;
+	decanterStatus.sectorsTotal = store->SectorCount();
+	decanterStatus.flashResult = FlashResult::Ok;
+
+	if (!uartLink.Enter(store->SectorCount()))
+	{
+		RecordUart();
+		decanterStatus.uart = UartState::Failed;
+		return;
+	}
+	FlashResult r = FlashPayload(*store, uartLink, UartFlashProgress, nullptr);
+	decanterStatus.flashResult = r;
+	RecordUart();
+	if (r != FlashResult::Ok)
+	{
+		decanterStatus.uart = UartState::Failed;
+		return;
+	}
+	// The target reboots into its new firmware; if the reply is lost it still
+	// reboots by itself after 30 seconds without packets. Once it is back it
+	// answers HELLO with the same ID, and is left alone.
+	uartLink.Reboot();
+	decanterStatus.targetsFlashed = decanterStatus.targetsFlashed + 1;
+	decanterStatus.uart = UartState::Done;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -500,18 +665,18 @@ int main()
 {
 	// Constructed on core 0 so it exists before core 1 runs it (a plain local,
 	// as in the usb_msc_host example, to avoid static-init guard code)
-	ProbeCard probe;
-	card = &probe;
+	DecanterCard decanter;
+	card = &decanter;
 
 	if (!FirmwareFits())
 	{
-		probeStatus.mode = Mode::Fatal;
+		decanterStatus.mode = Mode::Fatal;
 		multicore_launch_core1(Core1Entry);
 		while (true) tight_loop_contents();
 	}
 
 	bool host = card->CanDetectRole() && card->HostRole();
-	probeStatus.mode = host ? Mode::Host : Mode::Device;
+	decanterStatus.mode = host ? Mode::Host : Mode::Device;
 	PublishStatus();
 	multicore_launch_core1(Core1Entry);
 
@@ -520,6 +685,8 @@ int main()
 		.speed = TUSB_SPEED_AUTO
 	};
 	tusb_init(BOARD_TUD_RHPORT, &usbInit);
+	usbHost = host;
+	uartLink.Init();
 
 	absolute_time_t endedAt = nil_time;
 	while (true)
@@ -532,11 +699,13 @@ int main()
 				mountPending = false;
 				FlashTarget(mountedAddr);
 			}
+			ServiceUart();
 			continue;
 		}
 
 		tud_task();
-		probeStatus.driveMounted = tud_mounted() && !ejected;
+		decanterStatus.driveMounted = tud_mounted() && !ejected;
+		ServiceUart();
 
 		// Re-enumerate once the host has had a moment to finish writing
 		if (uploadEnded)

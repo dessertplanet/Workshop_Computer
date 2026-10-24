@@ -21,9 +21,9 @@ enum
 static char const *string_desc_arr[] = {
 	(const char[]){0x09, 0x04}, // 0: English (0x0409)
 	"Music Thing Modular",      // 1: Manufacturer
-	"Computer-Probe",           // 2: Product
+	"Decanter",                 // 2: Product
 	NULL,                       // 3: Serial, from the flash unique ID
-	"Computer-Probe Payload",   // 4: MSC interface
+	"Decanter Payload",         // 4: MSC interface
 };
 
 static tusb_desc_device_t const desc_device = {
@@ -36,7 +36,7 @@ static tusb_desc_device_t const desc_device = {
 	.bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
 	.idVendor = USB_VID,
 	.idProduct = USB_PID,
-	.bcdDevice = 0x0876, // card number, so hosts don't confuse it with other cards' interfaces
+	.bcdDevice = 0x0750, // card number, so hosts don't confuse it with other cards' interfaces
 	.iManufacturer = STRING_MANUFACTURER,
 	.iProduct = STRING_PRODUCT,
 	.iSerialNumber = STRING_SERIAL,

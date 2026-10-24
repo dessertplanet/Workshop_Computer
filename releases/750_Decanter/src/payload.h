@@ -1,14 +1,14 @@
-// Payload store: the target firmware kept in the probe card's flash.
+// Payload store: the target firmware kept in the program card's flash.
 //
 // A UF2 file arrives as a stream of 512-byte blocks (from the USB drive), in
 // any order. Each 4kB target flash sector it touches gets a 4kB slot in the
-// probe's flash, filled page by page as blocks arrive. When every block of the
+// card's flash, filled page by page as blocks arrive. When every block of the
 // file has arrived, a header listing which target sector each slot holds is
 // written, and the payload becomes valid. Starting a new upload erases the
 // header first, so a half-received file is never mistaken for a payload.
 //
-// Probe flash layout:
-//   0x000000  probe firmware (must end below kHeaderOffset)
+// Card flash layout:
+//   0x000000  Decanter firmware (must end below kHeaderOffset)
 //   0x040000  header sector
 //   0x041000  slots, 4kB each, to the end of flash
 #pragma once
@@ -28,9 +28,9 @@ constexpr uint32_t kPagesPerSector = kSectorSize / kPageSize;
 // Target address space: an RP2040's XIP flash
 constexpr uint32_t kTargetFlashBase = 0x10000000;
 
-// Nothing is ever stored or written at or above this target flash offset. The
-// Radio Music Mk2 keeps its factory 1V/oct calibration in the last 4kB sector
-// of its 2MB flash, at 0x1FF000.
+// Nothing is ever stored or written at or above this target flash offset: the
+// last 4kB sector of a 2MB flash, where a target may keep calibration data
+// that must survive a firmware update.
 constexpr uint32_t kTargetFlashLimit = 0x1FF000;
 constexpr uint32_t kMaxTargetSectors = kTargetFlashLimit / kSectorSize; // 511
 
@@ -70,7 +70,7 @@ enum class UploadError : uint8_t
 	None,
 	BadBlock,     // payload size not 256, misaligned address, or blockNo out of range
 	OutOfRange,   // a block below the target flash base or at/above kTargetFlashLimit
-	TooLarge,     // more target sectors than probe flash slots, or too many blocks
+	TooLarge,     // more target sectors than card flash slots, or too many blocks
 };
 
 class Store

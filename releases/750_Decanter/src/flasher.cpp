@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "crc32.h"
+
 using namespace payload;
 
 const char *FlashResultName(FlashResult r)
@@ -29,6 +31,18 @@ static FlashResult WriteSector(TargetTransport &target, uint32_t offset, const u
 	if (!target.Read(offset, verifyBuf, kSectorSize)) return FlashResult::ReadFailed;
 	if (memcmp(verifyBuf, data, kSectorSize) != 0) return FlashResult::VerifyFailed;
 	return FlashResult::Ok;
+}
+
+MatchResult PayloadMatchesTarget(Store &store, TargetTransport &target)
+{
+	if (!store.Valid()) return MatchResult::Unknown;
+	for (uint32_t i = 0; i < store.SectorCount(); i++)
+	{
+		uint32_t crc;
+		if (!target.SectorCrc(store.TargetOffset(i), &crc)) return MatchResult::Unknown;
+		if (crc != Crc32(store.SectorData(i), kSectorSize)) return MatchResult::Differs;
+	}
+	return MatchResult::Matches;
 }
 
 FlashResult FlashPayload(Store &store, TargetTransport &target, FlashProgressFn progress, void *ctx)

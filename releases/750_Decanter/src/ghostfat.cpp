@@ -60,8 +60,8 @@ static void BootSector(uint8_t *s)
 	Put32(s + 32, kSectorCount);
 	s[36] = 0x80;                         // drive number
 	s[38] = 0x29;                         // extended boot signature
-	Put32(s + 39, 0x0876C0DE);            // volume serial
-	memcpy(s + 43, "COMP-PROBE ", 11);
+	Put32(s + 39, 0x0750C0DE);            // volume serial
+	memcpy(s + 43, "DECANTER   ", 11);
 	memcpy(s + 54, "FAT16   ", 8);
 	s[510] = 0x55;
 	s[511] = 0xAA;
@@ -100,7 +100,7 @@ void ReadSector(uint32_t lba, uint8_t *buf, const char *infoText, uint32_t infoL
 	}
 	else if (lba == kRootStart)
 	{
-		DirEntry(buf, "COMP-PROBE ", 0x08, 0, 0);          // volume label
+		DirEntry(buf, "DECANTER   ", 0x08, 0, 0);          // volume label
 		DirEntry(buf + 32, "INFO    TXT", 0x01, 2, infoLen); // read-only
 	}
 	else if (lba >= kDataStart && lba < kDataStart + kSectorsPerCluster)

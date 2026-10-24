@@ -1,9 +1,8 @@
 /*
-usb_host_check - Computer-Probe feasibility test, step 1
+usb_host_check - Decanter feasibility test, step 1
 
-Can a Workshop Computer, as USB host, reach an RP2040 in BOOTSEL (for example a
-Radio Music Mk2 put into BOOTSEL with Reset + both knobs) over a USB-C cable,
-and talk PICOBOOT to it?
+Can a Workshop Computer, as USB host, reach a target RP2040 in BOOTSEL over a
+USB-C cable, and talk PICOBOOT to it?
 
 The test is read-only: it never erases, writes or reboots the target. Once the
 target enumerates, it reads 32 bytes of the target's bootrom over PICOBOOT

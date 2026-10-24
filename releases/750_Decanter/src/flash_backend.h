@@ -1,4 +1,4 @@
-// The probe card's own flash, as the payload store sees it. On the Computer
+// The program card's own flash, as the payload store sees it. On the Computer
 // this is the RP2040's QSPI flash (main.cpp); in the host tests it is an array.
 #pragma once
 

@@ -1,0 +1,65 @@
+; 8N1 UART on PIO, so the Decanter can put TX and RX on either UART pad. The
+; target's hardware UART has TX on GPIO 0 (SDA) and RX on GPIO 1 (SCL); the
+; Decanter swaps them, so the cable is straight-through: SDA-SDA, SCL-SCL.
+;
+; Both programs run at 8 PIO cycles per bit. From the pico-examples
+; uart_tx and uart_rx programs (BSD-3-Clause, Raspberry Pi).
+
+.program uart_link_tx
+.side_set 1 opt
+; OUT pin 0 and side-set pin 0 are both the TX pin
+    pull       side 1 [7]  ; stop bit, or idle high while the FIFO is empty
+    set x, 7   side 0 [7]  ; start bit, and the bit counter
+bitloop:
+    out pins, 1            ; data bit
+    jmp x-- bitloop   [6]
+
+.program uart_link_rx
+; IN pin 0 and JMP pin are both the RX pin
+start:
+    wait 0 pin 0           ; start bit
+    set x, 7    [10]       ; to the middle of the first data bit
+bitloop:
+    in pins, 1
+    jmp x-- bitloop [6]
+    jmp pin good_stop      ; the stop bit must be high
+    wait 1 pin 0           ; framing error or break: drop it, wait for idle
+    jmp start
+good_stop:
+    push                   ; the byte is in ISR bits 31:24
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void uart_link_tx_program_init(PIO pio, uint sm, uint offset, uint pin, uint baud)
+{
+	pio_sm_set_pins_with_mask(pio, sm, 1u << pin, 1u << pin);
+	pio_sm_set_pindirs_with_mask(pio, sm, 1u << pin, 1u << pin);
+	pio_gpio_init(pio, pin);
+
+	pio_sm_config c = uart_link_tx_program_get_default_config(offset);
+	sm_config_set_out_shift(&c, true, false, 32);
+	sm_config_set_out_pins(&c, pin, 1);
+	sm_config_set_sideset_pins(&c, pin);
+	sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+	sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / (8.0f * (float)baud));
+	pio_sm_init(pio, sm, offset, &c);
+	pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void uart_link_rx_program_init(PIO pio, uint sm, uint offset, uint pin, uint baud)
+{
+	pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, false);
+	pio_gpio_init(pio, pin);
+	gpio_pull_up(pin); // idle high with nothing connected
+
+	pio_sm_config c = uart_link_rx_program_get_default_config(offset);
+	sm_config_set_in_pins(&c, pin);
+	sm_config_set_jmp_pin(&c, pin);
+	sm_config_set_in_shift(&c, true, false, 32);
+	sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+	sm_config_set_clkdiv(&c, (float)clock_get_hz(clk_sys) / (8.0f * (float)baud));
+	pio_sm_init(pio, sm, offset, &c);
+	pio_sm_set_enabled(pio, sm, true);
+}
+%}

@@ -16,7 +16,27 @@ public:
 	virtual bool EraseSector(uint32_t offset) = 0;
 	virtual bool ProgramSector(uint32_t offset, const uint8_t *data) = 0;
 	virtual bool Read(uint32_t offset, uint8_t *buf, uint32_t len) = 0;
+
+	// CRC-32 of a 4kB sector, computed on the target. Optional: a transport
+	// without it can't check a target without stopping it.
+	virtual bool SectorCrc(uint32_t offset, uint32_t *crc)
+	{
+		(void)offset;
+		(void)crc;
+		return false;
+	}
 };
+
+enum class MatchResult : uint8_t
+{
+	Matches,   // every payload sector is already on the target
+	Differs,
+	Unknown,   // no payload, or the target couldn't answer
+};
+
+// Does the target already hold the payload? Asks the target for a CRC of each
+// payload sector and compares, without changing anything.
+MatchResult PayloadMatchesTarget(payload::Store &store, TargetTransport &target);
 
 enum class FlashResult : uint8_t
 {
