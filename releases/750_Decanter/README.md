@@ -1,6 +1,6 @@
 # Decanter (card 750)
 
-**Work in progress.** A Workshop Computer card that carries a firmware image (UF2) and flashes it onto a second RP2040, such as a Music Thing Radio Music Mk2, without a computer.
+**Work in progress.** A Workshop Computer card that carries a firmware image (UF2) and flashes it onto a second RP2040-based module without a desktop/laptop computer
 
 Status:
 
