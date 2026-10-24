@@ -1,0 +1,4 @@
+# Built by `make` here
+test_core
+test_proto
+ghostfat.img
