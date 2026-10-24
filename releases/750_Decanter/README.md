@@ -5,8 +5,8 @@
 Status:
 
 - **Done:** storing a payload. The card appears as a USB drive; copy a `.uf2` onto it.
-- **Done:** flashing the payload onto a target RP2040 in BOOTSEL over USB (PICOBOOT), automatically when the target appears. Tested with the Radio Music Mk2 factory firmware.
-- **Built, being tested:** flashing a *running* target over the UART pads, when its firmware includes the [rm2-diy](https://github.com/dessertplanet/rm2-diy) UART updater (as the `sd_stream` example does).
+- **Done:** flashing the payload onto a target RP2040 in BOOTSEL over USB (PICOBOOT), automatically when the target appears.
+- **Done:** flashing a *running* target over the UART pads, when its firmware includes the Decanter UART updater ([src/decanter_uart_updater.h](src/decanter_uart_updater.h)).
 
 ## Use
 
@@ -22,7 +22,7 @@ A new file replaces the stored payload. The old one is wiped as soon as the new 
 
 Files are refused (the four middle and bottom LEDs blink fast, and `INFO.TXT` says why) if they:
 
-- write at or above target flash offset `0x1FF000`, where the Radio Music Mk2 keeps its factory 1V/oct calibration;
+- write at or above target flash offset `0x1FF000`: the last 4 kB sector of a 2 MB flash, kept free so a target's calibration data there survives an update;
 - write outside target flash;
 - are too large for the program card (it holds 447 sectors, 1788 kB, on a 2 MB card).
 
@@ -31,7 +31,7 @@ Blocks for other chips in a universal UF2 (RP2350) are ignored.
 ### Flash a target
 
 1. Power down. Connect the Computer to the target with a USB-C cable.
-2. Power up with the target in BOOTSEL. Radio Music Mk2: hold Reset while powering up, then push both knobs.
+2. Power up with the target in BOOTSEL: hold its BOOTSEL button while powering up, or use whatever gesture its firmware provides. A target with blank flash starts in BOOTSEL by itself.
 3. The Computer flashes the payload as soon as the target appears: the middle and bottom LEDs fill as a progress bar, every sector is read back and checked, and the target reboots into its new firmware. All four lit means done.
 
 Any RP2040 in BOOTSEL plugged into the Computer in this mode is flashed, so only connect the target you mean to flash.
@@ -40,12 +40,12 @@ If flashing fails, the four LEDs blink fast and the target is left in BOOTSEL (t
 
 ### Flash a running target over UART
 
-For a target whose firmware includes the rm2-diy UART updater (`RM2UartUpdate.h`), such as rm2-diy's `sd_stream`.
+For a target whose firmware includes the Decanter UART updater ([src/decanter_uart_updater.h](src/decanter_uart_updater.h); see [How it works](#how-it-works)).
 
-1. Wire the Computer's UART pads to the target's rear header straight through: **SDA to SDA, SCL to SCL, GND to GND**. (The Computer runs its UART on PIO with TX and RX swapped, so no crossover.)
+1. Wire the Computer's UART pads to the target's UART0 pins straight through: **TX pad to the target's GPIO 0, RX pad to its GPIO 1, GND to GND**. On boards that label those pins for I2C, that's **SDA to SDA, SCL to SCL**. (The Computer runs its UART on PIO with TX and RX swapped, so no crossover.)
 2. Power up. That's all: the Computer looks for a target all the time, in either USB mode.
 
-When the target answers, the Computer asks it for a checksum of each payload sector, which the target answers without stopping. If it already has the payload, nothing happens and the four LEDs light: up to date. If not, the target stops, its top LEDs show progress, the Computer's middle and bottom LEDs fill as a progress bar, every sector is read back and checked, and the target reboots into the new firmware.
+When the target answers, the Computer asks it for a checksum of each payload sector, which the target answers without stopping. If it already has the payload, nothing happens and the four LEDs light: up to date. If not, the target stops (and shows progress on its own LEDs, if its updater is set up to), the Computer's middle and bottom LEDs fill as a progress bar, every sector is read back and checked, and the target reboots into the new firmware.
 
 A target is checked again when it reconnects or when the payload changes, so it can stay wired. The switch isn't used. While flashing, the USB drive stays mounted but refuses writes.
 

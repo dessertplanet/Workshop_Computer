@@ -3,8 +3,8 @@ Name: Decanter
 short-description: Carries a UF2 and flashes it onto a second RP2040
 summary: |
   Work in progress. Decanter stores a firmware image (UF2) on the card and programs it
-  onto a target RP2040, such as a Radio Music Mk2, over USB (target in BOOTSEL) or over the
-  UART pads.
+  onto a target RP2040: over USB with the target in BOOTSEL, or over the UART pads to a
+  target running firmware with the Decanter UART updater.
 Language: C++ (Pico SDK + ComputerCard)
 Creator: Dune Desormeaux
 Version: "0.0"
