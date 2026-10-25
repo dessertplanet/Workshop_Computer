@@ -15,6 +15,8 @@ on:
 
 permissions:
   contents: read
+  # Publishes the verdict as a check run on the PR head, for auto-merge.yml.
+  checks: write
 
 concurrency:
   group: merge-eligibility-${{ github.event.pull_request.number }}
@@ -58,8 +60,34 @@ jobs:
           PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           PR_DRAFT: ${{ github.event.pull_request.draft }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          AUTO_MERGE: ${{ vars.AUTO_MERGE }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node tools/sitegen/src/validate/trustedEligibilityCli.js merge-eligibility.json
+
+      - name: Publish verdict check
+        uses: actions/github-script@v9
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTO_MERGE: ${{ vars.AUTO_MERGE }}
+        with:
+          script: |
+            const fs = require('fs');
+            const verdict = JSON.parse(fs.readFileSync('merge-eligibility.json', 'utf8'));
+            if (verdict.head !== process.env.HEAD_SHA) throw new Error('Verdict is for a different commit.');
+            const lines = verdict.eligible ? [verdict.basis] : verdict.reasons.map(reason => `- ${reason}`);
+            await github.rest.checks.create({
+              ...context.repo,
+              name: 'Auto-merge verdict',
+              head_sha: verdict.head,
+              status: 'completed',
+              conclusion: verdict.eligible ? 'success' : 'neutral',
+              output: {
+                title: verdict.eligible ? 'Eligible for auto-merge' : 'Needs a maintainer to merge',
+                summary: [...lines, '', process.env.AUTO_MERGE === 'true'
+                  ? 'Eligible PRs merge automatically an hour after their last push, unless a maintainer adds the `hold` label.'
+                  : 'Report only: auto-merge is switched off.'].join('\n'),
+              },
+            });
 
       - name: Save verdict
         uses: actions/upload-artifact@v7

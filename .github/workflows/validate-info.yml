@@ -50,6 +50,7 @@ jobs:
           PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           PR_DRAFT: ${{ github.event.pull_request.draft }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          AUTO_MERGE: ${{ vars.AUTO_MERGE }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # The same change-set validation (src/validate/changeSet.js) backs the

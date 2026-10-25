@@ -12,6 +12,7 @@
 //   PR_AUTHOR_ASSOCIATION  PR author_association
 //   PR_DRAFT               "true" for draft PRs
 //   PR_LABELS              JSON array of the PR's label names
+//   AUTO_MERGE             "true" once auto-merge is on (summary wording)
 //   GITHUB_REPOSITORY, GITHUB_TOKEN   card committer lookup
 
 import fs from 'node:fs';
@@ -47,5 +48,5 @@ for (const line of eligibility.eligible ? [eligibility.basis] : eligibility.reas
 
 if (verdictFile) fs.writeFileSync(verdictFile, `${JSON.stringify(verdict, null, 2)}\n`);
 if (process.env.GITHUB_STEP_SUMMARY) {
-  fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `_Trusted verdict for \`${head}\`, decided by base-branch code._\n\n${reportEligibilityMarkdown(eligibility)}`);
+  fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `_Trusted verdict for \`${head}\`, decided by base-branch code._\n\n${reportEligibilityMarkdown(eligibility, { autoMerge: process.env.AUTO_MERGE === 'true' })}`);
 }

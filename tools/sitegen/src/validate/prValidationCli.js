@@ -14,6 +14,7 @@
 //   PR_AUTHOR_ASSOCIATION  PR author_association      (eligibility report)
 //   PR_DRAFT               "true" for draft PRs       (eligibility report)
 //   PR_LABELS              JSON array of label names  (eligibility report)
+//   AUTO_MERGE             "true" once auto-merge is on (eligibility report)
 //   GITHUB_REPOSITORY, GITHUB_TOKEN                   (card committer lookup)
 
 import fs from 'node:fs';
@@ -101,7 +102,7 @@ if (base && process.env.PR_AUTHOR) {
 
 if (summaryFile) {
   const sections = [reportMarkdown(results, otherRules, eligibility)];
-  if (eligibility) sections.push(reportEligibilityMarkdown(eligibility));
+  if (eligibility) sections.push(reportEligibilityMarkdown(eligibility, { autoMerge: process.env.AUTO_MERGE === 'true' }));
   fs.writeFileSync(summaryFile, sections.join('\n'));
 }
 
