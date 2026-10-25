@@ -1,0 +1,67 @@
+name: Auto-merge eligibility
+
+# Decides whether a PR may merge without review, using only code from the base
+# branch. pull_request_target runs this file and the validator as they are on
+# main, so a PR cannot change the code that judges it. The PR's commits are
+# fetched as Git objects and read as data: never checked out, installed or run.
+# Validate info.yaml stays the contributor-facing report; this verdict is the
+# one a merge step may act on.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: merge-eligibility-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  eligibility:
+    name: Decide auto-merge eligibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      # Base-branch lockfile; no install scripts. No dependency cache, so
+      # nothing written here can be restored into another workflow.
+      - name: Install validator dependencies
+        run: npm ci --prefix tools/sitegen --ignore-scripts
+
+      - name: Fetch PR head as data
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags --no-recurse-submodules origin "refs/pull/${PR_NUMBER}/head"
+          git cat-file -e "${HEAD_SHA}^{commit}"
+
+      - name: Decide eligibility
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node tools/sitegen/src/validate/trustedEligibilityCli.js merge-eligibility.json
+
+      - name: Save verdict
+        uses: actions/upload-artifact@v7
+        with:
+          name: merge-eligibility-${{ github.event.pull_request.number }}
+          path: merge-eligibility.json
+          retention-days: 7

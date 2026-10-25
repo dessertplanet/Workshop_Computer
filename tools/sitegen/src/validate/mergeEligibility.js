@@ -122,15 +122,20 @@ export function reviewReasons(introduced) {
  *   cardInHead       the card's directory exists in the PR
  *   authorCommitted  the author has committed to the card on the base
  *                    branch, or null when that could not be determined
+ *   specialEntries   symlinks and submodules in the PR's card, as paths
  *
  * Returns { eligible, card, reasons, basis }: `reasons` explain an ineligible
  * result, `basis` explains an eligible one.
  */
 export function evaluateMergeEligibility({
   changes, author, association, draft = false, errorCount = 0, introduced = [],
-  cardOnBase = false, cardInHead = true, authorCommitted = null,
+  cardOnBase = false, cardInHead = true, authorCommitted = null, specialEntries = [],
 }) {
   const reasons = [...scopeReasons(changes), ...reviewReasons(introduced)];
+  if (specialEntries.length) {
+    const listed = specialEntries.slice(0, 5).join(', ');
+    reasons.push(`Contains a symlink or submodule (${listed}${specialEntries.length > 5 ? `, and ${specialEntries.length - 5} more` : ''}); these need a maintainer's review.`);
+  }
   const { cards } = cardScope(changes);
   const card = cards.length === 1 ? cards[0] : null;
 
