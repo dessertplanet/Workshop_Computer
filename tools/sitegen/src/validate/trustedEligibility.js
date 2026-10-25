@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { evaluateChangeSet } from './changeSet.js';
 import { hasCommittedToCard } from './cardCommitters.js';
 import { listTree, treeContains, writeTreeFiles } from './gitTree.js';
-import { cardScope, evaluateMergeEligibility, touchesNoCards } from './mergeEligibility.js';
+import { cardScope, evaluateMergeEligibility, measureChanges, touchesNoCards } from './mergeEligibility.js';
 import { parseNameStatusZ } from './prRules.js';
 
 const releaseIndexFile = /^releases\/[^/]+\/info\.yaml$/;
@@ -31,7 +31,7 @@ function diffNameStatus(cwd, base, head) {
  * Options:
  *   cwd           repository holding both commits as objects
  *   base, head    the PR's base branch commit and head commit
- *   author, association, draft   PR facts from the GitHub event
+ *   author, association, draft, labels   PR facts from the GitHub event
  *   repo, token   for the card committer lookup (omit repo to skip it)
  *   committerLookup  injectable hasCommittedToCard, for tests
  *
@@ -39,12 +39,12 @@ function diffNameStatus(cwd, base, head) {
  * the PR touches no program card.
  */
 export async function assessPullRequest({
-  cwd, base, head, author, association = 'NONE', draft = false, repo = '', token = '',
+  cwd, base, head, author, association = 'NONE', draft = false, labels = [], repo = '', token = '',
   committerLookup = hasCommittedToCard,
 }) {
   const changes = diffNameStatus(cwd, base, head);
   if (touchesNoCards(changes)) {
-    return { changes, report: null, errorCount: 0, eligibility: evaluateMergeEligibility({ changes, author, association, draft }) };
+    return { changes, report: null, errorCount: 0, eligibility: evaluateMergeEligibility({ changes, author, association, draft, labels }) };
   }
 
   const { cards } = cardScope(changes);
@@ -56,6 +56,7 @@ export async function assessPullRequest({
     // The proposed cards, plus every card's info.yaml for the similar-values index.
     const headTree = listTree(cwd, head, ['releases']);
     writeTreeFiles(cwd, headTree.files.filter(entry => inCards(entry.path) || releaseIndexFile.test(entry.path)), headRoot);
+    const sizes = new Map(headTree.files.map(entry => [entry.path, entry.size]));
     const specialEntries = headTree.special.filter(entry => inCards(entry.path)).map(entry => entry.path);
     writeTreeFiles(cwd, listTree(cwd, base, cardDirs).files, baseRoot);
 
@@ -79,6 +80,8 @@ export async function assessPullRequest({
       cardInHead: card ? treeContains(cwd, head, `releases/${card}`) : false,
       authorCommitted,
       specialEntries,
+      size: measureChanges(changes, file => sizes.get(file) ?? null),
+      labels,
     });
     return { changes, report, errorCount, eligibility };
   } finally {

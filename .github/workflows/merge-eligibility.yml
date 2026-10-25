@@ -8,7 +8,8 @@ name: Auto-merge eligibility
 # one a merge step may act on.
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    # labeled/unlabeled re-decide when a maintainer adds or removes "hold".
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled, unlabeled]
     branches:
       - main
 
@@ -56,6 +57,7 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node tools/sitegen/src/validate/trustedEligibilityCli.js merge-eligibility.json
 

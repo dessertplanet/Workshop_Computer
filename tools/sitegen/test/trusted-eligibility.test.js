@@ -138,3 +138,12 @@ test('writeTreeFiles writes regular files only, with their contents and modes', 
   assert.equal(await fs.readFile(path.join(destination, 'releases/42_card/info.yaml'), 'utf8'), validInfo);
   assert.throws(() => writeTreeFiles(root, [{ ...files[0], path: '../escape' }], destination), /outside the tree/);
 });
+
+test('the trusted verdict applies size limits and the hold label', async t => {
+  const { root, base, propose } = await repository(t);
+  const big = await propose(({ write }) => write('releases/42_card/card.uf2', Buffer.alloc(17 * 1024 * 1024)));
+  assert.match((await assess(root, base, big)).eligibility.reasons.join('\n'), /card\.uf2 is 17\.0 MB/);
+
+  const update = await propose(({ write }) => write('releases/42_card/info.yaml', `${validInfo}# tweak\n`));
+  assert.match((await assess(root, base, update, { labels: ['hold'] })).eligibility.reasons.join('\n'), /"hold" label/);
+});

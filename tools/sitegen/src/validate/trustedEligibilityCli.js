@@ -11,12 +11,14 @@
 //   PR_AUTHOR              PR author login
 //   PR_AUTHOR_ASSOCIATION  PR author_association
 //   PR_DRAFT               "true" for draft PRs
+//   PR_LABELS              JSON array of the PR's label names
 //   GITHUB_REPOSITORY, GITHUB_TOKEN   card committer lookup
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assessPullRequest } from './trustedEligibility.js';
+import { parseLabels } from './mergeEligibility.js';
 import { reportEligibilityMarkdown } from './reporters/index.js';
 
 const verdictFile = process.argv[2];
@@ -34,6 +36,7 @@ const { eligibility, errorCount } = await assessPullRequest({
   author,
   association: process.env.PR_AUTHOR_ASSOCIATION || 'NONE',
   draft: process.env.PR_DRAFT === 'true',
+  labels: parseLabels(process.env.PR_LABELS),
   repo: process.env.GITHUB_REPOSITORY || '',
   token: process.env.GITHUB_TOKEN || '',
 });

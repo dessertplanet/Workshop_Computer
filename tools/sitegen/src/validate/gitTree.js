@@ -17,19 +17,19 @@ function git(cwd, args, options = {}) {
 
 /**
  * Entries under `paths` in `tree`, as { files, special }: `files` are regular
- * blobs ({ mode, object, path }), `special` are symlinks and submodules
+ * blobs ({ mode, object, size, path }), `special` are symlinks and submodules
  * ({ mode, path }). Paths are repository-relative.
  */
 export function listTree(cwd, tree, paths) {
   const files = [];
   const special = [];
-  const output = git(cwd, ['ls-tree', '-r', '-z', '--full-tree', tree, '--', ...paths]).toString('utf8');
+  const output = git(cwd, ['ls-tree', '-r', '-z', '-l', '--full-tree', tree, '--', ...paths]).toString('utf8');
   for (const entry of output.split('\0')) {
     if (!entry) continue;
     const tab = entry.indexOf('\t');
-    const [mode, , object] = entry.slice(0, tab).split(' ');
+    const [mode, , object, size] = entry.slice(0, tab).split(/ +/);
     const file = entry.slice(tab + 1);
-    if (REGULAR_MODES.has(mode)) files.push({ mode, object, path: file });
+    if (REGULAR_MODES.has(mode)) files.push({ mode, object, size: Number(size), path: file });
     else special.push({ mode, path: file });
   }
   return { files, special };
