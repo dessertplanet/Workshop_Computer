@@ -91,7 +91,7 @@ if (base && process.env.PR_AUTHOR) {
 }
 
 if (summaryFile) {
-  const sections = [reportMarkdown(results, otherRules)];
+  const sections = [reportMarkdown(results, otherRules, eligibility)];
   if (eligibility) sections.push(reportEligibilityMarkdown(eligibility));
   fs.writeFileSync(summaryFile, sections.join('\n'));
 }

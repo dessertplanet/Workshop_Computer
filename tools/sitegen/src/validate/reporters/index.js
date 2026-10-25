@@ -89,8 +89,13 @@ function displayInfoPath(file) {
   return index >= 0 ? normalized.slice(index + marker.length) : normalized;
 }
 
-/** Rich Markdown used by the PR comment and GitHub job summary. */
-export function reportMarkdown(results, otherRules = null) {
+/**
+ * Rich Markdown used by the PR comment and GitHub job summary. When an
+ * auto-merge `eligibility` result is supplied, the headline follows it rather
+ * than the warning count: errors fail, an ineligible PR needs review, and an
+ * eligible PR is green even with warnings, since those do not block merging.
+ */
+export function reportMarkdown(results, otherRules = null, eligibility = null) {
   const t = totals(results);
   const otherErrors = Number(otherRules?.errorCount || 0);
   const otherWarnings = Number(otherRules?.warningCount || 0);
@@ -98,9 +103,13 @@ export function reportMarkdown(results, otherRules = null) {
   const warningCount = t.warnings + otherWarnings;
   const status = errorCount
     ? { icon: '❌', label: 'failed' }
-    : warningCount
-      ? { icon: '⚠️', label: 'succeeded with warnings' }
-      : { icon: '✅', label: 'succeeded' };
+    : eligibility
+      ? eligibility.eligible
+        ? { icon: '✅', label: 'succeeded' }
+        : { icon: '⚠️', label: 'succeeded, needs maintainer review' }
+      : warningCount
+        ? { icon: '⚠️', label: 'succeeded with warnings' }
+        : { icon: '✅', label: 'succeeded' };
   const lines = [
     `## ${status.icon} Program card PR validation ${status.label}`,
     '',
