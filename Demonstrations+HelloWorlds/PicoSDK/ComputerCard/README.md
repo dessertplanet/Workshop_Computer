@@ -91,6 +91,21 @@ For beginners just starting with ComputerCard, the first example to look at is `
 - Make sure execution of `ComputerCard::ProcessSample` always runs quickly enough that it has returned before the next execution begins (1/48kHz = ~20μs). (See the [guidance below](#programming) on achieving this)
 - While multiple ComputerCard objects can be created and used sequentially, only one instance of a ComputerCard can be active (using `Run()`) at any one time.
 
+<a id="uart-pads"></a>
+### UART pads (GPIO 0 and 1)
+The Computer's two UART pads (TX = GPIO 0, RX = GPIO 1) are usually unpopulated. ComputerCard leaves them as inputs, as the RP2040 resets them, unless a card asks otherwise:
+
+- `#define ENABLE_DEBUG_PINS` (before including ComputerCard.h, or as a compile definition) makes them the `DEBUG_1` and `DEBUG_2` outputs, for timing measurements with a scope.
+- A card that uses them as a UART (for example the Pico SDK's stdio over UART, which `pico_stdlib` turns on unless `pico_enable_stdio_uart(<target> 0)`) should define `ENABLE_UART_DEBUGGING`, so they aren't debug outputs too.
+- `EnableI2COverUART()` makes them I2C (TX = SDA, RX = SCL).
+
+If you wire the pads to something, wire them **either to one UART partner** (TX to its RX, RX to its TX) **or to an I2C/ii bus, never both**, and run only cards that match the wiring while it's connected. A mismatch fights one output against another:
+
+- A UART card on an I2C bus drives TX (SDA) high, push-pull, against every device that pulls SDA low. ii also stops working.
+- An I2C card on a UART link drives SCL low against the partner's TX output, which idles high.
+
+Neither is likely to cause instant damage, but both are out of spec for the chips involved. A 220-330Ω resistor in series with each line limits the current if a mismatched card runs, without stopping I2C or UART from working. Use 3.3V logic only: the RP2040 isn't 5V tolerant.
+
 <a id="eightmu"></a>
 ### 8mu support
 `EightMU.h` provides an `EightMU` class, for cards that want to use a [Music Thing Modular 8mu](https://www.musicthing.co.uk/8mu/) USB MIDI controller as an input. It is independent of ComputerCard, and is intended to be added as a member of a card:
@@ -280,6 +295,7 @@ Lots of fixes found during Utility Pair development:
 #### Unreleased
 - New `EnableI2COverUART` method, to use the UART pads for I2C (for example ii, with a Teletype or crow)
   - New `i2c_over_uart` example: the Computer as an ii follower and leader
+- The UART pads are no longer driven as debug outputs by default: define `ENABLE_DEBUG_PINS` for `DEBUG_1` and `DEBUG_2`. Driven low, they jammed an ii bus wired to the pads while any other card ran. See [UART pads](#uart-pads)
 
 #### 0.4.0
 - Calibrated audio inputs, using calibration data held in the EEPROM
@@ -317,7 +333,7 @@ The following is a list of public and protected methods of the `ComputerCard` cl
 
 - `i2c_inst_t* EnableI2COverUART(uint32_t baudrate = 100000)`
 
-   Call before `Run` to use the UART pads for I2C (TX = GPIO 0 = SDA, RX = GPIO 1 = SCL), for example for ii with a Teletype or crow. Moves the I2C0 peripheral there from the calibration EEPROM, which has already been read, and returns `i2c0` ready to use. Turns on the RP2040's internal pull-ups on those pins, but they are too weak (50-80k) to run a bus on their own, whether the Computer leads or follows: the bus needs pull-ups from another device (crow and Teletype have them) or from resistors, about 2.2-4.7k from SDA and SCL to 3.3V. Pull up to 3.3V only, as the RP2040 isn't 5V tolerant. Define `ENABLE_UART_DEBUGGING` as well, so that the constructor doesn't drive the pads as debug outputs first. See the `i2c_over_uart` example.
+   Call before `Run` to use the UART pads for I2C (TX = GPIO 0 = SDA, RX = GPIO 1 = SCL), for example for ii with a Teletype or crow. Moves the I2C0 peripheral there from the calibration EEPROM, which has already been read, and returns `i2c0` ready to use. Turns on the RP2040's internal pull-ups on those pins, but they are too weak (50-80k) to run a bus on their own, whether the Computer leads or follows: the bus needs pull-ups from another device (crow and Teletype have them) or from resistors, about 2.2-4.7k from SDA and SCL to 3.3V. Pull up to 3.3V only, as the RP2040 isn't 5V tolerant. The pads must be wired to an I2C bus, not to a UART partner (see [UART pads](#uart-pads)). See the `i2c_over_uart` example.
    
 
 ## Protected methods

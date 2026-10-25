@@ -101,9 +101,8 @@ public:
 	    about 2.2-4.7k from SDA and SCL to 3.3V. Pull-ups to 3.3V only, as
 	    the RP2040 isn't 5V tolerant.
 
-	    Call before Run(). Define ENABLE_UART_DEBUGGING as well, so that the
-	    constructor doesn't drive the UART pads as debug outputs before this is
-	    called (which would hold the lines of a shared bus low for a moment).
+	    Call before Run(). The pads must be wired to an I2C bus, not to a UART
+	    partner, whose TX output would fight the bus driving SCL low.
 
 	    Returns i2c0, initialised at `baudrate` and ready to use.
 	*/
@@ -593,6 +592,7 @@ private:
 #define PULSE_1_INPUT 2
 #define PULSE_2_INPUT 3
 
+// Debug outputs on the UART pads, set up only when ENABLE_DEBUG_PINS is defined
 #define DEBUG_1 0
 #define DEBUG_2 1
 
@@ -1157,9 +1157,11 @@ ComputerCard::ComputerCard()
 	gpio_set_function(EEPROM_SCL, GPIO_FUNC_I2C);
 
 	
-	// If not using UART pins for UART, instead use as debug lines
-#ifndef ENABLE_UART_DEBUGGING
-	// Debug pins
+	// The UART pads (GPIO 0/1) are left as inputs, as the RP2040 resets them,
+	// unless a card asks for them as debug outputs. Driven (low) by default,
+	// they held SDA/SCL of an ii (I2C) bus wired to the pads low, jamming it
+	// for every other module while a card that doesn't use ii ran.
+#if defined(ENABLE_DEBUG_PINS) && !defined(ENABLE_UART_DEBUGGING)
 	gpio_init(DEBUG_1);
 	gpio_set_dir(DEBUG_1, GPIO_OUT);
 
