@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "hardware/gpio.h"
 #include "hardware/pio.h"
 #include "pico/time.h"
 #include "uart_link.pio.h"
@@ -25,11 +26,29 @@ void UartTransport::Init()
 	uint rxOffset = pio_add_program(pio, &uart_link_rx_program);
 	uart_link_tx_program_init(pio, kSmTx, txOffset, kPinTx, ru::kBaud);
 	uart_link_rx_program_init(pio, kSmRx, rxOffset, kPinRx, ru::kBaud);
+
+	// TX is driven only while a packet goes out (see Send). Released, its
+	// output is off and the pull-up holds the line idle high, so a target
+	// using these pins some other way (I2C, or its own outputs) isn't fought.
+	gpio_pull_up(kPinTx);
+	gpio_set_oeover(kPinTx, GPIO_OVERRIDE_LOW);
 }
 
 void UartTransport::Send(const uint8_t *p, uint32_t n)
 {
+	const uint32_t stalled = 1u << (PIO_FDEBUG_TXSTALL_LSB + kSmTx);
+	pio->fdebug = stalled; // clear the "waiting for data" flag
+
+	gpio_set_oeover(kPinTx, GPIO_OVERRIDE_NORMAL);
 	for (uint32_t i = 0; i < n; i++) pio_sm_put_blocking(pio, kSmTx, p[i]);
+
+	// Done once the FIFO is empty and the program is stalled at its pull,
+	// holding the line high: the last stop bit is out. Then let go.
+	while (!pio_sm_is_tx_fifo_empty(pio, kSmTx)) {}
+	pio->fdebug = stalled;
+	uint32_t start = time_us_32();
+	while (!(pio->fdebug & stalled) && time_us_32() - start < 50) {} // a byte is ~11us
+	gpio_set_oeover(kPinTx, GPIO_OVERRIDE_LOW);
 }
 
 bool UartTransport::Fail(Error e)

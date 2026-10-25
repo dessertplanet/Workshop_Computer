@@ -5,7 +5,9 @@
 //
 // Link: 921600 baud, 8N1, 3.3V. Straight-through wiring: SDA to SDA (GPIO0),
 // SCL to SCL (GPIO1), GND to GND. The target uses its hardware UART0 (TX
-// GPIO0, RX GPIO1); the Decanter uses PIO with the pins swapped.
+// GPIO0, RX GPIO1); the Decanter uses PIO with the pins swapped. Neither side
+// drives its TX pin except while it is sending (the target: while a Decanter
+// is talking to it); released, each holds its line high with a pull-up.
 //
 // Every packet, in both directions:
 //   Header, 12 bytes, little-endian:

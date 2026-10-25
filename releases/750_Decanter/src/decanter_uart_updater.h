@@ -12,6 +12,12 @@ Wiring: the target's GPIO 0 (UART0 TX) to the Decanter's TX pad, GPIO 1
 (UART0 RX) to its RX pad, GND to GND. (Those are the SDA and SCL pins on
 boards that label them for I2C: SDA to SDA, SCL to SCL.)
 
+The target only drives its TX pin while it is answering a Decanter: the rest
+of the time GPIO 0 is an input with a pull-up. Only a Decanter sends requests,
+so if the cable is left connected to a Computer running some other card (which
+will usually drive both pins as outputs), the two never fight. A 1k resistor
+in series with each signal wire protects every combination, I2C included.
+
 Use, with the system clock already set (uart_init takes its baud rate from it):
 
     static decanter::UartUpdater<> updater;  // or <MyBoard>, see below
@@ -74,6 +80,7 @@ Protocol: decanter_uart_proto.h.
 #include "hardware/flash.h"
 #include "hardware/gpio.h"
 #include "hardware/pio.h"
+#include "hardware/structs/io_bank0.h"
 #include "hardware/structs/psm.h"
 #include "hardware/structs/uart.h"
 #include "hardware/structs/watchdog.h"
@@ -123,9 +130,12 @@ public:
 	void Begin()
 	{
 		uart_init(uart0, ru::kBaud);
-		gpio_set_function(0, GPIO_FUNC_UART);
 		gpio_set_function(1, GPIO_FUNC_UART);
 		gpio_pull_up(1); // idle high when nothing is connected
+
+		// TX is connected to the UART only while answering (see Reply)
+		gpio_set_function(0, GPIO_FUNC_NULL);
+		gpio_pull_up(0);
 
 		pico_unique_board_id_t id;
 		pico_get_unique_board_id(&id);
@@ -139,6 +149,9 @@ public:
 	/// to update; after an ENTER it never returns (the target reboots).
 	void Poll()
 	{
+		// Let go of the TX pin once the last reply has gone out
+		if (txDriving && !(uart0_hw->fr & UART_UARTFR_BUSY_BITS)) DriveTx(false);
+
 		while (RxReady())
 		{
 			ru::Parser::Event e = parser.Push(RxByte());
@@ -167,6 +180,18 @@ private:
 	uint8_t uniqueId[8];
 	uint32_t totalSectors = 0;
 	uint32_t programmed = 0;
+
+	static inline bool txDriving = false; // TX pin connected to the UART
+	static inline bool holdTx = false;    // update mode: keep it connected
+
+	// Connect or release the TX pin (GPIO 0), by register so it is RAM-safe.
+	// Released, the pin's output is off and its pull-up holds the line high.
+	static inline void RU_RAMFUNC(DriveTx)(bool on)
+	{
+		if (!on && holdTx) return;
+		io_bank0_hw->io[0].ctrl = on ? GPIO_FUNC_UART : GPIO_FUNC_NULL;
+		txDriving = on;
+	}
 
 	// UART0 registers directly: the SDK's uart functions live in flash
 	static inline bool RU_RAMFUNC(RxReady)() {return !(uart0_hw->fr & UART_UARTFR_RXFE_BITS);}
@@ -197,6 +222,7 @@ private:
 		crc = ru::Crc32Update(crc, payload, len);
 		uint8_t tail[ru::kCrcSize];
 		ru::Put32(tail, crc);
+		if (!txDriving) DriveTx(true); // released again by Poll once sent
 		TxBytes(hdr, sizeof(hdr));
 		TxBytes(payload, len);
 		TxBytes(tail, sizeof(tail));
@@ -252,6 +278,8 @@ private:
 	void EnterUpdateMode()
 	{
 		while (uart0_hw->fr & UART_UARTFR_BUSY_BITS) {} // the ENTER reply goes out first
+		holdTx = true; // a Decanter is listening from now on
+		DriveTx(true);
 
 		// Stop everything that might run code or touch flash: the other core,
 		// every interrupt, all DMA and both PIOs
