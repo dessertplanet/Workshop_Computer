@@ -14,7 +14,8 @@ import { spawnSync } from 'node:child_process';
 import { evaluateChangeSet } from './changeSet.js';
 import { hasCommittedToCard } from './cardCommitters.js';
 import { listTree, treeContains, writeTreeFiles } from './gitTree.js';
-import { cardScope, evaluateMergeEligibility, measureChanges, touchesNoCards } from './mergeEligibility.js';
+import { cardScope, evaluateMergeEligibility, measureChanges, sizeReasons, touchesNoCards } from './mergeEligibility.js';
+import { minifiedWebFiles } from './webCode.js';
 import { parseNameStatusZ } from './prRules.js';
 
 const releaseIndexFile = /^releases\/[^/]+\/info\.yaml$/;
@@ -25,6 +26,14 @@ function diffNameStatus(cwd, base, head) {
   });
   if (result.status !== 0) throw new Error(`git diff failed: ${String(result.stderr).trim()}`);
   return parseNameStatusZ(result.stdout);
+}
+
+function readProposed(root, file) {
+  try {
+    return fs.readFileSync(path.join(root, file));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -50,14 +59,23 @@ export async function assessPullRequest({
   const { cards } = cardScope(changes);
   const cardDirs = cards.map(card => `releases/${card}`);
   const inCards = file => cardDirs.some(dir => file.startsWith(`${dir}/`));
+  const headTree = listTree(cwd, head, ['releases']);
+  const sizes = new Map(headTree.files.map(entry => [entry.path, entry.size]));
+  const size = measureChanges(changes, file => sizes.get(file) ?? null);
+  const specialEntries = headTree.special.filter(entry => inCards(entry.path)).map(entry => entry.path);
+  if (sizeReasons(size).length) {
+    // Too large to merge unreviewed: decide from the listing alone rather than
+    // reading an oversized PR into memory.
+    return { changes, report: null, errorCount: 0, eligibility: evaluateMergeEligibility({
+      changes, author, association, draft, labels, size, specialEntries,
+    }) };
+  }
+
   const headRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workshop-pr-head-'));
   const baseRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workshop-pr-base-'));
   try {
     // The proposed cards, plus every card's info.yaml for the similar-values index.
-    const headTree = listTree(cwd, head, ['releases']);
     writeTreeFiles(cwd, headTree.files.filter(entry => inCards(entry.path) || releaseIndexFile.test(entry.path)), headRoot);
-    const sizes = new Map(headTree.files.map(entry => [entry.path, entry.size]));
-    const specialEntries = headTree.special.filter(entry => inCards(entry.path)).map(entry => entry.path);
     writeTreeFiles(cwd, listTree(cwd, base, cardDirs).files, baseRoot);
 
     const report = await evaluateChangeSet(changes, { root: headRoot, baselineRoot: baseRoot });
@@ -80,8 +98,9 @@ export async function assessPullRequest({
       cardInHead: card ? treeContains(cwd, head, `releases/${card}`) : false,
       authorCommitted,
       specialEntries,
-      size: measureChanges(changes, file => sizes.get(file) ?? null),
+      size,
       labels,
+      minifiedWeb: minifiedWebFiles(changes, file => readProposed(headRoot, file)),
     });
     return { changes, report, errorCount, eligibility };
   } finally {

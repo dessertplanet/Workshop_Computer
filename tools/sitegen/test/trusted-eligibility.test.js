@@ -147,3 +147,22 @@ test('the trusted verdict applies size limits and the hold label', async t => {
   const update = await propose(({ write }) => write('releases/42_card/info.yaml', `${validInfo}# tweak\n`));
   assert.match((await assess(root, base, update, { labels: ['hold'] })).eligibility.reasons.join('\n'), /"hold" label/);
 });
+
+test('minified web code in the card needs review; readable web code does not', async t => {
+  const { root, base, propose } = await repository(t);
+  const readable = Array.from({ length: 80 }, (_, i) => `function update${i}(value) {\n  document.title = String(value);\n}`).join('\n');
+  const minified = Array.from({ length: 80 }, (_, i) => `function n${i}(e){document.title=String(e)}`).join(';');
+  const clean = await propose(({ write }) => write('releases/42_card/web/app.js', readable));
+  assert.equal((await assess(root, base, clean)).eligibility.eligible, true);
+  const packed = await propose(({ write }) => write('releases/42_card/web/app.js', minified));
+  assert.match((await assess(root, base, packed)).eligibility.reasons.join('\n'),
+    /Publishes minified script \(releases\/42_card\/web\/app\.js\); minified or compiled web code needs a maintainer's review/);
+});
+
+test('an oversized PR is judged from the tree listing without being read', async t => {
+  const { root, base, propose } = await repository(t);
+  const big = await propose(({ write }) => write('releases/42_card/card.uf2', Buffer.alloc(17 * 1024 * 1024)));
+  const { report, eligibility } = await assess(root, base, big);
+  assert.equal(report, null);
+  assert.match(eligibility.reasons.join('\n'), /card\.uf2 is 17\.0 MB/);
+});

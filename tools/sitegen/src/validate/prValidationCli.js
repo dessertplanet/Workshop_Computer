@@ -26,6 +26,7 @@ import { hasCommittedToCard } from './cardCommitters.js';
 import { archiveTree, treeContains } from './gitTree.js';
 import { cardScope, evaluateMergeEligibility, measureChanges, parseLabels, touchesNoCards } from './mergeEligibility.js';
 import { parseNameStatusZ } from './prRules.js';
+import { minifiedWebFiles } from './webCode.js';
 import {
   reportEligibilityMarkdown, reportGithub, reportMarkdown, reportOtherRulesGithub, reportText,
 } from './reporters/index.js';
@@ -95,6 +96,13 @@ if (base && process.env.PR_AUTHOR) {
       }
     }),
     labels: parseLabels(process.env.PR_LABELS),
+    minifiedWeb: minifiedWebFiles(changes, file => {
+      try {
+        return fs.readFileSync(path.join(root, file));
+      } catch {
+        return null;
+      }
+    }),
   });
   console.log(`Auto-merge eligibility (report only): ${eligibility.eligible ? 'eligible' : 'not eligible'}`);
   for (const line of eligibility.eligible ? [eligibility.basis] : eligibility.reasons) console.log(`  ${line}`);

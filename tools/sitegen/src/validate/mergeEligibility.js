@@ -170,6 +170,8 @@ export function reviewReasons(introduced) {
  *                    branch, or null when that could not be determined
  *   specialEntries   symlinks and submodules in the PR's card, as paths
  *   size             measureChanges() result, or null to skip size limits
+ *   minifiedWeb      published files that are minified or compiled, as
+ *                    [{ path, reason }] (see webCode.js)
  *   labels           the PR's label names
  *
  * Returns { eligible, card, reasons, basis }: `reasons` explain an ineligible
@@ -178,9 +180,13 @@ export function reviewReasons(introduced) {
 export function evaluateMergeEligibility({
   changes, author, association, draft = false, errorCount = 0, introduced = [],
   cardOnBase = false, cardInHead = true, authorCommitted = null, specialEntries = [],
-  size = null, labels = [],
+  size = null, labels = [], minifiedWeb = [],
 }) {
   const reasons = [...scopeReasons(changes), ...reviewReasons(introduced), ...sizeReasons(size)];
+  for (const { path, reason } of minifiedWeb.slice(0, 5)) {
+    reasons.push(`Publishes ${reason} (${path}); minified or compiled web code needs a maintainer's review.`);
+  }
+  if (minifiedWeb.length > 5) reasons.push(`Publishes ${minifiedWeb.length - 5} more minified or compiled web files.`);
   if (labels.includes(HOLD_LABEL)) reasons.push(`A maintainer added the "${HOLD_LABEL}" label.`);
   if (specialEntries.length) {
     const listed = specialEntries.slice(0, 5).join(', ');

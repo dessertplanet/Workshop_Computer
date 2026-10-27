@@ -2,8 +2,9 @@
 // Usage: node trustedEligibilityCli.js [VERDICT.json]
 //
 // Run from a checkout of the base branch that also holds the PR head commit
-// as a Git object (never a checkout of the PR). Writes the verdict as JSON and
-// appends a Markdown summary to $GITHUB_STEP_SUMMARY when set. Exits 0 with a
+// as a Git object (never a checkout of the PR). Writes the verdict as JSON,
+// `verdict=eligible|ineligible` to $GITHUB_OUTPUT, and a Markdown summary to
+// $GITHUB_STEP_SUMMARY, when those are set. Exits 0 with a
 // verdict either way; a non-zero exit means no verdict could be reached.
 //
 // Environment:
@@ -46,6 +47,7 @@ const verdict = { base, head, author, errorCount, ...eligibility };
 console.log(`Auto-merge eligibility (trusted): ${eligibility.eligible ? 'eligible' : 'not eligible'} at ${head}`);
 for (const line of eligibility.eligible ? [eligibility.basis] : eligibility.reasons) console.log(`  ${line}`);
 
+if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `verdict=${eligibility.eligible ? 'eligible' : 'ineligible'}\n`);
 if (verdictFile) fs.writeFileSync(verdictFile, `${JSON.stringify(verdict, null, 2)}\n`);
 if (process.env.GITHUB_STEP_SUMMARY) {
   fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `_Trusted verdict for \`${head}\`, decided by base-branch code._\n\n${reportEligibilityMarkdown(eligibility, { autoMerge: process.env.AUTO_MERGE === 'true' })}`);
